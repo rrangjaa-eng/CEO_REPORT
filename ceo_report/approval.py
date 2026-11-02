@@ -290,7 +290,7 @@ def _account_notes(accounts, cutoff, newest, stale_in):
 
 
 def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates,
-           paid_note=None, account_lines=()):
+           paid_note=None, account_lines=(), number_kept=()):
     lines = list(account_lines)
     if approved_paid:
         lines.append("승인 완료·예상 지급일이 잔액 기준일(%s) 이전 또는 당일 %d건 %s (잔액에 반영된 것으로 봄)" % (
@@ -311,6 +311,8 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
                  + (" — 일반 일정 규칙대로 반영" if unmatched_exec else ""))
     lines.append("중복 제외 " + _count_text(duplicates))
     lines.append("중복 가능성 " + _count_text(possible_duplicates) + (" — 일정에 그대로 둠, 확인 필요" if possible_duplicates else ""))
+    if number_kept:
+        lines.append("번호는 같으나 스냅숏 요청이 일정에 없어 입력 일정 유지 " + _count_text(number_kept))
     if paid_note:
         lines.append(paid_note)
     return lines
@@ -397,16 +399,16 @@ def build(d, snap, asof, now, wehago_dir=None):
         books.reason = "자료 없음: " + ", ".join(wehago.KINDS)
 
     # 요청 읽기와 예상 지급일 (A-1, A-2, A-4)
-    req_all, numbers = [], set()
+    req_all = []
     for k, row in enumerate(_masked(snap.payments)):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
               "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "", "reason": "", "toggle": False,
+              "scheduled": False,  # 8주 일정에 금액이 실제로 들어갔는가 (WR-06)
               "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", ""))}
         rq["schedule_amount"], rq["amount_source"] = rq["amount"], "인트라넷 요청"
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
-        numbers.add(rq["번호"])
         req_all.append(rq)
 
     # WEHAGO 대조 (D-32): 요청마다 상태 하나. '금액 차이'는 계산서 합계로 일정에 넣는다 (D-30a)
@@ -419,36 +421,101 @@ def build(d, snap, asof, now, wehago_dir=None):
             # D-30a: 계산서가 더 크면 계산서 합계로. D-30b: 더 적으면 요청 금액 그대로 (지급을 줄이지 않는다)
             rq["schedule_amount"], rq["amount_source"] = row["schedule_amount"], "WEHAGO 계산서"
 
-    # 입력 일정과 스냅숏 요청 맞추기 (A-3, P-6): 번호로 맞거나, 프로젝트·금액·날짜가 같으면 같은 지급으로 본다
-    cands = [rq for rq in req_all if rq["status"] != "status_unknown" and rq["amount"] is not None and rq["code"]]
+    # 요청 분류를 입력 일정 맞추기보다 먼저 한다: 일정에 실제로 들어간 요청만 입력 일정 줄을 대신할 수 있다 (WR-06)
+    undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
+    stale_in = []  # 잔액 기준일 이후·가장 늦은 계좌 날짜 이전·당일 입금 (WR-05)
+    # 요청 분류: 대기 → 체크 가능, 승인 완료 → 잔액 기준일 이후면 고정 지급 (A-3, P-3, P-8)
+    data_requests = []
+    amount_unknown, date_unknown, status_unknown, beyond_requests = [], [], [], []
+    approved_paid, approved_future = [], []
+    already_paid, paid_after = [], []
+    for rq in req_all:
+        if rq["xstatus"] == "이미 지급" and rq["status"] == "approved":  # 승인 전 요청은 이미 지급이 아니다 (WR-01)
+            # 분개장에서 같은 금액으로 이미 출금됨: 일정에 두 번 넣지 않는다 (D-35). 지급일이 잔액 기준일 이후면 잔액에
+            # 아직 없으므로 그 날 확정 지급으로 남긴다 (D-35b, A-3과 같은 원칙). 체크 칸은 없다.
+            paid = rq["xrow"]["payment"]["date"]
+            rq["paid_date"] = paid
+            already_paid.append(rq)
+            if paid <= cutoff:
+                rq["reason"] = "이미 지급·일정에서 뺌"
+            else:
+                paid_after.append(rq)
+                if paid > horizon:
+                    rq["reason"] = "이미 지급·기간 밖"
+                    beyond.append(_as_event(rq, paid))
+                else:
+                    rq["reason"] = "이미 지급·지급일에 확정 지급으로 일정에 둠"
+                    rq["scheduled"] = True
+                    base_out[_day_index(paid, monday)] += rq["schedule_amount"]
+                    if paid < monday:
+                        rolled.append(_as_event(rq, paid))
+        elif rq["status"] == "status_unknown":
+            rq["reason"] = "상태 확인 필요"
+            status_unknown.append(rq)
+        elif rq["amount"] is None:
+            rq["reason"] = "금액 미확인"
+            amount_unknown.append(rq)
+        elif rq["date"] is None:
+            rq["reason"] = "날짜 확인 불가"
+            date_unknown.append(rq)
+        elif rq["status"] == "approved":
+            if rq["date"] <= cutoff:
+                rq["reason"] = "승인 완료·잔액에 반영된 것으로 봄"
+                approved_paid.append(rq)
+            elif rq["date"] > horizon:
+                rq["reason"] = "기간 밖"
+                beyond.append(_as_event(rq, rq["date"]))
+            else:
+                rq["reason"] = "승인 완료·고정 지급"
+                rq["scheduled"] = True
+                approved_future.append(rq)
+                base_out[_day_index(rq["date"], monday)] += rq["schedule_amount"]
+                if rq["date"] < monday:
+                    rolled.append(_as_event(rq, rq["date"]))
+        elif rq["date"] > horizon:
+            rq["reason"] = "기간 밖"
+            beyond_requests.append(rq)
+        else:
+            rq["toggle"] = rq["scheduled"] = True
+            data_requests.append({"id": rq["id"], "day": _day_index(rq["date"], monday), "amount": rq["schedule_amount"]})
 
-    def key_hit(ev):
+    # 입력 일정과 스냅숏 요청 맞추기 (A-3, P-6): 번호로 맞거나, 프로젝트·금액·날짜가 같으면 같은 지급으로 본다.
+    # 입력 줄을 빼는 것은 그 요청이 8주 일정에 실제로 들어갔거나 분개장에서 이미 지급된 것(D-35: 두 번 빼지 않음)일 때뿐이다
+    # (WR-06). 상태·금액·날짜 미확인, 기간 밖, 잔액 반영 가정(A-3) 요청과 번호가 같으면 입력 줄을 그대로 두고 따로 센다
+    # (확실하지 않으면 지급을 줄이지 않는다)
+    accounted = set(rq["id"] for rq in req_all if rq["scheduled"]) | set(rq["id"] for rq in already_paid)
+    cands = [rq for rq in req_all if rq["status"] != "status_unknown" and rq["amount"] is not None and rq["code"]]
+    sched_cands = [rq for rq in cands if rq["id"] in accounted]
+    numbers = set(rq["번호"] for rq in req_all if rq["id"] in accounted)
+    all_numbers = set(rq["번호"] for rq in req_all)
+
+    def key_hit(ev, pool):
         digits = "".join(ch for ch in (ev.get("project") or "") if ch.isdigit())
         if not digits or ev["amount"] is None or ev["date"] is None:
             return False
         return any(rq["code"] == digits and rq["amount"] == ev["amount"]
-                   and (rq["request_date"] or rq["date"]) == ev["date"] for rq in cands)
+                   and (rq["request_date"] or rq["date"]) == ev["date"] for rq in pool)
 
-    replaced, unmatched_exec, duplicates, possible_duplicates, kept = [], [], [], [], []
+    replaced, unmatched_exec, duplicates, possible_duplicates, kept, number_kept = [], [], [], [], [], []
     for ev0 in R["events"]:
         ev = dict(ev0)
         m = _NO_RE.search(ev["basis"] or "")
         by_number = bool(m and m.group(1) in numbers)
+        if m and not by_number and m.group(1) in all_numbers:
+            number_kept.append(ev)
         if ev["source"] == "프로젝트집행" and ev["cat"] == "프로젝트 지급요청":
-            if by_number or key_hit(ev):
+            if by_number or key_hit(ev, sched_cands):
                 replaced.append(ev)
                 continue
             unmatched_exec.append(ev)
         elif by_number:
             duplicates.append(ev)
             continue
-        elif ev["io"] == "out" and key_hit(ev):
+        elif ev["io"] == "out" and key_hit(ev, cands):
             possible_duplicates.append(ev)
         kept.append(ev)
 
     # 남은 일정 분류 (A-4: 미확인은 합계에 넣지 않는다)
-    undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
-    stale_in = []  # 잔액 기준일 이후·가장 늦은 계좌 날짜 이전·당일 입금 (WR-05)
     for ev in kept:
         if ev["amount"] is None:
             amount_unknown_events.append(ev)
@@ -471,59 +538,6 @@ def build(d, snap, asof, now, wehago_dir=None):
                 base_out[i] += ev["amount"]
                 if ev.get("vat_unknown"):
                     vat_unknown_sched.append(ev)  # 부가세 칸이 비어 공급가액만 반영된 일정 (D-07)
-
-    # 요청 분류: 대기 → 체크 가능, 승인 완료 → 잔액 기준일 이후면 고정 지급 (A-3, P-3, P-8)
-    data_requests = []
-    amount_unknown, date_unknown, status_unknown, beyond_requests = [], [], [], []
-    approved_paid, approved_future = [], []
-    already_paid, paid_after = [], []
-    for rq in req_all:
-        if rq["xstatus"] == "이미 지급" and rq["status"] == "approved":  # 승인 전 요청은 이미 지급이 아니다 (WR-01)
-            # 분개장에서 같은 금액으로 이미 출금됨: 일정에 두 번 넣지 않는다 (D-35). 지급일이 잔액 기준일 이후면 잔액에
-            # 아직 없으므로 그 날 확정 지급으로 남긴다 (D-35b, A-3과 같은 원칙). 체크 칸은 없다.
-            paid = rq["xrow"]["payment"]["date"]
-            rq["paid_date"] = paid
-            already_paid.append(rq)
-            if paid <= cutoff:
-                rq["reason"] = "이미 지급·일정에서 뺌"
-            else:
-                paid_after.append(rq)
-                if paid > horizon:
-                    rq["reason"] = "이미 지급·기간 밖"
-                    beyond.append(_as_event(rq, paid))
-                else:
-                    rq["reason"] = "이미 지급·지급일에 확정 지급으로 일정에 둠"
-                    base_out[_day_index(paid, monday)] += rq["schedule_amount"]
-                    if paid < monday:
-                        rolled.append(_as_event(rq, paid))
-        elif rq["status"] == "status_unknown":
-            rq["reason"] = "상태 확인 필요"
-            status_unknown.append(rq)
-        elif rq["amount"] is None:
-            rq["reason"] = "금액 미확인"
-            amount_unknown.append(rq)
-        elif rq["date"] is None:
-            rq["reason"] = "날짜 확인 불가"
-            date_unknown.append(rq)
-        elif rq["status"] == "approved":
-            if rq["date"] <= cutoff:
-                rq["reason"] = "승인 완료·잔액에 반영된 것으로 봄"
-                approved_paid.append(rq)
-            elif rq["date"] > horizon:
-                rq["reason"] = "기간 밖"
-                beyond.append(_as_event(rq, rq["date"]))
-            else:
-                rq["reason"] = "승인 완료·고정 지급"
-                approved_future.append(rq)
-                base_out[_day_index(rq["date"], monday)] += rq["schedule_amount"]
-                if rq["date"] < monday:
-                    rolled.append(_as_event(rq, rq["date"]))
-        elif rq["date"] > horizon:
-            rq["reason"] = "기간 밖"
-            beyond_requests.append(rq)
-        else:
-            rq["toggle"] = True
-            data_requests.append({"id": rq["id"], "day": _day_index(rq["date"], monday), "amount": rq["schedule_amount"]})
 
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
@@ -548,6 +562,7 @@ def build(d, snap, asof, now, wehago_dir=None):
             "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,
-                            _account_notes(accounts, cutoff, newest, stale_in)),
+                            _account_notes(accounts, cutoff, newest, stale_in), number_kept),
+            "number_kept": number_kept,
             "newest_balance_date": newest, "stale_in": stale_in,
             "issues": list(issues.items)}

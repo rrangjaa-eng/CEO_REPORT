@@ -721,6 +721,26 @@ class TestApprovalRequests(unittest.TestCase):
         S = mod("approval").scenario(A, all_ids(A))
         self.assertEqual((S["low"], S["weeks"][1]["out"]), (98236000, 92700000))
 
+    def test_number_match_drops_an_input_line_only_when_the_request_is_scheduled(self):
+        """WR-06: 번호가 같아도 스냅숏 요청이 일정에 없으면(금액 미확인 5106, 반려 5107) 입력 일정은 그대로 둔다."""
+        folder = sample_copy(self)
+        edit_csv(folder, "자금일정.csv", lambda rows: rows.extend([
+            ["2026-11-17", "지급", "3,000,000", "확정", "거래처미지급", "", "", "지급요청 5106", ""],
+            ["2026-11-12", "지급", "3,300,000", "확정", "거래처미지급", "", "", "지급요청 5105", ""]]))
+        edit_csv(folder, "프로젝트집행.csv", lambda rows: rows.append(
+            ["P26201", "케이터링", "가상케이터링", "요청미지급", "1,000,000", "100,000", "2026-11-06", "확정", "지급요청 5107"]))
+        page, A = full_screen(self, folder)
+        self.assertEqual([e["basis"] for e in A["duplicates"]], ["지급요청 5105"])  # 5105 는 승인 완료·고정 지급
+        self.assertNotIn("지급요청 5107", [e["basis"] for e in A["replaced"]])
+        self.assertIn("지급요청 5107", [e["basis"] for e in A["unmatched_exec"]])
+        kept = sorted(e["basis"] for e in A["number_kept"])
+        self.assertEqual(kept, ["지급요청 5106", "지급요청 5107"])
+        S = mod("approval").scenario(A, all_ids(A))
+        base = mod("approval").scenario(full_screen(self)[1], all_ids(A))
+        self.assertEqual(S["weeks"][2]["out"] - base["weeks"][2]["out"], 3000000)  # 11-17 주: 5106 입력 금액이 남음
+        self.assertEqual(S["weeks"][0]["out"] - base["weeks"][0]["out"], 1100000)  # 11-06 주: 5107 입력 금액이 남음
+        self.assertIn("번호는 같으나 스냅숏 요청이 일정에 없어 입력 일정 유지 2건 (확인된 금액 4,100,000)", T(page, "schedule-notes"))
+
     def test_probe_big_pending_request(self):
         extra = [["9001", "[26201] 가상 컨퍼런스", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "400,000,000", "2026-11-13",
                   "홍길동", "승인", "승인", "미승인"]]
