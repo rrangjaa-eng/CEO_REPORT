@@ -13,6 +13,7 @@ from .util import date as parse_date
 # 새 설정의 기본값은 여기에 둔다. data.DEFAULT_SETTINGS에 넣으면 주간·월간 보고가 읽는 값이 달라진다 (P-7).
 APPROVAL_DEFAULTS = {"승인검토_주수": "8", "승인검토_정기지출": "급여,임차료,카드대금,부가세"}
 DAY = dt.timedelta(days=1)
+MAX_WEEKS = 521   # 승인검토_주수 위 끝 (약 3650일, 02-REVIEW WR-02)
 _NO_RE = re.compile(r"지급요청\s*(\d+)")
 _CODE_RE = re.compile(r"^\s*\[(\d+)\]")
 
@@ -148,6 +149,10 @@ def _read_settings(d, issues):
             issues.add("설정.csv", line, "%s 설정 비어 있음 → 기본값 %d 사용" % (key, default))
         elif reason is not None or not isinstance(value, int) or value < 1:
             issues.add("설정.csv", line, "%s 값이 1 이상 정수가 아님: '%s' → 기본값 %d 사용" % (key, d.settings.get(key), default))
+        elif value > MAX_WEEKS:
+            # 02-REVIEW WR-02: 아주 큰 값은 날짜 계산을 넘치게 한다 (3650일 ≈ 521주까지)
+            issues.add("설정.csv", line, "%s 값 %d 범위 밖 (1~%d) → %d 사용" % (key, value, MAX_WEEKS, MAX_WEEKS))
+            weeks = MAX_WEEKS
         else:
             weeks = value
     key = "승인검토_정기지출"

@@ -14,7 +14,7 @@
 
 종료 코드: 0 완료 · 2 입력 문제(기준일 형식) · 3 WEHAGO 장부를 쓸 수 없음(자료 없음·머리글 다름·읽기 실패: CSV를 만들지 않음)
 · 7 파일을 쓰지 못함(엑셀에서 열려 있는 파일 등: 아무 파일도 바꾸지 않음. 바꾸는 중에 실패하면 이미 바꾼 파일을
-  입력\\이전\\<시각>\\ 의 복사본으로 되돌리고 변환결과.txt에 실패를 적음)
+  입력\\이전\\<시각>\\ 의 복사본으로 되돌리고 변환결과.txt에 실패를 적음) 또는 예상하지 못한 오류(한 줄로 알림)
 """
 import argparse
 import datetime as dt
@@ -51,7 +51,12 @@ def main(argv=None):
         now = dt.datetime.now()
         asof = now.date()
     wehago_dir = a.위하고폴더 or os.path.join(a.수집폴더, "위하고")
-    res = convert.run(a.입력, a.수집폴더, wehago_dir, asof, now)
+    try:
+        res = convert.run(a.입력, a.수집폴더, wehago_dir, asof, now)
+    except Exception as e:   # 트레이스백을 보이지 않는다 (PATTERNS §3.5, 02-REVIEW WR-02). 글은 주민번호를 가린 한 줄
+        _say("변환 중 예상하지 못한 오류 (%s): %s — 설정.csv 값과 원천 파일을 확인하고 다시 실행하세요"
+             % (type(e).__name__, str(e)[:200]))
+        return 7
     for line in res.lines:
         _say(line)
     return res.code

@@ -150,6 +150,13 @@ def _progress(label, page, total):
     _say("%s 목록 %d쪽 읽음 (누계 %d건)" % (label, page, total))
 
 
+def _unexpected(e):
+    """화면을 만들다 난 예상하지 못한 오류: 한 줄 (주민번호 가림), 종료 코드 6."""
+    _say("승인 검토 화면을 만들던 중 예상하지 못한 오류 (%s): %s — 설정.csv 값과 입력 파일을 확인하고 다시 실행하세요"
+         % (type(e).__name__, str(e)[:200]))
+    return 6
+
+
 def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_dir=None):
     """입력 CSV와 스냅숏 폴더로 화면 파일을 만든다. (HTML 경로, 계산 결과 A)를 돌려준다.
 
@@ -203,6 +210,8 @@ def main(argv=None):
         _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s) — --출력 <폴더> 로 다른 폴더를 지정하세요"
              % (a.출력, e.strerror or type(e).__name__))
         return 7
+    except Exception as e:   # 트레이스백을 보이지 않는다 (02-REVIEW WR-02)
+        return _unexpected(e)
     report(path, A, "(마지막 스냅숏)")
     if a.열기 == "열기":
         webbrowser.open(pathlib.Path(path).resolve().as_uri())
@@ -333,6 +342,8 @@ def run_collect(a, asof, now):
     except (OSError, SnapshotError) as e:
         _say("저장 실패: 인트라넷 자료는 읽었지만 파일을 쓰지 못했습니다 (%s): %s" % (where, type(e).__name__))
         return 7
+    except Exception as e:   # 트레이스백을 보이지 않는다 (02-REVIEW WR-02)
+        return _unexpected(e)
     report(path, A, "(이번 실행에서 수집)")
     if a.열기 == "열기":
         webbrowser.open(pathlib.Path(path).resolve().as_uri())

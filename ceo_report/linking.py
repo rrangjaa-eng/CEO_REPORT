@@ -210,6 +210,14 @@ def _no_key(n):
 
 
 # ───────────── 원가 줄 연결 ─────────────
+def _window_end(start, days):
+    """start + days 일. 날짜 범위를 넘으면 마지막 날 (설정은 1~3650 으로 막지만 다른 호출도 예외 없이, 02-REVIEW WR-02)."""
+    try:
+        return start + dt.timedelta(days=days)
+    except (OverflowError, ValueError):
+        return dt.date.max
+
+
 def link_costs(books, requests, projects, overrides, link_days=90, direct_prefixes=("6",), direct_mark="(도)",
                vat_codes=("13500",)):
     """(도) 원가 줄을 프로젝트에 잇는다 -> {"lines": [...], "summary": {기준: {count, sum, unknown}}, "used": {수동 열쇠}}.
@@ -266,7 +274,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
                 amounts.add(ln["amount"] + vat_sum[k])
             for rq in eligible.get(ln["vendor_norm"], ()):
                 start = rq["registered"].date()
-                if start <= ln["date"] <= start + dt.timedelta(days=link_days) and rq["amount"] in amounts:
+                if start <= ln["date"] <= _window_end(start, link_days) and rq["amount"] in amounts:
                     found.append(rq["번호"])
         cand[ln["index"]] = sorted(set(found), key=_no_key)
     backing = {}   # 요청 번호 -> 그 요청을 후보로 가진 줄 수

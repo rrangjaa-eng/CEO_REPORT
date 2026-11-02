@@ -103,6 +103,7 @@ def write_table(path, table):
 
 
 # 설정.csv 항목 이름 → (cfg 키, 값 종류). 종류: 숫자목록(쉼표로 나눈 숫자) | 낱말 | 낱말목록 | 정수(0 이상)
+# | 일수(0 이상 정수, DAY_RANGE 밖이면 가까운 끝으로 바꾸고 알림 — 02-REVIEW WR-02: 큰 값이 날짜 계산을 넘치게 했다)
 CONFIG_ITEMS = (
     ("변환_매출계정", "revenue_codes", "숫자목록"),
     ("변환_매출채권계정", "receivable_codes", "숫자목록"),
@@ -114,9 +115,12 @@ CONFIG_ITEMS = (
     ("변환_현금계정", "cash_codes", "숫자목록"),
     ("변환_부가세대급금계정", "vat_codes", "숫자목록"),
     ("변환_결산구분", "closing_sorts", "낱말목록"),
-    ("변환_자동연결일수", "link_days", "정수"),
+    ("변환_자동연결일수", "link_days", "일수"),
     ("변환_카드거래처", "card_words", "낱말목록"),
 )
+
+
+DAY_RANGE = (1, 3650)
 
 
 def _split(raw):
@@ -128,7 +132,7 @@ def _parse_config_value(kind, raw):
     text = str(raw).strip()
     if kind == "낱말":
         return text or None
-    if kind == "정수":
+    if kind in ("정수", "일수"):
         return int(text) if re.match(r"^[0-9]+$", text) else None
     items = _split(text)
     if not items:
@@ -175,6 +179,10 @@ def read_config(input_dir):
         if value is None:
             notes.append("설정 %s 값 '%s' 사용할 수 없음 → 기본값 %s" % (item, raw, default))
             continue
+        if kind == "일수" and not DAY_RANGE[0] <= value <= DAY_RANGE[1]:
+            fixed = min(max(value, DAY_RANGE[0]), DAY_RANGE[1])
+            notes.append("설정 %s 값 %d 범위 밖 (%d~%d) → %d 사용" % (item, value, DAY_RANGE[0], DAY_RANGE[1], fixed))
+            value = fixed
         cfg[key] = value
     cfg.from_file = bool(found)
     return cfg, notes

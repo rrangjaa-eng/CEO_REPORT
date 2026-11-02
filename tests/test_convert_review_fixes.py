@@ -649,5 +649,113 @@ class TestWR01Rollback(unittest.TestCase):
         self.assertTrue([ln for ln in res.lines if ln.startswith("이미 바꾼 파일을 이전 내용으로 되돌림: 손익.csv")], res.lines)
 
 
+
+# ───────────── WR-02: 날짜 수 설정은 1~3650 으로, 어떤 값에도 트레이스백 없이 ─────────────
+def settings_folder(test, *rows):
+    import csv
+    folder = new_tmp(test)
+    with open(os.path.join(folder, "설정.csv"), "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["항목", "값"])
+        for r in rows:
+            w.writerow(r)
+    return folder
+
+
+def set_setting_rows(rows, key, value):
+    for r in rows[1:]:
+        if r and r[0] == key:
+            r[1] = value
+            return rows
+    rows.append([key, value])
+    return rows
+
+
+class TestWR02DaySettings(unittest.TestCase):
+    def test_a_huge_link_days_is_clamped_with_a_note(self):
+        cfg, notes = convert.read_config(settings_folder(self, ["변환_자동연결일수", "3000000"]))
+        self.assertEqual(cfg["link_days"], 3650)
+        self.assertIn("설정 변환_자동연결일수 값 3000000 범위 밖 (1~3650) → 3650 사용", notes)
+
+    def test_zero_is_raised_to_one_with_a_note(self):
+        cfg, notes = convert.read_config(settings_folder(self, ["변환_자동연결일수", "0"]))
+        self.assertEqual(cfg["link_days"], 1)
+        self.assertIn("설정 변환_자동연결일수 값 0 범위 밖 (1~3650) → 1 사용", notes)
+
+    def test_repro_g_linking_with_the_setting_does_not_crash(self):
+        cfg, _ = convert.read_config(settings_folder(self, ["변환_자동연결일수", "3000000"]))
+        journal = [jl(D40, 41, "61101", "행사외주비(도)", 500000, None, "가상케이터링", "케이터링"),
+                   jl(D40, 41, "10300", "보통예금", None, 500000, "가상케이터링")]
+        snap = Snap([pay(6002, "[26201] 가상 컨퍼런스", "가상케이터링", "2026-10-25 09:00:00", 500000)], [proj(1, "[26201] 가상 컨퍼런스")])
+        costs = linking.link_costs(books_of(journal), linking.requests_of(snap, ASOF, NOW), linking.projects_of(snap), {},
+                                   cfg["link_days"])
+        self.assertEqual(costs["lines"][0]["request"], "6002")
+
+    def test_linking_never_overflows_even_when_called_with_a_huge_number(self):
+        journal = [jl(D40, 41, "61101", "행사외주비(도)", 500000, None, "가상케이터링", "케이터링")]
+        snap = Snap([pay(6002, "[26201] 가상 컨퍼런스", "가상케이터링", "2026-10-25 09:00:00", 500000)], [proj(1, "[26201] 가상 컨퍼런스")])
+        costs = linking.link_costs(books_of(journal), linking.requests_of(snap, ASOF, NOW), linking.projects_of(snap), {},
+                                   10 ** 9)
+        self.assertEqual(costs["lines"][0]["request"], "6002")
+
+    def test_the_conversion_cli_runs_with_the_huge_setting(self):
+        from test_convert import cli_argv, convert_input, run_convert, write_convert_books
+        from test_approval import write_fake_snapshot, edit_csv
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir)
+        write_fake_snapshot(collect)
+        edit_csv(input_dir, "설정.csv", lambda rows: set_setting_rows(rows, "변환_자동연결일수", "3000000"))
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("설정 변환_자동연결일수 값 3000000 범위 밖 (1~3650) → 3650 사용", result_text(input_dir))
+
+    def test_an_unexpected_error_in_the_conversion_is_one_line_and_exit_7(self):
+        from test_convert import cli_argv, convert_input, load_cli, run_convert
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        cli = load_cli()
+        with unittest.mock.patch.object(cli.convert, "run", side_effect=OverflowError("date value out of range 900101-1234567")):
+            rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 7, out)
+        self.assertIn("변환 중 예상하지 못한 오류 (OverflowError)", out)
+        self.assertNotIn("1234567", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_the_approval_screen_runs_with_the_huge_settings(self):
+        from test_approval import edit_csv, run_cli, sample_copy, write_fake_snapshot
+        from test_wehago import write_fake_books
+        folder = sample_copy(self)
+        edit_csv(folder, "설정.csv", lambda rows: set_setting_rows(set_setting_rows(rows, "변환_자동연결일수", "3000000"),
+                                                                    "승인검토_주수", "999999"))
+        tmp = new_tmp(self)
+        write_fake_books(os.path.join(tmp, "수집", "위하고"))
+        write_fake_snapshot(os.path.join(tmp, "수집"))
+        rc, out = run_cli(["--기준일", "2026-11-02", "--입력", folder, "--수집폴더", os.path.join(tmp, "수집"),
+                           "--출력", os.path.join(tmp, "출력"), "--열기", "안함"])
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        from ceo_report import approval, data
+        snap_path = __import__("ceo_report.snapshot", fromlist=["x"]).latest_snapshot(os.path.join(tmp, "수집"))
+        A = approval.build(data.load(folder), __import__("ceo_report.snapshot", fromlist=["x"]).read_snapshot(snap_path),
+                           dt.date(2026, 11, 2), dt.datetime(2026, 11, 2), os.path.join(tmp, "수집", "위하고"), input_dir=folder)
+        notes = [m for f, line, m in A["issues"] if "승인검토_주수" in m or "변환_자동연결일수" in m]
+        self.assertTrue([m for m in notes if "승인검토_주수 값 999999 범위 밖 (1~521) → 521 사용" in m], notes)
+        self.assertTrue([m for m in notes if "변환_자동연결일수 값 3000000 범위 밖 (1~3650) → 3650 사용" in m], notes)
+        self.assertEqual((A["n_weeks"], len(A["data"]["days"])), (521, 521 * 7))
+
+    def test_an_unexpected_error_in_the_approval_screen_is_one_line(self):
+        from test_approval import load_approval_cli, run_cli, sample_copy, write_fake_snapshot
+        folder = sample_copy(self)
+        tmp = new_tmp(self)
+        write_fake_snapshot(os.path.join(tmp, "수집"))
+        cli = load_approval_cli()
+        with unittest.mock.patch.object(cli, "build", side_effect=OverflowError("date value out of range")):
+            rc, out = run_cli(["--기준일", "2026-11-02", "--입력", folder, "--수집폴더", os.path.join(tmp, "수집"),
+                               "--출력", os.path.join(tmp, "출력"), "--열기", "안함"])
+        self.assertEqual(rc, 6, out)
+        self.assertIn("승인 검토 화면을 만들던 중 예상하지 못한 오류 (OverflowError)", out)
+        self.assertNotIn("Traceback", out)
+
+
 if __name__ == "__main__":
     unittest.main()

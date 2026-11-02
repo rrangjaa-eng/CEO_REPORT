@@ -568,12 +568,14 @@ class TestConvertConfig(unittest.TestCase):
         self.assertIn("설정 변환_결산구분 비어 있음 → 기본값 결차,결대", notes)
         self.assertIn("설정 변환_공통비코드 값 '8.5' 사용할 수 없음 → 기본값 8", notes)
 
-    def test_zero_link_days_is_allowed_and_unknown_items_are_reported(self):
+    def test_zero_link_days_is_raised_to_one_and_unknown_items_are_reported(self):
+        # 02-REVIEW WR-02: 일수 설정은 1~3650 (예전: 0 그대로 허용, 알림 없음)
         convert = mod("convert")
         folder = settings_only(self, ["변환_자동연결일수", "0"], ["변환_매출계좌", "41200"], ["회사명", "가상"])
         cfg, notes = convert.read_config(folder)
-        self.assertEqual(cfg["link_days"], 0)
-        self.assertEqual(notes, ["설정 변환_매출계좌 알 수 없는 변환 항목 → 무시"])
+        self.assertEqual(cfg["link_days"], 1)
+        self.assertEqual(notes, ["설정 변환_자동연결일수 값 0 범위 밖 (1~3650) → 1 사용",
+                                 "설정 변환_매출계좌 알 수 없는 변환 항목 → 무시"])
 
     def test_missing_settings_file_uses_defaults_with_a_note(self):
         convert = mod("convert")
