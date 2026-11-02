@@ -4,6 +4,7 @@
 ceo_report 모듈은 시험 안에서 불러온다: 모듈이 없으면 해당 시험만 실패한다.
 """
 import contextlib
+import copy
 import csv
 import datetime as dt
 import html as htmlmod
@@ -465,6 +466,342 @@ class TestApprovalJsParity(unittest.TestCase):
         ids = [r["id"] for r in data["requests"]]
         self.assertEqual(ids, ["r0", "r1"])
         self.check(data, [ids, [], [ids[0]], [ids[1]]])
+
+
+# ───────────── Task 2: 요청 규칙 ─────────────
+STAMP_RE = re.compile(r"작성 [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}")
+
+
+def edit_csv(folder, filename, mutate):
+    """폴더 안의 CSV 한 개를 읽어 mutate(rows)로 고쳐 다시 쓴다."""
+    path = os.path.join(folder, filename)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    mutate(rows)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows(rows)
+
+
+def sample_copy(test):
+    """샘플 입력 전체를 임시 폴더에 복사한다 (여러 파일을 고칠 때)."""
+    tmp = new_tmp(test)
+    folder = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, folder)
+    return folder
+
+
+def set_setting(rows, key, value):
+    """설정.csv 줄의 값을 바꾸고, 줄이 없으면 끝에 붙인다. value가 None이면 줄을 지운다."""
+    rows[:] = [r for r in rows if not (r and r[0] == key)]
+    if value is not None:
+        rows.append([key, value])
+
+
+def full_screen(test, input_dir=SAMPLE, extra=None, ids=None, collected_at=COLLECTED):
+    """전체 가상 스냅숏 + 입력 폴더로 화면을 만들어 (page, A)를 돌려준다."""
+    tmp = new_tmp(test)
+    snap = write_fake_snapshot(os.path.join(tmp, "수집"), ids=ids, extra=extra, collected_at=collected_at)
+    path, A = load_approval_cli().make_screen(input_dir, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+    with open(path, encoding="utf-8") as f:
+        return f.read(), A
+
+
+def by_no(A):
+    return {r["번호"]: r for r in A["requests_all"]}
+
+
+def all_ids(A):
+    return [r["id"] for r in A["data"]["requests"]]
+
+
+def ssum_amounts(items):
+    return sum(i["amount"] for i in items if i["amount"] is not None)
+
+
+class TestApprovalDates(unittest.TestCase):
+    def test_friday_after(self):
+        f = mod("approval").friday_after
+        D = dt.datetime
+        self.assertEqual(f(D(2026, 11, 2, 0, 0)), dt.date(2026, 11, 6))
+        self.assertEqual(f(D(2026, 11, 5, 13, 59)), dt.date(2026, 11, 6))
+        self.assertEqual(f(D(2026, 11, 5, 14, 0)), dt.date(2026, 11, 13))
+        self.assertEqual(f(D(2026, 11, 6, 9, 0)), dt.date(2026, 11, 13))
+        self.assertEqual(f(D(2026, 11, 1, 18, 0)), dt.date(2026, 11, 6))
+        self.assertEqual(f(D(2026, 10, 26, 11, 0)), dt.date(2026, 10, 30))
+
+    def test_parse_registered(self):
+        p = mod("approval").parse_registered
+        self.assertEqual(p("2026-10-28 15:52:03"), dt.datetime(2026, 10, 28, 15, 52, 3))
+        self.assertEqual(p("2026-10-28 15:52"), dt.datetime(2026, 10, 28, 15, 52))
+        self.assertEqual(p("2026-10-28"), dt.datetime(2026, 10, 28))
+        self.assertIsNone(p("abc"))
+        self.assertIsNone(p(""))
+
+    def test_project_code(self):
+        c = mod("approval").project_code
+        self.assertEqual(c("[26201] 가상 컨퍼런스"), "26201")
+        self.assertEqual(c(" [26201]가상"), "26201")
+        self.assertIsNone(c("가상 [26201]"))
+        self.assertIsNone(c(""))
+
+
+class TestApprovalRequests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        snap = write_fake_snapshot(os.path.join(cls.tmp, "수집"))
+        path, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+        cls.S = mod("approval").scenario(cls.A, all_ids(cls.A))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_expected_dates_and_rules(self):
+        r = by_no(self.A)
+        self.assertEqual(r["5102"]["date"], dt.date(2026, 11, 6))
+        self.assertEqual(r["5102"]["rule"], "지급요청일 없음 → 목요일 14시 승인·금요일 지급 (지금 기준)")
+        self.assertEqual(r["5108"]["date"], dt.date(2026, 11, 6))
+        self.assertEqual(r["5108"]["rule"], "지급요청일 지남·대기 중 → 목요일 14시 승인·금요일 지급 (지금 기준)")
+        self.assertEqual(r["1201"]["rule"], "지급요청일")
+        self.assertEqual(r["5104"]["date"], dt.date(2026, 10, 30))
+        self.assertEqual(r["5104"]["rule"], "지급요청일 없음 → 목요일 14시 승인·금요일 지급 (등록 시각 기준)")
+
+    def test_toggleable_and_unknown_requests(self):
+        r = by_no(self.A)
+        self.assertEqual(sorted(k for k, v in r.items() if v["toggle"]), ["1201", "5102", "5103", "5108"])
+        self.assertEqual(r["5106"]["reason"], "금액 미확인")
+        self.assertEqual([x["번호"] for x in self.A["amount_unknown"]], ["5106"])
+        self.assertEqual([x["번호"] for x in self.A["status_unknown"]], ["5107"])
+        self.assertEqual(ssum_amounts(self.A["status_unknown"]), 1100000)
+
+    def test_approved_requests_against_balance_date(self):
+        A = self.A
+        self.assertEqual(A["balance_date"], dt.date(2026, 11, 2))
+        self.assertEqual(sorted(x["번호"] for x in A["approved_future"]), ["5105", "5109"])
+        self.assertEqual([x["번호"] for x in A["approved_paid"]], ["5104"])
+        self.assertEqual(ssum_amounts(A["approved_paid"]), 5500000)
+        self.assertEqual(A["rolled"], [])
+        self.assertEqual(A["data"]["base_out"][4], 49500000)
+        self.assertEqual(A["data"]["base_out"][8], 14900000)
+        r = by_no(A)
+        self.assertFalse(r["5105"]["toggle"])
+        self.assertFalse(r["5109"]["toggle"])
+
+    def test_snapshot_matching(self):
+        A = self.A
+        self.assertEqual(len(A["replaced"]), 2)
+        self.assertEqual(ssum_amounts(A["replaced"]), 93500000)
+        self.assertEqual(sorted(e["project"] for e in A["unmatched_exec"]), ["P26204", "P26206"])
+        self.assertEqual(A["duplicates"], [])
+        self.assertEqual(A["possible_duplicates"], [])
+
+    def test_all_checked_numbers(self):
+        S = self.S
+        self.assertEqual((S["low"], S["low_day"]), (98236000, "2026-12-25"))
+        self.assertEqual((S["est_low"], S["est_low_day"]), (120236000, "2026-12-25"))
+        w = S["weeks"]
+        self.assertEqual((w[0]["out"], w[0]["min"], w[0]["end"]), (53164000, 489236000, 489236000))
+        self.assertEqual((w[1]["in"], w[1]["out"], w[1]["min"], w[1]["end"]), (88000000, 92700000, 396536000, 484536000))
+        self.assertEqual((w[2]["out"], w[2]["est_in"], w[2]["end"]), (161300000, 22000000, 323236000))
+        self.assertEqual((w[7]["out"], w[7]["end"], w[7]["level"]), (53000000, 98236000, "최소보유현금 미만"))
+        self.assertEqual([x["level"] for x in w[:7]], [""] * 7)
+
+    def test_toggle_values_and_none_checked(self):
+        r = by_no(self.A)
+        tg = self.S["toggle"]
+        self.assertEqual(tg[r["1201"]["id"]][0], 142236000)
+        self.assertEqual(tg[r["5102"]["id"]][0], 98500000)
+        self.assertEqual(tg[r["5103"]["id"]][0], 258736000)
+        self.assertEqual(tg[r["5108"]["id"]][0], 100436000)
+        self.assertEqual(mod("approval").scenario(self.A, [])["low"], 305200000)
+
+    def test_unknowns_are_listed_not_summed(self):
+        A = self.A
+        io = lambda items, k: [e for e in items if e["io"] == k]  # noqa: E731
+        self.assertEqual((len(io(A["undated"], "in")), ssum_amounts(io(A["undated"], "in"))), (2, 38800000))
+        self.assertEqual((len(io(A["undated"], "out")), ssum_amounts(io(A["undated"], "out"))), (4, 105000000))
+        self.assertEqual((len(io(A["past"], "in")), ssum_amounts(io(A["past"], "in"))), (1, 110000000))
+        self.assertEqual(len(io(A["past"], "out")), 0)
+        self.assertEqual((len(io(A["beyond"], "in")), len(io(A["beyond"], "out"))), (1, 26))
+        self.assertEqual(len(A["amount_unknown_events"]), 1)
+
+    def test_screen_headline_and_notes(self):
+        h = T(self.page, "headline")
+        self.assertIn("전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25", h)
+        self.assertIn("최소보유현금 미만", h)
+        self.assertIn("12/21~12/27", h)
+        self.assertIn("추정 입금 포함 시 최저 잔액 120.2 백만원 · 2026-12-25", T(self.page, "h-est"))
+        n = T(self.page, "schedule-notes")
+        for line in (
+                "승인 완료·예상 지급일이 잔액 기준일(2026-11-02) 이전 또는 당일 1건 5,500,000 (잔액에 반영된 것으로 봄)",
+                "잔액 기준일(2026-11-02) 이후·1주 시작(11/02) 전 일정 0건",
+                "프로젝트집행.csv 요청미지급 중 인트라넷 스냅숏으로 대체 2건 (확인된 금액 93,500,000)",
+                "스냅숏과 연결 안 된 프로젝트집행 요청미지급 2건 (확인된 금액 11,000,000, 금액 미확인 1건) — 일반 일정 규칙대로 반영",
+                "중복 제외 0건", "중복 가능성 0건"):
+            self.assertIn(line, n)
+
+    def test_probe_a_balance_date_before_asof(self):
+        folder = sample_copy(self)
+        edit_csv(folder, "계좌잔액.csv", lambda rows: [r.__setitem__(0, "2026-10-30") for r in rows if r[0] == "2026-11-02"])
+        edit_csv(folder, "자금일정.csv", lambda rows: rows.extend([
+            ["2026-10-31", "입금", "4,000,000", "확정", "기타입금", "", "", "", ""],
+            ["2026-11-01", "지급", "7,000,000", "확정", "거래처미지급", "", "", "", ""]]))
+        extra = [["5110", "[26203] 가상 전시부스", "가상전기", "2026-10-29 11:00:00", "2026-11-12", "6,000,000", "2026-11-02",
+                  "김철수", "승인", "승인", "승인"],
+                 ["5111", "[26203] 가상 전시부스", "가상통신", "2026-10-29 11:30:00", "2026-11-12", "1,000,000", "2026-10-31",
+                  "김철수", "승인", "승인", "승인"]]
+        page, A = full_screen(self, folder, extra=extra)
+        self.assertEqual(A["balance_date"], dt.date(2026, 10, 30))
+        self.assertEqual(A["data"]["start"], 542400000)
+        self.assertIn("5110", [x["번호"] for x in A["approved_future"]])
+        self.assertEqual(A["data"]["base_out"][0] > 0, True)
+        rolled_in = [e for e in A["rolled"] if e["io"] == "in"]
+        rolled_out = [e for e in A["rolled"] if e["io"] == "out"]
+        self.assertEqual((len(rolled_in), ssum_amounts(rolled_in)), (1, 4000000))
+        self.assertEqual((len(rolled_out), ssum_amounts(rolled_out)), (2, 8000000))
+        self.assertEqual([x["번호"] for x in A["approved_paid"]], ["5104"])
+        self.assertEqual(ssum_amounts([e for e in A["past"] if e["io"] == "in"]), 110000000)
+        S = mod("approval").scenario(A, all_ids(A))
+        self.assertEqual((S["low"], S["low_day"]), (88236000, "2026-12-25"))
+        w0 = S["weeks"][0]
+        self.assertEqual((w0["in"], w0["out"], w0["min"]), (4000000, 67164000, 479236000))
+        n = T(page, "schedule-notes")
+        self.assertIn("잔액 기준일(2026-10-30) 이후·1주 시작(11/02) 전 일정: 입금 1건 4,000,000 · 지급 2건 8,000,000 "
+                      "(1주 첫날 11/02에 반영)", n)
+        self.assertIn("승인 완료·예상 지급일이 잔액 기준일(2026-10-30) 이전 또는 당일 1건 5,500,000 (잔액에 반영된 것으로 봄)", n)
+
+    def test_probe_b_key_match_and_possible_duplicate(self):
+        folder = sample_copy(self)
+        edit_csv(folder, "프로젝트집행.csv", lambda rows: rows.append(
+            ["P26221", "버스 임차", "가상버스", "요청미지급", "3,000,000", "300,000", "2026-11-10", "확정", "발주서"]))
+        edit_csv(folder, "자금일정.csv", lambda rows: rows.append(
+            ["2026-11-20", "지급", "160,500,000", "확정", "거래처미지급", "P26220", "", "계약서", ""]))
+        page, A = full_screen(self, folder)
+        self.assertEqual(len(A["replaced"]), 3)
+        self.assertEqual(ssum_amounts(A["replaced"]), 96800000)
+        S = mod("approval").scenario(A, all_ids(A))
+        self.assertEqual(S["weeks"][1]["out"], 92700000)
+        self.assertEqual(len(A["possible_duplicates"]), 1)
+        self.assertEqual((S["low"], S["low_day"]), (-62264000, "2026-12-25"))
+        self.assertIn("중복 가능성 1건 (확인된 금액 160,500,000) — 일정에 그대로 둠, 확인 필요", T(page, "schedule-notes"))
+
+    def test_probe_c_number_duplicate_is_dropped(self):
+        folder = sample_copy(self)
+        edit_csv(folder, "자금일정.csv", lambda rows: rows.append(
+            ["2026-11-12", "지급", "3,300,000", "확정", "거래처미지급", "", "", "지급요청 5105", ""]))
+        page, A = full_screen(self, folder)
+        self.assertEqual(len(A["duplicates"]), 1)
+        self.assertIn("중복 제외 1건 (확인된 금액 3,300,000)", T(page, "schedule-notes"))
+        S = mod("approval").scenario(A, all_ids(A))
+        self.assertEqual((S["low"], S["weeks"][1]["out"]), (98236000, 92700000))
+
+    def test_probe_big_pending_request(self):
+        extra = [["9001", "[26201] 가상 컨퍼런스", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "400,000,000", "2026-11-13",
+                  "홍길동", "승인", "승인", "미승인"]]
+        page, A = full_screen(self, extra=extra)
+        S = mod("approval").scenario(A, all_ids(A))
+        self.assertEqual(S["low"], -301764000)
+        self.assertEqual(S["weeks"][0]["level"], "")
+        self.assertEqual([w["level"] for w in S["weeks"][1:]], ["부족"] * 7)
+        self.assertIn("부족", T(page, "headline"))
+
+    def test_probe_unreadable_date_and_beyond_horizon(self):
+        extra = [["9002", "[26201] 가상 컨퍼런스", "가상기기", "abc", "2026-11-20", "1,000,000", "", "홍길동", "승인", "승인", "미승인"],
+                 ["9003", "[26201] 가상 컨퍼런스", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "2,000,000", "2027-01-15",
+                  "홍길동", "승인", "승인", "미승인"]]
+        page, A = full_screen(self, extra=extra)
+        r = by_no(A)
+        self.assertEqual(r["9002"]["reason"], "날짜 확인 불가")
+        self.assertFalse(r["9002"]["toggle"])
+        self.assertEqual([x["번호"] for x in A["date_unknown"]], ["9002"])
+        self.assertEqual([x["번호"] for x in A["beyond_requests"]], ["9003"])
+        self.assertFalse(r["9003"]["toggle"])
+
+
+class TestApprovalSettings(unittest.TestCase):
+    def build(self, mutate):
+        folder = sample_copy(self)
+        edit_csv(folder, "설정.csv", mutate)
+        page, A = full_screen(self, folder, ids=MINI_IDS)
+        return page, A
+
+    def issues_with(self, A, key):
+        return [i for i in A["issues"] if i[0] == "설정.csv" and key in i[2]]
+
+    def test_weeks_setting(self):
+        page, A = self.build(lambda rows: set_setting(rows, "승인검토_주수", "12"))
+        self.assertEqual(len(A["data"]["days"]), 84)
+        self.assertEqual(len(A["data"]["weeks"]), 12)
+        self.assertEqual(self.issues_with(A, "승인검토_주수"), [])
+
+    def test_bad_weeks_fall_back_to_eight_with_issue(self):
+        for value in (None, "", "abc", "0", "2.5"):
+            page, A = self.build(lambda rows, v=value: set_setting(rows, "승인검토_주수", v))
+            self.assertEqual(len(A["data"]["weeks"]), 8, value)
+            found = self.issues_with(A, "승인검토_주수")
+            self.assertTrue(found and "기본값 8 사용" in found[0][2], value)
+            self.assertIn("기본값 8 사용", T(page, "issues"))
+
+    def test_regular_categories_default_with_issue(self):
+        for value in (None, ""):
+            page, A = self.build(lambda rows, v=value: set_setting(rows, "승인검토_정기지출", v))
+            self.assertEqual(A["regular"], ["급여", "임차료", "카드대금", "부가세"])
+            found = self.issues_with(A, "승인검토_정기지출")
+            self.assertTrue(found and "기본값 사용" in found[0][2], value)
+
+    def test_regular_categories_custom(self):
+        page, A = self.build(lambda rows: set_setting(rows, "승인검토_정기지출", "급여, 임차료"))
+        self.assertEqual(A["regular"], ["급여", "임차료"])
+
+    def test_regenerated_sample_has_both_rows_and_no_issue(self):
+        with open(os.path.join(SAMPLE, "설정.csv"), encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+        self.assertEqual(rows[-2:], [["승인검토_주수", "8"], ["승인검토_정기지출", "급여,임차료,카드대금,부가세"]])
+        self.assertTrue(rows[9][0] == "예산_원가율")
+        page, A = full_screen(self, ids=MINI_IDS)
+        self.assertEqual([i for i in A["issues"] if "승인검토" in i[2]], [])
+
+
+class TestReportsUnchanged(unittest.TestCase):
+    def reports(self, folder):
+        calc, data, render = mod("calc"), mod("data"), mod("render")
+        d = data.load(folder)
+        out = []
+        for kind, asof in (("weekly", dt.date(2026, 11, 2)), ("monthly", dt.date(2026, 10, 31))):
+            R = calc.compute(d, kind, asof)
+            for mode in ("ceo", "mgmt"):
+                out.append(STAMP_RE.sub("", render.render(R, mode)))
+        return out
+
+    def test_reports_identical_with_or_without_new_settings(self):
+        with_rows = sample_copy(self)
+        without = sample_copy(self)
+        edit_csv(with_rows, "설정.csv", lambda rows: (set_setting(rows, "승인검토_주수", "8"),
+                                                     set_setting(rows, "승인검토_정기지출", "급여,임차료,카드대금,부가세")))
+        edit_csv(without, "설정.csv", lambda rows: (set_setting(rows, "승인검토_주수", None),
+                                                   set_setting(rows, "승인검토_정기지출", None)))
+        self.assertEqual(self.reports(with_rows), self.reports(without))
+
+    def test_build_does_not_change_loaded_data(self):
+        data, calc = mod("data"), mod("approval")
+        d = data.load(SAMPLE)
+        before = (copy.deepcopy(d.issues.items), copy.deepcopy(d.schedule), copy.deepcopy(d.execs))
+        tmp = new_tmp(self)
+        snapshot = mod("snapshot")
+        snap = snapshot.read_snapshot(write_fake_snapshot(tmp))
+        calc.build(d, snap, ASOF, NOW)
+        self.assertEqual((d.issues.items, d.schedule, d.execs), before)
+
+    def test_profit_file_is_not_an_approval_input(self):
+        base_page, base = full_screen(self)
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "손익.csv"))
+        page, A = full_screen(self, folder)
+        sc = mod("approval").scenario
+        self.assertEqual(sc(A, all_ids(A)), sc(base, all_ids(base)))
 
 
 if __name__ == "__main__":
