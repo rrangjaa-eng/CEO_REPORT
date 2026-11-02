@@ -5,12 +5,15 @@
 project_page)만 가져다 쓴다. TestCase 클래스는 가져가지 않는다.
 """
 import http.client
+import http.cookiejar
 import io
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import unittest
+import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.response
@@ -315,6 +318,238 @@ class TestSnapshotFolderIgnored(unittest.TestCase):
     def test_git_check_ignore_matches_snapshot_path(self):
         r = subprocess.run(["git", "check-ignore", "-q", self.SAMPLE_PATH], cwd=ROOT)
         self.assertEqual(r.returncode, 0, "스냅숏 폴더가 git 제외 대상이 아님")
+
+
+# ---------------------------------------------------------------------------
+# Task 2: 허용 목록은 우회할 수 없다
+# ---------------------------------------------------------------------------
+
+class TestAllowlistMatrix(unittest.TestCase):
+    BLOCKED = [
+        # 이름으로 막는 것
+        ("GET", BASE + "/confirm/payment/5101/ceo"),
+        ("GET", BASE + "/payment/confirm/5101"),
+        ("GET", BASE + "/logout"),
+        ("GET", BASE + "/project/logout"),
+        ("GET", BASE + "/payment/delete/5101"),
+        ("GET", BASE + "/payment/del/5101"),
+        ("GET", BASE + "/project/save"),
+        ("GET", BASE + "/payment/update/1"),
+        ("GET", BASE + "/payment/삭제/1"),
+        # 방식이 틀린 것
+        ("POST", BASE + "/payment/index"),
+        ("GET", BASE + "/login/submit"),
+        ("POST", BASE + "/"),
+        # 주소 틀·호스트가 틀린 것
+        ("GET", "http://intranet.plant8.co.kr/payment/index"),
+        ("GET", "https://intranet.plant8.co.kr.evil.example/"),
+        ("GET", "https://evil.example/payment/index"),
+        ("GET", "https://user:pw@intranet.plant8.co.kr/"),
+        ("GET", "https://intranet.plant8.co.kr:8443/"),
+        # 경로 형식이 나쁜 것
+        ("GET", BASE + "/payment/index/../confirm/1"),
+        ("GET", BASE + "/payment/%2e%2e/confirm"),
+        ("GET", BASE + "/payment//index"),
+        ("GET", BASE + "/payment/index;del;"),
+        # 조회 값이 나쁜 것
+        ("GET", BASE + "/payment/index?del=1"),
+        ("GET", BASE + "/payment/index?page=../../confirm"),
+        ("GET", BASE + "/payment/index?page=2x"),
+        ("GET", BASE + "/payment/index?search=javascript:alert(1)"),
+        ("GET", BASE + "/project/payment?pro_num=1;drop"),
+        ("GET", BASE + "/project/payment?pro_num=12&x=1"),
+        ("GET", BASE + "/project/payment"),
+        ("GET", BASE + "/project/index?confirm=1"),
+        ("GET", BASE + "/?next=/payment/index"),
+        # 그 밖
+        ("GET", "javascript:checkconfirm('1','/confirm/payment/1/ceo')"),
+        ("GET", BASE + "/payment/view/5101"),
+    ]
+    ALLOWED = [
+        BASE + "/payment/index?gyear=2026&team=&subteam=&project=&partner=&writer=&search=&confirm=&page=3",
+        BASE + "/payment/index/20",
+        BASE + "/project/index?page=2",
+        BASE + "/project/index/40",
+        BASE + "/payment/index",
+        BASE + "/project/payment?pro_num=903",
+    ]
+
+    def test_blocked_requests_never_reach_the_transport(self):
+        module = intranet()
+        for method, url in self.BLOCKED:
+            with self.subTest(method=method, url=url):
+                opener, fake = make_fake_opener()
+                with self.assertRaises(module.BlockedRequest):
+                    if method == "POST":
+                        opener.post(url, [("a", "b")])
+                    else:
+                        opener.get(url)
+                self.assertEqual(fake.calls, [])
+
+    def test_check_url_blocks_the_same_matrix(self):
+        module = intranet()
+        for method, url in self.BLOCKED:
+            with self.subTest(method=method, url=url):
+                with self.assertRaises(module.BlockedRequest):
+                    module.check_url(method, url)
+
+    def test_allowed_urls_pass_unchanged(self):
+        module = intranet()
+        for url in self.ALLOWED:
+            with self.subTest(url=url):
+                self.assertEqual(module.check_url("GET", url), url)
+
+    def test_fragment_is_stripped(self):
+        module = intranet()
+        self.assertEqual(module.check_url("GET", BASE + "/payment/index?page=2#top"),
+                         BASE + "/payment/index?page=2")
+
+    def test_block_message_has_method_and_path_but_no_query_values_or_userinfo(self):
+        module = intranet()
+        with self.assertRaises(module.BlockedRequest) as ctx:
+            module.check_url("GET", BASE + "/payment/index?search=javascript:alert(1)")
+        text = str(ctx.exception)
+        self.assertIn("GET", text)
+        self.assertIn("/payment/index", text)
+        self.assertNotIn("alert", text)
+        with self.assertRaises(module.BlockedRequest) as ctx:
+            module.check_url("GET", "https://user:S3cret@intranet.plant8.co.kr/")
+        self.assertNotIn("S3cret", str(ctx.exception))
+        self.assertNotIn("S3cret", repr(ctx.exception))
+
+
+class TestRedirectsChecked(unittest.TestCase):
+    def test_redirect_to_confirm_is_blocked_before_it_is_sent(self):
+        module = intranet()
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "/confirm/payment/1"}, "")}))
+        with self.assertRaises(module.BlockedRequest):
+            opener.get(BASE + "/payment/index")
+        self.assertEqual(len(fake.calls), 1)
+        self.assertFalse([c for c in fake.calls if "confirm" in c[1]])
+
+    def test_redirect_to_other_host_is_blocked(self):
+        module = intranet()
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "https://evil.example/"}, "")}))
+        with self.assertRaises(module.BlockedRequest):
+            opener.get(BASE + "/payment/index")
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_redirect_to_http_is_blocked(self):
+        module = intranet()
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "http://intranet.plant8.co.kr/payment/index"}, "")}))
+        with self.assertRaises(module.BlockedRequest):
+            opener.get(BASE + "/payment/index")
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_redirect_to_allowed_target_is_followed(self):
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "/payment/index?page=1"}, ""),
+            ("GET", "/payment/index?page=1"): (200, {}, payment_page([prow(5101)]))}))
+        status, final_url, text = opener.get(BASE + "/payment/index")
+        self.assertEqual(status, 200)
+        self.assertTrue(final_url.endswith("/payment/index?page=1"))
+        self.assertIn("5101", text)
+        self.assertEqual(fake.requested(), [("GET", "/payment/index"), ("GET", "/payment/index?page=1")])
+
+    def test_redirect_to_login_page_then_collect_reports_login_failed(self):
+        module = intranet()
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "/"}, "")}))
+        with self.assertRaises(module.LoginFailed):
+            module.collect(opener, USER, PASSWORD)
+        self.assertEqual(fake.paths()[-1], ("GET", "/"))
+
+    def test_307_on_login_post_is_not_followed(self):
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("POST", "/login/submit"): (307, {"Location": "/main"}, "")}))
+        code, path, body = opener.post(BASE + "/login/submit", [("id", USER), ("pass", PASSWORD)])
+        self.assertEqual((code, path, body), (307, "/main", ""))
+        self.assertEqual(fake.paths(), [("POST", "/login/submit")])
+
+    def test_login_redirect_target_is_never_requested(self):
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("POST", "/login/submit"): (302, {"Location": "https://evil.example/steal"}, "")}))
+        intranet().login(opener, USER, PASSWORD)
+        self.assertEqual(fake.paths(), [("GET", "/"), ("POST", "/login/submit")])
+
+    def test_redirect_loop_is_cut_off(self):
+        opener, fake = make_fake_opener(site_routes(extra={
+            ("GET", "/payment/index"): (302, {"Location": "/payment/index?page=1"}, ""),
+            ("GET", "/payment/index?page=1"): (302, {"Location": "/payment/index"}, "")}))
+        with self.assertRaises(urllib.error.HTTPError):
+            opener.get(BASE + "/payment/index")
+        self.assertLessEqual(len(fake.calls), 6)
+
+
+class TestRequestGuard(unittest.TestCase):
+    def test_inner_director_call_to_logout_is_blocked_and_not_sent(self):
+        module = intranet()
+        opener, fake = make_fake_opener()
+        with self.assertRaises(module.BlockedRequest):
+            opener.director.open(BASE + "/logout")
+        self.assertEqual(fake.calls, [])
+
+    def test_inner_director_call_with_request_object_and_post_body(self):
+        module = intranet()
+        opener, fake = make_fake_opener()
+        with self.assertRaises(module.BlockedRequest):
+            opener.director.open(urllib.request.Request(BASE + "/payment/index", data=b"x=1"))
+        with self.assertRaises(module.BlockedRequest):
+            opener.director.open(BASE + "/confirm/payment/1/ceo")
+        self.assertEqual(fake.calls, [])
+
+    def test_inner_director_http_scheme_fails_closed(self):
+        module = intranet()
+        opener, fake = make_fake_opener()
+        with self.assertRaises(module.BlockedRequest):
+            opener.director.open("http://intranet.plant8.co.kr/payment/index")
+        self.assertEqual(fake.calls, [])
+
+
+class TestTransportSafety(unittest.TestCase):
+    PLAIN = ("http_open", "file_open", "ftp_open", "data_open")
+
+    def handlers(self, **kwargs):
+        return intranet().make_opener(**kwargs).director.handlers
+
+    def test_no_plain_scheme_handlers_without_proxies(self):
+        for handler in self.handlers(proxies={}):
+            for attr in self.PLAIN:
+                self.assertFalse(hasattr(handler, attr), "%s.%s" % (type(handler).__name__, attr))
+
+    def test_with_system_proxy_settings_only_the_proxy_handler_may_differ(self):
+        others = [h for h in self.handlers() if not isinstance(h, urllib.request.ProxyHandler)]
+        for handler in others:
+            for attr in self.PLAIN:
+                self.assertFalse(hasattr(handler, attr), "%s.%s" % (type(handler).__name__, attr))
+        self.assertEqual(len([h for h in others if hasattr(h, "https_open")]), 1)
+
+    def test_one_https_handler_with_verification_on(self):
+        https = [h for h in self.handlers(proxies={}) if hasattr(h, "https_open")]
+        self.assertEqual(len(https), 1)
+        context = https[0]._context
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    def test_cookies_live_in_a_plain_in_memory_jar(self):
+        procs = [h for h in self.handlers(proxies={}) if isinstance(h, urllib.request.HTTPCookieProcessor)]
+        self.assertEqual(len(procs), 1)
+        self.assertIs(type(procs[0].cookiejar), http.cookiejar.CookieJar)
+
+    def test_opener_has_no_save_or_dump_method(self):
+        opener = intranet().make_opener(proxies={})
+        for name in dir(opener):
+            self.assertNotIn("save", name.lower())
+            self.assertNotIn("dump", name.lower())
+
+    def test_redirect_handler_limit_is_at_most_five(self):
+        module = intranet()
+        redirects = [h for h in self.handlers(proxies={}) if isinstance(h, module.CheckedRedirectHandler)]
+        self.assertEqual(len(redirects), 1)
+        self.assertLessEqual(redirects[0].max_redirections, 5)
 
 
 if __name__ == "__main__":
