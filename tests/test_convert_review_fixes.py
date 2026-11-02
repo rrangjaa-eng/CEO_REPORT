@@ -950,5 +950,52 @@ class TestWR05JournalPeriod(unittest.TestCase):
         self.assertIn("판단 불가 (기간 밖)", html)
 
 
+
+# ───────────── WR-06: 어떤 스냅숏을 썼는지 화면에 보이고, 오래됐거나 기준일 뒤면 경고 ─────────────
+class TestWR06SnapshotAge(unittest.TestCase):
+    def test_the_console_names_the_snapshot_and_its_age(self):
+        tmp, input_dir, collect, wehago_dir = company(self, snapshot_at=dt.datetime(2026, 10, 30, 18, 0))
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 0, res.lines)
+        self.assertIn("인트라넷 스냅숏 인트라넷_20261030_180000 (수집 2026-10-30 18:00:00, 기준일보다 3일 이전)", res.lines)
+        self.assertFalse([ln for ln in res.lines if ln.startswith("경고: 인트라넷 스냅숏")], res.lines)
+        self.assertNotIn("경고: 인트라넷 스냅숏", result_text(input_dir))
+
+    def test_an_old_snapshot_is_warned_on_the_console_and_in_the_result(self):
+        tmp, input_dir, collect, wehago_dir = company(self, snapshot_at=dt.datetime(2026, 10, 1, 9, 0))
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 0, res.lines)
+        want = ("경고: 인트라넷 스냅숏이 기준일보다 32일 이전 (수집 2026-10-01 09:00:00) — 설정 변환_스냅숏경과일 7일을 넘음: "
+                "지급요청·프로젝트가 오래됐을 수 있음 (승인검토.py로 새로 수집한 뒤 다시 변환)")
+        self.assertIn(want, res.lines)
+        self.assertIn(want, result_text(input_dir).splitlines())
+
+    def test_the_limit_comes_from_the_setting(self):
+        from test_approval import edit_csv
+        tmp, input_dir, collect, wehago_dir = company(self, snapshot_at=dt.datetime(2026, 10, 1, 9, 0))
+        edit_csv(input_dir, "설정.csv", lambda rows: set_setting_rows(rows, "변환_스냅숏경과일", "40"))
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertFalse([ln for ln in res.lines if ln.startswith("경고: 인트라넷 스냅숏")], res.lines)
+        cfg, notes = convert.read_config(settings_folder(self, ["변환_스냅숏경과일", "0"]))
+        self.assertEqual(cfg["snapshot_days"], 1)
+        self.assertIn("설정 변환_스냅숏경과일 값 0 범위 밖 (1~3650) → 1 사용", notes)
+        self.assertEqual(convert.read_config(settings_folder(self))[0]["snapshot_days"], 7)
+
+    def test_a_snapshot_collected_after_the_report_date_is_warned(self):
+        tmp, input_dir, collect, wehago_dir = company(self, snapshot_at=dt.datetime(2026, 11, 5, 9, 0))
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        want = ("경고: 인트라넷 스냅숏이 기준일(2026-11-02)보다 3일 뒤에 수집됨 (수집 2026-11-05 09:00:00) — "
+                "기준일 시점의 지급요청·프로젝트가 아닐 수 있음")
+        self.assertIn(want, res.lines)
+        self.assertIn(want, result_text(input_dir).splitlines())
+
+    def test_without_a_snapshot_the_console_says_so(self):
+        from test_convert import convert_input, write_convert_books
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir)
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertIn("인트라넷 스냅숏: 없음 — 자동 연결 안 함", res.lines)
+
+
 if __name__ == "__main__":
     unittest.main()

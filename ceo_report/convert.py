@@ -35,6 +35,7 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("closing_sorts", ("결차", "결대")),
     ("link_days", 90),
     ("card_words", ("카드",)),
+    ("snapshot_days", 7),   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
 ])
 
 
@@ -117,6 +118,7 @@ CONFIG_ITEMS = (
     ("변환_결산구분", "closing_sorts", "낱말목록"),
     ("변환_자동연결일수", "link_days", "일수"),
     ("변환_카드거래처", "card_words", "낱말목록"),
+    ("변환_스냅숏경과일", "snapshot_days", "일수"),
 )
 
 
@@ -379,6 +381,28 @@ def read_latest_snapshot(collect_dir):
         os.path.basename(snap.path), snap.collected_at.strftime(snapshot.TIME_FORMAT), len(snap.payments), len(snap.projects))
 
 
+def snapshot_lines(snap, snap_line, asof, cfg):
+    """(화면 한 줄, 경고 또는 None) (02-REVIEW WR-06): 어떤 스냅숏을 썼는지와 기준일 대비 나이.
+
+    기준일보다 설정 변환_스냅숏경과일(기본 7일)을 넘게 오래됐거나, 기준일 뒤에 수집된 스냅숏이면 경고한다.
+    """
+    if snap is None:
+        return snap_line, None
+    taken = snap.collected_at
+    stamp = taken.strftime(snapshot.TIME_FORMAT)
+    days = (asof - taken.date()).days
+    age = "기준일보다 %d일 이전" % days if days > 0 else ("기준일과 같은 날" if days == 0 else "기준일보다 %d일 뒤" % -days)
+    line = "인트라넷 스냅숏 %s (수집 %s, %s)" % (os.path.basename(snap.path), stamp, age)
+    limit = cfg["snapshot_days"]
+    if days < 0:
+        return line, ("경고: 인트라넷 스냅숏이 기준일(%s)보다 %d일 뒤에 수집됨 (수집 %s) — 기준일 시점의 지급요청·프로젝트가 아닐 수 있음"
+                      % (asof.isoformat(), -days, stamp))
+    if days > limit:
+        return line, ("경고: 인트라넷 스냅숏이 기준일보다 %d일 이전 (수집 %s) — 설정 변환_스냅숏경과일 %d일을 넘음: "
+                      "지급요청·프로젝트가 오래됐을 수 있음 (승인검토.py로 새로 수집한 뒤 다시 변환)" % (days, stamp, limit))
+    return line, None
+
+
 def build_links(books, cfg, snap, input_dir, asof, now):
     """D-38 연결 한 번: 요청·프로젝트·수동 지정을 읽고 원가·매출 줄을 잇는다. build_pl 이 받는 links 딕셔너리 (+ 다른 만들기가 쓸 입력)."""
     requests = linking.requests_of(snap, asof, now)
@@ -536,11 +560,13 @@ def status_warning(links):
 
 
 def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
-                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None, cross=(), listings=()):
+                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None, cross=(), listings=(), snap_warning=None):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
            _books_line(books, asof),
            snap_line]
+    if snap_warning:
+        out.append(snap_warning)
     warning = status_warning(links)
     if warning:
         out.append(warning)
@@ -786,7 +812,9 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
         listings = overlap + checks
         summary = [overlap[0], checks[0]]
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings)
+    snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
+                         snap_warning)
     try:
         write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)
     except WriteFailed as e:
@@ -804,6 +832,9 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         late = (asof - books.book_date).days
         out.append("WEHAGO 장부 기준일 %s%s" % (books.book_date.isoformat(),
                                              " · 기준일보다 %d일 이전" % late if late > 0 else ""))
+    out.append(snap_console)   # 어떤 스냅숏을 썼는지 (WR-06)
+    if snap_warning:
+        out.append(snap_warning)
     warning = status_warning(res.links)
     if warning:
         out.append(warning)

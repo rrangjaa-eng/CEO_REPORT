@@ -75,6 +75,10 @@ The pipeline may only write names in GENERATED. A test lists every path the run 
 | 변환_결산구분 | closing_sorts | 결차,결대 | 분개장 구분 값 (Q-3) |
 | 변환_자동연결일수 | link_days | 90 | D-38 / Q-2 |
 | 변환_카드거래처 | card_words | 카드 | 미지급 대변 거래처 이름에 이 낱말이 있으면 카드 |
+| 변환_스냅숏경과일 | snapshot_days | 7 | 스냅숏이 기준일보다 이 일수를 넘게 오래됐으면 경고 (02-REVIEW WR-06) |
+
+일수 항목(변환_자동연결일수, 변환_스냅숏경과일)은 1~3650 이다. 밖의 정수는 가까운 끝으로 바꾸고
+`설정 <항목> 값 N 범위 밖 (1~3650) → M 사용` 알림을 남긴다 (02-REVIEW WR-02).
 
 Lists are comma-separated; codes and prefixes must be digits; link_days an integer ≥ 0. A blank or invalid value uses
 the default and adds a note `설정 <항목> 값 '<값>' 사용할 수 없음 → 기본값 <기본값>` (blank: `설정 <항목> 비어 있음 → 기본값 <기본값>`;

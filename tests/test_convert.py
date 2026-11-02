@@ -525,7 +525,8 @@ class TestConvertConfig(unittest.TestCase):
             "revenue_codes": ("41200",), "receivable_codes": ("10800",), "direct_prefixes": ("6",),
             "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
-            "closing_sorts": ("결차", "결대"), "link_days": 90, "card_words": ("카드",)})
+            "closing_sorts": ("결차", "결대"), "link_days": 90, "card_words": ("카드",),
+            "snapshot_days": 7})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
 
     def test_every_item_is_read_from_the_settings(self):
         convert = mod("convert")

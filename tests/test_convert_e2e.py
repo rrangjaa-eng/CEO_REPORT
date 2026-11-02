@@ -398,7 +398,9 @@ class TestConvertListings(unittest.TestCase):
         tmp, input_dir, collect, wehago_dir, rc, out = run_full(self)
         lines = out.splitlines()
         self.assertEqual(lines[0], "WEHAGO 장부 기준일 2026-10-31 · 기준일보다 2일 이전")
-        self.assertEqual([ln.split(" ")[0] for ln in lines[1:6]], list(GENERATED_CSV))
+        # 02-REVIEW WR-06: 둘째 줄은 쓴 스냅숏과 나이 (예전: 바로 파일 줄)
+        self.assertEqual(lines[1], "인트라넷 스냅숏 인트라넷_20261101_180000 (수집 2026-11-01 18:00:00, 기준일보다 1일 이전)")
+        self.assertEqual([ln.split(" ")[0] for ln in lines[2:7]], list(GENERATED_CSV))
         tail = lines[-4:]
         self.assertEqual(tail[0], "대조 불일치 0건")
         self.assertTrue(tail[1].startswith("자금일정.csv와 겹칠 수 있는 줄 "))
