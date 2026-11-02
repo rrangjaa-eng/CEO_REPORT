@@ -611,6 +611,25 @@ class TestWehagoPrivacy(unittest.TestCase):
         self.assertEqual(m("12900101-1234567"), "12" + star)
         self.assertEqual(m(""), "")
 
+    def test_mask_rrn_other_spellings(self):
+        """WR-08: 구분자 앞뒤 공백, 여러 대시(‐ ‑ ‒ – — ― － −), 점, 빗금도 가린다. util 과 wehago 는 같은 함수."""
+        self.assertIs(mod("wehago").mask_rrn, mod("util").mask_rrn)
+        m = mod("util").mask_rrn
+        star = "******-*******"
+        for text in ("800101 - 1234567", "800101  1234567", "800101 -1234567", "800101- 1234567",
+                     "800101‐1234567", "800101‑1234567", "800101‒1234567", "800101–1234567", "800101—1234567",
+                     "800101―1234567", "800101－1234567", "800101−1234567", "800101.1234567", "800101 . 1234567",
+                     "800101/1234567", "800101 / 1234567", "８００１０１－１２３４５６７", "800101．1234567"):
+            self.assertEqual(m("강사료 홍길동 %s 지급" % text), "강사료 홍길동 %s 지급" % star, text)
+
+    def test_mask_rrn_keeps_ordinary_amounts_dates_and_phone_numbers(self):
+        m = mod("util").mask_rrn
+        for text in ("2026-10-31", "2026.10.31", "2026/10/31", "2026-11-02 15:52:03", "20261031", "165,000,000",
+                     "165000000", "−44,000,000", "010-1234-5678", "02-123-4567", "123-45-67890", "[26201] 가상 행사",
+                     "분개장_20261031.xlsx", "금액 차이 (계산서 165,000,000 · 차액 +4,500,000)"):
+            self.assertEqual(m(text), text, text)
+        self.assertEqual(m(None), "")
+
     def test_no_rrn_survives_loading_and_the_biz_number_column_is_not_stored(self):
         books = load(folder_with(self))
         self.assertEqual(books.state, "ok")

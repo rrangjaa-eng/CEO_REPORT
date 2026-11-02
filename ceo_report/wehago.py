@@ -10,7 +10,7 @@ import zlib
 import xml.etree.ElementTree as ET
 
 from .approval import parse_registered, project_code  # noqa: F401  (parse_registered: 지급 확인 단계에서 쓴다)
-from .util import is_blank, ssum_or_none, won
+from .util import is_blank, mask_rrn, ssum_or_none, won
 from .util import date as parse_date
 
 # 종류 → 예상 머리글 (공백을 모두 없앤 이름). 분개장의 'Code'는 두 번 나온다 (계정 Code, 거래처 Code).
@@ -49,14 +49,6 @@ class Rows(list):
 
 
 # ───────────── 글자·숫자·날짜 해석 ─────────────
-_RRN_RE = re.compile(r"\d{6}[- ]?\d{7}")  # 앞뒤 숫자 제한 없음: 더 긴 숫자 안의 6+7자리도 가린다 (D-36, W-11)
-
-
-def mask_rrn(text):
-    """주민번호 모양(6자리 + 선택 '-'/공백 + 7자리, 일곱째 자리 수 무관)을 '******-*******'로 바꾼다."""
-    return _RRN_RE.sub("******-*******", text or "")
-
-
 def norm_vendor(name):
     """거래처 이름 정규화 (W-5): NFKC('㈜'→'(주)'), 공백 제거, '(주)'·'주식회사' 제거."""
     s = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name or ""))
