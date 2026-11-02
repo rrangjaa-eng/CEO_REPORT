@@ -5,6 +5,7 @@ import datetime as dt
 import importlib.util
 import io
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -1349,6 +1350,98 @@ class TestCliArguments(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("집계 기간 2026-10-20 ~ 2026-11-02", text)
         self.assertEqual(len(files), 2)
+
+
+class TestPdfLaunch(unittest.TestCase):
+    """WR-02: 이미 열려 있는 Edge/Chrome에 일을 넘기지 않고, 파일 주소를 바르게 만들고, 빈 PDF를 성공으로 치지 않는다."""
+
+    def setUp(self):
+        self.cli = load_cli()
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def make_html(self, folder_name="out"):
+        folder = os.path.join(self.tmp, folder_name)
+        os.makedirs(folder)
+        html_path = os.path.join(folder, "a.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write("<html></html>")
+        return html_path, os.path.join(folder, "a.pdf")
+
+    def fake_browser(self, calls, size=5):
+        def run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs, [d for d in cmd if d.startswith("--user-data-dir=")]))
+            for arg in cmd:
+                if arg.startswith("--user-data-dir="):
+                    calls[-1] += (os.path.isdir(arg.split("=", 1)[1]),)
+                if arg.startswith("--print-to-pdf="):
+                    with open(arg.split("=", 1)[1], "wb") as f:
+                        f.write(b"%PDF-" if size else b"")
+            return None
+        return run
+
+    def test_dedicated_profile_dir_used_and_removed(self):
+        html_path, pdf_path = self.make_html()
+        calls = []
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=self.fake_browser(calls)):
+            self.assertIsNone(self.cli.to_pdf("b", html_path, pdf_path))
+        cmd, kwargs, profile, existed = calls[0]
+        self.assertEqual(len(profile), 1)
+        pdir = profile[0].split("=", 1)[1]
+        self.assertTrue(existed)
+        self.assertFalse(os.path.exists(pdir), "임시 프로필 폴더가 남음")
+        self.assertIsInstance(cmd, list)
+        self.assertFalse(kwargs.get("shell"))
+
+    def test_each_call_uses_its_own_profile_dir(self):
+        html_path, pdf_path = self.make_html()
+        calls = []
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=self.fake_browser(calls)):
+            self.cli.to_pdf("b", html_path, pdf_path)
+            self.cli.to_pdf("b", html_path, pdf_path)
+        self.assertNotEqual(calls[0][2], calls[1][2])
+
+    def test_profile_dir_removed_when_browser_fails(self):
+        html_path, pdf_path = self.make_html()
+        seen = []
+
+        def boom(cmd, **kwargs):
+            seen.extend(a.split("=", 1)[1] for a in cmd if a.startswith("--user-data-dir="))
+            raise OSError("cannot start")
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=boom):
+            err = self.cli.to_pdf("b", html_path, pdf_path)
+        self.assertIsNotNone(err)
+        self.assertTrue(seen)
+        self.assertFalse(os.path.exists(seen[0]))
+
+    def test_file_url_is_percent_encoded_uri(self):
+        html_path, pdf_path = self.make_html("폴더 #1 100%")
+        calls = []
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=self.fake_browser(calls)):
+            self.cli.to_pdf("b", html_path, pdf_path)
+        url = calls[0][0][-1]
+        self.assertEqual(url, pathlib.Path(html_path).resolve().as_uri())
+        self.assertIn("%23", url)
+        self.assertNotIn(" ", url)
+        self.assertTrue(url.startswith("file:///"))
+
+    def test_no_sandbox_only_outside_windows(self):
+        html_path, pdf_path = self.make_html()
+        for is_win in (True, False):
+            with self.subTest(windows=is_win):
+                calls = []
+                with mock.patch.object(self.cli, "_is_windows", return_value=is_win), \
+                        mock.patch.object(self.cli.subprocess, "run", side_effect=self.fake_browser(calls)):
+                    self.cli.to_pdf("b", html_path, pdf_path)
+                self.assertEqual("--no-sandbox" in calls[0][0], not is_win)
+
+    def test_empty_pdf_is_a_failure(self):
+        html_path, pdf_path = self.make_html()
+        calls = []
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=self.fake_browser(calls, size=0)):
+            err = self.cli.to_pdf("b", html_path, pdf_path)
+        self.assertIsNotNone(err)
+        self.assertFalse(os.path.exists(pdf_path), "빈 PDF를 남기지 않음")
 
 
 if __name__ == "__main__":
