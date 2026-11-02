@@ -812,5 +812,62 @@ class TestWR03PreviousOnlyProjects(unittest.TestCase):
         self.assertTrue([n for n in t.notes if "P26299" in n and "여러 줄" in n], t.notes)
 
 
+
+# ───────────── WR-04: 손으로 넣은 미지급 줄은 옮기고, 새로 만든 줄과 겹치는지 대조한다 ─────────────
+def exec_row(project, item, vendor, state, supply, vat, basis, firm="확정"):
+    return {"프로젝트번호": project, "항목": item, "거래처": vendor, "상태": state, "공급가액": supply, "부가세": vat, "일자": "",
+            "확정여부": firm, "근거": basis}
+
+
+HAND_PREV = [
+    exec_row("26220", "무대", "가상무대", "요청미지급", "1,000,000", "100,000", "구두 발주"),
+    exec_row("26220", "카드", "", "카드사용미결제", "300,000", "", "카드 사용"),
+    exec_row("26220", "확인 중", "가상음향", "요청미지급", "", "", "금액 확인 중"),
+    exec_row("26220", "조명", "가상조명", "요청미지급", "200,000", "20,000", "지급요청 6001 (인트라넷 금액)"),
+    exec_row("26220", "원가", "가상조명", "요청미지급", "200,000", "20,000", "WEHAGO 2026-10-01 전표 1"),
+    exec_row("26220", "발주", "가상무대", "지급완료", "5,000,000", "500,000", "발주서"),
+]
+
+
+def hand_rows(table):
+    return [r for r in table.rows if r["근거"] in ("구두 발주", "카드 사용", "금액 확인 중", "가상조명 구두")]
+
+
+class TestWR04HandEnteredRows(unittest.TestCase):
+    def test_unpaid_hand_rows_are_carried_and_generated_or_paid_ones_are_not(self):
+        r = Run([], [], AUTO_PROJECTS, prev=HAND_PREV)
+        got = [(x["근거"], x["상태"], x["공급가액"], x["부가세"]) for x in hand_rows(r.execs)]
+        self.assertEqual(got, [("구두 발주", "요청미지급", "1000000", "100000"), ("카드 사용", "카드사용미결제", "300000", ""),
+                               ("금액 확인 중", "요청미지급", "", "")])
+        self.assertFalse([x for x in r.execs.rows if x["근거"] in ("발주서", "WEHAGO 2026-10-01 전표 1")
+                          or x["근거"].startswith("지급요청 6001")])
+        self.assertIn("이전 프로젝트집행.csv 손으로 넣은 미지급 줄 3건 옮김 (근거가 'WEHAGO '·'지급요청'으로 시작하지 않는 "
+                      "요청미지급·카드사용미결제): 공급가액+부가세 1,400,000원 (금액 미확인 1건)", r.execs.notes)
+        res = results(r.execs)
+        self.assertEqual(res[convert_projects.HAND_LABEL], "일치")
+        self.assertEqual(res[convert_projects.OVERLAP_LABEL], "일치")
+
+    def test_a_hand_row_that_matches_a_regenerated_row_is_kept_and_flagged(self):
+        prev = [exec_row("26220", "조명", "가상조명", "요청미지급", "200,000", "20,000", "가상조명 구두")]
+        r = Run(AUTO_JOURNAL, AUTO_PAYMENTS, AUTO_PROJECTS, AUTO_LEDGER, prev=prev)
+        self.assertEqual(len(hand_rows(r.execs)), 1)   # 지출을 적게 잡지 않는다: 옮기고 알린다
+        c = [x for x in r.execs.checks if x.label == convert_projects.OVERLAP_LABEL][0]
+        self.assertEqual((c.source, c.csv, convert.check_result(c)), (0, 1, "불일치"))
+        self.assertTrue([n for n in r.execs.notes if n.startswith("겹칠 수 있음: 손으로 넣은 줄 26220 가상조명 220,000 (가상조명 구두)")],
+                        r.execs.notes)
+
+    def test_a_hand_row_naming_a_regenerated_request_is_an_overlap(self):
+        prev = [exec_row("26220", "조명", "", "요청미지급", "100,000", "", "구두 (지급요청 6001 일부)")]
+        r = Run(AUTO_JOURNAL, AUTO_PAYMENTS, AUTO_PROJECTS, AUTO_LEDGER, prev=prev)
+        c = [x for x in r.execs.checks if x.label == convert_projects.OVERLAP_LABEL][0]
+        self.assertEqual(c.csv, 1)
+
+    def test_the_hand_check_catches_the_pre_fix_rows(self):
+        r = Run([], [], AUTO_PROJECTS, prev=HAND_PREV)
+        before = [x for x in r.execs.rows if x not in hand_rows(r.execs)]
+        c = convert_projects.hand_check(HAND_PREV, before)
+        self.assertEqual((c.source, c.csv, convert.check_result(c)), (3, 0, "불일치"))
+
+
 if __name__ == "__main__":
     unittest.main()

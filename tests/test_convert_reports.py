@@ -213,7 +213,9 @@ class TestConvertedNoDouble(unittest.TestCase):
 
     def test_the_request_with_an_unknown_amount_is_listed_not_added_as_zero(self):
         self.assertEqual([r["번호"] for r in self.A["amount_unknown"]], ["5106"])
-        self.assertEqual([request_numbers(ev["basis"]) for ev in self.A["amount_unknown_events"]], [["5106"]])
+        # 02-REVIEW WR-04: 이전 프로젝트집행.csv 의 손으로 넣은 금액 미확인 줄(P26206 '금액 확인 중')도 옮겨져 같이 보인다
+        self.assertEqual([(request_numbers(ev["basis"]), ev["basis"] if not request_numbers(ev["basis"]) else "")
+                          for ev in self.A["amount_unknown_events"]], [(["5106"], ""), ([], "금액 확인 중")])
         self.assertEqual([r["번호"] for r in self.B["amount_unknown"]], ["5106"])
 
 

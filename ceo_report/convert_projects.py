@@ -662,25 +662,72 @@ def basis_check(groups, request_rows):
     return Check(BASIS_LABEL, len(bases), sum(bases.values()))
 
 
+HAND_LABEL = "이전 프로젝트집행.csv 손으로 넣은 미지급 줄 → 옮긴 줄"
+OVERLAP_LABEL = "손으로 넣은 미지급 줄 중 새로 만든 줄과 겹치는 줄 (같은 거래처·금액 또는 같은 지급요청)"
+_UNPAID = ("요청미지급", "카드사용미결제")
+_GENERATED = ("WEHAGO ", "지급요청")
+
+
+def is_hand_unpaid(row):
+    """사람이 넣은 아직 나가지 않은 돈 줄 (WR-04): 상태가 요청미지급·카드사용미결제이고 근거가 변환이 쓰는 'WEHAGO '·'지급요청'으로
+    시작하지 않는다. 지급완료 손 줄은 옮기지 않는다 (D-37: 나간 돈은 WEHAGO 원가 줄이 정한다)."""
+    return (row.get("상태") or "").strip() in _UNPAID and not (row.get("근거") or "").strip().startswith(_GENERATED)
+
+
+def hand_check(prev_rows, rows):
+    """대조 (WR-04): 이전 파일의 손으로 넣은 미지급 줄 수 = 새 파일에 있는 그런 줄 수 (버리면 '불일치')."""
+    return Check(HAND_LABEL, sum(1 for r in prev_rows if is_hand_unpaid(r)), sum(1 for r in rows if is_hand_unpaid(r)))
+
+
+def _row_total(row):
+    supply = num(row.get("공급가액"))
+    return None if supply is None else supply + (num(row.get("부가세")) or 0)
+
+
+def _overlaps(hand, made):
+    """손 줄마다 겹칠 수 있는 새 줄 목록: 거래처(정규화)와 공급가액+부가세가 같거나, 근거가 같은 지급요청 번호를 가리킨다."""
+    out = []
+    for h in hand:
+        vendor, total = norm_vendor(h.get("거래처") or ""), _row_total(h)
+        nos = set(re.findall(r"지급요청 (\d+)", h.get("근거") or ""))
+        hits = []
+        for g in made:
+            same = vendor and total is not None and norm_vendor(g.get("거래처") or "") == vendor and _row_total(g) == total
+            if same or nos & set(re.findall(r"지급요청 (\d+)", g.get("근거") or "")):
+                hits.append(g)
+        if hits:
+            out.append((h, hits))
+    return out
+
+
 def _carry_plan_rows(prev_rows, key_pool):
-    """이전 프로젝트집행.csv 에서 집행계획미요청 줄만 옮긴다 (프로젝트번호는 숫자가 같은 새 번호가 정확히 하나일 때 바꾼다)."""
+    """이전 프로젝트집행.csv 에서 집행계획미요청 줄과 손으로 넣은 미지급 줄(WR-04)을 옮긴다.
+
+    프로젝트번호는 숫자가 같은 새 번호가 정확히 하나일 때 바꾼다. -> (집행계획 줄, 손 줄, 옮기지 않은 줄, 바꾸지 못한 번호).
+    """
     by_digits = collections.defaultdict(list)
     for k in key_pool:
         if _digits(k):
             by_digits[_digits(k)].append(k)
-    carried, dropped, odd = [], [], []
+    carried, hand, dropped, odd = [], [], [], []
     for r in prev_rows:
-        if (r.get("상태") or "").strip() != "집행계획미요청":
+        plan = (r.get("상태") or "").strip() == "집행계획미요청"
+        if not plan and not is_hand_unpaid(r):
             dropped.append(r)
             continue
         row = dict((c, (r.get(c) or "").strip()) for c in data.SCHEMA["프로젝트집행.csv"])
         same = by_digits.get(_digits(row["프로젝트번호"]), []) if _digits(row["프로젝트번호"]) else []
         if len(same) == 1:
             row["프로젝트번호"] = same[0]
-        else:
+        elif plan:
             odd.append(row["프로젝트번호"])
-        carried.append(row)
-    return carried, dropped, odd
+        if not plan:   # 손 줄 금액은 이 파일 모양(쉼표 없는 정수)으로. 빈칸·읽을 수 없는 글자는 그대로 (0으로 채우지 않음)
+            for column in ("공급가액", "부가세"):
+                value = num(row[column])
+                if value is not None:
+                    row[column] = cell_amount(value)
+        (carried if plan else hand).append(row)
+    return carried, hand, dropped, odd
 
 
 def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
@@ -697,11 +744,26 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     request_rows = [e[2] for e in part["entries"]]
     key_pool = list(projects) if projects is not None else sorted(
         set(ln["project"] for ln in costs["lines"] if ln["project"]) | set(rq["code"] for rq in requests if rq["code"]))
-    carried, dropped, odd = _carry_plan_rows(prev_rows, key_pool)
-    rows = wehago_rows + request_rows + carried
+    carried, hand, dropped, odd = _carry_plan_rows(prev_rows, key_pool)
+    rows = wehago_rows + request_rows + carried + hand
     checks = checks + _request_checks(part, wehago_rows + request_rows, requests, match)
     checks.append(basis_check(groups, [e[2] for e in part["entries"] if e[1] == 0]))
+    # WR-04: 손으로 넣은 미지급 줄은 옮기고 (지출을 적게 잡지 않음), 새로 만든 줄과 겹치면 '불일치'로 알린다
+    overlaps = _overlaps(hand, wehago_rows + request_rows)
+    checks.append(hand_check(prev_rows, rows))
+    checks.append(Check(OVERLAP_LABEL, 0, len(overlaps)))
     notes = notes + part["notes"]
+    if hand:
+        totals = [_row_total(r) for r in hand]
+        unknown = sum(1 for t in totals if t is None)
+        notes.append("이전 프로젝트집행.csv 손으로 넣은 미지급 줄 %d건 옮김 (근거가 'WEHAGO '·'지급요청'으로 시작하지 않는 "
+                     "요청미지급·카드사용미결제): 공급가액+부가세 %s원%s"
+                     % (len(hand), won(sum(t for t in totals if t is not None)),
+                        " (금액 미확인 %d건)" % unknown if unknown else ""))
+    for h, hits in overlaps:
+        head = " ".join(x for x in (h["프로젝트번호"], h.get("거래처", ""), won(_row_total(h))) if x)
+        notes.append("겹칠 수 있음: 손으로 넣은 줄 %s (%s) — 새 줄 %s → 같은 지출이면 이전 줄을 지우세요"
+                     % (head, h.get("근거", ""), " / ".join(g.get("근거", "") for g in hits)))
     if carried:
         notes.append("이전 프로젝트집행.csv 집행계획미요청 줄 %d건 옮김" % len(carried))
     if odd:
@@ -714,5 +776,5 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
             notes.append("옮기지 않은 줄 중 아직 나가지 않은 돈(요청미지급·카드사용미결제) %d건, 공급가액+부가세 %s원%s — 새 줄에 같은 지출이 있는지 확인"
                          % (len(unpaid), won(sum(known)),
                             " (금액 미확인 %d건 제외)" % (len(unpaid) - len(known)) if len(known) < len(unpaid) else ""))
-    portions = [g["supply"] for g in groups] + [None] * (len(request_rows) + len(carried))
+    portions = [g["supply"] for g in groups] + [None] * (len(request_rows) + len(carried) + len(hand))
     return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes, extra={"cost_portions": portions})

@@ -724,23 +724,28 @@ class TestBuildExecsRequests(unittest.TestCase):
 
     def test_previous_plan_rows_are_carried_with_the_new_project_number(self):
         t = full_table()
-        carried = cell_rows(t)[16:]
+        carried = cell_rows(t)[16:20]
         self.assertEqual([(r[0], r[1], r[3]) for r in carried],
                          [("26201", "케이터링", "집행계획미요청"), ("26201", "영상·중계", "집행계획미요청"),
                           ("26203", "현장 인력", "집행계획미요청"), ("P26207", "공연", "집행계획미요청")])
         self.assertEqual(carried[0][4:], ("55,000,000", "5,500,000", "2026-11-25", "추정", "계약서"))
-        self.assertEqual(t.extra["cost_portions"][16:], [None] * 4)
-        self.assertIn("이전 프로젝트집행.csv 줄 20건 옮기지 않음 (WEHAGO·인트라넷으로 다시 만듦)", t.notes)
+        # 02-REVIEW WR-04: 손으로 넣은 미지급 줄 4건도 옮긴다 (예전: 버리고 알림만). 지급완료 손 줄과 '지급요청' 줄은 옮기지 않는다
+        self.assertEqual([(r[0], r[3], r[4], r[5], r[8]) for r in cell_rows(t)[20:]],
+                         [("26201", "카드사용미결제", "3200000", "", "카드 사용"), ("P26204", "요청미지급", "10000000", "1000000", "가계약서"),
+                          ("P26206", "요청미지급", "", "", "금액 확인 중"), ("P26208", "카드사용미결제", "350000", "", "카드 사용")])
+        self.assertEqual(t.extra["cost_portions"][16:], [None] * 8)
+        self.assertIn("이전 프로젝트집행.csv 줄 16건 옮기지 않음 (WEHAGO·인트라넷으로 다시 만듦)", t.notes)   # 예전 20건
         self.assertTrue([n for n in t.notes if "P26207" in n and "번호 그대로" in n], t.notes)
         unpaid = [n for n in t.notes if "아직 나가지 않은 돈" in n]
         self.assertEqual(len(unpaid), 1)
-        self.assertIn("6건", unpaid[0])
-        self.assertIn("금액 미확인 1건 제외", unpaid[0])
+        self.assertIn("2건", unpaid[0])   # 예전 6건 (금액 미확인 1건 제외): 이제 남은 것은 다시 만드는 '지급요청' 줄 2건뿐
+        self.assertNotIn("금액 미확인", unpaid[0])
 
     def test_without_the_project_list_the_linked_keys_and_request_codes_are_used(self):
         inp = exec_inputs(FAKE_PL_JOURNAL)
         t = mod("convert_projects").build_execs(inp.books, inp.costs, inp.requests, inp.match, prev_execs(), inp.cfg)
-        self.assertEqual([r[0] for r in cell_rows(t)[16:]], ["26201", "26201", "26203", "P26207"])
+        self.assertEqual([r[0] for r in cell_rows(t)[16:]], ["26201", "26201", "26203", "P26207",
+                                                               "26201", "P26204", "P26206", "P26208"])   # WR-04: 손 줄 4건 추가
 
     def test_nothing_is_carried_when_there_is_no_previous_file_and_no_note_is_made_up(self):
         t = full_table(prev=[])
