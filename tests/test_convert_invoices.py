@@ -58,10 +58,12 @@ def new_tmp(test):
     return tmp
 
 
-def write_sales(folder, rows, name=SALES_NAME):
-    """매출 전자세금계산서 엑셀(머리글은 전자세금계산서(매입)과 같다)을 folder 에 쓴다."""
+def write_sales(folder, rows, name=SALES_NAME, header=None):
+    """매출 계산서 엑셀을 folder 에 쓴다. 머리글은 이름에 '매입매출장'이 있으면 매입매출장, 아니면 전자세금계산서(매입)과 같다."""
     os.makedirs(folder, exist_ok=True)
-    return write_xlsx(os.path.join(folder, name), [EINVOICE_HEADER] + [list(r) for r in rows])
+    if header is None:
+        header = LEDGER_HEADER if "매입매출장" in name else EINVOICE_HEADER
+    return write_xlsx(os.path.join(folder, name), [header] + [list(r) for r in rows])
 
 
 def write_prev_csv(input_dir, rows):
@@ -73,10 +75,10 @@ def write_prev_csv(input_dir, rows):
         w.writerows(rows)
 
 
-def invoice_inputs(test, journal=None, sales=SALES_EINVOICE, ledger=None, prev=None, snapshot=True, files=None):
+def invoice_inputs(test, journal=None, sales=SALES_EINVOICE, ledger=None, prev=None, snapshot=True, files=None, junk=()):
     """(sales, books, revenue, projects, cfg) — convert.run 이 하는 순서 그대로, 임시 폴더만 쓴다.
 
-    sales 가 None 이면 매출 파일을 쓰지 않는다. files = [(이름, 행 목록)] 는 전자세금계산서 모양으로 더 쓸 매출 파일.
+    sales 가 None 이면 매출 파일을 쓰지 않는다. files = [(이름, 행 목록[, 머리글])] 는 더 쓸 매출 파일, junk = [(이름, 바이트)] 는 그대로 쓸 파일.
     prev 가 있으면 이전 계산서.csv 의 줄 목록(모양은 SALES_COLUMNS)을 입력 폴더에 쓰고 test.prev_rows 에 읽은 값을 남긴다.
     """
     convert, wehago = mod("convert"), mod("wehago")
@@ -86,8 +88,11 @@ def invoice_inputs(test, journal=None, sales=SALES_EINVOICE, ledger=None, prev=N
                         ledger=PURCHASE_LEDGER if ledger is None else ledger)
     if sales is not None:
         write_sales(wdir, sales)
-    for name, rows in (files or []):
-        write_sales(wdir, rows, name)
+    for entry in (files or []):
+        write_sales(wdir, entry[1], entry[0], entry[2] if len(entry) > 2 else None)
+    for name, blob in junk:
+        with open(os.path.join(wdir, name), "wb") as f:
+            f.write(blob)
     collect = os.path.join(tmp, "수집")
     if snapshot:
         write_fake_snapshot(collect)
@@ -286,6 +291,200 @@ class TestBuildInvoices(unittest.TestCase):
         self.assertEqual(sorted((e["desc"], e["amount"]) for e in events),
                          [("가상고객D", 82500000), ("가상고객X", 20900000)])
         self.assertEqual(sum(e["amount"] for e in events), 103400000)
+
+
+# ───────────── Task 2: 매출 원천 우선순위, 없는·틀린 매출 파일, 매입 장부 보호 (D-41, Q-1) ─────────────
+LEDGER_SALES = [
+    _L("매출", "2026-09-15", 101, "가상고객A", "900101-1234567", "[26201] 가상 컨퍼런스 선금", 100000000, 10000000),
+    _L("매출", "2026-10-27", 102, "가상고객D", "000-00-00007", "가상 전시부스 잔금", 75000000, 7500000),
+    _L("매출", "2026-10-28", 103, "가상고객X", "000-00-00008", "기타 용역", 20000000, 2000000),
+    _L("매출", "2026-10-29", 104, "가상고객X", "000-00-00008", "매출 정정", -1000000, -100000),
+]
+LEDGER_SALES_NAME = "매입매출장(매출)_20261031.xlsx"
+
+
+def brief(rows):
+    return [(r["date"], r["vendor"], r["supply"], r["vat"]) for r in rows]
+
+
+class TestSalesSources(unittest.TestCase):
+    def test_source_a_sales_rows_of_the_chosen_ledger(self):
+        sales, books, _, _, _ = invoice_inputs(self, sales=None, ledger=PURCHASE_LEDGER + LEDGER_SALES)
+        ref, _, _, _, _ = invoice_inputs(self)
+        self.assertEqual((sales["state"], sales["source"], sales["file"]), ("ok", "매입매출장", "매입매출장_20261031.xlsx"))
+        self.assertEqual(brief(sales["rows"]), brief(ref["rows"]))
+        self.assertEqual([r["type"] for r in sales["rows"]], ["과세"] * 4)
+        self.assertEqual(sales["notes"], [])
+
+    def test_source_a_leaves_the_purchase_rows_of_load_books_alone(self):
+        _, with_sales, _, _, _ = invoice_inputs(self, sales=None, ledger=PURCHASE_LEDGER + LEDGER_SALES)
+        _, without, _, _, _ = invoice_inputs(self, sales=None)
+        self.assertEqual(with_sales.ledger, without.ledger)
+        self.assertEqual(with_sales.einvoice, without.einvoice)
+        self.assertEqual(with_sales.journal, without.journal)
+        self.assertEqual(with_sales.files["매입매출장"]["sales"], 4)
+
+    def test_source_a_wins_over_the_separate_files(self):
+        sales, _, _, _, _ = invoice_inputs(self, ledger=PURCHASE_LEDGER + LEDGER_SALES,
+                                           files=[(LEDGER_SALES_NAME, LEDGER_SALES)])
+        self.assertEqual(sales["source"], "매입매출장")
+        self.assertEqual(sales["notes"], ["쓰지 않은 매출 파일: %s, %s" % (LEDGER_SALES_NAME, SALES_NAME)])
+
+    def test_source_b_separate_sales_ledger(self):
+        sales, books, _, _, _ = invoice_inputs(self, sales=None, files=[(LEDGER_SALES_NAME, LEDGER_SALES + PURCHASE_LEDGER[:1])])
+        ref, _, _, _, _ = invoice_inputs(self)
+        self.assertEqual((sales["state"], sales["source"], sales["file"]), ("ok", "매입매출장(매출)", LEDGER_SALES_NAME))
+        self.assertEqual(brief(sales["rows"]), brief(ref["rows"]))
+        self.assertEqual(sales["notes"], ["매입매출장(매출) 파일의 매출 아닌 줄 1건 무시"])
+        self.assertEqual(books.unused, [LEDGER_SALES_NAME])
+
+    def test_source_b_wins_over_the_einvoice_file_and_names_it(self):
+        sales, _, _, _, _ = invoice_inputs(self, files=[(LEDGER_SALES_NAME, LEDGER_SALES + PURCHASE_LEDGER[:1])])
+        self.assertEqual(sales["source"], "매입매출장(매출)")
+        self.assertEqual(sorted(sales["notes"]), sorted(["매입매출장(매출) 파일의 매출 아닌 줄 1건 무시",
+                                                         "쓰지 않은 매출 파일: " + SALES_NAME]))
+
+    def test_source_b_through_build_gives_the_same_table_as_the_einvoice(self):
+        a = build(self)
+        b = build(self, sales=None, files=[(LEDGER_SALES_NAME, LEDGER_SALES)])
+        self.assertEqual(cell_rows(a), cell_rows(b))
+        self.assertEqual(check_lines(a), check_lines(b))
+
+    def test_the_newest_file_of_a_kind_wins_and_the_older_one_is_named(self):
+        older = "전자세금계산서(매출)_20261020.xlsx"
+        sales, _, _, _, _ = invoice_inputs(self, files=[(older, SALES_EINVOICE[:1])])
+        self.assertEqual(sales["file"], SALES_NAME)
+        self.assertEqual(len(sales["rows"]), 4)
+        self.assertEqual(sales["notes"], ["쓰지 않은 매출 파일: " + older])
+
+    def test_stale_sales_file_adds_a_note(self):
+        stale = "전자세금계산서(매출)_20261020.xlsx"
+        sales, _, _, _, _ = invoice_inputs(self, sales=None, files=[(stale, SALES_EINVOICE)])
+        self.assertEqual(sales["state"], "ok")
+        self.assertEqual(sales["file_date"], dt.date(2026, 10, 20))
+        self.assertEqual(sales["notes"], ["매출 계산서 파일 기준일 2026-10-20 — 장부 기준일 2026-10-31보다 11일 이전"])
+        t = build(self, sales=None, files=[(stale, SALES_EINVOICE)])
+        self.assertIn(sales["notes"][0], t.notes)
+
+    def test_lock_file_marker_is_ignored(self):
+        sales, books, _, _, _ = invoice_inputs(self, junk=[("~$" + SALES_NAME, b"owner")])
+        self.assertEqual(sales["state"], "ok")
+        self.assertEqual(sales["notes"], [])
+        self.assertEqual(books.unused, [SALES_NAME])
+
+    def test_a_newer_sales_ledger_is_never_the_purchase_ledger(self):
+        newer = "매입매출장(매출)_20261101.xlsx"
+        _, books, _, _, _ = invoice_inputs(self, files=[(newer, LEDGER_SALES)])
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["매입매출장"]["name"], "매입매출장_20261031.xlsx")
+        self.assertEqual(books.unused, sorted([newer, SALES_NAME]))
+        self.assertEqual(books.book_date, dt.date(2026, 10, 31))
+
+    def test_approval_results_do_not_change_with_a_sales_file_in_the_folder(self):
+        approval, snapshot, data = mod("approval"), mod("snapshot"), mod("data")
+        results = []
+        for extra in ((), (("매입매출장(매출)_20261101.xlsx", LEDGER_SALES), (LEDGER_SALES_NAME, LEDGER_SALES),
+                          ("전자세금계산서(매출)_20261101.xlsx", SALES_EINVOICE))):
+            tmp = new_tmp(self)
+            write_fake_books(os.path.join(tmp, "위하고"))
+            for name, rows in extra:
+                write_sales(os.path.join(tmp, "위하고"), rows, name)
+            snap = snapshot.read_snapshot(write_fake_snapshot(os.path.join(tmp, "수집")))
+            A = approval.build(data.load(SAMPLE), snap, ASOF, NOW, os.path.join(tmp, "위하고"))
+            x = A["xchk"]
+            results.append(([(k, v["status"]) for k, v in sorted(x["rows"].items())], x["summary"]))
+        self.assertEqual(results[0], results[1])
+        self.assertTrue(results[0][0])
+
+
+class TestSalesMissing(unittest.TestCase):
+    def test_no_sales_source_gives_no_table_and_no_zero(self):
+        sales, _, _, _, _ = invoice_inputs(self, sales=None)
+        self.assertEqual((sales["state"], sales["rows"], sales["source"], sales["file"]), ("자료 없음", [], "", ""))
+        self.assertEqual(sales["reason"], "자료 없음 (매출 계산서 엑셀)")
+        t = build(self, sales=None)
+        self.assertEqual((t.name, t.written, t.rows, t.checks), ("계산서.csv", False, [], []))
+        self.assertEqual(t.reason, "자료 없음 (매출 계산서 엑셀)")
+
+    def test_a_lookalike_adds_the_xlsx_only_hint(self):
+        name = "전자세금계산서(매출)_20261031.xls"
+        t = build(self, sales=None, junk=[(name, b"old format")])
+        self.assertFalse(t.written)
+        self.assertEqual(t.reason, "자료 없음 (매출 계산서 엑셀) — .xlsx만 읽음 (%s 있음)" % name)
+        t = build(self, sales=None, junk=[("매입매출장(매출)_20261031.csv", b"a,b")])
+        self.assertTrue(t.reason.endswith(" — .xlsx만 읽음 (매입매출장(매출)_20261031.csv 있음)"), t.reason)
+
+    def test_a_purchase_lookalike_is_not_a_sales_hint(self):
+        t = build(self, sales=None, junk=[("전자세금계산서(매입)_20261101.xls", b"x")])
+        self.assertEqual(t.reason, "자료 없음 (매출 계산서 엑셀)")
+
+    def test_header_without_supply_column_stops_and_names_it(self):
+        header = [h for h in EINVOICE_HEADER if h != "공급가액"]
+        rows = [r[:5] + r[6:] for r in SALES_EINVOICE]
+        sales, _, _, _, _ = invoice_inputs(self, sales=None, files=[(SALES_NAME, rows, header)])
+        self.assertEqual((sales["state"], sales["rows"]), ("머리글 다름", []))
+        t = build(self, sales=None, files=[(SALES_NAME, rows, header)])
+        self.assertFalse(t.written)
+        self.assertEqual(t.rows, [])
+        self.assertTrue(t.reason.startswith("매출 계산서 엑셀 머리글 다름"), t.reason)
+        self.assertEqual(t.reason, "매출 계산서 엑셀 머리글 다름 — %s: 없는 열 공급가액" % SALES_NAME)
+
+    def test_corrupt_sales_file_is_a_read_failure_without_an_exception(self):
+        sales, _, _, _, _ = invoice_inputs(self, sales=None, junk=[(SALES_NAME, bytes(range(256)) * 4)])
+        self.assertEqual(sales["state"], "읽기 실패")
+        self.assertEqual(sales["reason"], "매출 계산서 엑셀 읽기 실패 — " + SALES_NAME)
+        t = build(self, sales=None, junk=[(SALES_NAME, b"PK\x03\x04 not really")])
+        self.assertEqual((t.written, t.rows), (False, []))
+        self.assertEqual(t.reason, "매출 계산서 엑셀 읽기 실패 — " + SALES_NAME)
+
+    def test_a_failing_file_does_not_fall_back_to_a_lower_source(self):
+        sales, _, _, _, _ = invoice_inputs(self, junk=[(LEDGER_SALES_NAME, b"not a zip")])
+        self.assertEqual(sales["state"], "읽기 실패")
+        self.assertIn(LEDGER_SALES_NAME, sales["reason"])
+        self.assertEqual(sales["rows"], [])
+
+    def test_a_sales_file_without_any_sales_row_is_no_source(self):
+        t = build(self, sales=[])
+        self.assertFalse(t.written)
+        self.assertEqual(t.rows, [])
+        self.assertTrue(t.reason.startswith("자료 없음 (매출 계산서 엑셀)"), t.reason)
+        self.assertIn(SALES_NAME, t.reason)
+
+    def test_missing_folder_is_no_source_and_never_raises(self):
+        w = mod("wehago")
+        sales = w.load_sales(os.path.join(new_tmp(self), "없는 폴더"), ASOF, None)
+        self.assertEqual((sales["state"], sales["rows"]), ("자료 없음", []))
+        self.assertEqual(sales["reason"], "자료 없음 (매출 계산서 엑셀)")
+
+    def test_a_sales_file_alone_does_not_satisfy_the_purchase_books(self):
+        tmp = new_tmp(self)
+        write_sales(tmp, LEDGER_SALES, LEDGER_SALES_NAME)
+        write_sales(tmp, SALES_EINVOICE)
+        books = mod("wehago").load_books(tmp, ASOF, None)
+        self.assertEqual(books.state, "자료 없음")
+        self.assertEqual(books.reason, "자료 없음: 분개장, 매입매출장, 전자세금계산서(매입)")
+        self.assertEqual(books.unused, sorted([LEDGER_SALES_NAME, SALES_NAME]))
+        sales = mod("wehago").load_sales(tmp, ASOF, books)
+        self.assertEqual((sales["state"], sales["source"]), ("ok", "매입매출장(매출)"))
+
+    def test_a_folder_named_like_a_sales_file_and_an_undated_name(self):
+        tmp = new_tmp(self)
+        os.makedirs(os.path.join(tmp, SALES_NAME))
+        sales = mod("wehago").load_sales(tmp, ASOF, None)
+        self.assertEqual(sales["state"], "자료 없음")
+        write_sales(tmp, SALES_EINVOICE[1:2], "전자세금계산서(매출).xlsx")
+        sales = mod("wehago").load_sales(tmp, ASOF, None)
+        self.assertEqual((sales["state"], sales["file_date"]), ("ok", None))
+        self.assertEqual([r["date"] for r in sales["rows"]], [dt.date(2026, 10, 27)])   # 해는 기준일 기준 (MM-DD)
+        self.assertEqual(sales["notes"], [])
+
+    def test_a_bad_day_in_the_sales_file_is_an_undated_invoice_not_a_guess(self):
+        rows = [list(r) for r in SALES_EINVOICE]
+        rows[1][0] = "13-45"
+        t = build(self, sales=rows)
+        self.assertEqual([r[2] for r in cell_rows(t)], ["2026-09-15", "2026-10-28", "2026-10-29", ""])
+        self.assertIn("발행일 없는 계산서 1건 (입금과 짝짓지 않음)", t.notes)
+        self.assertEqual(len(t.rows), 4)
 
 
 if __name__ == "__main__":
