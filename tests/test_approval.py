@@ -760,7 +760,7 @@ class TestApprovalSettings(unittest.TestCase):
         with open(os.path.join(SAMPLE, "설정.csv"), encoding="utf-8-sig", newline="") as f:
             rows = list(csv.reader(f))
         self.assertEqual(rows[-2:], [["승인검토_주수", "8"], ["승인검토_정기지출", "급여,임차료,카드대금,부가세"]])
-        self.assertTrue(rows[9][0] == "예산_원가율")
+        self.assertEqual(rows[8][0], "예산_원가율")  # 파일 9번째 줄 (머리글 포함)
         page, A = full_screen(self, ids=MINI_IDS)
         self.assertEqual([i for i in A["issues"] if "승인검토" in i[2]], [])
 

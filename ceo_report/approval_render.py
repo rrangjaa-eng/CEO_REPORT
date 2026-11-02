@@ -252,6 +252,16 @@ def _weeks_table(A, S):
     return '<div class="tw"><table id="weeks">%s<tbody>%s</tbody></table></div>' % (head, "".join(body))
 
 
+def _notes_block(A):
+    lines = "".join('<div class="note">%s</div>' % esc(t) for t in A["notes"])
+    return '<h2 class="sec">일정 반영 기준</h2><div id="schedule-notes">%s</div>' % lines
+
+
+def _issues_block(A):
+    items = "".join('<div class="note">%s %s: %s</div>' % (esc(f), esc(l), esc(m)) for f, l, m in A["issues"])
+    return '<div id="issues"><h2 class="sec">입력 자료 확인 필요 %d건</h2>%s</div>' % (len(A["issues"]), items)
+
+
 def render_approval(A, collected_now):
     """승인 검토 화면 HTML 한 장. collected_now: 이번 실행에서 수집했으면 True, 마지막 스냅숏을 쓰면 False."""
     data = A["data"]
@@ -269,6 +279,8 @@ def render_approval(A, collected_now):
         _requests_table(A, S),
         '<h2 class="sec">주별 일정 (월요일 시작, 단위 원)</h2>',
         _weeks_table(A, S),
+        _notes_block(A),
+        _issues_block(A),
         '<script id="approval-data" type="application/json">%s</script>' % payload,
         '<script id="approval-calc">%s</script>' % CALC_JS,
         '<script id="approval-ui">%s</script>' % UI_JS,

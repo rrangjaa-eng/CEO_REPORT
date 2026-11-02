@@ -7,12 +7,14 @@ import datetime as dt
 import re
 
 from .calc import compute
-from .util import Issues, num
+from .util import Issues, is_blank, num, setting_num, ssum_or_none, won
 from .util import date as parse_date
 
-WEEKS = 8
+# 새 설정의 기본값은 여기에 둔다. data.DEFAULT_SETTINGS에 넣으면 주간·월간 보고가 읽는 값이 달라진다 (P-7).
+APPROVAL_DEFAULTS = {"승인검토_주수": "8", "승인검토_정기지출": "급여,임차료,카드대금,부가세"}
 DAY = dt.timedelta(days=1)
 _NO_RE = re.compile(r"지급요청\s*(\d+)")
+_CODE_RE = re.compile(r"^\s*\[(\d+)\]")
 
 
 # ───────────── 표시 글자 (JS의 fmtMan/fmtWon과 같은 결과) ─────────────
@@ -94,6 +96,33 @@ def scenario(A, checked):
             "toggle": toggle, "checked_n": len(sel), "checked_sum": sum(amount[i] for i in sel)}
 
 
+# ───────────── 날짜·글자 해석 ─────────────
+def parse_registered(text):
+    """인트라넷 등록일 글자 → datetime. 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM', 'YYYY-MM-DD'만 받고 나머지는 None."""
+    s = (text or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def project_code(text):
+    """행사명 맨 앞 [ ] 안의 숫자(프로젝트 코드). 앞 공백은 허용하고, 없으면 None (P-4)."""
+    m = _CODE_RE.match(text or "")
+    return m.group(1) if m else None
+
+
+def friday_after(ref):
+    """ref 이후(엄격히) 처음 오는 목요일 14:00 마감 → 그 다음 날 금요일 날짜 (A-2, P-2)."""
+    day = ref.date() + dt.timedelta(days=(3 - ref.weekday()) % 7)
+    cutoff = dt.datetime.combine(day, dt.time(14, 0))
+    if cutoff <= ref:
+        cutoff += dt.timedelta(days=7)
+    return (cutoff + DAY).date()
+
+
 # ───────────── 화면 자료 만들기 ─────────────
 def _day_index(date, monday):
     return (max(date, monday) - monday).days
@@ -107,46 +136,146 @@ def _status(text):
     return "status_unknown"
 
 
+def _read_settings(d, issues):
+    """승인검토_주수(1 이상 정수)와 승인검토_정기지출(쉼표 목록). 틀리면 기본값을 쓰고 입력 확인 목록에 남긴다 (D-22)."""
+    key, default = "승인검토_주수", int(APPROVAL_DEFAULTS["승인검토_주수"])
+    weeks, line = default, d.settings_line.get(key, "-")
+    if key not in d.settings_line:
+        issues.add("설정.csv", "-", "%s 설정 비어 있음 → 기본값 %d 사용" % (key, default))
+    else:
+        value, reason = setting_num(d.settings, key, default)
+        if reason == "설정 비어 있음":
+            issues.add("설정.csv", line, "%s 설정 비어 있음 → 기본값 %d 사용" % (key, default))
+        elif reason is not None or not isinstance(value, int) or value < 1:
+            issues.add("설정.csv", line, "%s 값이 1 이상 정수가 아님: '%s' → 기본값 %d 사용" % (key, d.settings.get(key), default))
+        else:
+            weeks = value
+    key = "승인검토_정기지출"
+    raw = d.settings.get(key)
+    cats = []
+    if key in d.settings_line and not is_blank(raw):
+        cats = [c.strip() for c in str(raw).split(",") if c.strip()]
+    if not cats:
+        cats = [c.strip() for c in APPROVAL_DEFAULTS[key].split(",")]
+        issues.add("설정.csv", d.settings_line.get(key, "-"),
+                   "%s 설정 비어 있음 → 기본값 사용(%s)" % (key, APPROVAL_DEFAULTS[key]))
+    return weeks, cats
+
+
+def _expected_date(rq, asof, now):
+    """예상 지급일과 근거 규칙 (A-2, P-1, P-2). 날짜를 정할 수 없으면 (None, '')."""
+    req = rq["request_date"]
+    if req and req > asof:
+        return req, "지급요청일"
+    if rq["status"] == "pending":
+        if req:
+            return friday_after(now), "지급요청일 지남·대기 중 → 목요일 14시 승인·금요일 지급 (지금 기준)"
+        if rq["registered"] is not None:
+            return friday_after(now), "지급요청일 없음 → 목요일 14시 승인·금요일 지급 (지금 기준)"
+        return None, ""
+    if req:
+        return req, "지급요청일"
+    if rq["registered"] is not None:
+        return friday_after(rq["registered"]), "지급요청일 없음 → 목요일 14시 승인·금요일 지급 (등록 시각 기준)"
+    return None, ""
+
+
+def _as_event(rq, date):
+    """승인 요청을 일정 목록(rolled·beyond)에 같이 담을 때의 모양."""
+    return {"date": date, "io": "out", "amount": rq["amount"], "firm": True, "cat": "승인 완료 지급요청",
+            "desc": rq["vendor"], "basis": "지급요청 %s" % rq["번호"], "project": rq["code"] or "", "source": "인트라넷 요청",
+            "번호": rq["번호"]}
+
+
+def _count_text(items):
+    n = len(items)
+    if not n:
+        return "0건"
+    total, unknown = ssum_or_none(i["amount"] for i in items)
+    inner = "확인된 금액 " + ("없음" if total is None else won(total))
+    if unknown:
+        inner += ", 금액 미확인 %d건" % unknown
+    return "%d건 (%s)" % (n, inner)
+
+
+def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates):
+    lines = []
+    if approved_paid:
+        lines.append("승인 완료·예상 지급일이 잔액 기준일(%s) 이전 또는 당일 %d건 %s (잔액에 반영된 것으로 봄)" % (
+            cutoff.isoformat(), len(approved_paid), won(sum(r["amount"] for r in approved_paid))))
+    else:
+        lines.append("승인 완료·예상 지급일이 잔액 기준일(%s) 이전 또는 당일 0건" % cutoff.isoformat())
+    mmdd = monday.strftime("%m/%d")
+    if rolled:
+        def piece(io, label):
+            items = [e for e in rolled if e["io"] == io]
+            return "%s %d건" % (label, len(items)) + (" " + won(sum(e["amount"] for e in items)) if items else "")
+        lines.append("잔액 기준일(%s) 이후·1주 시작(%s) 전 일정: %s · %s (1주 첫날 %s에 반영)" % (
+            cutoff.isoformat(), mmdd, piece("in", "입금"), piece("out", "지급"), mmdd))
+    else:
+        lines.append("잔액 기준일(%s) 이후·1주 시작(%s) 전 일정 0건" % (cutoff.isoformat(), mmdd))
+    lines.append("프로젝트집행.csv 요청미지급 중 인트라넷 스냅숏으로 대체 " + _count_text(replaced))
+    lines.append("스냅숏과 연결 안 된 프로젝트집행 요청미지급 " + _count_text(unmatched_exec)
+                 + (" — 일반 일정 규칙대로 반영" if unmatched_exec else ""))
+    lines.append("중복 제외 " + _count_text(duplicates))
+    lines.append("중복 가능성 " + _count_text(possible_duplicates) + (" — 일정에 그대로 둠, 확인 필요" if possible_duplicates else ""))
+    return lines
+
+
 def build(d, snap, asof, now):
     """승인 검토 화면의 모든 숫자를 한 번에 만든다. d(Data)는 바꾸지 않는다."""
     R = compute(d, "weekly", asof)
     issues = Issues()
     issues.items = list(R["s7"]["issues"])
+    n_weeks, regular = _read_settings(d, issues)
     start = R["s1"]["available"]
     reserve = R["settings_num"]["위험_최소보유현금"]
     dates = [a["date"] for a in R["s1"]["accounts"]]
     balance_date = max(dates) if dates else None
-    cutoff = balance_date or asof
+    cutoff = balance_date or asof  # 이 날짜 이전·당일은 잔액에 이미 반영된 것으로 본다 (P-3)
     monday = asof - dt.timedelta(days=asof.weekday())
-    n_days = 7 * WEEKS
+    n_days = 7 * n_weeks
     horizon = monday + dt.timedelta(days=n_days - 1)
     days = [(monday + dt.timedelta(days=i)).isoformat() for i in range(n_days)]
     base_in, base_out, est_in = [0] * n_days, [0] * n_days, [0] * n_days
 
-    # 요청 읽기 (A-1, A-4)
+    # 요청 읽기와 예상 지급일 (A-1, A-2, A-4)
     req_all, numbers = [], set()
     for k, row in enumerate(snap.payments):
-        status = _status(row.get("사장님승인", ""))
-        request_date = parse_date(row.get("지급요청일"))
-        date = request_date if request_date and request_date > asof else None
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
-              "code": None, "registered": None, "status": status, "amount": num(row.get("금액")),
-              "request_date": request_date, "date": date, "rule": "지급요청일" if date else "", "reason": "",
-              "toggle": False,
+              "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
+              "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
+              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "", "reason": "", "toggle": False,
               "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", ""))}
+        rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         numbers.add(rq["번호"])
         req_all.append(rq)
 
-    # 프로젝트집행 요청미지급 줄 중 스냅숏 요청 번호를 근거로 가진 것은 스냅숏으로 대체 (A-3)
-    replaced, unmatched_exec, kept = [], [], []
+    # 입력 일정과 스냅숏 요청 맞추기 (A-3, P-6): 번호로 맞거나, 프로젝트·금액·날짜가 같으면 같은 지급으로 본다
+    cands = [rq for rq in req_all if rq["status"] != "status_unknown" and rq["amount"] is not None and rq["code"]]
+
+    def key_hit(ev):
+        digits = "".join(ch for ch in (ev.get("project") or "") if ch.isdigit())
+        if not digits or ev["amount"] is None or ev["date"] is None:
+            return False
+        return any(rq["code"] == digits and rq["amount"] == ev["amount"]
+                   and (rq["request_date"] or rq["date"]) == ev["date"] for rq in cands)
+
+    replaced, unmatched_exec, duplicates, possible_duplicates, kept = [], [], [], [], []
     for ev0 in R["events"]:
         ev = dict(ev0)
+        m = _NO_RE.search(ev["basis"] or "")
+        by_number = bool(m and m.group(1) in numbers)
         if ev["source"] == "프로젝트집행" and ev["cat"] == "프로젝트 지급요청":
-            m = _NO_RE.search(ev["basis"] or "")
-            if m and m.group(1) in numbers:
+            if by_number or key_hit(ev):
                 replaced.append(ev)
                 continue
             unmatched_exec.append(ev)
+        elif by_number:
+            duplicates.append(ev)
+            continue
+        elif ev["io"] == "out" and key_hit(ev):
+            possible_duplicates.append(ev)
         kept.append(ev)
 
     # 남은 일정 분류 (A-4: 미확인은 합계에 넣지 않는다)
@@ -169,7 +298,7 @@ def build(d, snap, asof, now):
             else:
                 base_out[i] += ev["amount"]
 
-    # 요청 분류 (대기 → 체크 가능, 승인 완료는 이번 단계에서는 세기만)
+    # 요청 분류: 대기 → 체크 가능, 승인 완료 → 잔액 기준일 이후면 고정 지급 (A-3, P-3, P-8)
     data_requests = []
     amount_unknown, date_unknown, status_unknown, beyond_requests = [], [], [], []
     approved_paid, approved_future = [], []
@@ -181,10 +310,21 @@ def build(d, snap, asof, now):
             rq["reason"] = "금액 미확인"
             amount_unknown.append(rq)
         elif rq["date"] is None:
-            rq["reason"] = "예상 지급일 미확인"
+            rq["reason"] = "날짜 확인 불가"
             date_unknown.append(rq)
         elif rq["status"] == "approved":
-            rq["reason"] = "승인 완료"
+            if rq["date"] <= cutoff:
+                rq["reason"] = "승인 완료·잔액에 반영된 것으로 봄"
+                approved_paid.append(rq)
+            elif rq["date"] > horizon:
+                rq["reason"] = "기간 밖"
+                beyond.append(_as_event(rq, rq["date"]))
+            else:
+                rq["reason"] = "승인 완료·고정 지급"
+                approved_future.append(rq)
+                base_out[_day_index(rq["date"], monday)] += rq["amount"]
+                if rq["date"] < monday:
+                    rolled.append(_as_event(rq, rq["date"]))
         elif rq["date"] > horizon:
             rq["reason"] = "기간 밖"
             beyond_requests.append(rq)
@@ -193,14 +333,16 @@ def build(d, snap, asof, now):
             data_requests.append({"id": rq["id"], "day": _day_index(rq["date"], monday), "amount": rq["amount"]})
 
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
-            "weeks": [[7 * i, 7 * i + 6] for i in range(WEEKS)], "base_in": base_in, "base_out": base_out,
+            "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests}
-    return {"data": data, "R": R, "asof": asof, "now": now, "start": start, "reserve": reserve,
-            "balance_date": balance_date, "cutoff": cutoff, "monday": monday, "horizon": horizon,
+    return {"data": data, "R": R, "asof": asof, "now": now, "start": start, "reserve": reserve, "n_weeks": n_weeks,
+            "regular": regular, "balance_date": balance_date, "cutoff": cutoff, "monday": monday, "horizon": horizon,
             "collected_at": snap.collected_at, "snapshot_path": snap.path, "requests_all": req_all,
-            "replaced": replaced, "unmatched_exec": unmatched_exec, "duplicates": [], "possible_duplicates": [],
-            "rolled": rolled, "past": past, "undated": undated, "beyond": beyond,
-            "amount_unknown": amount_unknown, "amount_unknown_events": amount_unknown_events,
+            "replaced": replaced, "unmatched_exec": unmatched_exec, "duplicates": duplicates,
+            "possible_duplicates": possible_duplicates, "rolled": rolled, "past": past, "undated": undated,
+            "beyond": beyond, "amount_unknown": amount_unknown, "amount_unknown_events": amount_unknown_events,
             "approved_paid": approved_paid, "approved_future": approved_future, "status_unknown": status_unknown,
-            "date_unknown": date_unknown, "beyond_requests": beyond_requests, "notes": [],
+            "date_unknown": date_unknown, "beyond_requests": beyond_requests,
+            "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
+                            possible_duplicates),
             "issues": list(issues.items)}
