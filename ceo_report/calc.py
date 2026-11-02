@@ -3,7 +3,7 @@ import calendar
 import datetime as dt
 from collections import OrderedDict, defaultdict
 
-from .data import DEFAULT_SETTINGS, TRANSFER
+from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
 from .util import is_blank, setting_num, ssum, won, d2s
 
 DAY = dt.timedelta(days=1)
@@ -168,9 +168,11 @@ def compute(d, kind, asof, start=None):
             continue
         P = proj[e["project"]]
         P["lines"].append(e)
+        P["line_n"][e["state"]] += 1
         amt = e["supply"]
         if amt is None:
             P["unknown_cost"] += 1
+            P["line_unknown"][e["state"]] += 1
             continue
         st = e["state"]
         if st == "지급완료":
@@ -194,7 +196,8 @@ def compute(d, kind, asof, start=None):
         P["paid_total"] = P["paid"] + P["card_paid"]
         P["expected"] = P["paid_total"] + P["requested"] + P["card_unpaid"] + P["planned"]
         b = P["budget"]
-        P["remain"] = None if b is None else b - P["expected"]
+        # 금액 미확인 원가 줄이 있으면 예상총집행이 모자라므로 잔여예산을 정확한 숫자로 보이지 않는다 (D-02)
+        P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]
         P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
         P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
     plist = list(proj.values())
@@ -202,10 +205,15 @@ def compute(d, kind, asof, start=None):
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
     tot["budget"], tot["budget_missing"] = ssum(P["budget"] for P in plist)
     tot["estimate"], tot["estimate_missing"] = ssum(P["estimate"] for P in plist)
-    tot["remain"] = sum(P["remain"] for P in plist if P["remain"] is not None)
+    remain_known = [P["remain"] for P in plist if P["remain"] is not None]
+    tot["remain"] = sum(remain_known)
+    tot["remain_excluded"] = sum(1 for P in plist if P["budget"] is not None and P["remain"] is None)
+    if (plist and tot["budget_missing"] == len(plist)) or not remain_known:
+        tot["remain"] = None  # 계산할 수 있는 프로젝트가 하나도 없으면 합계는 0이 아니라 판단 불가 (D-02)
     if plist and tot["budget_missing"] == len(plist):
         tot["budget"] = None  # 원가 예산이 하나도 없으면 합계는 0이 아니라 판단 불가 (D-02)
-        tot["remain"] = None
+    tot["line_n"] = {st: sum(P["line_n"][st] for P in plist) for st in EXEC_STATES}
+    tot["line_unknown"] = {st: sum(P["line_unknown"][st] for P in plist) for st in EXEC_STATES}
     tot["paid_cash"], tot["paid_cash_unknown"] = ssum(P["paid_cash"] for P in plist)
     tot["unknown_cost"] = sum(P["unknown_cost"] for P in plist)
     budgeted = [P for P in plist if P["budget"] is not None]
@@ -522,7 +530,9 @@ def _blank_proj(p, rate):
     """프로젝트 한 건의 빈 집계 틀. 원가 예산 = 사전견적 x 원가율. 만들 수 없으면 예산은 None, 이유를 남긴다 (D-16)."""
     P = dict(p)
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
-              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0})
+              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
+              # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다
+              "line_n": dict.fromkeys(EXEC_STATES, 0), "line_unknown": dict.fromkeys(EXEC_STATES, 0)})
     est = P["estimate"]
     P["budget"], P["budget_reason"] = None, None
     if est is None:
