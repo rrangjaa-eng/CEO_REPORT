@@ -546,5 +546,40 @@ class TestLaunchersPushd(unittest.TestCase):
                     self.assertEqual(lines[i - 1].strip().lower(), "popd", (name, i))
 
 
+# ───────────── (낮은 우선순위) '출금'·상태 오타로 지급이 일정에서 빠지지 않는다 ─────────────
+class TestOutflowNotDropped(unittest.TestCase):
+    def base(self):
+        return compute(load(sample_folder(self)), "weekly", ASOF)
+
+    def test_schedule_chulgeum_is_a_payment(self):
+        def edit(S):
+            S["자금일정.csv"].append(["2026-11-05", "출금", "5,000,000", "확정", "회사공통지출", "", "가상업체", "청구서", ""])
+        base = self.base()
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertEqual(R["s2"]["out4_firm"] - base["s2"]["out4_firm"], 5000000)
+        self.assertEqual(R["s6"]["total"] - base["s6"]["total"], 5000000)
+        self.assertFalse(any("출금" in m and "허용 값" in m for f, _, m in R["s7"]["issues"] if f == "자금일정.csv"))
+
+    def test_unknown_exec_state_stays_an_outflow(self):
+        def edit(S):
+            S["프로젝트집행.csv"] += [
+                ["P26203", "가상 추가", "가상업체", "요청 미지급", "1,000,000", "100,000", "2026-11-10", "확정", "지급요청"],
+                ["P26203", "가상 추가2", "가상업체2", "", "2,000,000", "200,000", "2026-11-12", "추정", "견적"],
+            ]
+        base = self.base()
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertEqual(R["s2"]["out4_firm"] - base["s2"]["out4_firm"], 1100000)
+        self.assertEqual(R["s2"]["out4_est"] - base["s2"]["out4_est"], 2200000)
+        P = {x["id"]: x for x in R["s3"]["projects"]}["P26203"]
+        P0 = {x["id"]: x for x in base["s3"]["projects"]}["P26203"]
+        self.assertEqual(P["requested"] - P0["requested"], 3000000)
+        n = len(make_sample_module().S["프로젝트집행.csv"])
+        msgs = [(l, m) for f, l, m in R["s7"]["issues"] if f == "프로젝트집행.csv"]
+        self.assertTrue(any(l == n + 2 and "'요청 미지급'" in m and "요청미지급" in m for l, m in msgs), msgs)
+        self.assertTrue(any(l == n + 3 and "요청미지급" in m for l, m in msgs), msgs)
+        for c in R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+
+
 if __name__ == "__main__":
     unittest.main()

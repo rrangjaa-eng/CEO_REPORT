@@ -104,7 +104,8 @@ def load(folder):
     # 자금일정 (프로젝트 밖 지급, 기타 입금)
     d.schedule = []
     for r in raw["자금일정.csv"]:
-        s = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": r.get("입출금", ""),
+        io = r.get("입출금", "")
+        s = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": "지급" if io == "출금" else io,  # '출금'도 지급으로 읽는다
              "amount": num(r.get("금액"), iss, r, "금액"), "firm": r.get("확정여부", "") == "확정",
              "cat": r.get("분류", "") or "미분류", "project": r.get("프로젝트번호", ""), "vendor": r.get("거래처", ""),
              "basis": r.get("근거", ""), "memo": r.get("비고", ""), "source": "자금일정", "row": r}
@@ -147,8 +148,11 @@ def load(folder):
              "state": r.get("상태", ""), "supply": num(r.get("공급가액"), iss, r, "공급가액"),
              "vat": num(r.get("부가세"), iss, r, "부가세"), "date": date(r.get("일자"), iss, r, "일자"),
              "firm": r.get("확정여부", "") == "확정", "basis": r.get("근거", ""), "row": r}
-        if not _check(iss, r, "상태", e["state"], EXEC_STATES):
-            continue
+        if e["state"] not in EXEC_STATES:
+            # 상태를 모르는 줄도 지급이다: 버리지 않고 지급 전(요청미지급)으로 일정에 넣어 현금을 많게 보이지 않는다
+            iss.add(r["_file"], r["_line"], "상태 값 '%s'은(는) 허용 값이 아님 (%s) → 지급 전(요청미지급)으로 보고 지급 일정에 넣음"
+                    % (e["state"], "/".join(EXEC_STATES)))
+            e["state"] = "요청미지급"
         e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
         e["vat"] = _outflow(iss, r, "부가세", e["vat"])
         if e["project"] not in d.projects:
