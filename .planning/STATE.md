@@ -1,10 +1,10 @@
 ---
 gsd_state_version: "1.0"
 status: unknown
-stopped_at: Completed 01.1-05-PLAN.md
-last_updated: "2026-11-02T10:55:46.464Z"
+stopped_at: Completed 01.1-06-PLAN.md
+last_updated: "2026-11-02T11:16:13.031Z"
 last_activity: 2026-11-02
-state_head: a28d527c508fcd0ba23b40e86c0a77eab32fd60b
+state_head: 1eed66db36fabcf9b905071425a35d79d2d61756
 progress:
   total_phases: 4
   completed_phases: 0
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Position
 
-Phase 01.1 (approval-screen) · Plans 5 of 6 complete (01.1-01 .. 01.1-05) · Phase 1 plans 01-01, 01-02 complete · Next: 01.1-06 (wave 3, WEHAGO comparison on the screen); XCHK-01..04 engine done in tests (wehago.py), requirements stay open until 01.1-06; human checks on the user's Windows PC pending (see .planning/WINDOWS.md)
+Phase 01.1 (approval-screen) · Plans 6 of 6 complete (01.1-01 .. 01.1-06) · Phase 1 plans 01-01, 01-02 complete · Next: orchestrator verification of 01.1 and ticking XCHK-01..04 / APPR-05 in REQUIREMENTS.md; human checks on the user's Windows PC pending (see .planning/WINDOWS.md)
 Last activity: 2026-11-02
 
 ## Decisions
@@ -44,6 +44,8 @@ Last activity: 2026-11-02
 - [Phase 01.1]: 01.1-04: duplicate project keys are 판단 불가 and never listed as 미요청 실행가; the 390px browser check runs in a 390px iframe because headless Chrome here has a 500px minimum window
 - [Phase 01.1]: 01.1-05: books not 'ok' empty journal/ledger/einvoice (no partial use); read_book(path, kind, file_date, asof) is the public per-file reader and raises HeaderMismatch; a shared payment line gives '연결 불가 (지급 후보 N건)' with N = candidate lines (1), a shared invoice '연결 불가 (계산서 후보 공유)'
 - [Phase 01.1]: 01.1-05: XCHK-01..04 stay unchecked until plan 01.1-06 (screen shows 장부 기준일/상태/차이; .gitignore '*.xlsx'); unknown ref date or missing folder gives 경과 / 자료 없음, never a guess
+- [Phase 01.1]: 01.1-06: D-35b wins over the old must_have: an '이미 지급' request paid after the 잔액 기준일 stays as a fixed outflow on the payment date (rolled to the first schedule day if earlier); only payments on or before the 잔액 기준일 leave the schedule
+- [Phase 01.1]: 01.1-06: WEHAGO screen texts (stop lines, summary, 장부 기준일) live in approval_render.py and are shared with the CLI; approval.build(d, snap, asof, now, wehago_dir=None) imports wehago inside the function to avoid a circular import
 
 ## Blockers
 
@@ -60,9 +62,10 @@ Last activity: 2026-11-02
 | Phase 01.1 P03 | ~25min | 3 tasks | 4 files |
 | Phase 01.1 P04 | ~14min | 3 tasks | 3 files |
 | Phase 01.1 P05 | ~40min | 3 tasks | 2 files |
+| Phase 01.1 P06 | ~50min | 3 tasks | 5 files |
 
 ## Session
 
-**Last session:** 2026-11-02T10:55:46.423Z
-**Stopped at:** Completed 01.1-05-PLAN.md
+**Last session:** 2026-11-02T11:16:12.987Z
+**Stopped at:** Completed 01.1-06-PLAN.md
 **Resume file:** None
