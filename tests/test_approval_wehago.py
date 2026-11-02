@@ -488,5 +488,176 @@ class TestXchkCollect(unittest.TestCase):
         sweep(self, tmp, [text, err, page], fake)
 
 
+# ───────────── Task 3: 거래처·프로젝트 패널, 개인정보, git 제외 ─────────────
+RRN_RE = re.compile(r"\d{6}[- ]?\d{7}")  # 앞뒤 숫자 제한 없음: 더 긴 숫자 안의 6+7자리도 잡는다
+
+
+def cells(row):
+    return [text_of(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)]
+
+
+def body_rows(page, table_id):
+    frag = element_html(page, table_id) or ""
+    return [m for m in re.findall(r"<tr[^>]*>(.*?)</tr>", frag, re.S) if "<td" in m]
+
+
+def code_row(page, table_id, code):
+    frag = element_html(page, table_id) or ""
+    m = re.search(r'<tr[^>]*data-code="%s"[^>]*>(.*?)</tr>' % re.escape(code), frag, re.S)
+    return None if m is None else cells(m.group(1))
+
+
+class TestXchkPanels(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, tmp, True)
+        write_fake_books(os.path.join(tmp, "위하고"))
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        path, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False,
+                                                      wehago_dir=os.path.join(tmp, "위하고"))
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+
+    def test_vendor_panel(self):
+        self.assertEqual(T(self.page, "xchk-vendors-sum"),
+                         "차이 있는 거래처 표시 6곳 / 전체 6곳 · 차이 합계 +10,976,000 · 판단 불가 1곳 · 비교 거래처 9곳 · 기초잔액 미반영")
+        rows = body_rows(self.page, "xchk-vendors")
+        self.assertEqual(cells(rows[0]), ["㈜가상제작", "165,000,000", "160,500,000", "+4,500,000"])
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(cells(rows[-1])[-1], "판단 불가")  # 가상숙박: 금액 미확인 요청이 있어 차이를 알 수 없다
+        head = element_html(self.page, "xchk-vendors")
+        for h in ("거래처", "WEHAGO 미지급금", "인트라넷 요청", "차이"):
+            self.assertIn(h, head)
+
+    def test_project_panel(self):
+        self.assertEqual(code_row(self.page, "xchk-projects", "26201"),
+                         ["26201", "가상 컨퍼런스", "300,000,000", "44,264,000", "40,000,000", "260,000,000", "4,264,000"])
+        self.assertEqual(code_row(self.page, "xchk-projects", "26220")[2:],
+                         ["250,000,000", "166,000,000", "158,000,000", "92,000,000", "8,000,000"])
+        self.assertEqual(code_row(self.page, "xchk-projects", "26221")[2:],
+                         ["미확인", "판단 불가", "5,400,000", "판단 불가", "판단 불가"])
+        self.assertEqual(code_row(self.page, "xchk-projects", "26203")[2:],
+                         ["60,000,000", "49,500,000", "45,000,000", "15,000,000", "4,500,000"])
+        self.assertEqual([cells(r)[0] for r in body_rows(self.page, "xchk-projects")], ["26201", "26220", "26221", "26203"])
+        self.assertIn("원가는 공급가액 기준, 요청 금액은 인트라넷 표시 금액(부가세 기준 미확인)", T(self.page, "xchk-projects"))
+
+    def test_unlinked_cost(self):
+        t = T(self.page, "xchk-unlinked")
+        self.assertTrue(t.startswith("프로젝트 미연결 원가 2건 1,100,000"), t)
+        rows = [cells(r) for r in body_rows(self.page, "xchk-unlinked")]
+        self.assertIn(["2026-10-29", "가상강사", "가상 개인강사 ******-******* 강사료", "800,000"], rows)
+        self.assertIn(["2026-10-29", "가상기타", "[26999] 가상 기타 행사", "300,000"], rows)
+        self.assertEqual(len(rows), 2)  # 계정 Code 4xxxx 인 (도)외주비 줄은 원가가 아니다
+
+    def test_panel_order(self):
+        marks = ['<table id="xchk"', '<table id="xchk-vendors"', '<table id="xchk-projects"', 'id="xchk-unlinked"', 'id="basis"']
+        at = [self.page.index(m) for m in marks]
+        self.assertEqual(at, sorted(at), list(zip(marks, at)))
+        self.assertLess(self.page.index('id="unrequested"'), self.page.index('id="book-dates"'))
+
+    def test_wehago_rules_in_the_basis(self):
+        t = T(self.page, "basis")
+        for n in range(1, 6):
+            self.assertIn("WEHAGO 규칙 %d" % n, t)
+        for fact in ("주식회사", "이미 지급", "계산서 합계", "기초잔액", "(도)"):
+            self.assertIn(fact, t)
+        for word in ("위험", "해결방안", "권고", "우려", "추천"):
+            self.assertNotIn(word, T(self.page, "xchk-summary") + T(self.page, "xchk-vendors") + T(self.page, "basis"))
+
+    def test_opening_balance_removes_the_label(self):
+        journal = list(FAKE_JOURNAL) + [_jl(dt.date(2026, 10, 1), 40, "25300", "미지급금", None, 1000000, "가상임대", "전기이월")]
+        rc, text, page, _, _ = cli_screen(self, journal=journal)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("기초잔액 미반영", T(page, "xchk-vendors-sum"))
+        rows = [cells(r) for r in body_rows(page, "xchk-vendors")]
+        self.assertIn(["가상임대", "4,000,000", "0", "+4,000,000"], rows)
+
+    def test_not_ok_books_give_one_line_per_panel(self):
+        for prep, label in ((None, "판단 불가(WEHAGO 자료 없음)"), (lambda f: write_fake_books(f, stamp="20261025"), "판단 불가(WEHAGO 자료 경과)")):
+            rc, text, page, _, _ = cli_screen(self, books=False, prep=prep)
+            for panel in ("xchk-vendors", "xchk-projects", "xchk-unlinked"):
+                self.assertEqual(T(page, panel), label, panel)
+                self.assertEqual(body_rows(page, panel), [], panel)
+
+    def test_header_stop_gives_one_line_per_panel(self):
+        def prep(folder):
+            write_fake_books(folder)
+            header = ["메모" if h == "적요" else h for h in JOURNAL_HEADER]
+            write_xlsx(os.path.join(folder, "분개장_20261031.xlsx"), [header] + [list(r) for r in FAKE_JOURNAL])
+        rc, text, page, _, _ = cli_screen(self, books=False, prep=prep)
+        for panel in ("xchk-vendors", "xchk-projects", "xchk-unlinked"):
+            self.assertEqual(T(page, panel), "판단 불가(머리글 다름)", panel)
+
+
+class TestXchkPrivacy(unittest.TestCase):
+    def sweep_rrn(self, texts, folder):
+        for t in texts:
+            self.assertIsNone(RRN_RE.search(t), RRN_RE.search(t))
+        for dirpath, _, files in os.walk(folder):
+            for name in files:
+                with open(os.path.join(dirpath, name), "rb") as f:
+                    data = f.read().decode("utf-8", "replace")
+                self.assertIsNone(RRN_RE.search(data), name)
+
+    def test_screen_stdout_and_files_have_no_rrn_like_run(self):
+        rc, text, page, root, out = cli_screen(self)
+        self.assertEqual(rc, 0)
+        self.assertIn("가상 개인강사 ******-******* 강사료", page)
+        self.assertNotIn("900101-1234567", page + text)
+        self.sweep_rrn([page, text], out)
+
+    def test_a_longer_digit_run_is_masked_too(self):
+        journal = list(FAKE_JOURNAL) + [
+            _jl(dt.date(2026, 10, 29), 41, "61101", "행사외주비(도)", 700000, None, "가상강사2", "강사료 계좌 12345678901234", "V041"),
+            _jl(dt.date(2026, 10, 29), 41, "10300", "보통예금", None, 700000, "가상강사2", "강사료 계좌 12345678901234", "V041")]
+        rc, text, page, root, out = cli_screen(self, journal=journal)
+        self.sweep_rrn([page, text], out)
+        self.assertIn("******-*******", page)
+
+    def test_collection_run_has_no_rrn_like_run(self):
+        tmp = new_tmp(self)
+        root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
+        write_fake_books(os.path.join(root, "위하고"))
+        rc, text, err, fake, _ = run_collect_cli(self, ["--수집", "함", "--기준일", "2026-11-02", "--수집폴더", root, "--출력", out])
+        self.assertEqual(rc, 0)
+        self.sweep_rrn([text, err, read_only_html(out)], out)
+
+    def test_vendor_and_unlinked_text_is_escaped(self):
+        journal = list(FAKE_JOURNAL) + [
+            _jl(dt.date(2026, 10, 29), 42, "25300", "미지급금", None, 1000000, "<b>가상</b>", "[26201] 가상 태그", "V042"),
+            _jl(dt.date(2026, 10, 29), 43, "61101", "행사외주비(도)", 250000, None, "<b>가상</b>", "<i>메모</i>", "V042"),
+            _jl(dt.date(2026, 10, 29), 43, "10300", "보통예금", None, 250000, "<b>가상</b>", "<i>메모</i>", "V042")]
+        rc, text, page, _, _ = cli_screen(self, journal=journal)
+        self.assertEqual(rc, 0)
+        self.assertIn("&lt;b&gt;", element_html(page, "xchk-vendors"))
+        self.assertIn("&lt;b&gt;", element_html(page, "xchk-unlinked"))
+        self.assertIn("&lt;i&gt;", element_html(page, "xchk-unlinked"))
+        self.assertNotIn("<b>가상", page)
+        self.assertNotIn("<i>메모", page)
+
+
+class TestXchkIgnored(unittest.TestCase):
+    def git(self, *args):
+        try:
+            return subprocess.run(("git",) + args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError:
+            self.skipTest("git 없음")
+
+    def test_gitignore_has_the_xlsx_line(self):
+        with open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f.read().splitlines()]
+        self.assertIn("*.xlsx", lines)
+
+    def test_wehago_paths_are_ignored(self):
+        for path in ("수집/위하고/분개장_20261031.xlsx", "입력/분개장_20261031.xlsx"):
+            self.assertEqual(self.git("check-ignore", "-q", path).returncode, 0, path)
+
+    def test_no_xlsx_is_tracked(self):
+        res = self.git("ls-files", "*.xlsx")
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stdout.decode("utf-8").strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
