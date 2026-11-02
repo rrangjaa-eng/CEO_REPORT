@@ -2,16 +2,16 @@
 gsd_state_version: "1.0"
 status: unknown
 stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-11-02T07:42:34.365Z"
+last_updated: "2026-11-02T09:49:05.958Z"
 last_activity: 2026-11-02
-state_head: 29e8b1dc2ccd73cd217c3fc8a1bc4f5392a84365
+state_head: ed2236b3a88b7d6156164787125b889a1345dc8b
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 2
+  total_plans: 8
   completed_plans: 2
-  percent: 100
-current_phase_name: 보고 엔진 검증
+  percent: 0
+current_phase_name: approval-screen
 ---
 
 # State
@@ -20,7 +20,7 @@ current_phase_name: 보고 엔진 검증
 
 See: .planning/PROJECT.md (updated 2026-11-02)
 **Core value:** 수익·현금·예정·예산 집행을 섞지 않고 미확인 값을 0으로 넣지 않는다
-**Current focus:** Phase 1 — 보고 엔진 검증
+**Current focus:** Phase 01.1 — approval-screen
 
 ## Position
 

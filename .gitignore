@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 .planning/milestone.lock
+.gsd/
