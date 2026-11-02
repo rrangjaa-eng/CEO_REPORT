@@ -1483,5 +1483,52 @@ class TestPaidDateWithoutAmount(unittest.TestCase):
         self.assertEqual([x["outstanding"] for x in R["s5"]["ar_rows"] if x["project"] == "P26202"], [60_000_000])
 
 
+class TestReadCsvLines(unittest.TestCase):
+    """WR-04: 칸 안의 줄바꿈과 유니코드 줄 구분 문자는 그대로 두고, 보고하는 줄 번호는 실제 파일 줄이다."""
+
+    def write(self, text, encoding="utf-8-sig"):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "a.csv")
+        with open(path, "w", encoding=encoding, newline="") as f:
+            f.write(text)
+        return path
+
+    def test_multiline_and_unicode_separators_kept(self):
+        text = 'a,b\r\n1,"줄1\n줄2"\r\n2,"x\u2028y"\r\n3,"p\x0bq\x85r\x1cs"\r\n'
+        rows, ok = read_csv(self.write(text), ["a", "b"], Issues())
+        self.assertTrue(ok)
+        self.assertEqual([r["b"] for r in rows], ["줄1\n줄2", "x\u2028y", "p\x0bq\x85r\x1cs"])
+
+    def test_line_numbers_are_file_lines(self):
+        text = 'a,b\n1,"줄1\n줄2"\n\n3,x\n\n\n6,y\n'
+        rows, _ = read_csv(self.write(text), ["a", "b"], Issues())
+        self.assertEqual([(r["a"], r["_line"]) for r in rows], [("1", 2), ("3", 5), ("6", 8)])
+
+    def test_line_numbers_with_crlf_and_blank_lines(self):
+        text = "a,b\r\n\r\n1,x\r\n2,y\r\n"
+        rows, _ = read_csv(self.write(text), ["a", "b"], Issues())
+        self.assertEqual([(r["a"], r["_line"]) for r in rows], [("1", 3), ("2", 4)])
+
+    def test_blank_rows_skipped_and_header_checked(self):
+        iss = Issues()
+        rows, ok = read_csv(self.write("a,b\n,\n\n"), ["a", "b", "c"], iss)
+        self.assertTrue(ok)
+        self.assertEqual(rows, [])
+        self.assertTrue(any("필수 열 없음" in m and "c" in m for _, _, m in iss.items))
+
+    def test_cp949_multiline(self):
+        rows, ok = read_csv(self.write('항목,값\n회사명,"한글\n회사"\n', "cp949"), ["항목", "값"], Issues())
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["값"], "한글\n회사")
+
+    def test_bad_number_reports_real_file_line(self):
+        text = 'a,b\n1,"줄1\n줄2"\n\n3,12x\n'
+        rows, _ = read_csv(self.write(text), ["a", "b"], Issues())
+        iss = Issues()
+        self.assertIsNone(num(rows[1]["b"], iss, rows[1], "b"))
+        self.assertEqual(iss.items[0][:2], ("a.csv", 5))
+
+
 if __name__ == "__main__":
     unittest.main()
