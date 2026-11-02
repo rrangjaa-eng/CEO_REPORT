@@ -588,7 +588,9 @@ WEHAGO_RULES = [
     " · 분개장에 기초잔액 줄이 없으면 기초잔액 미반영 · 분개장에 그 거래처 미지급금 줄이 없으면 미확인(0 아님)"
     " · 인트라넷 요청은 대기+승인 중 이미 지급과 승인 완료·예상 지급일이 잔액 기준일 이전 또는 당일(잔액에 반영된 것으로 봄)을 뺀 합계",
     "WEHAGO 규칙 5 프로젝트 원가 = 계정과목에 (도)가 있고 계정 Code가 6으로 시작하는 5자리인 줄의 차변 − 대변"
-    " · 적요의 [프로젝트 코드]로 연결하고 연결되지 않으면 프로젝트 미연결 원가",
+    " · 프로젝트 연결은 월간 보고와 같은 순서: 수동(프로젝트연결.csv) → 적요의 [프로젝트 코드]"
+    " → 자동(거래처·금액·기간이 같은 지급요청이 후보 하나일 때만) → 미연결(프로젝트 미연결 원가로 따로 보임)"
+    " · 계정·표시·기간은 설정.csv 변환_* 값을 따름(기본 6·(도)·90일)",
 ]
 
 
@@ -789,27 +791,40 @@ def _projects_panel(A):
         esc(summary), esc(PROJECT_NOTE), head, "".join(body))
 
 
+LINK_BASES = ("수동", "코드", "자동", "미연결")   # linking.BASES 와 같은 순서 (이 모듈은 linking 을 가져오지 않는다)
+
+
+def _link_summary_text(x):
+    """' · 연결: 수동 N줄 · 코드 N줄 · 자동 N줄 · 미연결 N줄' — 원가 줄이 어느 근거로 이어졌는지 (D-47). 연결 결과가 없으면 빈 글."""
+    s = x.get("link_summary")
+    if not s:
+        return ""
+    return " · 연결: " + " · ".join("%s %d줄" % (b, s[b]["count"]) for b in LINK_BASES if b in s)
+
+
 def _unlinked_panel(A):
     x = A["xchk"]
     title = '<h2 class="sec">프로젝트 미연결 원가 (프로젝트 코드로 연결되지 않은 (도) 원가)</h2>'
     if x["state"] != "ok":
         return title + '<div id="xchk-unlinked" class="scope">%s</div>' % esc(_na_label(A))
     u = x["unlinked"]
+    basis = _link_summary_text(x)
     if not u["count"]:
-        return title + '<div id="xchk-unlinked"><div class="scope">프로젝트 미연결 원가 0건</div></div>'
+        return title + '<div id="xchk-unlinked"><div class="scope">%s</div></div>' % esc("프로젝트 미연결 원가 0건" + basis)
     if u["sum"] is None:
         line = "프로젝트 미연결 원가 %d건 (금액 미확인 %d건)" % (u["count"], u["unknown"])
     else:
         line = "프로젝트 미연결 원가 %d건 %s" % (u["count"], fmt_won(u["sum"]))
         if u["unknown"]:
             line += " 외 금액 미확인 %d건" % u["unknown"]
+    line += basis
     lines = u["lines"][:SHOW_XCHK]
     if u["count"] > len(lines):
         line += " · 표시 %d건 / 전체 %d건" % (len(lines), u["count"])
-    head = '<thead><tr><th>전표일자</th><th>거래처</th><th>적요</th><th class="n">금액(원)</th></tr></thead>'
-    body = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td class="n">%s</td></tr>' % (
+    head = '<thead><tr><th>전표일자</th><th>거래처</th><th>적요</th><th class="n">금액(원)</th><th>연결</th></tr></thead>'
+    body = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td class="n">%s</td><td>%s</td></tr>' % (
         esc(i["date"].isoformat()) if i["date"] else _na("날짜 없음"), _w(i["vendor"]), _w(i["memo"]),
-        _na("미확인") if i["amount"] is None else esc(fmt_won(i["amount"]))) for i in lines)
+        _na("미확인") if i["amount"] is None else esc(fmt_won(i["amount"])), _w(i.get("label", ""))) for i in lines)
     return title + '<div id="xchk-unlinked"><div class="scope">%s</div><div class="tw"><table>%s<tbody>%s</tbody></table></div></div>' % (
         esc(line), head, body)
 

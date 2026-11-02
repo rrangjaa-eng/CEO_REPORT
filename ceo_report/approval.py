@@ -318,6 +318,9 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
     return lines
 
 
+NOT_LISTED = "(프로젝트 목록에 없음)"   # 월간 대조(convert_xchk)와 같은 글자
+
+
 def _project_cost_rows(pc, projects):
     """A['projects']와 WEHAGO (도) 원가를 코드로 잇는다 (D-34). 한쪽이라도 모르면 차이는 None (D-02), 0이 아니다."""
     count = {}
@@ -334,6 +337,12 @@ def _project_cost_rows(pc, projects):
                      "requested_unknown": p["requested_unknown"], "cost": cost, "cost_unknown": partial,
                      "budget_minus_cost": p["budget"] - cost if exact and p["budget"] is not None else None,
                      "requested_minus_cost": p["requested"] - cost if exact and p["requested"] is not None else None})
+    # D-47 A-3: 수동 지정 등으로 목록에 없는 번호에 닿은 원가도 버리지 않는다 (미연결 표에도 없으므로 여기서 한 줄로 보인다)
+    for code in sorted(k for k in pc["by_code"] if k not in count):
+        c = pc["by_code"][code]
+        rows.append({"code": code, "name": NOT_LISTED, "budget": None, "requested": None, "requested_unknown": 0,
+                     "cost": c["cost"], "cost_unknown": c["unknown"], "budget_minus_cost": None,
+                     "requested_minus_cost": None})
     return rows
 
 
@@ -342,7 +351,7 @@ def _xchk(books, match):
     return {"state": books.state, "reason": books.reason, "book_date": books.book_date, "files": books.files,
             "unused": list(books.unused), "header": books.header, "after_ref": books.after_ref,
             "rows": match["rows"], "summary": match["summary"], "vendors": None, "projects": None, "unlinked": None,
-            "projects_without_cost": 0}
+            "projects_without_cost": 0, "link_summary": None}
 
 
 def _xchk_full(books, match, req_all, projects, wehago, approved_paid=(), links=None):
@@ -356,8 +365,11 @@ def _xchk_full(books, match, req_all, projects, wehago, approved_paid=(), links=
         x["vendors"] = wehago.vendor_payables(books, req_all, match, settled=[r["id"] for r in approved_paid])
         pc = wehago.project_costs(books, [p["code"] for p in projects], links=links)
         x["projects"] = _project_cost_rows(pc, projects)
-        x["projects_without_cost"] = len(projects) - len(x["projects"])
+        listed = set(p["code"] for p in projects)
+        outside = sum(1 for k in pc["by_code"] if k not in listed)   # 목록에 없는 번호의 행은 '원가 줄 없는 프로젝트' 셈에서 뺀다
+        x["projects_without_cost"] = len(projects) - (len(x["projects"]) - outside)
         x["unlinked"] = pc["unlinked"]
+        x["link_summary"] = links["summary"] if links is not None else None
     return x
 
 

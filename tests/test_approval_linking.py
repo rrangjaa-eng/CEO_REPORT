@@ -317,7 +317,7 @@ class TestApprovalLinkingCases(unittest.TestCase):
 class TestApprovalLinkingPanel(unittest.TestCase):
     def test_the_unlinked_table_has_a_last_column_with_each_lines_label(self):
         page, A, _ = screen(self)
-        head = re.findall(r"<th[^>]*>(.*?)</th>", element_html(page, "xchk-unlinked"))
+        head = cells(re.search(r"<thead>(.*?)</thead>", element_html(page, "xchk-unlinked"), re.S).group(1))
         self.assertEqual(head, ["전표일자", "거래처", "적요", "금액(원)", "연결"])
         rows = unlinked_rows(page)
         self.assertTrue(all(len(r) == 5 for r in rows), rows)
