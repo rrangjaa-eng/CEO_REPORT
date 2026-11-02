@@ -11,8 +11,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
+from unittest import mock
 from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -283,6 +285,350 @@ class TestWehagoTracer(unittest.TestCase):
         row = w.match_requests(books, reqs)["rows"]["1201"]
         self.assertEqual(row["status"], "계산서 있음")
         self.assertEqual((row["invoice_total"], row["diff"]), (44000000, 0))
+
+
+
+# ───────────── Task 2: 읽기 단단하게 ─────────────
+def folder_with(test, **kw):
+    folder = os.path.join(new_tmp(test), "위하고")
+    write_fake_books(folder, **kw)
+    return folder
+
+
+def load(folder, asof=ASOF, stale=7):
+    return mod("wehago").load_books(folder, asof, stale)
+
+
+def kind_path(folder, kind, stamp="20261031"):
+    return os.path.join(folder, "%s_%s.xlsx" % (kind, stamp))
+
+
+def read_kind(folder, kind, **kw):
+    return mod("wehago").read_book(kind_path(folder, kind), kind, **kw)
+
+
+def write_junk(path, data=b"not a zip"):
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def all_rows(books):
+    return books.journal + books.ledger + books.einvoice
+
+
+class TestWehagoHeaders(unittest.TestCase):
+    def test_real_header_forms_with_line_breaks_are_accepted(self):
+        folder = folder_with(self)
+        self.assertIn("11일\n이내", LEDGER_HEADER)
+        self.assertIn("매입/매출\n유형", LEDGER_HEADER)
+        rows, _ = read_kind(folder, "매입매출장")
+        self.assertEqual(len(rows), 8)
+        self.assertEqual(load(folder).state, "ok")
+
+    def test_columns_in_another_order_read_the_same_rows(self):
+        folder = folder_with(self)
+        base, _ = read_kind(folder, "분개장")
+        order = [9, 0, 1, 2, 3, 4, 5, 6, 7, 8]  # 적요를 맨 앞으로 (두 Code 열의 앞뒤 순서는 그대로)
+        path = write_xlsx(os.path.join(new_tmp(self), "분개장_20261031.xlsx"),
+                          [[r[i] for i in order] for r in [JOURNAL_HEADER] + FAKE_JOURNAL])
+        moved, _ = mod("wehago").read_book(path, "분개장")
+        self.assertEqual(moved, base)
+        self.assertEqual(len(base), 34)
+
+    def test_two_code_columns_map_by_order(self):
+        rows, _ = read_kind(folder_with(self), "분개장")
+        self.assertEqual(rows[0]["account_code"], "61101")
+        self.assertNotIn("V001", repr(rows))  # 두 번째 Code(거래처 코드)는 쓰지 않는다
+
+    def test_missing_column_stops_the_read_and_names_it(self):
+        w = mod("wehago")
+        folder = folder_with(self)
+        drop = JOURNAL_HEADER.index("적요")
+        write_xlsx(kind_path(folder, "분개장"),
+                   [[c for i, c in enumerate(r) if i != drop] for r in [JOURNAL_HEADER] + FAKE_JOURNAL])
+        with self.assertRaises(w.WehagoError) as cm:
+            read_kind(folder, "분개장")
+        self.assertIn("분개장", str(cm.exception))
+        self.assertIn("없음: 적요", str(cm.exception))
+        self.assertNotIn("추가", str(cm.exception))
+
+    def test_renamed_column_is_missing_and_extra_and_load_books_stops(self):
+        w = mod("wehago")
+        folder = folder_with(self)
+        header = [("메모" if h == "적요" else h) for h in JOURNAL_HEADER]
+        write_xlsx(kind_path(folder, "분개장"), [header] + FAKE_JOURNAL)
+        with self.assertRaises(w.WehagoError) as cm:
+            read_kind(folder, "분개장")
+        self.assertIn("추가: 메모", str(cm.exception))
+        books = load(folder)
+        self.assertEqual(books.state, "머리글 다름")
+        self.assertEqual(books.reason, "분개장_20261031.xlsx 머리글이 예상과 다름 — 없음: 적요 · 추가: 메모")
+        self.assertEqual(books.header, {"file": "분개장_20261031.xlsx", "kind": "분개장", "missing": ["적요"],
+                                        "extra": ["메모"]})
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+
+    def test_an_extra_column_alone_also_stops_everything(self):
+        folder = folder_with(self)
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER + ["비고"]] + [r + ["x"] for r in FAKE_LEDGER])
+        books = load(folder)
+        self.assertEqual(books.state, "머리글 다름")
+        self.assertEqual(books.reason, "매입매출장_20261031.xlsx 머리글이 예상과 다름 — 추가: 비고")
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+
+    def test_header_mismatch_wins_over_a_missing_file(self):
+        folder = folder_with(self, drop=("전자세금계산서(매입)",))
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER[:-1]] + [r[:-1] for r in FAKE_JOURNAL])
+        self.assertEqual(load(folder).state, "머리글 다름")
+
+
+class TestWehagoCells(unittest.TestCase):
+    def xlsx(self, rows, **kw):
+        return write_xlsx(os.path.join(new_tmp(self), "a.xlsx"), rows, **kw)
+
+    def test_first_sheet_is_found_through_workbook_and_rels(self):
+        path = self.xlsx([["첫", "시트"], ["1", "2"]], first_part="sheet2.xml", extra_sheet=[["다른", "줄"], ["9", "9"]])
+        self.assertEqual(mod("wehago").read_xlsx(path), [["첫", "시트"], ["1", "2"]])
+
+    def test_rich_text_inline_and_formula_string_cells(self):
+        w = mod("wehago")
+        path = self.xlsx([[("rich", ["가", "상", " 글"]), ("inline", "인라인"), ("str", "수식 글")]])
+        self.assertEqual(w.read_xlsx(path), [["가상 글", "인라인", "수식 글"]])
+        path = self.xlsx([["모두", "인라인"]], inline=True)
+        self.assertEqual(w.read_xlsx(path), [["모두", "인라인"]])
+
+    def test_sparse_and_r_less_cells_land_in_the_right_columns(self):
+        w = mod("wehago")
+        self.assertEqual(w.read_xlsx(self.xlsx([["a", None, "c"]])), [["a", "", "c"]])
+        raw = (_XML + '<worksheet xmlns="%s"><sheetData><row r="1"><c><v>1</v></c><c><v>2</v></c></row>'
+               '<row r="2"><c r="C2"><v>3</v></c><c><v>4</v></c></row></sheetData></worksheet>' % _MAIN)
+        self.assertEqual(w.read_xlsx(self.xlsx([], raw_sheet_xml=raw)), [["1", "2", "", ""], ["", "", "3", "4"]])
+
+    def test_error_and_boolean_cells_read_as_empty(self):
+        w = mod("wehago")
+        path = self.xlsx([[("e", "#REF!"), ("b", "1"), 5]])
+        self.assertEqual(w.read_xlsx(path), [["", "", "5"]])
+
+    def ledger_total(self, cell):
+        folder = folder_with(self)
+        row = list(FAKE_LEDGER[0])
+        row[8] = cell
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER, row])
+        return read_kind(folder, "매입매출장")[0][0]["total"]
+
+    def test_amount_forms(self):
+        self.assertEqual(self.ledger_total(("n", "4.4E7")), 44000000)
+        self.assertEqual(self.ledger_total("44,000,000"), 44000000)
+        self.assertEqual(self.ledger_total(44000000), 44000000)
+        self.assertIsNone(self.ledger_total(""))
+        self.assertIsNone(self.ledger_total(None))
+        self.assertIsNone(self.ledger_total(("n", "1.5")))
+        self.assertIsNone(self.ledger_total(("e", "#REF!")))
+        self.assertIsNone(self.ledger_total("가격 미정"))
+
+    def test_error_cell_in_debit_reads_as_none_not_zero(self):
+        folder = folder_with(self)
+        row = list(FAKE_JOURNAL[0])
+        row[5] = ("e", "#REF!")
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER, row])
+        self.assertIsNone(read_kind(folder, "분개장")[0][0]["debit"])
+
+    def journal_date(self, cell, **kw):
+        folder = folder_with(self)
+        row = list(FAKE_JOURNAL[0])
+        row[0] = cell
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER, row], **kw)
+        return read_kind(folder, "분개장")[0][0]["date"]
+
+    def test_date_forms(self):
+        want = dt.date(2026, 10, 20)
+        self.assertEqual(self.journal_date(46315), want)
+        self.assertEqual(self.journal_date(46315.5), want)
+        self.assertEqual(self.journal_date(44853, date1904=True), want)
+        for text in ("2026-10-20", "2026.10.20", "2026/10/20", "20261020"):
+            self.assertEqual(self.journal_date(text), want, text)
+        self.assertEqual(self.journal_date(20261020), want)
+        self.assertIsNone(self.journal_date("abc"))
+
+    def test_einvoice_month_day_takes_the_file_year(self):
+        folder = folder_with(self)
+        rows = [list(r) for r in FAKE_EINVOICE]
+        rows[0][0], rows[1][0] = "10-28", "12-30"
+        write_xlsx(kind_path(folder, "전자세금계산서(매입)"), [EINVOICE_HEADER] + rows)
+        got, _ = read_kind(folder, "전자세금계산서(매입)", file_date=dt.date(2026, 10, 31))
+        self.assertEqual([r["date"] for r in got], [dt.date(2026, 10, 28), dt.date(2025, 12, 30)])
+
+    def test_subtotal_and_blank_rows_are_skipped_and_counted(self):
+        folder = folder_with(self)
+        extra = [["", "", "", "", "월계", 1000, 1000, "", "", ""],
+                 ["", "", "", "", "", "", "", "", "", "누계"],
+                 [None] * 10]
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + extra)
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(len(books.journal), 34)
+        self.assertEqual(books.files["분개장"]["skipped"], 3)
+        self.assertEqual(books.files["분개장"]["last_date"], dt.date(2026, 10, 30))
+
+    def test_undated_data_row_is_kept_and_counted(self):
+        folder = folder_with(self)
+        row = list(FAKE_JOURNAL[0])
+        row[0] = "abc"
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + [row])
+        books = load(folder)
+        self.assertEqual(len(books.journal), 35)
+        self.assertIsNone(books.journal[-1]["date"])
+        self.assertEqual((books.files["분개장"]["undated"], books.files["분개장"]["skipped"]), (1, 0))
+        self.assertEqual(books.files["분개장"]["last_date"], dt.date(2026, 10, 30))
+
+
+class TestWehagoFolder(unittest.TestCase):
+    def test_newest_file_date_wins_and_the_other_is_unused(self):
+        folder = folder_with(self)
+        write_fake_books(folder, stamp="20261024", drop=("매입매출장", "전자세금계산서(매입)"))
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["분개장"]["name"], "분개장_20261031.xlsx")
+        self.assertEqual(books.unused, ["분개장_20261024.xlsx"])
+
+    def test_excel_owner_file_is_ignored_even_when_newest(self):
+        folder = folder_with(self)
+        junk = write_junk(os.path.join(folder, "~$분개장_20261031.xlsx"), b"\x00junk")
+        later = time.time() + 1000
+        os.utime(junk, (later, later))
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["분개장"]["name"], "분개장_20261031.xlsx")
+        self.assertNotIn("~$", repr(books.files) + repr(books.unused) + books.reason)
+
+    def test_sales_einvoice_export_is_never_read_as_purchase(self):
+        folder = folder_with(self)
+        sales = [list(r) for r in FAKE_EINVOICE]
+        sales[0][2] = "(주)가상음향"
+        sales[0][7] = 777
+        write_xlsx(os.path.join(folder, "전자세금계산서(매출)_20261031.xlsx"), [EINVOICE_HEADER] + sales)
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["전자세금계산서(매입)"]["name"], "전자세금계산서(매입)_20261031.xlsx")
+        self.assertEqual(books.unused, ["전자세금계산서(매출)_20261031.xlsx"])
+        self.assertEqual(len(books.einvoice), 2)
+        self.assertNotIn(777, [r["total"] for r in books.einvoice])
+
+    def test_xls_look_alike_is_named_in_the_missing_reason(self):
+        folder = folder_with(self, drop=("분개장",))
+        write_junk(os.path.join(folder, "분개장_20261031.xls"), b"\xd0\xcf\x11\xe0")
+        books = load(folder)
+        self.assertEqual(books.state, "자료 없음")
+        self.assertIn("분개장", books.reason)
+        self.assertIn(".xlsx만 읽음 (분개장_20261031.xls 있음)", books.reason)
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+
+    def test_missing_files_are_named(self):
+        empty = os.path.join(new_tmp(self), "비어 있음")
+        os.makedirs(empty)
+        books = load(empty)
+        self.assertEqual(books.state, "자료 없음")
+        for kind in ("분개장", "매입매출장", "전자세금계산서(매입)"):
+            self.assertIn(kind, books.reason)
+        only = folder_with(self, drop=("매입매출장", "전자세금계산서(매입)"))
+        books = load(only)
+        self.assertEqual(books.state, "자료 없음")
+        self.assertIn("매입매출장", books.reason)
+        self.assertIn("전자세금계산서(매입)", books.reason)
+        self.assertEqual(load(os.path.join(empty, "없는 폴더")).state, "자료 없음")
+
+    def test_stale_books_stop_the_cross_check(self):
+        books = load(folder_with(self, stamp="20261025"))
+        self.assertEqual(books.state, "경과")
+        self.assertIn("2026-10-25", books.reason)
+        self.assertIn("8일", books.reason)
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+        self.assertEqual(books.book_date, dt.date(2026, 10, 25))
+        self.assertEqual(load(folder_with(self, stamp="20261026")).state, "ok")
+
+    def test_missing_wins_over_stale(self):
+        self.assertEqual(load(folder_with(self, stamp="20261025", drop=("분개장",))).state, "자료 없음")
+
+    def test_ref_date_falls_back_to_the_last_row_date(self):
+        folder = folder_with(self)
+        os.rename(kind_path(folder, "분개장"), os.path.join(folder, "분개장.xlsx"))
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["분개장"]["file_date"], None)
+        self.assertEqual(books.files["분개장"]["ref_date"], dt.date(2026, 10, 30))
+        self.assertEqual(books.book_date, dt.date(2026, 10, 30))
+
+    def test_not_a_zip_is_a_read_failure(self):
+        folder = folder_with(self)
+        write_junk(kind_path(folder, "분개장"))
+        books = load(folder)
+        self.assertEqual(books.state, "읽기 실패")
+        self.assertIn("엑셀 파일을 열 수 없음", books.reason)
+        self.assertIn("분개장_20261031.xlsx", books.reason)
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+
+    def test_doctype_in_a_part_is_refused_before_parsing(self):
+        folder = folder_with(self)
+        bad = (_XML + '<!DOCTYPE worksheet [<!ENTITY a "b">]><worksheet xmlns="%s"><sheetData/></worksheet>' % _MAIN)
+        write_xlsx(kind_path(folder, "분개장"), [], raw_sheet_xml=bad)
+        books = load(folder)
+        self.assertEqual(books.state, "읽기 실패")
+        self.assertIn("엑셀 내부 형식이 예상과 다름", books.reason)
+
+    def test_oversized_part_is_refused(self):
+        w = mod("wehago")
+        folder = folder_with(self)
+        with mock.patch.object(w, "MAX_PART_BYTES", 1000):
+            books = w.load_books(folder, ASOF, 7)
+        self.assertEqual(books.state, "읽기 실패")
+        self.assertIn("엑셀 파일이 너무 큼", books.reason)
+
+    def test_broken_xml_is_a_read_failure(self):
+        folder = folder_with(self)
+        write_xlsx(kind_path(folder, "분개장"), [], raw_sheet_xml=_XML + "<worksheet><sheetData><row>")
+        books = load(folder)
+        self.assertEqual(books.state, "읽기 실패")
+        self.assertIn("엑셀 내부 형식이 예상과 다름", books.reason)
+
+    def test_read_failure_wins_over_stale(self):
+        folder = folder_with(self, stamp="20261025")
+        write_junk(kind_path(folder, "분개장", "20261025"))
+        self.assertEqual(load(folder).state, "읽기 실패")
+
+
+class TestWehagoPrivacy(unittest.TestCase):
+    def test_mask_rrn(self):
+        m = mod("wehago").mask_rrn
+        star = "******-*******"
+        self.assertEqual(m("가상 개인강사 900101-1234567 강사료"), "가상 개인강사 %s 강사료" % star)
+        self.assertEqual(m("9001011234567"), star)
+        self.assertEqual(m("900101-0234567"), star)
+        self.assertEqual(m("900101-9234567"), star)
+        self.assertEqual(m("900101 9234567"), star)
+        self.assertEqual(m("123-45-67890"), "123-45-67890")
+        self.assertEqual(m("12900101-1234567"), "12" + star)
+        self.assertEqual(m(""), "")
+
+    def test_no_rrn_survives_loading_and_the_biz_number_column_is_not_stored(self):
+        books = load(folder_with(self))
+        self.assertEqual(books.state, "ok")
+        for row in books.ledger:
+            self.assertFalse([k for k in row if "사업자" in k or "주민" in k])
+            self.assertNotIn("000-00-0000", repr(row))
+        text = repr(all_rows(books))
+        self.assertNotIn("900101-1234567", text)
+        self.assertNotIn("9001011234567", text)
+        memos = [r["memo"] for r in books.journal if "강사료" in r["memo"]]
+        self.assertEqual(memos, ["가상 개인강사 ******-******* 강사료"] * 2)
+
+    def test_rrn_in_the_vendor_and_item_columns_is_masked_too(self):
+        folder = folder_with(self)
+        row = list(FAKE_LEDGER[0])
+        row[3], row[5] = "개인 900101-1234567", "[26201] 900101 1234567 강의"
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER, row])
+        got = read_kind(folder, "매입매출장")[0][0]
+        self.assertEqual(got["vendor"], "개인 ******-*******")
+        self.assertEqual(got["item"], "[26201] ******-******* 강의")
 
 
 if __name__ == "__main__":
