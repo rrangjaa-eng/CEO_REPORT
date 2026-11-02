@@ -223,3 +223,31 @@ class TestTitleRowAboveHeader(unittest.TestCase):
         rows, ok = read_csv(path, ["a", "b"], iss, info)
         self.assertEqual(info["missing"], ["a", "b"])
         self.assertTrue(any("필수 열 없음" in m for _, _, m in iss.items))
+
+
+class _FixedNow(dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 11, 2, 9, 30, 5)
+
+
+class TestApprovalSameMinute(unittest.TestCase):
+    """같은 분에 두 번 만들면 앞 화면을 덮어쓰지 않는다 (기준일을 바꿔 비교하는 경우 앞 화면이 사라졌다)."""
+
+    def test_second_run_gets_its_own_file(self):
+        from unittest import mock
+        cli = load_approval_cli()
+        tmp = new_tmp(self)
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        out = os.path.join(tmp, "출력")
+        fake = type("dtmod", (), {"datetime": _FixedNow, "date": dt.date, "time": dt.time, "timedelta": dt.timedelta})
+        with mock.patch.object(cli, "dt", fake):
+            p1, _ = cli.make_screen(SAMPLE, out, snap, ASOF, NOW, False)
+            p2, _ = cli.make_screen(SAMPLE, out, snap, dt.date(2026, 12, 31), dt.datetime(2026, 12, 31), False)
+        self.assertNotEqual(p1, p2)
+        self.assertEqual(os.path.basename(p1), "승인검토_20261102_0930.html")
+        self.assertEqual(os.path.basename(p2), "승인검토_20261102_0930_2.html")
+        with open(p1, encoding="utf-8") as f:
+            self.assertIn("기준일 2026-11-02", f.read())
+        with open(p2, encoding="utf-8") as f:
+            self.assertIn("기준일 2026-12-31", f.read())

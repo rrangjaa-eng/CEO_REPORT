@@ -162,7 +162,11 @@ def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_
     A = build(d, snap, asof, now, wehago_dir)
     page = render_approval(A, collected_now)
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, "승인검토_%s.html" % dt.datetime.now().strftime("%Y%m%d_%H%M"))
+    stem = os.path.join(out_dir, "승인검토_%s" % dt.datetime.now().strftime("%Y%m%d_%H%M"))
+    path, n = stem + ".html", 1
+    while os.path.exists(path):  # 같은 분에 다시 만들면 앞 화면을 덮어쓰지 않는다 (_2, _3 ...)
+        n += 1
+        path = "%s_%d.html" % (stem, n)
     with open(path, "w", encoding="utf-8") as f:
         f.write(page)
     return path, A
