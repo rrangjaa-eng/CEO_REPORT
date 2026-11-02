@@ -5,6 +5,8 @@ ID·비밀번호는 시험용 가짜 값이며, 어떤 실행에서도 파일·�
 다른 시험 파일에서는 함수와 상수만 가져온다(TestCase 클래스는 가져오지 않는다).
 """
 import contextlib
+import csv
+import datetime as dt
 import getpass
 import http.client
 import io
@@ -24,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, element_html, load_approval_cli,  # noqa: E402
+from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, as_dicts, element_html, load_approval_cli,  # noqa: E402
                            text_of, write_fake_snapshot)
 from test_intranet import (PASSWORD, USER, FakeTransport, PAYMENT_HEADER, login_page,  # noqa: E402
                            make_fake_opener, payment_page, project_page, site_routes)
@@ -252,6 +254,108 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
                 load_approval_cli().build_parser().parse_args(["--최대페이지", "0"])
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(load_approval_cli().build_parser().parse_args([]).최대페이지, 300)
+
+
+# CR-02: 인트라넷 글자(행사명·파트너·클라이언트 등)의 주민번호 모양 값은 화면·CSV·stdout 어디에도 나가지 않는다 (D-36).
+# 가상 값만 쓴다. 'RRN_PARTS' 의 두 조각은 다른 가상 자료에 나오지 않는 숫자다.
+RRN_PARTS = ("770707", "2345678")
+RRN_PAYMENTS = [
+    ["5201", "[26201] 강사료 홍길동 770707-2345678", "홍길동 770707 - 2345678", "2026-10-30 10:00:00", "2026-11-20",
+     "800,000", "2026-11-13", "홍길동", "승인", "승인", "미승인"],
+    ["5202", "[26201] 강사료 770707–2345678", "가상강사 770707.2345678", "2026-10-30 11:00:00", "2026-11-20",
+     "300,000", "", "홍길동", "승인", "승인", "승인"],
+    ["5203", "[26220] 강사료 7707072345678", "가상강사 770707/2345678", "2026-10-30 11:00:00", "2026-11-20",
+     "1,100,000", "2026-11-13", "홍길동", "승인", "승인", "반려"],
+]
+RRN_PROJECT = ["26230", "개인고객 770707-2345678", "홍길동", "PO-9", "2026-11-20", "[26230] 개인 강의 770707 2345678", "1국",
+               "1팀", "홍길동", "미발행", "1,000,000", "1,100,000", "900,000", "18.2%", "승인", "승인", "승인", "승인", "905"]
+
+
+def assert_no_rrn(test, tmp, captured):
+    """tmp 아래 모든 파일과 붙잡은 출력에 주민번호 조각이 없어야 한다 (가려졌다는 표시는 남아도 된다)."""
+    seen = 0
+    for dirpath, _, files in os.walk(tmp):
+        for name in files:
+            with open(os.path.join(dirpath, name), "rb") as f:
+                data = f.read().decode("utf-8", "replace")
+            seen += 1
+            for part in RRN_PARTS:
+                test.assertNotIn(part, data, "파일에 남음: %s" % name)
+    for text in captured:
+        for part in RRN_PARTS:
+            test.assertNotIn(part, text)
+    return seen
+
+
+def unmasked_snapshot(snap, payments, projects):
+    """write_snapshot 이 가린 값을 원래 값으로 되돌려 쓴다 (가리기 전 버전이 쓴 스냅숏 흉내). 프로젝트 줄은 덧붙인다."""
+    for name, rows, append in (("지급요청.csv", payments, False), ("프로젝트목록.csv", projects, True)):
+        path = os.path.join(snap, name)
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            table = list(csv.reader(f))
+        stamp = table[1][0]
+        by_no = dict((r[0], r) for r in rows)
+        table = [table[0]] + [([t[0]] + by_no[t[1]]) if t[1] in by_no else t for t in table[1:]]
+        if append:
+            table += [[stamp] + list(r) for r in rows]
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows(table)
+    if projects:
+        info = os.path.join(snap, "수집정보.csv")
+        with open(info, encoding="utf-8-sig", newline="") as f:
+            table = list(csv.reader(f))
+        table = [[k, str(int(v) + len(projects))] if k == "프로젝트_건수" else [k, v] for k, v in table]
+        with open(info, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows(table)
+
+
+class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
+    def setUp(self):
+        self.make_tmp()
+
+    def test_collect_run_masks_intranet_text_in_snapshot_page_and_stdout(self):
+        site = fake_site({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS + RRN_PAYMENTS)),
+                          ("GET", "/project/index"): (200, {}, project_page(FAKE_PROJECTS + [RRN_PROJECT]))})
+        rc, out, err, fake, mocks = run_cli(self, self.argv(), site=site)
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 4)  # 스냅숏 CSV 3개 + 화면 1개
+        snap = snapshot_module().read_snapshot(os.path.join(self.root, entries(self.root)[0]))
+        names = dict((p["번호"], (p["행사명"], p["파트너"])) for p in snap.payments)
+        self.assertEqual(names["5201"], ("[26201] 강사료 홍길동 ******-*******", "홍길동 ******-*******"))
+        self.assertEqual(names["5201"][0][:7], "[26201]")  # 프로젝트 코드는 그대로 읽힌다
+        with open(os.path.join(self.out, entries(self.out)[0]), encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("******-*******", page)
+
+    def test_crawler_rows_are_masked_where_they_are_read(self):
+        opener = intranet().make_opener(
+            transport=FakeTransport(site_routes(RRN_PAYMENTS, [RRN_PROJECT])), proxies={}, delay=0,
+            sleep=lambda s: None)
+        result = intranet().collect(opener, USER, PASSWORD)
+        self.assertNotIn(RRN_PARTS[0], repr(result.payments) + repr(result.projects))
+        self.assertNotIn(RRN_PARTS[1], repr(result.payments) + repr(result.projects))
+        self.assertEqual(result.projects[0]["클라이언트"], "개인고객 ******-*******")
+
+    def test_write_snapshot_masks_whatever_it_is_given(self):
+        s = snapshot_module()
+        path = s.write_snapshot(self.root, dt.datetime(2026, 11, 2, 9, 0, 0),
+                                as_dicts(RRN_PAYMENTS, s.PAYMENT_COLUMNS), as_dicts([RRN_PROJECT], s.PROJECT_COLUMNS))
+        self.assertEqual(assert_no_rrn(self, path, []), 3)
+
+    def test_an_older_unmasked_snapshot_is_masked_on_the_page(self):
+        snap = write_fake_snapshot(self.root, extra=RRN_PAYMENTS)
+        # 이전 버전이 가리지 않고 쓴 스냅숏을 흉내 낸다: CSV 에 원래 값을 다시 써 넣는다
+        unmasked_snapshot(snap, RRN_PAYMENTS, [RRN_PROJECT])
+        with open(os.path.join(snap, "지급요청.csv"), encoding="utf-8-sig") as f:
+            self.assertIn(RRN_PARTS[0], f.read())  # 시험 준비 확인: 디스크의 옛 스냅숏에는 원래 값이 있다
+        rc, out, err, fake, mocks = run_cli(
+            self, ["--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
+        self.assertEqual(rc, 0, out + err)
+        assert_no_rrn(self, self.out, [out, err])
+        with open(os.path.join(self.out, entries(self.out)[0]), encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("강사료 홍길동 ******-*******", page)
+        self.assertIn("개인 강의 ******-*******", page)
 
 
 class TestApprovalCollectStops(_TmpMixin, unittest.TestCase):

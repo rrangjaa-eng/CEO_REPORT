@@ -7,7 +7,7 @@ import datetime as dt
 import re
 
 from .calc import compute
-from .util import Issues, is_blank, num, setting_num, ssum, ssum_or_none, won
+from .util import Issues, is_blank, mask_rrn, num, setting_num, ssum, ssum_or_none, won
 from .util import date as parse_date
 
 # 새 설정의 기본값은 여기에 둔다. data.DEFAULT_SETTINGS에 넣으면 주간·월간 보고가 읽는 값이 달라진다 (P-7).
@@ -340,6 +340,11 @@ def _xchk_full(books, match, req_all, projects, wehago):
     return x
 
 
+def _masked(rows):
+    """스냅숏 줄의 글자 칸에서 주민번호 모양 값을 가린 복사본 (D-36, CR-02). 이전 버전이 쓴 스냅숏은 가려져 있지 않다."""
+    return [dict((k, mask_rrn(v) if isinstance(v, str) else v) for k, v in row.items()) for row in rows]
+
+
 def build(d, snap, asof, now, wehago_dir=None):
     """승인 검토 화면의 모든 숫자를 한 번에 만든다. d(Data)는 바꾸지 않는다.
 
@@ -370,7 +375,7 @@ def build(d, snap, asof, now, wehago_dir=None):
 
     # 요청 읽기와 예상 지급일 (A-1, A-2, A-4)
     req_all, numbers = [], set()
-    for k, row in enumerate(snap.payments):
+    for k, row in enumerate(_masked(snap.payments)):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
@@ -495,7 +500,7 @@ def build(d, snap, asof, now, wehago_dir=None):
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests}
-    projects, unrequested, unlinked, over_requested = _projects(snap.projects, req_all)
+    projects, unrequested, unlinked, over_requested = _projects(_masked(snap.projects), req_all)
     lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
              "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,
              "past": past, "beyond": beyond, "beyond_requests": beyond_requests,

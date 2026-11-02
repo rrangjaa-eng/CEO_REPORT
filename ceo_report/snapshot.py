@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 
-from .util import Issues, read_csv
+from .util import Issues, mask_rrn, read_csv
 
 PAYMENT_COLUMNS = ["번호", "행사명", "파트너", "등록일", "행사일", "금액", "지급요청일", "등록자",
                    "팀장승인", "관리팀승인", "사장님승인"]
@@ -38,11 +38,12 @@ class Snapshot:
 
 
 def _write_csv(path, header, rows):
+    """주민번호 모양 값은 가려서 쓴다 (D-36, CR-02). 숫자 칸(건수)은 그대로다."""
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
         for r in rows:
-            w.writerow(r)
+            w.writerow([mask_rrn(v) if isinstance(v, str) else v for v in r])
 
 
 def _page_counts(pages):

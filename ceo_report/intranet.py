@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 
 from .snapshot import PAYMENT_COLUMNS, PROJECT_COLUMNS
+from .util import mask_rrn
 
 HOST = "intranet.plant8.co.kr"
 BASE = "https://" + HOST
@@ -518,11 +519,12 @@ def _pro_num(row):
 
 
 def _map_payment(row):
-    return dict(zip(PAYMENT_KEYS, row.cells[:len(PAYMENT_KEYS)]))
+    # 주민번호 모양 값은 읽는 곳에서 가린다: 스냅숏 CSV·화면·stdout 어디에도 나가지 않는다 (D-36, CR-02)
+    return dict(zip(PAYMENT_KEYS, [mask_rrn(c) for c in row.cells[:len(PAYMENT_KEYS)]]))
 
 
 def _map_project(row):
-    cells = row.cells
+    cells = [mask_rrn(c) for c in row.cells]  # D-36, CR-02
     values = cells[1:15] + cells[16:20]
     mapped = dict(zip(PROJECT_KEYS[:-1], values))
     mapped["pro_num"] = _pro_num(row)

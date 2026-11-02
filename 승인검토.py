@@ -39,7 +39,7 @@ from ceo_report.approval_render import book_dates_line, render_approval, xchk_co
 from ceo_report.data import load  # noqa: E402
 from ceo_report.snapshot import SnapshotError, latest_snapshot, read_snapshot, write_snapshot  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
-from ceo_report.util import num  # noqa: E402
+from ceo_report.util import mask_rrn, num  # noqa: E402
 
 
 def _positive_int(text):
@@ -108,7 +108,7 @@ def _scrub(text, secrets):
 
 
 def _fail(code, text, secrets):
-    print(_scrub(text, secrets))
+    print(mask_rrn(_scrub(text, secrets)))
     return code
 
 
@@ -181,7 +181,7 @@ def main(argv=None):
     try:
         path, A = make_screen(a.입력, a.출력, snap_path, asof, now, False, wehago_dir=a.위하고폴더 or default_wehago(a))
     except SnapshotError as e:
-        print("스냅숏을 읽지 못했습니다: %s" % e)
+        print(mask_rrn("스냅숏을 읽지 못했습니다: %s" % e))
         return 2
     report(path, A, "(마지막 스냅숏)")
     if a.열기 == "열기":
