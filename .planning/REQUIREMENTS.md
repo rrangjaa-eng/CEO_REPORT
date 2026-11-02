@@ -69,9 +69,16 @@
 - [ ] **CRAWL-03**: 지급요청·프로젝트 목록 전 페이지를 수집 시각이 있는 CSV 스냅숏으로 저장하고, 화면 구조가 다르면 멈추고 차이를 알린다
 - [ ] **CRAWL-04**: 실제 수집 자료는 git에 올라가지 않는다
 
+### WEHAGO 기준 대조 (XCHK) — Phase 01.1
+
+- [ ] **XCHK-01**: WEHAGO 분개장·매입매출장·전자세금계산서(매입) 엑셀을 읽고, 머리글이 다르면 멈추고 차이를 알린다. 장부 기준일이 보인다
+- [ ] **XCHK-02**: 승인 화면 요청마다 WEHAGO 대조 상태(계산서 있음/금액 차이/계산서 없음/이미 지급/연결 불가)와 첫 화면 상태별 건수·금액. '이미 지급'은 일정에서 빠진다
+- [ ] **XCHK-03**: 거래처별 WEHAGO 미지급금 vs 인트라넷 요청 합계, 프로젝트별 WEHAGO (도) 원가 vs 인트라넷 실행가·요청 누계, 프로젝트 미연결 원가가 보인다
+- [ ] **XCHK-04**: WEHAGO 실제 자료는 git에 올라가지 않고 주민번호 형태 값은 출력에 나오지 않는다
+
 ### 원천자료 (SRC)
 
-- [ ] **SRC-01**: WEHAGO에서 내려받은 엑셀을 손익·계산서·채권채무 입력 CSV로 바꾼다
+- [ ] **SRC-01**: WEHAGO에서 내려받은 엑셀을 손익·계산서·채권채무 입력 CSV로 바꾸고, 월간 보고에 WEHAGO 기준 대조(XCHK와 같은 규칙)를 싣는다
 - [ ] **SRC-02**: 인트라넷 수집 스냅숏(Phase 01.1)을 프로젝트·집행 입력 CSV로 바꾼다
 
 ### 배포 (DEP)
@@ -97,11 +104,11 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | CASH-01..03, PLAN-01..03, PROJ-01..04, PL-01..03, AR-01..03, AP-01..02, DATA-01..03, REP-01..03 | Phase 1 | Pending |
-| APPR-01..06, CRAWL-01..04 | Phase 01.1 | Pending |
+| APPR-01..06, CRAWL-01..04, XCHK-01..04 | Phase 01.1 | Pending |
 | SRC-01..02 | Phase 2 | Pending |
 | DEP-01..03 | Phase 3 | Pending |
 
-**Coverage:** v1 39 total · mapped 39 · unmapped 0 ✓
+**Coverage:** v1 43 total · mapped 43 · unmapped 0 ✓
 
 ---
 *Requirements defined: 2026-11-02*
