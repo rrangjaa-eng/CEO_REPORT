@@ -123,9 +123,22 @@ def read_rows(path):
         return list(csv.reader(f))
 
 
-def company_rows(rows):
-    """읽은 손익.csv 줄 중 WEHAGO 회사 줄만 (02-03부터 같은 파일에 팀·프로젝트 줄도 있다)."""
-    return [r for r in rows[1:] if r[0] == "WEHAGO" and r[2] == "회사"]
+KEPT_SAMPLE_MONTHS = [   # 02-REVIEW CR-04: 샘플 이전 손익.csv 중 새 분개장(2026-09~2026-10) 밖의 달은 이전 변환 그대로 남는다
+    "WEHAGO,2026-01,회사,회사 전체,0,0,30000000,", "WEHAGO,2026-02,회사,회사 전체,80000000,54400000,30000000,",
+    "WEHAGO,2026-03,회사,회사 전체,120000000,81600000,30000000,", "WEHAGO,2026-04,회사,회사 전체,150000000,102000000,30000000,",
+    "WEHAGO,2026-05,회사,회사 전체,90000000,61200000,30000000,", "WEHAGO,2026-06,회사,회사 전체,200000000,136000000,30000000,",
+    "WEHAGO,2026-07,회사,회사 전체,160000000,108800000,30000000,", "WEHAGO,2026-08,회사,회사 전체,140000000,95200000,30000000,"]
+KEPT_SAMPLE_LATER = ["WEHAGO,2026-11,회사,회사 전체,30000000,20400000,30000000,Y"]
+JOURNAL_MONTHS = ("2026-09", "2026-10")   # FAKE_PL_JOURNAL 의 달
+
+
+def company_rows(rows, months=JOURNAL_MONTHS):
+    """읽은 손익.csv 줄 중 WEHAGO 회사 줄만 (02-03부터 같은 파일에 팀·프로젝트 줄도 있다).
+
+    months: 이 달들의 줄만 (기본: 새 분개장 FAKE_PL_JOURNAL 의 달). 02-REVIEW CR-04 부터 분개장 밖 달의 이전 줄은 남으므로
+    새로 만든 줄만 보려면 달로 거른다. None 이면 모든 회사 줄.
+    """
+    return [r for r in rows[1:] if r[0] == "WEHAGO" and r[2] == "회사" and (months is None or r[1] in months)]
 
 
 def mod(name):
@@ -156,10 +169,13 @@ class TestConvertTracer(unittest.TestCase):
         # 02-03: 스냅숏이 없어도 [코드]로 이은 프로젝트 줄이 회사 줄 뒤에 붙는다 (회사 줄은 그대로)
         self.assertEqual(company_rows(rows), ["WEHAGO,2026-09,회사,회사 전체,100000000,10000000,2000000,Y".split(","),
                                               "WEHAGO,2026-10,회사,회사 전체,94000000,249500000,4500000,Y".split(",")])
-        self.assertEqual(rows[1], "WEHAGO,2026-09,회사,회사 전체,100000000,10000000,2000000,Y".split(","))
+        # 02-REVIEW CR-04: 새 분개장 밖의 달(2026-01~08 앞, 2026-11 뒤)은 이전 변환 줄(회사·팀)을 그대로 남긴다 (예전: 모두 지움)
+        self.assertEqual(company_rows(rows, None), [r.split(",") for r in KEPT_SAMPLE_MONTHS] + company_rows(rows)
+                         + [r.split(",") for r in KEPT_SAMPLE_LATER])
+        self.assertEqual(rows[1], KEPT_SAMPLE_MONTHS[0].split(","))
         self.assertEqual(rows[-3:], carried)
-        self.assertEqual(len(rows), 13)  # 머리글 + 12줄
-        self.assertEqual(sum(1 for r in rows[1:] if r[0] == "WEHAGO"), 9)
+        self.assertEqual(len(rows), 40)  # 머리글 + 이전 유지 24줄 (8달 × 회사·팀 2) + 새 9줄 + 이전 유지 3줄 (2026-11) + 옮긴 3줄
+        self.assertEqual(sum(1 for r in rows[1:] if r[0] == "WEHAGO"), 36)
 
     def test_result_file_has_source_vs_csv_checks(self):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
@@ -173,12 +189,15 @@ class TestConvertTracer(unittest.TestCase):
         self.assertIn("손익.csv에 넣지 않은 손익 계정: 45100 (도)외주비 1줄 500,000 · 93100 이자비용 1줄 400,000", text)
         self.assertIn("공통비 중 (판) 표시 없음: 81900 임차료 1줄 3,000,000 (공통비에 넣음)", text)
         self.assertTrue(lines[0].startswith("변환 시각 "), lines[0])
-        self.assertIn("[손익.csv] 만듦 12줄", lines)
+        self.assertIn("[손익.csv] 만듦 39줄", lines)   # 02-REVIEW CR-04: 이전 변환 유지 27줄 포함 (예전 12줄)
+        self.assertIn("  알림 이전 변환 유지 2026-01~2026-08, 2026-11 (WEHAGO 줄 27건: 회사 9 · 팀 18) — 새 분개장(2026-09~2026-10)에 없는 달",
+                      lines)
+        self.assertIn("  알림 분개장 기간 2026-09-15~2026-10-31", lines)
         self.assertTrue(any(ln.startswith("WEHAGO 장부: ") and "장부 기준일 2026-10-31" in ln for ln in lines))
 
     def test_stdout_is_a_short_summary(self):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
-        self.assertIn("손익.csv 만듦 12줄", out)
+        self.assertIn("손익.csv 만듦 39줄", out)   # 02-REVIEW CR-04: 이전 변환 유지 27줄 포함
         self.assertIn("대조 불일치 0건", out)
         self.assertIn("변환결과.txt", out)
         self.assertIn("2026-10-31", out)
@@ -193,7 +212,8 @@ class TestConvertTracer(unittest.TestCase):
         self.assertEqual(len(company), 1)
         cur, ytd = company[0]["cur"], company[0]["ytd"]
         self.assertEqual((cur["revenue"], cur["direct"], cur["common"]), (94000000, 249500000, 4500000))
-        self.assertEqual((ytd["revenue"], ytd["direct"], ytd["common"]), (194000000, 259500000, 6500000))
+        # 02-REVIEW CR-04: 누계에 이전 변환 유지 달(샘플 2026-01~08)이 남는다 (예전: 새 분개장 두 달 194,000,000 · 259,500,000 · 6,500,000)
+        self.assertEqual((ytd["revenue"], ytd["direct"], ytd["common"]), (1134000000, 898700000, 246500000))
         self.assertTrue(cur["provisional"])
 
     def test_bad_asof_is_exit_2(self):
@@ -630,10 +650,13 @@ class TestConvertProvisional(unittest.TestCase):
 
     def test_a_closing_line_of_last_year_only_closes_last_year(self):
         line = jl_sort(dt.date(2025, 12, 31), 91, "결대", "37500", "이월이익잉여금", None, 0, "", "전기 결산")
-        rows, _ = self.pl_rows(FAKE_PL_JOURNAL + [line])
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=FAKE_PL_JOURNAL + [line])
+        rows = company_rows(read_rows(os.path.join(input_dir, "손익.csv")), None)
+        # 02-REVIEW CR-04: 분개장이 2025-12~2026-10 을 덮으므로 그 사이 샘플 줄은 바뀌고 뒤의 2026-11 만 이전 변환 그대로 남는다
         self.assertEqual([(r[1], r[4:7], r[7]) for r in rows],
                          [("2025-12", ["0", "0", "0"], ""), ("2026-09", ["100000000", "10000000", "2000000"], "Y"),
-                          ("2026-10", ["94000000", "249500000", "4500000"], "Y")])
+                          ("2026-10", ["94000000", "249500000", "4500000"], "Y"),
+                          ("2026-11", ["30000000", "20400000", "30000000"], "Y")])
 
     def test_closing_words_come_from_the_settings(self):
         other = jl_sort(dt.date(2026, 10, 31), 92, "결산", "37500", "이월이익잉여금", 0, None, "", "연말 결산")
@@ -659,8 +682,9 @@ class TestConvertProvisional(unittest.TestCase):
         self.assertIn("  대조 직접비 (6xxxx (도) 차변−대변): 원본 259,500,000 · CSV 259,500,000 → 일치", lines)
         self.assertIn("대조 불일치 0건", lines)
         # 02-03: 회사 합계 확인 1건 + 프로젝트별 합계 확인(2026-10 매출) 1건
-        self.assertIn("대조 판단 불가 2건", lines)
-        self.assertIn("대조 판단 불가 2건", out)
+        # + 02-REVIEW CR-04 올해 누계 매출 확인 1건 (모르는 칸이 있으니 판단 불가; 예전 2건)
+        self.assertIn("대조 판단 불가 3건", lines)
+        self.assertIn("대조 판단 불가 3건", out)
         d = mod("data").load(input_dir)
         R = mod("calc").compute(d, "monthly", dt.date(2026, 10, 31))
         company = [t for t in R["s4"]["sources"]["WEHAGO"]["table"] if t["unit"] == "회사"][0]

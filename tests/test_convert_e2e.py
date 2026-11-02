@@ -131,7 +131,8 @@ class TestConvertEndToEnd(unittest.TestCase):
     def test_cross_file_totals_agree_in_the_written_files(self):
         pl = read_csv_rows(os.path.join(self.input_dir, "손익.csv"))
         head = pl[0]
-        company = [dict(zip(head, r)) for r in pl[1:] if r[0] == "WEHAGO" and r[2] == "회사"]
+        # 02-REVIEW CR-04: 새 분개장 밖 달의 이전 회사 줄은 남으므로 새 분개장의 달(2026-09~10)만 더한다
+        company = [dict(zip(head, r)) for r in pl[1:] if r[0] == "WEHAGO" and r[2] == "회사" and r[1] in ("2026-09", "2026-10")]
         self.assertEqual(sum(int(r["직접비"]) for r in company), 259500000)
         self.assertEqual(sum(int(r["매출"]) for r in company), 194000000)
         unlinked = [dict(zip(head, r)) for r in pl[1:] if r[0] == "WEHAGO" and r[2] == "프로젝트" and r[3] == "프로젝트 미연결"]

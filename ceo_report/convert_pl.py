@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 from . import data
 from .convert import Check, Table, cell_amount
-from .util import won
+from .util import num, won
 
 CATEGORIES = (("revenue", "매출", "매출"), ("direct", "직접비", "직접비"), ("common", "공통비", "공통비"))
 
@@ -200,6 +200,88 @@ def _project_row(columns, ym, key, cells, projects, snapshot, final):
     return dict(zip(columns, values))
 
 
+def _month_span(months):
+    """['2026-09', '2026-10'] -> 처음 달부터 마지막 달까지 모든 달 (빈 목록이면 빈 집합)."""
+    if not months:
+        return set()
+    first, last = min(months), max(months)
+    y, m = int(first[:4]), int(first[5:7])
+    out = set()
+    while "%04d-%02d" % (y, m) <= last:
+        out.add("%04d-%02d" % (y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def _ranges(months):
+    """달 목록 -> '2026-01~2026-08, 2026-11' (이어지는 달은 묶는다; 달 모양이 아닌 글자는 그대로)."""
+    good = sorted(m for m in set(months) if re.match(r"^\d{4}-\d{2}$", m))
+    odd = sorted(m for m in set(months) if not re.match(r"^\d{4}-\d{2}$", m))
+    parts, start, prev = [], None, None
+    for m in good:
+        if prev is not None and _month_span([prev, m]) == {prev, m}:
+            prev = m
+            continue
+        if start is not None:
+            parts.append(start if start == prev else "%s~%s" % (start, prev))
+        start = prev = m
+    if start is not None:
+        parts.append(start if start == prev else "%s~%s" % (start, prev))
+    return ", ".join(parts + [o or "(연월 없음)" for o in odd])
+
+
+def _ym(row):
+    return (row.get("연월") or "").strip()[:7]
+
+
+def _company_sum(rows, year, measure):
+    """WEHAGO 회사 줄 중 그 해 줄의 칸 합계. 모르는 칸이 하나라도 있으면 None."""
+    total = 0
+    for r in rows:
+        if r.get("출처", "") == "WEHAGO" and r.get("단위", "") == "회사" and _ym(r).startswith(year + "-"):
+            v = num(r.get(measure))
+            if v is None:
+                return None
+            total += v
+    return total
+
+
+def _kept_row(columns, r):
+    """이전 변환에서 유지하는 WEHAGO 줄: 금액 칸은 이 파일의 모양(쉼표 없는 정수)으로, 읽을 수 없는 글자는 그대로 둔다."""
+    out = dict((c, (r.get(c) or "").strip()) for c in columns)
+    for c in ("매출", "직접비", "공통비"):
+        v = num(out[c])
+        if v is not None:
+            out[c] = cell_amount(v)
+    return out
+
+
+def ytd_checks(per_company, prev_rows, rows):
+    """올해 누계 대조 (CR-04): CSV 회사 줄의 올해 합 = 새 분개장의 올해 합 + 새 분개장 기간 밖이라 이전 변환에서 유지한 달의 합.
+
+    per_company: 새 분개장 달 -> {revenue, direct, common} 회사 칸 (모르면 None). 올해 = 새 분개장 마지막 달의 해.
+    기대값은 이전 손익.csv 와 분개장 기간에서 바로 구한다: 기간 밖 달을 버리면 CSV 쪽이 모자라 '불일치' (CSV 누계 ≥ 새 분개장 누계).
+    """
+    months = sorted(per_company)
+    if not months:
+        return []
+    covered = _month_span(months)
+    year = months[-1][:4]
+    kept = [r for r in prev_rows if r.get("출처", "") == "WEHAGO" and _ym(r) not in covered]
+    out = []
+    for key, label, measure in CATEGORIES:
+        new = 0
+        for ym in months:
+            if ym.startswith(year + "-"):
+                v = per_company[ym][key]
+                new = None if v is None or new is None else new + v
+        old = _company_sum(kept, year, measure)
+        source = None if new is None or old is None else new + old
+        out.append(Check("올해(%s) 누계 %s: 새 분개장 + 이전 변환 유지 달 = CSV 회사 줄" % (year, label), source,
+                         _company_sum(rows, year, measure)))
+    return out
+
+
 def build_pl(books, cfg, prev_rows, links=None):
     """손익.csv Table: 달마다 회사 줄, 프로젝트 줄 순서로 WEHAGO 줄을 쓰고, 이전 손익.csv 의 WEHAGO 외 출처 줄을 그대로 잇는다 (P1-2).
 
@@ -213,6 +295,7 @@ def build_pl(books, cfg, prev_rows, links=None):
     csv_unknown = dict((k, False) for k, _, _ in CATEGORIES)
     unit_totals = _unit_totals(links) if links is not None else {}
     unit_checks = []
+    per_company = OrderedDict()
     for ym, cats in per.items():
         cells = {}
         for key, label, _ in CATEGORIES:
@@ -224,6 +307,7 @@ def build_pl(books, cfg, prev_rows, links=None):
             else:
                 cells[key] = total
                 csv_sum[key] += total
+        per_company[ym] = dict(cells)
         values = ["WEHAGO", ym, "회사", "회사 전체", cell_amount(cells["revenue"]), cell_amount(cells["direct"]),
                   cell_amount(cells["common"]), "" if int(ym[:4]) in closed else "Y"]
         rows.append(dict(zip(columns, values)))
@@ -254,14 +338,31 @@ def build_pl(books, cfg, prev_rows, links=None):
         notes.append("손익.csv에 넣지 않은 손익 계정: " + _listing(excluded))
     if unmarked:
         notes.append("공통비 중 %s 표시 없음: %s (공통비에 넣음)" % (cfg["common_mark"], _listing(unmarked)))
+    # CR-04: 이전 WEHAGO 줄은 새 분개장이 덮는 달(처음 전표 달 ~ 마지막 전표 달)만 바꾼다. 그 밖의 달은 그대로 둔다 (누계가 줄지 않게)
+    dated = [line["date"] for line in books.journal if line["date"] is not None]
+    if dated:
+        notes.append("분개장 기간 %s~%s" % (min(dated).isoformat(), max(dated).isoformat()))
+    covered = _month_span(list(per))
     carried = [r for r in prev_rows if r.get("출처", "") != "WEHAGO"]
-    replaced = [r for r in prev_rows if r.get("출처", "") == "WEHAGO"]
-    if replaced:
+    replaced = [r for r in prev_rows if r.get("출처", "") == "WEHAGO" and _ym(r) in covered]
+    kept = [r for r in prev_rows if r.get("출처", "") == "WEHAGO" and _ym(r) not in covered]
+
+    def unit_text(group):
         units = OrderedDict()
-        for r in replaced:
+        for r in group:
             units[r.get("단위", "") or "(단위 없음)"] = units.get(r.get("단위", "") or "(단위 없음)", 0) + 1
-        notes.append("이전 손익.csv의 WEHAGO 줄 %d건(%s)은 새로 만든 줄로 바꿈"
-                     % (len(replaced), " · ".join("%s %d" % (u, n) for u, n in units.items())))
+        return " · ".join("%s %d" % (u, n) for u, n in units.items())
+    if replaced:
+        notes.append("이전 손익.csv의 WEHAGO 줄 %d건(%s)은 새로 만든 줄로 바꿈" % (len(replaced), unit_text(replaced)))
+    if kept:
+        span = ("%s~%s" % (min(covered), max(covered))) if covered else "전표 없음"
+        notes.append("이전 변환 유지 %s (WEHAGO 줄 %d건: %s) — 새 분개장(%s)에 없는 달"
+                     % (_ranges([_ym(r) for r in kept]), len(kept), unit_text(kept), span))
+        first = min(covered) if covered else ""
+        before = [_kept_row(columns, r) for r in kept if covered and _ym(r) < first]
+        after = [_kept_row(columns, r) for r in kept if not (covered and _ym(r) < first)]
+        rows = before + rows + after
+    checks.extend(ytd_checks(per_company, prev_rows, rows))
     if carried:
         notes.append("이전 손익.csv의 WEHAGO 외 출처 줄 %d건 그대로 옮김" % len(carried))
         rows.extend(dict((c, r.get(c, "")) for c in columns) for r in carried)

@@ -18,8 +18,8 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from test_approval import write_fake_snapshot  # noqa: E402
-from test_convert import (ASOF, FAKE_PL_JOURNAL, NOW, cli_argv, convert_input, jl_sort, read_result_lines,  # noqa: E402
-                          run_convert, sha, write_convert_books)
+from test_convert import (ASOF, FAKE_PL_JOURNAL, JOURNAL_MONTHS, NOW, cli_argv, convert_input, jl_sort,  # noqa: E402
+                          read_result_lines, run_convert, sha, write_convert_books)
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
 from test_linking import write_links_csv  # noqa: E402
 
@@ -40,8 +40,12 @@ class Ran(object):
         with open(os.path.join(self.input_dir, name), encoding="utf-8-sig", newline="") as f:
             return list(csv.reader(f))
 
-    def wehago_rows(self):
-        return [tuple(r) for r in self.csv_rows()[1:] if r[0] == "WEHAGO"]
+    def wehago_rows(self, months=JOURNAL_MONTHS):
+        """WEHAGO 줄. months: 이 달들만 (기본: 새 분개장의 달; None 이면 모두).
+
+        02-REVIEW CR-04 부터 샘플 이전 손익.csv 중 새 분개장 밖 달(2026-01~08, 2026-11)의 WEHAGO 줄은 남는다.
+        """
+        return [tuple(r) for r in self.csv_rows()[1:] if r[0] == "WEHAGO" and (months is None or r[1] in months)]
 
     def result_lines(self):
         return read_result_lines(self.input_dir)
@@ -130,9 +134,16 @@ class TestConvertPlProjects(unittest.TestCase):
         self.assertEqual(r.code, 0, r.stdout)
         rows = r.csv_rows()
         self.assertEqual(r.wehago_rows(), EXPECTED_ROWS)
-        n = len(EXPECTED_ROWS)
-        self.assertEqual([tuple(x) for x in rows[1:1 + n]], EXPECTED_ROWS)
-        carried = rows[1 + n:]
+        # 02-REVIEW CR-04: 새 분개장(2026-09~10) 앞 달의 이전 WEHAGO 줄, 새 줄, 뒤 달(2026-11)의 이전 줄, 옮긴 줄 순서
+        before = [tuple(x) for x in rows[1:] if x[0] == "WEHAGO" and x[1] < JOURNAL_MONTHS[0]]
+        after = [tuple(x) for x in rows[1:] if x[0] == "WEHAGO" and x[1] > JOURNAL_MONTHS[-1]]
+        self.assertEqual(sorted(set(x[1] for x in before)), ["2026-%02d" % m for m in range(1, 9)])
+        self.assertEqual(set(x[1] for x in after), {"2026-11"})
+        n, k = len(EXPECTED_ROWS), len(before)
+        self.assertEqual([tuple(x) for x in rows[1:1 + k]], before)
+        self.assertEqual([tuple(x) for x in rows[1 + k:1 + k + n]], EXPECTED_ROWS)
+        self.assertEqual([tuple(x) for x in rows[1 + k + n:1 + k + n + len(after)]], after)
+        carried = rows[1 + k + n + len(after):]
         self.assertEqual(len(carried), 3)
         self.assertEqual(set(x[0] for x in carried), {"인트라넷완료보고"})
 

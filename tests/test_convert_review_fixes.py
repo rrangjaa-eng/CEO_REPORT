@@ -360,5 +360,58 @@ class TestCR03RunLevel(unittest.TestCase):
         self.assertEqual(sorted(ln["key"] for ln in X["status_check_lines"]), ["5107", "6201", "6202"])
 
 
+
+# ───────────── CR-04: 일부 기간 분개장은 그 기간의 손익 줄만 바꾼다 ─────────────
+D27 = dt.date(2026, 10, 27)
+OCT_JOURNAL = [jl(D27, 31, "10800", "수입수수료미수금", 82500000, None, "가상고객D", "잔금"),
+               jl(D27, 31, "41200", "수입수수료", None, 75000000, "가상고객D", "잔금"),
+               jl(D27, 31, "25500", "부가세예수금", None, 7500000, "가상고객D")]
+
+
+def prev_pl(months, unit="회사", target="회사 전체"):
+    return [{"출처": "WEHAGO", "연월": "2026-%02d" % m, "단위": unit, "대상": target, "매출": "100000000", "직접비": "60000000",
+             "공통비": "5000000", "잠정": "Y"} for m in months]
+
+
+class TestCR04PartialJournal(unittest.TestCase):
+    def build(self, prev, journal=OCT_JOURNAL):
+        from ceo_report import convert_pl
+        return convert_pl.build_pl(books_of(journal), convert.Config(convert.DEFAULT_CONFIG), prev, None)
+
+    def test_months_outside_the_journal_are_kept_with_a_note(self):
+        t = self.build(prev_pl(range(1, 10)) + prev_pl([10]))
+        company = [(r["연월"], r["매출"]) for r in t.rows if r["단위"] == "회사"]
+        self.assertEqual(company, [("2026-%02d" % m, "100000000") for m in range(1, 10)] + [("2026-10", "75000000")])
+        self.assertEqual(sum(int(r["매출"]) for r in t.rows if r["단위"] == "회사"), 975000000)
+        self.assertIn("이전 변환 유지 2026-01~2026-09 (WEHAGO 줄 9건: 회사 9) — 새 분개장(2026-10~2026-10)에 없는 달", t.notes)
+        self.assertIn("이전 손익.csv의 WEHAGO 줄 1건(회사 1)은 새로 만든 줄로 바꿈", t.notes)
+        self.assertIn("분개장 기간 2026-10-27~2026-10-27", t.notes)
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_later_months_are_kept_too_and_the_journal_months_are_replaced(self):
+        t = self.build(prev_pl([9, 10, 11]) + prev_pl([10], "팀", "가상팀"))
+        months = [(r["연월"], r["단위"]) for r in t.rows]
+        self.assertEqual(months, [("2026-09", "회사"), ("2026-10", "회사"), ("2026-11", "회사")])
+        self.assertTrue([n for n in t.notes if n.startswith("이전 변환 유지 2026-09, 2026-11 ")], t.notes)
+
+    def test_ytd_check_catches_dropped_months(self):
+        """고치기 전 모양(10월 줄만)을 올해 누계 대조가 '불일치'로 잡는다. 새 분개장보다 CSV 누계가 작아지면 안 된다."""
+        from ceo_report import convert_pl
+        prev = prev_pl(range(1, 10))
+        before = [{"출처": "WEHAGO", "연월": "2026-10", "단위": "회사", "대상": "회사 전체", "매출": "75000000", "직접비": "0",
+                   "공통비": "0", "잠정": "Y"}]
+        per = {"2026-10": {"revenue": 75000000, "direct": 0, "common": 0}}
+        checks = convert_pl.ytd_checks(per, prev, before)
+        revenue = [c for c in checks if "매출" in c.label][0]
+        self.assertEqual((revenue.source, revenue.csv), (975000000, 75000000))
+        self.assertEqual(convert.check_result(revenue), "불일치")
+        self.assertTrue(revenue.label.startswith("올해(2026) 누계 매출: 새 분개장 + 이전 변환 유지 달"), revenue.label)
+        t = self.build(prev)
+        got = [c for c in t.checks if c.label.startswith("올해(2026) 누계 매출")][0]
+        self.assertEqual((got.source, got.csv), (975000000, 975000000))
+        self.assertGreaterEqual(got.csv, 75000000)
+
+
 if __name__ == "__main__":
     unittest.main()
