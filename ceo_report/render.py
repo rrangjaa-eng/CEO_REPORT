@@ -245,7 +245,7 @@ def render(R, mode):
     h.append("<div class='low'>")
     h.append("<div class='card'><h4>매출·이익 (%s)</h4>%s</div>" % (esc(s4["ym"]), _pl_card(s4)))
     h.append("<div class='card'><h4>미수·미지급</h4>%s</div>" % kv([
-        ("발행 후 미수", M(s5["ar"])), ("그중 입금예정일 경과", M(s5["overdue_total"])),
+        ("발행 후 미수", M(s5["ar"]) + (_na(" · 미확인 %d건" % s5["ar_unknown_n"]) if s5["ar_unknown_n"] else "")), ("그중 입금예정일 경과", M(s5["overdue_total"])),
         ("프로젝트 요청 미지급", M(tot["requested"])), ("카드 미결제 (프로젝트)", M(tot["card_unpaid"])),
         ("프로젝트 밖 지급예정 (등록분 전체)", M(s6["total"]) + esc(" · 날짜 없음 %d건" % s6["undated_n"]) +
          (esc(" · 금액 미확인 %d건" % s6["unknown_n"]) if s6["unknown_n"] else ""))]))
@@ -314,6 +314,13 @@ def _bank_dates(s1):
     if not ds:
         return "자료 없음"
     return d2s(ds[0]) if len(ds) == 1 else "%s~%s" % (d2s(ds[0]), d2s(ds[-1]))
+
+
+def _amt_unk(v, unk):
+    """금액 칸 + 금액을 알 수 없는 건수. 값이 없고 미확인 건만 있으면 '미확인 N건'."""
+    if v is None:
+        return _na("미확인 %d건" % unk) if unk > 0 else W(None)
+    return W(v) + (_na(" 외 미확인 %d건" % unk) if unk > 0 else "")
 
 
 def _no_budget_note(s3):
@@ -539,12 +546,14 @@ def _s5(R):
     for x in s5["by_project"]:
         P = x["P"]
         rows.append([esc(P["id"]), esc(P["name"]), esc(d2s(P["done_date"], "-")), W(P["contract"], "계약금액 미등록"),
-                     W(x["issued"]), W(x["unissued"], "판단 불가"), W(x["ar"]),
+                     _amt_unk(x["issued"], x["issued_unknown"]), W(x["unissued"], "판단 불가"), _amt_unk(x["ar"], x["ar_unknown"]),
                      esc("%d일" % x["unissued_days"]) if x["unissued_days"] is not None else
                      ("<span class='note'>완료일 미확인</span>" if x["unissued"] and not P["done_date"] else "")])
     h.append(table(["번호", "프로젝트", "완료일", "계약금액(공급가)", "발행금액(공급가)", "미발행금액", "발행 후 미수(VAT포함)",
                     "완료 후 미발행 경과"], rows, num_cols=(3, 4, 5, 6, 7),
-                   total=["전체", "", "", W(s5["contract"]), W(s5["issued"]), W(s5["unissued"]), W(s5["ar"]), ""]))
+                   total=["전체", "", "", W(s5["contract"]), _amt_unk(s5["issued"], s5["issued_unknown_n"]),
+                          W(s5["unissued"]) + (_na(" 외 판단 불가 %d건" % s5["unissued_unknown_n"]) if s5["unissued_unknown_n"] else ""),
+                          _amt_unk(s5["ar"], s5["ar_unknown_n"]), ""]))
     h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가). 미수 = 발행 합계(VAT포함) − 입금액. "
              "완료일이 없으면 미발행 경과일을 계산하지 않음.</div>")
     h.append("<h3>발행 후 미수 (%d건)</h3>" % len(s5["ar_rows"]))
@@ -601,15 +610,28 @@ def _s7(R):
             for c in s7["changes"]]
     h.append(table(["변경일", "항목", "대상", "변경 전", "변경 후", "사유"], rows))
     h.append("<h3>지급계획 대비 실제 지급</h3>")
-    rows = [[esc(x["project"] or "-"), esc(x["vendor"]), W(x["plan"], "계획 없음"), W(x["actual"]),
-             W(None if x["plan"] is None else x["actual"] - x["plan"], "-")] for x in s7["pva"]]
+    rows = []
+    for x in s7["pva"]:
+        if x["unplanned"]:
+            plan_cell = _na("계획 없음")
+        elif x["plan"] is None:
+            plan_cell = _na("미확인")
+        else:
+            plan_cell = W(x["plan"]) + (_na(" 외 미확인 %d건" % x["plan_unknown"]) if x["plan_unknown"] else "")
+        rows.append([esc(x["project"] or "-"), esc(x["vendor"]), plan_cell, W(x["actual"]),
+                     W(None if x["plan"] is None else x["actual"] - x["plan"], "-")])
+    diff_cell = W(s7["actual_total"] - s7["plan_total"]) if not s7["plan_unknown_n"] else _na("판단 불가")
     h.append(table(["프로젝트", "거래처", "계획", "실제 출금", "차이"], rows, num_cols=(2, 3, 4),
-                   total=["합계", "", W(s7["plan_total"]), W(s7["actual_total"]), W(s7["actual_total"] - s7["plan_total"])]))
-    h.append("<div class='note'>계획 외 지급액 %s원. 실제 출금은 계좌 간 이체를 뺀 기간 내 전체 출금.</div>" % won(s7["unplanned_total"]))
+                   total=["합계", "", W(s7["plan_total"]), W(s7["actual_total"]), diff_cell]))
+    h.append("<div class='note'>계획 외 지급액 %s원. 실제 출금은 계좌 간 이체를 뺀 기간 내 전체 출금.%s</div>"
+             % (won(s7["unplanned_total"]),
+                esc(" 계획 금액 미확인 %d건 (합계 제외)." % s7["plan_unknown_n"]) if s7["plan_unknown_n"] else ""))
     h.append("<h3>미반영·미연결 현황</h3>")
     h.append("<div style='max-width:620px'>%s</div>" % kv([
-        ("예산 미지정 프로젝트", "%d건 · 계약 %s원 · 예상 총집행 %s원" % (len(s7["no_budget"]), won(s7["no_budget_contract"]),
-                                                          won(s7["no_budget_expected"]))),
+        ("예산 미지정 프로젝트", "%d건 · 계약 %s원%s · 예상 총집행 %s원"
+         % (len(s7["no_budget"]), won(s7["no_budget_contract"]),
+            " (계약금액 미등록 %d건)" % s7["no_budget_contract_missing"] if s7["no_budget_contract_missing"] else "",
+            won(s7["no_budget_expected"]))),
         ("프로젝트 미연결 지급 (출금 내역)", "%s원 (%d건)" % (won(s7["unlinked_txn_total"]), len(s7["unlinked_txn"]))),
         ("프로젝트 미연결 집행 (집행 자료)", "%s원 (%d건)" % (won(R["s3"]["unlinked_total"]), len(R["s3"]["unlinked"]))),
         ("지급일 미등록 지급예정", "%s원 (%d건)" % (won(s7["undated_out"]), s7["undated_out_n"])),

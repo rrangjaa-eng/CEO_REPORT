@@ -242,13 +242,22 @@ def compute(d, kind, asof, start=None):
     inv_proj = []
     for P in plist:
         rows = inv_by.get(P["id"], [])
-        issued, issued_unknown = ssum(v["supply"] for v in rows if v["kind"] != "환불")
-        out, out_unknown = ssum(v["outstanding"] for v in rows if v["kind"] != "환불" and (v["outstanding"] or 0) > 0)
-        unissued = None if P["contract"] is None else P["contract"] - issued
+        rows_i = [v for v in rows if v["kind"] != "환불"]
+        issued, issued_unknown = ssum(v["supply"] for v in rows_i)
+        if rows_i and issued_unknown == len(rows_i):
+            issued = None  # 발행 줄이 모두 금액 미확인이면 0이 아니라 미확인
+        # 미수: 금액을 알 수 없는 줄(None)도 버리지 않고 건수로 센다
+        rows_a = [v for v in rows_i if v["outstanding"] is None or v["outstanding"] > 0]
+        out, out_unknown = ssum(v["outstanding"] for v in rows_a)
+        if rows_a and out_unknown == len(rows_a):
+            out = None
+        # 발행금액 일부가 미확인이면 미발행금액을 부풀리지 않고 판단 불가로 둔다
+        unissued = None if (P["contract"] is None or issued_unknown > 0) else P["contract"] - issued
         days = None
         if unissued and unissued > 0 and P["done_date"]:
             days = (asof - P["done_date"]).days
-        inv_proj.append({"P": P, "issued": issued, "unissued": unissued, "ar": out, "unissued_days": days,
+        inv_proj.append({"P": P, "issued": issued, "issued_unknown": issued_unknown, "unissued": unissued,
+                         "ar": out, "ar_unknown": out_unknown, "unissued_days": days,
                          "unknown": issued_unknown + out_unknown})
     no_proj_inv = [v for v in d.invoices if v["project"] not in proj]
     c_tot, c_missing = ssum(P["contract"] for P in plist)
@@ -256,7 +265,10 @@ def compute(d, kind, asof, start=None):
         "by_project": inv_proj, "ar_rows": ar_rows, "overdue": sorted(overdue, key=lambda v: -v["overdue_days"]),
         "specials": specials, "no_project": no_proj_inv,
         "contract": c_tot, "contract_missing": c_missing,
-        "issued": sum(x["issued"] for x in inv_proj),
+        "issued": sum(x["issued"] for x in inv_proj if x["issued"] is not None),
+        "issued_unknown_n": sum(x["issued_unknown"] for x in inv_proj),
+        "unissued_unknown_n": sum(1 for x in inv_proj if x["unissued"] is None),
+        "ar_unknown_n": sum(1 for v in d.invoices if v["kind"] != "환불" and v["outstanding"] is None),
         "unissued": sum(x["unissued"] for x in inv_proj if x["unissued"] is not None),
         "ar": sum(v["outstanding"] for v in ar_rows),
         "overdue_total": sum(v["outstanding"] for v in overdue),
@@ -453,28 +465,36 @@ def compute(d, kind, asof, start=None):
     # 지급계획 대비 실제
     plan_rows = [p for p in d.plans if p["week"] and p0 - 6 * DAY <= p["week"] <= p1]
     actual_out = [t for t in in_p if t["io"] == "출금" and t["cat"] != TRANSFER]
-    plan_keys = defaultdict(int)
+    plan_amounts = defaultdict(list)
     for p in plan_rows:
-        plan_keys[(p["project"], p["vendor"])] += p["amount"] or 0
+        plan_amounts[(p["project"], p["vendor"])].append(p["amount"])
+    plan_keys = {}
+    plan_key_unknown = {}
+    for k, amts in plan_amounts.items():
+        total_k, unk_k = ssum(amts)
+        plan_keys[k] = None if unk_k == len(amts) else total_k  # 계획 금액이 모두 빈칸이면 0이 아니라 미확인
+        plan_key_unknown[k] = unk_k
     act_keys = defaultdict(int)
     for t in actual_out:
         act_keys[(t["project"], t["vendor"])] += t["amount"]
     pva = []
     for k in sorted(set(plan_keys) | set(act_keys)):
         pva.append({"project": k[0], "vendor": k[1], "plan": plan_keys.get(k), "actual": act_keys.get(k, 0),
-                    "unplanned": k not in plan_keys})
+                    "plan_unknown": plan_key_unknown.get(k, 0), "unplanned": k not in plan_keys})
     no_budget = [P for P in plist if P["budget"] is None]
     unlinked_txn = [t for t in in_p if t["io"] == "출금" and t["cat"] == "프로젝트지급"
                     and (not t["project"] or t["project"] not in proj)]
+    plan_total, plan_unknown_n = ssum(p["amount"] for p in plan_rows)
+    nb_contract, nb_contract_missing = ssum(P["contract"] for P in no_budget)
     asof_rows = []
     for a in d.asof:
         asof_rows.append(dict(a, age=None if a["date"] is None else (asof - a["date"]).days))
     R["s7"] = {
         "changes": changes, "undated_changes": undated_changes, "pva": pva, "plan_rows": plan_rows,
-        "plan_total": sum(p["amount"] or 0 for p in plan_rows), "actual_total": sum(t["amount"] for t in actual_out),
+        "plan_total": plan_total, "plan_unknown_n": plan_unknown_n, "actual_total": sum(t["amount"] for t in actual_out),
         "unplanned_total": sum(x["actual"] for x in pva if x["unplanned"]),
         "no_budget": no_budget, "no_budget_expected": sum(P["expected"] for P in no_budget),
-        "no_budget_contract": sum(P["contract"] or 0 for P in no_budget),
+        "no_budget_contract": nb_contract, "no_budget_contract_missing": nb_contract_missing,
         "unlinked_txn": unlinked_txn, "unlinked_txn_total": sum(t["amount"] for t in unlinked_txn),
         "undated_out": R["s2"]["undated_out"], "undated_out_n": sum(1 for e in undated if e["io"] == "out"),
         "asof": asof_rows, "diffs": d.diffs, "issues": d.issues.items, "checks": checks,
