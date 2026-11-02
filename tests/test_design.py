@@ -114,5 +114,46 @@ class TestLowestBalanceCard(unittest.TestCase):
         self.assertNotIn("lv-", cls_)
 
 
+REQ_MEASURE = """
+(function(){
+  var b=document.body,tw=document.getElementById('requests').parentNode,h=0;
+  [].forEach.call(document.querySelectorAll('#requests tbody tr'),function(r){var x=r.getBoundingClientRect().height;if(x>h)h=x;});
+  b.setAttribute('data-twsw',String(tw.scrollWidth));
+  b.setAttribute('data-twcw',String(tw.clientWidth));
+  b.setAttribute('data-rowmax',String(h));
+  b.setAttribute('data-sw',String(document.documentElement.scrollWidth));
+})();
+"""
+
+
+class TestApprovalTableWithBooks(unittest.TestCase):
+    """WEHAGO 장부가 있을 때(대조 글·금액 차이 글이 길 때)도 요청 표가 읽히는가."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        import tempfile
+        from test_approval import NOW, load_approval_cli, write_fake_snapshot
+        from test_wehago import write_fake_books
+        tmp = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, tmp, True)
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        write_fake_books(os.path.join(tmp, "위하고"))
+        path, _ = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False,
+                                                  wehago_dir=os.path.join(tmp, "위하고"))
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+
+    def test_desk_width_shows_every_column_without_tall_rows(self):
+        dom = browser_dom(self, self.page, REQ_MEASURE, size=(1280, 900))
+        self.assertLessEqual(float(body_attr(dom, "data-twsw")), float(body_attr(dom, "data-twcw")))
+        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
+
+    def test_phone_rows_stay_short_and_table_scrolls_sideways(self):
+        dom = browser_dom(self, self.page, REQ_MEASURE, size=(390, 844))
+        self.assertLessEqual(float(body_attr(dom, "data-sw")), 390)
+        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
+
+
 if __name__ == "__main__":
     unittest.main()
