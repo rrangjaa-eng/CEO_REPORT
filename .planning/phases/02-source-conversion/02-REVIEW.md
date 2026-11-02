@@ -86,6 +86,8 @@ if len(linked) == 1:
     found, has_invoice, invoice = linked, True, _group_total(linked[0])   # then annotate / diff row as today
 ```
 
+**Fix status:** fixed in 03287ae — an auto-linked (D-38) group is annotated '· 지급요청 N' instead of a second 요청미지급 row; scheduled as max(row, request) with a 차액 row when the request is larger; new check '지급요청마다 일정 근거 하나' (TestCR01AutoLinkedRequest).
+
 ### CR-02: D-50 "larger of invoice and request" is dropped when the matched invoice group is already paid
 
 **File:** `ceo_report/convert_projects.py:433-440` (masking checks at `:470-477` and `:480-490`)
@@ -102,6 +104,8 @@ skipped requests are never added there (`:483-484`). The result is an understate
 **Fix:** In the skip branch, add the positive 차액 row (`_request_row(rq, rq["amount"] - invoice, "지급요청 N 차액 (인트라넷
 요청 − 계산서, 계산서는 이미 지급)")`) and append `· 지급요청 N` to `g["basis"]`. Then put skipped requests in the D-50
 check: use `want += max(...)` and count the paid group plus the 차액 row.
+
+**Fix status:** fixed in 85d4a63 — a paid matched invoice is annotated and, when the request is larger, a 차액 row (request − invoice, 요청미지급 추정) is added so the CSV equals the approval schedule; the amount and D-50 checks now read the written rows (TestCR02PaidInvoiceDiff).
 
 ### CR-03: Requests with an unreadable 사장님승인 status disappear from 프로젝트집행, 요청 누계 and 프로젝트밖요청, and section 8 shows 0
 
@@ -127,6 +131,8 @@ edition) and in the detail tables. When unknown-status requests with that code e
 '' plus the count. For 프로젝트집행, keep blank or unrecognised statuses as 요청미지급/추정 rows and only drop a known
 rejection value such as '반려'. This follows the "never understate outflows" rule.
 
+**Fix status:** fixed in 6bff3ef — recorded as D-52 in 02-CONTEXT.md: such requests become 요청미지급 추정 ('상태 확인 필요 (<value>)'), count in 요청 누계 / 프로젝트밖요청, get 요청상태확인필요 rows and the section 8 '상태 확인 필요 N건 X'; all-blank status warns on stdout and in 변환결과; approval keeps 01.1 behaviour with an equality test (TestCR03StatusUnknown, TestCR03RunLevel).
+
 ### CR-04: Converting a partial-period 분개장 deletes every earlier WEHAGO month from 손익.csv (YTD silently collapses)
 
 **File:** `ceo_report/convert_pl.py:257-267`
@@ -145,6 +151,8 @@ replaced = [r for r in prev_rows if r.get("출처") == "WEHAGO" and r.get("연�
 carried = [r for r in prev_rows if r not in replaced]
 ```
 Also print the journal's first and last 전표일자 in 변환결과.txt.
+
+**Fix status:** fixed in 08c6c75 — only WEHAGO rows in the new journal's first..last month are replaced; other months are kept with '이전 변환 유지 …'; new YTD checks per measure (TestCR04PartialJournal).
 
 ### CR-05: Installment or fee-deducted customer payments never reach the invoice, so 계산서.csv shows the full amount as still receivable
 
@@ -165,6 +173,8 @@ line. When the vendor's pre-period balance is unknown, keep the result marked as
 and noting '배분 (금액 다름)'. If the team does not want that, write `입금액` as '' **with** `입금일` set for vendors that have
 unallocated receipts, so `calc` treats the remainder as unknown (`calc.py:268`) instead of fully outstanding.
 
+**Fix status:** fixed in 59732f4 — per-customer oldest-first allocation without an opening line, partial 입금액, any 10xxx asset debit is a receipt, no fee forgiveness (remainders listed), real per-customer difference, new check '매출채권 잔액' (TestCR05Receipts). D-51 amended.
+
 ## Warnings
 
 ### WR-01: `write_files` is not all-or-nothing when a replace fails partway
@@ -179,6 +189,8 @@ replaced: ['손익.csv']`, `손익.csv -> NEW`, `계산서.csv -> OLD 계산서.
 **Fix:** On failure, roll back every name in `done` by copying it back from `이전/<backup>/` (or `os.replace` from a
 second temp of the old file). Re-raise only after the rollback, and say in the error whether the rollback worked.
 
+**Fix status:** fixed in 03030e6 — replaced files are restored from 이전/<backup>/ (new files removed), 변환결과.txt is rewritten with the failure, exit 7; also when the final 변환결과.txt write fails (TestWR01Rollback).
+
 ### WR-02: A large `변환_자동연결일수` crashes both 변환.py and 승인검토 with a traceback
 
 **File:** `ceo_report/convert.py:131-132` (validation), `ceo_report/linking.py:268`, `ceo_report/approval.py:391-409`
@@ -190,6 +202,8 @@ and then `CRASH: OverflowError date value out of range`.
 **Fix:** Bound the value in `_parse_config_value` (for example `0 <= n <= 3650`, otherwise the default plus a note). Also wrap
 `convert.run` in `변환.py` with a masked generic error line and exit code 7.
 
+**Fix status:** fixed in aca5b92 — day settings clamp to 1..3650 with a note, 승인검토_주수 to 1..521, linking window saturates; 변환.py (exit 7) and 승인검토.py (exit 6) print one masked line instead of a traceback (TestWR02DaySettings).
+
 ### WR-03: Projects that exist only in the previous 프로젝트.csv are dropped, along with their manual 계약금액, 상태 and 완료일
 
 **File:** `ceo_report/convert_projects.py:99-102`
@@ -199,6 +213,8 @@ its manual 계약금액 out of the monthly totals (`calc.py:303`). Its carried �
 point at a number that is no longer in 프로젝트.csv (a `data.load` issue). The only record is a 변환결과.txt note.
 **Fix:** Carry previous-only rows unchanged (with a '스냅숏에 없음' 비고 or note), or at least keep those with a non-blank
 계약금액 or 상태 other than 완료.
+
+**Fix status:** fixed in 1686668 — previous-only projects are carried with every column after the snapshot rows, with a note and the check '이전 프로젝트.csv에만 있는 프로젝트 → 옮긴 줄' (TestWR03PreviousOnlyProjects).
 
 ### WR-04: Previous hand-entered 요청미지급 / 카드사용미결제 rows in 프로젝트집행.csv are dropped on the first conversion
 
@@ -211,6 +227,8 @@ least likely to read the log.
 `근거` '이전 프로젝트집행 (수동)' and list them as possible duplicates. Alternatively, print the dropped unpaid total on stdout
 and in the section 8 summary.
 
+**Fix status:** fixed in d1b5c33 — hand-entered 요청미지급 / 카드사용미결제 rows (근거 not 'WEHAGO '/'지급요청') are carried with a note; checks for the carried count and for overlaps with regenerated rows. Hand-entered paid rows are still not carried (D-37) (TestWR04HandEnteredRows).
+
 ### WR-05: Cumulative fields come from the journal's period only, so pre-period history shows as a known 0
 
 **File:** `ceo_report/convert_projects.py:89-90` (매출반영누계), `:515-546` (집행 rows), `ceo_report/convert_xchk.py:100-105`
@@ -222,6 +240,8 @@ history.
 **Fix:** Record the journal's first 전표일자. For projects with an 행사일 or registration earlier than that date, write ''
 (and a note) instead of 0, or require a full-history journal and flag a shorter one in 변환결과.txt and on stdout.
 
+**Fix status:** fixed in 8656367 — '분개장 기간' recorded in 위하고대조 and shown in section 8 labels ('YYYY-MM~YYYY-MM 장부 기준'); projects whose 행사일 or request 등록일 predates the journal start get '판단 불가 (기간 밖)' (blank cell, period sum on its own row; 프로젝트.csv 매출반영누계 blank) with count checks (TestWR05JournalPeriod).
+
 ### WR-06: Snapshot age is never checked and the snapshot used is not printed on the console
 
 **File:** `ceo_report/convert.py:335-345, 726-744`
@@ -232,6 +252,8 @@ never says which snapshot was used or its age, while it does for the books (`:73
 **Fix:** Add a console line `인트라넷 스냅숏 <name> (수집 <ts>, 기준일보다 N일 이전)`, and warn (or set a non-zero exit) when
 it is older than a configurable number of days or newer than 기준일.
 
+**Fix status:** fixed in 9b46f69 — console line '인트라넷 스냅숏 <name> (수집 <ts>, 기준일보다 N일 이전)'; warning on console and in 변환결과 when older than 설정 변환_스냅숏경과일 (default 7) or collected after 기준일 (TestWR06SnapshotAge).
+
 ## Info
 
 ### IN-01: Section 8 label hard-codes the cash account
@@ -241,6 +263,8 @@ it is older than a configurable number of days or newer than 기준일.
 With a different setting the label is wrong.
 **Fix:** Write the configured code into the 위하고대조 `기준` meta and render it from there.
 
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
+
 ### IN-02: A single matched group in 카드사용미결제 state gets a misleading note
 
 **File:** `ceo_report/convert_projects.py:420-446`
@@ -248,6 +272,8 @@ With a different setting the label is wrong.
 is added with the note "원가 줄을 하나로 정하지 못함" although exactly one group was found. (No cash double count, because
 `calc` ignores 카드사용미결제, but the text is wrong and the D-50 sum leaves out the card group.)
 **Fix:** Handle the card-unpaid state explicitly: annotate the group or add a request row with an accurate note.
+
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
 
 ### IN-03: `--기준일` sets "now" to midnight, which skews the 변환 시각 and the backup stamp
 
@@ -257,12 +283,16 @@ real run time. The pending-request `friday_after(now)` also moves. The newest bo
 postdate 기준일.
 **Fix:** Keep `now = dt.datetime.now()` for timestamps and pass `asof` on its own.
 
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
+
 ### IN-04: Manual link keys depend on line position inside a 전표
 
 **File:** `ceo_report/linking.py:75-84, 141-152`
 **Issue:** `줄` is the 1-based position in file order. If a re-download reorders the lines in a 전표, or a line is added to
 it, a `프로젝트연결.csv` override quietly attaches to a different cost line. `unused_links` only catches keys that vanish.
 **Fix:** Store and check a fingerprint (account code and amount) with each override, and warn on mismatch.
+
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
 
 ### IN-05: The slip-level `cash_paid` check can mark an unpaid cost as 지급완료
 
@@ -273,12 +303,16 @@ which understates outflow for a non-default chart of accounts.
 **Fix:** Require that the cash credits cover the group total, or check the group's vendor, before calling it paid; otherwise
 use 요청미지급 with "지급 여부 확인 불가".
 
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
+
 ### IN-06: `WriteFailed` names the wrong file when the 이전 folder cannot be created
 
 **File:** `ceo_report/convert.py:265-277`
 **Issue:** If `os.makedirs` fails, `name` still holds the last target from the temp loop, so the user is told
 `입력/<some csv>을(를) 쓸 수 없음` when the real failure is `입력/이전/...`.
 **Fix:** Raise `WriteFailed("이전/" + backup_name, e)` from the makedirs branch.
+
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
 
 ### IN-07: Duplicated helpers and constants
 
@@ -288,6 +322,8 @@ use 요청미지급 with "지급 여부 확인 불가".
 **Issue:** These copies must stay in step by hand (the comments say "같은 글자" / "같은 순서"). Drift would quietly break the
 D-47 approval and monthly equality.
 **Fix:** Move them to `util.py` (or a small `convert_common.py`) and import them.
+
+**Fix status:** not fixed — Info finding, outside this fix run (Critical and Warning only).
 
 ---
 
