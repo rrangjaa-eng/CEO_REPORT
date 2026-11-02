@@ -384,7 +384,7 @@ def _no_budget_note(s3):
 
 def _rate_text(s3):
     rate = s3["cost_rate"]
-    return "원가율 설정 오류" if rate is None else "%g%%" % round(rate * 100, 6)
+    return "설정 오류" if rate is None else "%g%%" % round(rate * 100, 6)
 
 
 PAID_STATES = ("지급완료", "카드결제완료")
