@@ -230,7 +230,8 @@ def run_structure(a):
 def print_structure(rep, max_pages):
     """점검 결과를 출력한다. 머리글 이름과 건수만 나오고 줄의 값은 나오지 않는다."""
     login = rep["login"]
-    print("로그인: 성공 (응답 %s, 이동 위치 %s)" % (login["status"], login["redirect_path"] or "없음"))
+    # 이동 위치에는 ID가 들어 있을 수 있어 있음/없음만 보인다 (IN-09)
+    print("로그인: 성공 (응답 %s, 이동 위치 %s)" % (login["status"], "있음" if login["redirect_path"] else "없음"))
     for key, label in (("payment", "지급요청"), ("project", "프로젝트")):
         r = rep[key]
         if not r["table_found"]:
