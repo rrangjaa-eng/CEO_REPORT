@@ -10,7 +10,7 @@ import zlib
 import xml.etree.ElementTree as ET
 
 from .approval import parse_registered, project_code  # noqa: F401  (parse_registered: 지급 확인 단계에서 쓴다)
-from .util import is_blank, won
+from .util import is_blank, ssum_or_none, won
 from .util import date as parse_date
 
 # 종류 → 예상 머리글 (공백을 모두 없앤 이름). 분개장의 'Code'는 두 번 나온다 (계정 Code, 거래처 Code).
@@ -449,50 +449,205 @@ def load_books(folder, asof, stale_days):
     return books
 
 
-# ───────────── 요청 대조 ─────────────
+# ───────────── 요청 대조 (D-32) ─────────────
+STATUSES = ("계산서 있음", "금액 차이", "계산서 없음", "이미 지급", "연결 불가", "판단 불가")
+_PAYABLE = ("미지급금", "미지급비용")
+_NOT_OK_LABEL = {"자료 없음": "판단 불가(WEHAGO 자료 없음)", "경과": "판단 불가(WEHAGO 자료 경과)",
+                 "머리글 다름": "판단 불가(머리글 다름)", "읽기 실패": "판단 불가(WEHAGO 읽기 실패)"}
+
+
 def _signed(v):
     return ("+" if v > 0 else "") + won(v)
 
 
-def _invoices(books, rq):
-    """같은 거래처·같은 코드의 매입 계산서: 매입매출장이 우선, 없을 때만 전자세금계산서(매입)."""
-    key = norm_vendor(rq["vendor"])
+def _squash(text):
+    return re.sub(r"\s+", "", text or "")
+
+
+def _is_payable(line):
+    return _squash(line["account"]) in _PAYABLE
+
+
+def _invoices(books, key, code):
+    """같은 거래처·같은 코드의 매입 계산서 [(번호표, 행)]: 매입매출장이 우선, 없을 때만 전자세금계산서(매입) (W-6)."""
     for source, rows in (("매입매출장", books.ledger), ("전자세금계산서(매입)", books.einvoice)):
-        found = [r for r in rows if r["vendor_norm"] == key and r["code"] == rq["code"]]
+        found = [(i, r) for i, r in enumerate(rows) if r["vendor_norm"] == key and r["code"] == code]
         if found:
             return source, found
     return None, []
 
 
+def _payment_lines(books, rq, key):
+    """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후, 적요에 코드가 있으면 같은 코드."""
+    reg = rq["registered"].date() if rq.get("registered") else None
+    out = []
+    for i, line in enumerate(books.journal):
+        if not _is_payable(line) or line["debit"] != rq["amount"] or line["vendor_norm"] != key:
+            continue
+        if line["date"] is None or (reg is not None and line["date"] < reg):
+            continue
+        if line["code"] is not None and line["code"] != rq["code"]:
+            continue
+        out.append(i)
+    return out
+
+
+def _row(rq, status, label, **more):
+    row = {"status": status, "label": label, "invoice_total": None, "diff": None, "schedule_amount": rq["amount"],
+           "candidates": 0, "source": None, "payment": None}
+    row.update(more)
+    return row
+
+
+def _summary(requests, rows):
+    out = {}
+    for status in STATUSES:
+        items = [rq for rq in requests if rows[rq["번호"]]["status"] == status]
+        picked = [rows[rq["번호"]] for rq in items]
+        total, unknown = ssum_or_none(rq["amount"] for rq in items)
+        invoices = [r["invoice_total"] for r in picked if r["invoice_total"] is not None]
+        out[status] = {"count": len(items), "sum": total, "unknown": unknown,
+                       "diff": sum(r["diff"] for r in picked) if status == "금액 차이" else None,
+                       "invoice_sum": sum(invoices) if status in ("계산서 있음", "금액 차이") else None}
+    return out
+
+
 def match_requests(books, requests):
+    """요청마다 WEHAGO 기준 상태 하나를 붙인다. 애매하면 '연결 불가'로 두어 일정에 남긴다 (W-6~W-8).
+
+    같은 지급 줄·같은 계산서를 두 요청이 가리키면 둘 다 연결 불가이며, 결과는 요청 순서와 무관하다. books 와 requests 는 바꾸지 않는다.
+    """
     rows = {}
+    if books.state != "ok":
+        text = _NOT_OK_LABEL.get(books.state, _NOT_OK_LABEL["자료 없음"])
+        for rq in requests:
+            rows[rq["번호"]] = _row(rq, "판단 불가", text)
+        return {"rows": rows, "summary": _summary(requests, rows)}
+
     known = set(r["vendor_norm"] for src in (books.journal, books.ledger, books.einvoice) for r in src)
-    for rq in requests:
-        row = {"status": "", "label": "", "invoice_total": None, "diff": None, "schedule_amount": rq["amount"],
-               "candidates": 0, "source": None, "payment": None}
-        rows[rq["번호"]] = row
+    pending, pay_users, inv_users = {}, {}, {}
+    for rq in requests:  # 1회전: 요청마다 후보를 모은다
+        no, key = rq["번호"], norm_vendor(rq["vendor"])
         if rq["amount"] is None:
-            row["status"], row["label"] = "연결 불가", "연결 불가 (금액 미확인)"
-        elif norm_vendor(rq["vendor"]) not in known:
-            row["status"], row["label"] = "연결 불가", "연결 불가 (거래처 후보 0건)"
-        elif not rq["code"]:
-            row["status"], row["label"] = "연결 불가", "연결 불가 (프로젝트 코드 없음)"
-        else:
-            source, found = _invoices(books, rq)
-            suffix = "" if source == "매입매출장" else " (전자세금계산서)"
-            exact = [r for r in found if r["total"] == rq["amount"]]
-            row["source"], row["candidates"] = source, len(found)
-            if not found:
-                row["status"], row["label"] = "계산서 없음", "계산서 없음"
-            elif len(exact) == 1:
-                row["status"], row["label"] = "계산서 있음", "계산서 있음" + suffix
-                row["invoice_total"], row["diff"] = exact[0]["total"], 0
-            elif not exact and len(found) == 1 and found[0]["total"] is not None:
-                total = found[0]["total"]
-                row["status"] = "금액 차이"
-                row["invoice_total"], row["diff"] = total, total - rq["amount"]
-                row["label"] = "금액 차이 (계산서 %s · 차액 %s)%s" % (won(total), _signed(row["diff"]), suffix)
-                row["schedule_amount"] = total
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (금액 미확인)")
+            continue
+        if key not in known:
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (거래처 후보 0건)")
+            continue
+        lines = _payment_lines(books, rq, key)
+        for i in lines:
+            pay_users.setdefault(i, []).append(no)
+        item = {"lines": lines, "source": None, "found": [], "exact": []}
+        if not lines and rq["code"]:
+            item["source"], item["found"] = _invoices(books, key, rq["code"])
+            item["exact"] = [(i, r) for i, r in item["found"] if r["total"] == rq["amount"]]
+            if len(item["exact"]) == 1:
+                inv_users.setdefault((item["source"], item["exact"][0][0]), []).append(no)
+        pending[no] = item
+    for rq in requests:  # 2회전: 겹침을 보고 상태를 정한다
+        no = rq["번호"]
+        if no in rows:
+            continue
+        item = pending[no]
+        lines = item["lines"]
+        if lines:
+            if len(lines) == 1 and len(pay_users[lines[0]]) == 1:
+                line = books.journal[lines[0]]
+                rows[no] = _row(rq, "이미 지급", "이미 지급 (분개장 %s 전표 %s)" % (line["date"].isoformat(), line["no"]),
+                                candidates=1, payment={"date": line["date"], "no": line["no"], "amount": line["debit"]})
             else:
-                row["status"], row["label"] = "연결 불가", "연결 불가 (계산서 후보 %d건)" % len(found)
-    return {"rows": rows, "summary": {}}
+                rows[no] = _row(rq, "연결 불가", "연결 불가 (지급 후보 %d건)" % len(lines), candidates=len(lines))
+            continue
+        if not rq["code"]:
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (프로젝트 코드 없음)")
+            continue
+        source, found, exact = item["source"], item["found"], item["exact"]
+        suffix = "" if source == "매입매출장" else " (전자세금계산서)"
+        more = {"source": source, "candidates": len(found)}
+        if not found:
+            rows[no] = _row(rq, "계산서 없음", "계산서 없음", **more)
+        elif len(exact) == 1:
+            if len(inv_users[(source, exact[0][0])]) > 1:
+                rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 공유)", **more)
+            else:
+                rows[no] = _row(rq, "계산서 있음", "계산서 있음" + suffix, invoice_total=exact[0][1]["total"], diff=0, **more)
+        elif not exact and len(found) == 1 and found[0][1]["total"] is not None:
+            total = found[0][1]["total"]
+            diff = total - rq["amount"]
+            rows[no] = _row(rq, "금액 차이", "금액 차이 (계산서 %s · 차액 %s)%s" % (won(total), _signed(diff), suffix),
+                            invoice_total=total, diff=diff, schedule_amount=total, **more)  # D-30a: 일정은 WEHAGO 합계
+        else:
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 %d건)" % len(found), **more)
+    return {"rows": rows, "summary": _summary(requests, rows)}
+
+
+# ───────────── 거래처별 미지급금 (D-33) ─────────────
+def vendor_payables(books, requests, match):
+    """분개장 미지급금·미지급비용 거래처별 잔액(대변−차변) 대 인트라넷 대기·승인 요청 합계 (W-9, W-13)."""
+    out = {"rows": [], "compared": 0, "diff_count": 0, "diff_sum": 0, "unknown_count": 0, "opening": False, "note": ""}
+    if books.state != "ok":
+        return out
+    names, pay, opening = {}, {}, False
+    for line in books.journal:
+        names.setdefault(line["vendor_norm"], line["vendor"])
+        if not _is_payable(line):
+            continue
+        if any(w in _squash(line["memo"]) for w in ("전기이월", "기초잔액")):
+            opening = True
+        entry = pay.setdefault(line["vendor_norm"], {"sum": 0, "unknown": False})
+        if line["debit"] is None and line["credit"] is None:
+            entry["unknown"] = True  # 금액이 전혀 없는 줄: 잔액을 알 수 없다 (0이 아니다)
+        else:
+            entry["sum"] += (line["credit"] or 0) - (line["debit"] or 0)
+    asked, intranet_names = {}, {}
+    for rq in requests:
+        paid = match["rows"].get(rq["번호"], {}).get("status") == "이미 지급"
+        if rq["status"] not in ("pending", "approved") or paid:
+            continue
+        key = norm_vendor(rq["vendor"])
+        intranet_names.setdefault(key, rq["vendor"])
+        asked.setdefault(key, []).append(rq["amount"])
+    rows = []
+    for key in set(pay) | set(asked):
+        total, unknown = ssum_or_none(asked.get(key, []))
+        payable = None if key in pay and pay[key]["unknown"] else (pay[key]["sum"] if key in pay else 0)
+        diff = None if payable is None or unknown else payable - (total or 0)
+        rows.append({"key": key, "vendor": names.get(key) or intranet_names.get(key) or "(거래처 없음)",
+                     "payable": payable, "requested": total, "requested_unknown": unknown, "diff": diff})
+    out["compared"] = len(rows)
+    shown = [r for r in rows if r["diff"] != 0]
+    shown.sort(key=lambda r: (r["diff"] is None, -abs(r["diff"]) if r["diff"] is not None else 0, r["key"]))
+    for r in shown:
+        del r["key"]
+    out["rows"] = shown
+    out["diff_count"] = sum(1 for r in shown if r["diff"] is not None)
+    out["diff_sum"] = sum(r["diff"] for r in shown if r["diff"] is not None)
+    out["unknown_count"] = sum(1 for r in shown if r["diff"] is None)
+    out["opening"] = opening
+    out["note"] = "" if opening else "기초잔액 미반영"
+    return out
+
+
+# ───────────── 프로젝트 (도) 원가 (D-34) ─────────────
+def project_costs(books, project_keys):
+    """(도) 원가(계정과목에 '(도)', 계정 Code 6xxxx)의 차변−대변을 적요 [코드]로 프로젝트에 잇는다 (W-10)."""
+    out = {"by_code": {}, "unlinked": {"count": 0, "sum": 0, "unknown": 0, "lines": []}}
+    if books.state != "ok":
+        return out
+    keys = set(str(k) for k in project_keys)
+    linked, loose = {}, []
+    for line in books.journal:
+        if "(도)" not in _squash(line["account"]) or not re.match(r"^6\d{4}$", line["account_code"]):
+            continue
+        amount = None if line["debit"] is None and line["credit"] is None else (line["debit"] or 0) - (line["credit"] or 0)
+        item = {"date": line["date"], "vendor": line["vendor"], "memo": line["memo"], "amount": amount}
+        if line["code"] in keys:
+            linked.setdefault(line["code"], []).append(item)
+        else:
+            loose.append(item)
+    for code, lines in linked.items():
+        total, unknown = ssum_or_none(i["amount"] for i in lines)
+        out["by_code"][code] = {"cost": total, "lines": lines, "unknown": unknown}
+    total, unknown = ssum_or_none(i["amount"] for i in loose)
+    out["unlinked"] = {"count": len(loose), "sum": total, "unknown": unknown, "lines": loose}
+    return out
