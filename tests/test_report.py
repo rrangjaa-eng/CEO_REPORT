@@ -1575,5 +1575,54 @@ class TestLauncherFlow(unittest.TestCase):
                 self.assertIn("python.org", text)
 
 
+class TestComputeIsPure(unittest.TestCase):
+    """WR-06: compute()는 읽어 온 Data를 바꾸지 않는다. 같은 Data로 여러 번 계산해도 결과가 같고 이전 상태가 남지 않는다."""
+
+    def setUp(self):
+        self.d = load(SAMPLE)
+
+    def test_two_calls_give_identical_results(self):
+        def blank_balance(rows):  # 계산 중에 입력 확인 항목을 만드는 입력
+            for r in rows[1:]:
+                if r[0] == "2026-11-02" and r[1] == "운영계좌":
+                    r[3] = ""
+        self.d = load(probe_folder(self, "계좌잔액.csv", blank_balance))
+        r1 = compute(self.d, "weekly", ASOF)
+        self.assertTrue(any("잔액 미확인" in m for _, _, m in r1["s7"]["issues"]))
+        issues1 = list(r1["s7"]["issues"])
+        r2 = compute(self.d, "weekly", ASOF)
+        self.assertEqual(r1["s7"]["issues"], issues1, "두 번째 계산이 첫 결과의 입력 확인 목록을 바꿈")
+        self.assertEqual(r1, r2)
+        self.assertEqual(len(r2["s7"]["issues"]), len(issues1))
+
+    def test_data_is_not_modified(self):
+        before_issues = list(self.d.issues.items)
+        before_inv = [dict(v) for v in self.d.invoices]
+        compute(self.d, "weekly", ASOF)
+        self.assertEqual(self.d.issues.items, before_issues)
+        self.assertEqual(self.d.invoices, before_inv)
+        for v in self.d.invoices:
+            for key in ("total", "outstanding", "overdue_days"):
+                self.assertNotIn(key, v)
+
+    def test_no_overdue_state_left_between_calls(self):
+        r1 = compute(self.d, "weekly", ASOF)
+        self.assertEqual([v["project"] for v in r1["s5"]["overdue"]], ["P26202"])
+        early = dt.date(2026, 9, 25)  # P26202의 입금예정일(09-30) 전
+        r2 = compute(self.d, "weekly", early)
+        row = [v for v in r2["s5"]["ar_rows"] if v["project"] == "P26202"][0]
+        self.assertNotIn("overdue_days", row)
+        self.assertEqual(r2["s5"]["overdue"], [])
+        html = render(r2, "ceo")
+        cells = table_cells(re.findall(r"<tr[^>]*><td>P26202</td><td>B사</td>.*?</tr>", section(html, 5), re.S)[0])
+        self.assertEqual(cells[-1], "")
+
+    def test_weekly_then_monthly_same_as_fresh_data(self):
+        compute(self.d, "weekly", ASOF)
+        monthly = compute(self.d, "monthly", dt.date(2026, 10, 31))
+        fresh = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
+        self.assertEqual(monthly, fresh)
+
+
 if __name__ == "__main__":
     unittest.main()
