@@ -1,0 +1,475 @@
+"""보고 숫자 계산. 대표용과 경영관리용은 이 결과 하나를 함께 쓴다."""
+import calendar
+import datetime as dt
+from collections import OrderedDict, defaultdict
+
+from .data import TRANSFER
+from .util import ssum
+
+DAY = dt.timedelta(days=1)
+
+
+def _add_months(d, n):
+    y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
+    return dt.date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def _month_end(d):
+    return dt.date(d.year, d.month, calendar.monthrange(d.year, d.month)[1])
+
+
+def period_of(kind, asof, start=None):
+    if start:
+        return start, asof
+    if kind == "weekly":
+        return asof - 6 * DAY, asof
+    return asof.replace(day=1), asof
+
+
+def _add(a, b):
+    return None if a is None or b is None else a + b
+
+
+def compute(d, kind, asof, start=None):
+    R = {"kind": kind, "asof": asof}
+    p0, p1 = period_of(kind, asof, start)
+    R["period"] = (p0, p1)
+    R["settings"] = d.settings
+    R["present"] = d.present
+    checks = []  # 대조표: (항목, 값A, 값B, 일치여부)
+
+    # ───────────── 1. 현재 자금과 기간 입출금 ─────────────
+    latest = OrderedDict()
+    for b in sorted(d.balances, key=lambda x: x["date"]):
+        if b["date"] <= p1:
+            latest[b["account"]] = b
+    accounts = list(latest.values())
+    total_bal, bal_unknown = ssum(a["balance"] for a in accounts)
+    restricted, restr_unknown = ssum(a["restricted"] for a in accounts)
+    stale_accounts = [a for a in accounts if a["date"] < p1]
+    in_p = [t for t in d.txns if p0 <= t["date"] <= p1]
+    ext = [t for t in in_p if t["cat"] != TRANSFER]
+    tin = sum(t["amount"] for t in ext if t["io"] == "입금")
+    tout = sum(t["amount"] for t in ext if t["io"] == "출금")
+    tr_in = sum(t["amount"] for t in in_p if t["cat"] == TRANSFER and t["io"] == "입금")
+    tr_out = sum(t["amount"] for t in in_p if t["cat"] == TRANSFER and t["io"] == "출금")
+    by_cat = defaultdict(lambda: [0, 0])
+    for t in ext:
+        by_cat[t["cat"]][0 if t["io"] == "입금" else 1] += t["amount"]
+    # 기간 시작 잔액: 은행 잔액이 있으면 그것, 없으면 기말 잔액에서 거꾸로 계산
+    start_snap = OrderedDict()
+    for b in sorted(d.balances, key=lambda x: x["date"]):
+        if b["date"] == p0 - DAY:
+            start_snap[b["account"]] = b
+    start_calc = total_bal - tin + tout - tr_in + tr_out
+    start_bank = None
+    if start_snap and set(start_snap) == set(latest):
+        start_bank, _ = ssum(b["balance"] for b in start_snap.values())
+    acct_flow = defaultdict(lambda: [0, 0])
+    for t in in_p:
+        acct_flow[t["account"]][0 if t["io"] == "입금" else 1] += t["amount"]
+    R["s1"] = {
+        "accounts": accounts, "total": total_bal, "bal_unknown": bal_unknown, "restricted": restricted,
+        "restr_unknown": restr_unknown, "available": total_bal - restricted, "stale": stale_accounts,
+        "in": tin, "out": tout, "start_calc": start_calc, "start_bank": start_bank,
+        "end": total_bal, "by_cat": dict(by_cat), "transfer_in": tr_in, "transfer_out": tr_out,
+        "acct_flow": dict(acct_flow), "txns": sorted(in_p, key=lambda t: t["date"]),
+    }
+    checks.append(("이번 기간 회사 계좌 간 이체 (입금 = 출금)", tr_in, tr_out, tr_in == tr_out))
+    checks.append(("분류별 입금 합 = 입금 합계", sum(v[0] for v in by_cat.values()), tin,
+                   sum(v[0] for v in by_cat.values()) == tin))
+    checks.append(("분류별 출금 합 = 출금 합계", sum(v[1] for v in by_cat.values()), tout,
+                   sum(v[1] for v in by_cat.values()) == tout))
+    if start_bank is not None:
+        checks.append(("기간 시작 잔액 (은행 잔액 = 거래로 계산한 값)", start_bank, start_calc, start_bank == start_calc))
+
+    # ───────────── 3. 프로젝트별 예산·지급 ─────────────
+    proj = OrderedDict()
+    for pid in d.project_order:
+        proj[pid] = _blank_proj(d.projects[pid])
+    unlinked_exec = []
+    for e in d.execs:
+        if e["project"] not in proj:
+            unlinked_exec.append(e)
+            continue
+        P = proj[e["project"]]
+        P["lines"].append(e)
+        amt = e["supply"]
+        if amt is None:
+            P["unknown_cost"] += 1
+            continue
+        st = e["state"]
+        if st == "지급완료":
+            P["paid"] += amt
+            P["paid_cash"] = _add(P["paid_cash"], amt + (e["vat"] or 0)) if e["vat"] is not None else None
+            if e["vat"] is None:
+                P["vat_unknown"] += 1
+            if e["date"] and p0 <= e["date"] <= p1:
+                P["paid_period"] += amt
+        elif st == "카드결제완료":
+            P["card_paid"] += amt
+            if e["date"] and p0 <= e["date"] <= p1:
+                P["paid_period"] += amt
+        elif st == "요청미지급":
+            P["requested"] += amt
+        elif st == "카드사용미결제":
+            P["card_unpaid"] += amt
+        elif st == "집행계획미요청":
+            P["planned"] += amt
+    for P in proj.values():
+        P["paid_total"] = P["paid"] + P["card_paid"]
+        P["expected"] = P["paid_total"] + P["requested"] + P["card_unpaid"] + P["planned"]
+        b = P["budget"]
+        P["remain"] = None if b is None else b - P["expected"]
+        P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
+        P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
+    plist = list(proj.values())
+    tot = {k: sum(P[k] for P in plist) for k in
+           ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
+    tot["budget"], tot["budget_missing"] = ssum(P["budget"] for P in plist)
+    tot["remain"] = sum(P["remain"] for P in plist if P["remain"] is not None)
+    tot["paid_cash"], tot["paid_cash_unknown"] = ssum(P["paid_cash"] for P in plist)
+    tot["unknown_cost"] = sum(P["unknown_cost"] for P in plist)
+    budgeted = [P for P in plist if P["budget"] is not None]
+    tot["expected_budgeted"] = sum(P["expected"] for P in budgeted)
+    tot["paid_budgeted"] = sum(P["paid_total"] for P in budgeted)
+    n_show = int(d.settings.get("첫화면_프로젝트_표시수", "10") or 10)
+    ranked = sorted(plist, key=lambda P: (-(P["budget"] if P["budget"] is not None else -1), -P["expected"]))
+    shown = ranked[:n_show]
+    rest = ranked[n_show:]
+    ue_tot, ue_unknown = ssum(e["supply"] for e in unlinked_exec)
+    R["s3"] = {"projects": plist, "ranked": ranked, "shown": shown, "rest": rest, "total": tot,
+               "unlinked": unlinked_exec, "unlinked_total": ue_tot}
+    linked_lines = sum(len(P["lines"]) for P in plist)
+    checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄", len(d.execs), linked_lines + len(unlinked_exec),
+                   len(d.execs) == linked_lines + len(unlinked_exec)))
+    shown_exp = sum(P["expected"] for P in shown) + sum(P["expected"] for P in rest)
+    checks.append(("첫 화면 표시 + 나머지 프로젝트 예상총집행 = 전체 합계", shown_exp, tot["expected"],
+                   shown_exp == tot["expected"]))
+
+    # ───────────── 5. 계산서·수금 ─────────────
+    inv_by = defaultdict(list)
+    for v in d.invoices:
+        inv_by[v["project"]].append(v)
+    ar_rows, overdue, specials = [], [], []
+    for v in d.invoices:
+        total = None if v["supply"] is None or v["vat"] is None else v["supply"] + v["vat"]
+        v["total"] = total
+        v["outstanding"] = None if total is None else total - (v["paid"] or 0)
+        if v["kind"] in ("선수금", "취소", "환불", "수정"):
+            specials.append(v)
+        if v["outstanding"] and v["outstanding"] > 0 and v["kind"] != "환불":
+            ar_rows.append(v)
+            if v["due"] and v["due"] < asof:
+                v["overdue_days"] = (asof - v["due"]).days
+                overdue.append(v)
+    inv_proj = []
+    for P in plist:
+        rows = inv_by.get(P["id"], [])
+        issued, issued_unknown = ssum(v["supply"] for v in rows if v["kind"] != "환불")
+        out, out_unknown = ssum(v["outstanding"] for v in rows if v["kind"] != "환불" and (v["outstanding"] or 0) > 0)
+        unissued = None if P["contract"] is None else P["contract"] - issued
+        days = None
+        if unissued and unissued > 0 and P["done_date"]:
+            days = (asof - P["done_date"]).days
+        inv_proj.append({"P": P, "issued": issued, "unissued": unissued, "ar": out, "unissued_days": days,
+                         "unknown": issued_unknown + out_unknown})
+    no_proj_inv = [v for v in d.invoices if v["project"] not in proj]
+    c_tot, c_missing = ssum(P["contract"] for P in plist)
+    R["s5"] = {
+        "by_project": inv_proj, "ar_rows": ar_rows, "overdue": sorted(overdue, key=lambda v: -v["overdue_days"]),
+        "specials": specials, "no_project": no_proj_inv,
+        "contract": c_tot, "contract_missing": c_missing,
+        "issued": sum(x["issued"] for x in inv_proj),
+        "unissued": sum(x["unissued"] for x in inv_proj if x["unissued"] is not None),
+        "ar": sum(v["outstanding"] for v in ar_rows),
+        "overdue_total": sum(v["outstanding"] for v in overdue),
+        "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
+    }
+
+    # ───────────── 2. 앞으로의 입금·지급 일정 ─────────────
+    events = []
+    for s in d.schedule:
+        events.append({"date": s["date"], "io": "in" if s["io"] == "입금" else "out", "amount": s["amount"],
+                       "firm": s["firm"], "cat": s["cat"], "desc": s["vendor"] or s["memo"], "basis": s["basis"],
+                       "project": s["project"], "source": "자금일정"})
+    for v in ar_rows:
+        events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
+                       "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
+                       "project": v["project"], "source": "계산서"})
+    for v in d.invoices:
+        if v["kind"] == "환불" and v["outstanding"] is not None and v["outstanding"] < 0 and not v["paid_date"]:
+            events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
+                           "cat": "환불", "desc": v["client"], "basis": "계산서 환불", "project": v["project"],
+                           "source": "계산서"})
+    for e in d.execs:
+        if e["state"] in ("요청미지급", "집행계획미요청"):
+            amt = None if e["supply"] is None else e["supply"] + (e["vat"] or 0)
+            events.append({"date": e["date"], "io": "out", "amount": amt,
+                           "firm": e["firm"] and e["state"] == "요청미지급",
+                           "cat": "프로젝트 " + ("지급요청" if e["state"] == "요청미지급" else "집행계획"),
+                           "desc": e["vendor"] or e["item"], "basis": e["basis"], "project": e["project"],
+                           "source": "프로젝트집행", "vat_unknown": e["vat"] is None})
+    R["events"] = events
+
+    week_ends = [asof + 7 * (i + 1) * DAY for i in range(4)]
+    buckets = []
+    s = asof + DAY
+    for i, we in enumerate(week_ends):
+        buckets.append({"label": "%d주차" % (i + 1), "from": s, "to": we, "type": "week"})
+        s = we + DAY
+    horizon = _month_end(_add_months(asof, 6))
+    cut3 = _month_end(_add_months(asof, 3))
+    while s <= horizon:
+        e_ = min(_month_end(s), horizon)
+        buckets.append({"label": "%d년 %d월" % (s.year, s.month) + (" (일부)" if s.day != 1 else ""),
+                        "from": s, "to": e_, "type": "month", "within3": e_ <= cut3})
+        s = e_ + DAY
+    for b in buckets:
+        for k in ("in_firm", "in_est", "out_firm", "out_est"):
+            b[k] = 0
+    undated, past, beyond, amount_unknown = [], [], [], []
+    for ev in events:
+        if ev["amount"] is None:
+            amount_unknown.append(ev)
+            continue
+        if ev["date"] is None:
+            undated.append(ev)
+            continue
+        if ev["date"] <= asof:
+            past.append(ev)
+            continue
+        if ev["date"] > horizon:
+            beyond.append(ev)
+            continue
+        for b in buckets:
+            if b["from"] <= ev["date"] <= b["to"]:
+                b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
+                break
+    start_cash = R["s1"]["available"]
+    bal_f = bal_a = start_cash
+    for b in buckets:
+        bal_f += b["in_firm"] - b["out_firm"]
+        bal_a += b["in_firm"] + b["in_est"] - b["out_firm"] - b["out_est"]
+        b["bal_firm"], b["bal_all"] = bal_f, bal_a
+    # 날짜 단위 최저 잔액
+    dated = sorted([ev for ev in events if ev["amount"] is not None and ev["date"] and asof < ev["date"] <= horizon],
+                   key=lambda x: x["date"])
+    mins = {}
+    for mode in ("firm", "all"):
+        bal, low, low_d = start_cash, start_cash, asof
+        daily = defaultdict(int)
+        for ev in dated:
+            if mode == "firm" and not ev["firm"]:
+                continue
+            daily[ev["date"]] += ev["amount"] if ev["io"] == "in" else -ev["amount"]
+        for day in sorted(daily):
+            bal += daily[day]
+            if bal < low:
+                low, low_d = bal, day
+        mins[mode] = (low, low_d)
+    four = buckets[:4]
+    R["s2"] = {
+        "start": start_cash, "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
+        "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
+        "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
+        "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
+        "undated_in": sum(e["amount"] for e in undated if e["io"] == "in"),
+        "undated_out": sum(e["amount"] for e in undated if e["io"] == "out"),
+    }
+    all_amt = sum(e["amount"] for e in events if e["amount"] is not None)
+    parts = (sum(b[k] for b in buckets for k in ("in_firm", "in_est", "out_firm", "out_est"))
+             + sum(e["amount"] for e in undated + past + beyond))
+    checks.append(("예정 일정 합계 = 기간별 + 날짜 없음 + 지난 날짜 + 기간 밖", parts, all_amt, parts == all_amt))
+
+    # ───────────── 4. 매출·손익 ─────────────
+    ym = asof.strftime("%Y-%m")
+    year = asof.strftime("%Y")
+    pl_out = OrderedDict()
+    for src in sorted(set(p["source"] for p in d.pl), key=lambda x: (x != "WEHAGO", x)):
+        rows = [p for p in d.pl if p["source"] == src]
+        months = sorted(set(p["ym"] for p in rows))
+        units = OrderedDict()
+        for p in rows:
+            units.setdefault((p["unit"], p["target"]), []).append(p)
+        table = []
+        for (unit, target), ps in units.items():
+            cur = [p for p in ps if p["ym"] == ym]
+            ytd = [p for p in ps if p["ym"][:4] == year and p["ym"] <= ym]
+            table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd)})
+        pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months}
+    R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
+               "unrecognized": sum(P["unrecognized"] for P in plist if P["unrecognized"] is not None),
+               "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None)}
+
+    # ───────────── 6. 프로젝트 밖 지급과 지급의무 ─────────────
+    nonproj = [s for s in d.schedule if s["io"] == "지급"]
+    by_cat6 = OrderedDict()
+    for s in sorted(nonproj, key=lambda x: (x["cat"], x["date"] or dt.date.max)):
+        g = by_cat6.setdefault(s["cat"], {"rows": [], "total": 0, "unknown": 0, "undated": 0})
+        g["rows"].append(s)
+        if s["amount"] is None:
+            g["unknown"] += 1
+        else:
+            g["total"] += s["amount"]
+        if s["date"] is None:
+            g["undated"] += 1
+    vendors = OrderedDict()
+    for s in nonproj:
+        if not s["vendor"]:
+            continue
+        v = vendors.setdefault(s["vendor"], {"total": 0, "next": None, "n": 0})
+        v["total"] += s["amount"] or 0
+        v["n"] += 1
+        if s["date"] and (v["next"] is None or s["date"] < v["next"]):
+            v["next"] = s["date"]
+    for e in d.execs:
+        if e["state"] == "요청미지급" and e["vendor"]:
+            v = vendors.setdefault(e["vendor"], {"total": 0, "next": None, "n": 0})
+            v["total"] += (e["supply"] or 0) + (e["vat"] or 0)
+            v["n"] += 1
+            if e["date"] and (v["next"] is None or e["date"] < v["next"]):
+                v["next"] = e["date"]
+    dup = [s for s in d.schedule if "프로젝트" in s["cat"]]
+    for s in dup:
+        d.issues.add(s["row"]["_file"], s["row"]["_line"],
+                     "자금일정에 프로젝트 지급(%s)이 있음 — 프로젝트집행.csv와 중복일 수 있음" % s["cat"])
+    R["s6"] = {"by_cat": by_cat6, "vendors": sorted(vendors.items(), key=lambda kv: -kv[1]["total"]),
+               "total": sum(g["total"] for g in by_cat6.values())}
+
+    # ───────────── 7. 변동과 자료 반영 범위 ─────────────
+    changes = [c for c in d.changes if c["date"] and p0 <= c["date"] <= p1]
+    undated_changes = [c for c in d.changes if not c["date"]]
+    # 지급계획 대비 실제
+    plan_rows = [p for p in d.plans if p["week"] and p0 - 6 * DAY <= p["week"] <= p1]
+    actual_out = [t for t in in_p if t["io"] == "출금" and t["cat"] != TRANSFER]
+    plan_keys = defaultdict(int)
+    for p in plan_rows:
+        plan_keys[(p["project"], p["vendor"])] += p["amount"] or 0
+    act_keys = defaultdict(int)
+    for t in actual_out:
+        act_keys[(t["project"], t["vendor"])] += t["amount"]
+    pva = []
+    for k in sorted(set(plan_keys) | set(act_keys)):
+        pva.append({"project": k[0], "vendor": k[1], "plan": plan_keys.get(k), "actual": act_keys.get(k, 0),
+                    "unplanned": k not in plan_keys})
+    no_budget = [P for P in plist if P["budget"] is None]
+    unlinked_txn = [t for t in in_p if t["io"] == "출금" and t["cat"] == "프로젝트지급"
+                    and (not t["project"] or t["project"] not in proj)]
+    asof_rows = []
+    for a in d.asof:
+        asof_rows.append(dict(a, age=None if a["date"] is None else (asof - a["date"]).days))
+    R["s7"] = {
+        "changes": changes, "undated_changes": undated_changes, "pva": pva, "plan_rows": plan_rows,
+        "plan_total": sum(p["amount"] or 0 for p in plan_rows), "actual_total": sum(t["amount"] for t in actual_out),
+        "unplanned_total": sum(x["actual"] for x in pva if x["unplanned"]),
+        "no_budget": no_budget, "no_budget_expected": sum(P["expected"] for P in no_budget),
+        "no_budget_contract": sum(P["contract"] or 0 for P in no_budget),
+        "unlinked_txn": unlinked_txn, "unlinked_txn_total": sum(t["amount"] for t in unlinked_txn),
+        "undated_out": R["s2"]["undated_out"], "undated_out_n": sum(1 for e in undated if e["io"] == "out"),
+        "asof": asof_rows, "diffs": d.diffs, "issues": d.issues.items, "checks": checks,
+        "stale": stale_accounts,
+    }
+    R["risks"] = risks(R)
+    return R
+
+
+def _blank_proj(p):
+    P = dict(p)
+    P.update({"lines": [], "paid": 0, "paid_cash": 0, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
+              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0})
+    return P
+
+
+def _pl_sum(rows):
+    if not rows:
+        return None
+    rev, ru = ssum(p["revenue"] for p in rows)
+    dc, du = ssum(p["direct"] for p in rows)
+    cc, cu = ssum(p["common"] for p in rows)
+    has_common = any(p["common"] is not None for p in rows)
+    gp = None if (ru or du) else rev - dc
+    np_ = None if (gp is None or cu or not has_common) else gp - cc
+    return {"revenue": None if ru else rev, "direct": None if du else dc, "common": cc if has_common and not cu else None,
+            "gp": gp, "np": np_, "provisional": any(p["provisional"] for p in rows),
+            "months": sorted(set(p["ym"] for p in rows))}
+
+
+def risks(R):
+    """경영관리용에만 싣는 위험 분석과 해결방안. 기준값은 설정.csv에서 바꾼다."""
+    st = R["settings"]
+    out = []
+
+    def add(level, area, fact, action):
+        out.append({"level": level, "area": area, "fact": fact, "action": action})
+
+    min_cash = int(st.get("위험_최소보유현금", "0") or 0)
+    ar_days = int(st.get("위험_미수경과일", "30") or 30)
+    ui_days = int(st.get("위험_미발행경과일", "30") or 30)
+    data_days = int(st.get("위험_자료경과일", "7") or 7)
+    over_pct = float(st.get("위험_예산초과율", "100") or 100)
+    from .util import won, d2s
+    s2 = R["s2"]
+    for mode, label in (("firm", "확정 일정만"), ("all", "확정+추정")):
+        low, low_d = s2["min"][mode]
+        if low < min_cash:
+            add("높음" if low < 0 else "중간", "자금",
+                "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
+                "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
+                "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+    if s2["undated_out"]:
+        add("중간", "자금", "지급일이 없는 지급예정 %s원 (%d건)이 일정 그래프에 들어가지 않음."
+            % (won(s2["undated_out"]), R["s7"]["undated_out_n"]),
+            "담당자에게 지급일 확정을 요청하고, 확정 전까지는 가장 이른 날짜로 가정한 잔액도 함께 검토.")
+    if s2["undated_in"]:
+        add("중간", "자금", "입금일이 없는 입금예정 %s원이 일정에 들어가지 않음." % won(s2["undated_in"]),
+            "거래처와 입금일을 확정해 일정에 반영.")
+    for P in R["s3"]["projects"]:
+        if P["budget"] is not None and P["budget"] > 0 and P["expected"] * 100.0 / P["budget"] > over_pct:
+            add("높음", "프로젝트", "%s %s: 예상총집행 %s원이 예산 %s원의 %.1f%%."
+                % (P["id"], P["name"], won(P["expected"]), won(P["budget"]), P["expected"] * 100.0 / P["budget"]),
+                "남은 지급요청·집행계획 중 줄일 수 있는 항목 확인, 추가 범위는 고객과 변경계약 협의, 예산 수정 등록.")
+        if P["profit_end"] is not None and P["profit_end"] < 0:
+            add("높음", "프로젝트", "%s %s: 종료 시점 예상이익 %s원." % (P["id"], P["name"], won(P["profit_end"])),
+                "원가 절감 가능 항목과 추가 청구 가능 범위 검토.")
+        if P["unknown_cost"]:
+            add("중간", "프로젝트", "%s %s: 금액 미확인 원가 %d건 — 예상이익 판단 불가." % (P["id"], P["name"], P["unknown_cost"]),
+                "담당자에게 견적·발주 금액 확정을 요청.")
+    nb = R["s7"]["no_budget"]
+    if nb:
+        add("중간", "프로젝트", "예산 미지정 프로젝트 %d건, 예상총집행 %s원." % (len(nb), won(R["s7"]["no_budget_expected"])),
+            "인트라넷 사전 견적을 등록해 예산 대비 집행을 관리.")
+    for v in R["s5"]["overdue"]:
+        if v["overdue_days"] >= ar_days:
+            add("높음" if v["overdue_days"] >= ar_days * 2 else "중간", "수금",
+                "%s %s: 입금예정일 %s에서 %d일 경과, 미수 %s원." % (v["project"], v["client"], d2s(v["due"]),
+                                                       v["overdue_days"], won(v["outstanding"])),
+                "거래처 담당자에게 지급 일정 확인, 필요 시 공문 발송.")
+    for x in R["s5"]["unissued_aged"]:
+        if x["unissued_days"] >= ui_days:
+            add("중간", "수금", "%s %s: 완료 후 %d일, 미발행 %s원." % (x["P"]["id"], x["P"]["name"], x["unissued_days"],
+                                                          won(x["unissued"])),
+                "발행 조건(검수·정산) 확인 후 계산서 발행.")
+    s7 = R["s7"]
+    if s7["unlinked_txn_total"] or R["s3"]["unlinked_total"]:
+        add("중간", "자료", "프로젝트 미연결 지급 %s원 (출금내역) / %s원 (집행자료)."
+            % (won(s7["unlinked_txn_total"]), won(R["s3"]["unlinked_total"])),
+            "지급마다 프로젝트번호를 연결해 프로젝트 원가에 반영.")
+    if s7["unplanned_total"]:
+        add("중간", "지급 관리", "주간 지급계획에 없던 지급 %s원." % won(s7["unplanned_total"]),
+            "계획 외 지급의 승인 경로 확인, 다음 주 계획에 미리 등록.")
+    for a in s7["asof"]:
+        if a["age"] is None or a["age"] > data_days:
+            add("중간", "자료", "%s 기준일 %s (%s)." % (a["name"], d2s(a["date"]),
+                                                  "날짜 없음" if a["age"] is None else "%d일 전" % a["age"]),
+                "보고 전 해당 자료를 최신으로 갱신.")
+    for x in s7["diffs"]:
+        if x["state"] != "확인완료":
+            add("중간", "자료", "%s: %s %s원 / %s %s원." % (x["item"], x["a"], won(x["a_amt"]), x["b"], won(x["b_amt"])),
+                "두 자료를 건별로 대조해 차이 원인 확정.")
+    for c in s7["checks"]:
+        if not c[3]:
+            add("높음", "자료", "대조 불일치: %s (%s / %s)." % (c[0], won(c[1]), won(c[2])), "입력 자료를 다시 확인.")
+    order = {"높음": 0, "중간": 1}
+    out.sort(key=lambda r: order.get(r["level"], 2))
+    return out
