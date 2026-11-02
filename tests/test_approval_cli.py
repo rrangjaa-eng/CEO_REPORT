@@ -174,7 +174,7 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
         mocks["browser"].assert_called_once()
         target = mocks["browser"].call_args[0][0]
         self.assertTrue(target.startswith("file://"), target)
-        self.assertTrue(target.endswith(htmls[0]))
+        self.assertTrue(urllib.parse.unquote(target).endswith(htmls[0]))
 
     def test_success_prints_summary_line(self):
         rc, out, err, fake, mocks = self.success()

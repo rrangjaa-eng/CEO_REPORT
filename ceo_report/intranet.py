@@ -16,16 +16,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .snapshot import PAYMENT_COLUMNS, PROJECT_COLUMNS
+
 HOST = "intranet.plant8.co.kr"
 BASE = "https://" + HOST
 USER_AGENT = "Mozilla/5.0 (compatible; CEO_REPORT read-only collector)"
 
-# 스냅숏 열과 같아야 한다(계획 01.1-03에서 snapshot 모듈의 목록을 가져다 쓰도록 바꾼다)
-PAYMENT_KEYS = ["번호", "행사명", "파트너", "등록일", "행사일", "금액", "지급요청일", "등록자",
-                "팀장승인", "관리팀승인", "사장님승인"]
-PROJECT_KEYS = ["번호", "클라이언트", "담당자", "PO번호", "행사일", "행사명", "국", "팀", "등록자",
-                "계산서", "사전견적", "견적금액", "실행가", "수익률",
-                "승인_담당자", "승인_팀장", "승인_관리팀", "승인_대표이사", "pro_num"]
+# 줄 값의 이름은 스냅숏 열과 같은 목록 하나를 쓴다(snapshot.py가 원본)
+PAYMENT_KEYS = PAYMENT_COLUMNS
+PROJECT_KEYS = PROJECT_COLUMNS
 
 PAYMENT_HEADER = PAYMENT_KEYS + ["삭제"]
 PROJECT_HEADER = ["", "번호", "클라이언트", "담당자", "PO번호", "행사일", "행사명", "국", "팀", "등록자",
