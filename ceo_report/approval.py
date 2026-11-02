@@ -451,7 +451,7 @@ def build(d, snap, asof, now, wehago_dir=None):
     approved_paid, approved_future = [], []
     already_paid, paid_after = [], []
     for rq in req_all:
-        if rq["xstatus"] == "이미 지급":
+        if rq["xstatus"] == "이미 지급" and rq["status"] == "approved":  # 승인 전 요청은 이미 지급이 아니다 (WR-01)
             # 분개장에서 같은 금액으로 이미 출금됨: 일정에 두 번 넣지 않는다 (D-35). 지급일이 잔액 기준일 이후면 잔액에
             # 아직 없으므로 그 날 확정 지급으로 남긴다 (D-35b, A-3과 같은 원칙). 체크 칸은 없다.
             paid = rq["xrow"]["payment"]["date"]

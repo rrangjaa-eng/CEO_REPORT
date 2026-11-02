@@ -518,14 +518,19 @@ def paid_invoices(books):
 
 
 def _payment_lines(books, rq, key):
-    """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후 장부 기준일 이전·당일, 적요에 코드가 있으면 같은 코드 (D-35c)."""
+    """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후 장부 기준일 이전·당일, 적요에 코드가 있으면 같은 코드 (D-35c).
+
+    등록일을 읽지 못한 요청은 아래 한계가 없으므로 후보를 찾지 않는다 (WR-01: 이미 지급 판단 불가).
+    """
     reg = rq["registered"].date() if rq.get("registered") else None
+    if reg is None:
+        return []
     ref = books.book_date
     out = []
     for i, line in enumerate(books.journal):
         if not _is_payable(line) or line["debit"] != rq["amount"] or line["vendor_norm"] != key:
             continue
-        if line["date"] is None or (reg is not None and line["date"] < reg):
+        if line["date"] is None or line["date"] < reg:
             continue
         if ref is not None and line["date"] > ref:
             continue  # 장부 기준일 이후 전표는 아직 확정 지급으로 보지 않는다
@@ -602,7 +607,11 @@ def match_requests(books, requests):
         item = pending[no]
         lines = item["lines"]
         if lines:
-            if len(lines) == 1 and len(pay_users[lines[0]]) == 1:
+            if rq["status"] != "approved":
+                # D-17: 사장님 승인 전에는 지급하지 않는다. 같은 금액 지급은 다른 지급일 가능성이 크다 → 일정에 둔다 (WR-01)
+                rows[no] = _row(rq, "연결 불가", "연결 불가 (사장님 승인 전 요청인데 같은 금액 지급 기록 %d건)" % len(lines),
+                                candidates=len(lines))
+            elif len(lines) == 1 and len(pay_users[lines[0]]) == 1:
                 line = books.journal[lines[0]]
                 rows[no] = _row(rq, "이미 지급", "이미 지급 (분개장 %s 전표 %s)" % (line["date"].isoformat(), line["no"]),
                                 candidates=1, payment={"date": line["date"], "no": line["no"], "amount": line["debit"]})
@@ -639,6 +648,9 @@ def match_requests(books, requests):
                             invoice_total=total, diff=diff, schedule_amount=max(total, rq["amount"]), **more)
         else:
             rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 %d건)" % len(open_), **more)
+    for rq in requests:  # 등록일이 없으면 이미 지급인지 알 수 없다: 그 사실을 상태 글자에 붙인다 (WR-01)
+        if rq["번호"] in pending and rq.get("registered") is None and "판단 불가(등록일" not in rows[rq["번호"]]["label"]:
+            rows[rq["번호"]]["label"] += " · 이미 지급 판단 불가(등록일 없음)"
     return {"rows": rows, "summary": _summary(requests, rows)}
 
 

@@ -1216,3 +1216,45 @@ class TestWehagoInvoiceClaims(unittest.TestCase):
         self.assertEqual(item["amount"], 160500000)
         self.assertIn("금액 차이 1건 110,000,000 (인트라넷 요청 160,500,000 · 차액 −50,500,000, "
                       "일정은 인트라넷 요청 금액: 계산서가 더 적음)", mod("approval_render").xchk_summary_text(A))
+
+
+# ───────────── WR-01: 승인 전 요청·등록일 없는 요청은 금액만으로 '이미 지급'이 되지 않는다 ─────────────
+class TestWehagoPaidNeedsApproval(unittest.TestCase):
+    def setUp(self):
+        self.w = mod("wehago")
+        self.books = mem_books(journal=[(dt.date(2026, 3, 20), "7", "미지급금", 33000000, "가상제작", ""),
+                                        (dt.date(2026, 10, 20), "8", "미지급금", 44000000, "가상제작", "")])
+
+    def row(self, rq):
+        return self.w.match_requests(self.books, [rq])["rows"][rq["번호"]]
+
+    def test_pending_request_with_a_same_amount_payment_is_not_already_paid(self):
+        r = self.row(mem_req("10", 44000000, registered=dt.datetime(2026, 10, 2)))
+        self.assertEqual((r["status"], r["label"], r["schedule_amount"]),
+                         ("연결 불가", "연결 불가 (사장님 승인 전 요청인데 같은 금액 지급 기록 1건)", 44000000))
+        self.assertIsNone(r["payment"])
+
+    def test_no_registration_date_means_no_already_paid(self):
+        for status in ("pending", "approved"):
+            r = self.row(mem_req("10", 33000000, registered=None, status=status))
+            self.assertNotEqual(r["status"], "이미 지급", status)
+            self.assertIn("이미 지급 판단 불가(등록일 없음)", r["label"], status)
+            self.assertEqual(r["schedule_amount"], 33000000)
+
+    def test_approved_request_with_a_registration_date_is_still_already_paid(self):
+        r = self.row(mem_req("10", 44000000, registered=dt.datetime(2026, 10, 2), status="approved"))
+        self.assertEqual(r["label"], "이미 지급 (분개장 2026-10-20 전표 8)")
+
+    def test_build_keeps_a_pending_request_in_the_schedule(self):
+        tmp = new_tmp(self)
+        folder = os.path.join(tmp, "위하고")
+        write_fake_books(folder)
+        row = [r for r in FAKE_PAYMENTS if r[0] == "5109"][0][:10] + ["미승인"]
+        snap_dir = write_fake_snapshot(os.path.join(tmp, "수집"), ids=[r[0] for r in FAKE_PAYMENTS if r[0] != "5109"],
+                                       extra=[row])
+        A = mod("approval").build(mod("data").load(SAMPLE), mod("snapshot").read_snapshot(snap_dir), ASOF, NOW, folder)
+        rq = [r for r in A["requests_all"] if r["번호"] == "5109"][0]
+        self.assertEqual(rq["xchk"], "연결 불가 (사장님 승인 전 요청인데 같은 금액 지급 기록 1건)")
+        self.assertTrue(rq["toggle"])
+        self.assertEqual(A["already_paid"], [])
+        self.assertIn(rq["id"], [r["id"] for r in A["data"]["requests"]])
