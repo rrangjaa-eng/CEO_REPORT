@@ -8,7 +8,9 @@ import datetime as dt
 import importlib.util
 import io
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -265,6 +267,99 @@ class TestCancelNetting(unittest.TestCase):
                                _inv("수정", "-2,000,000", "-200,000", date="2026-10-25", firm="")])
         import test_report as tr
         tr.check_editions(self, R)
+
+
+# ───────────── 4. 테스트·샘플 도구는 실제 입력 폴더(입력/)를 건드리지 않는다 ─────────────
+MAKE_SAMPLE = os.path.join(ROOT, "tools", "make_sample.py")
+REAL_INPUT = make_sample_module().REAL_INPUT  # <프로그램 폴더>/입력: 쓰지 않는 것만 확인한다
+
+
+def _git(*args):
+    return subprocess.run(["git"] + list(args), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+class TestInputFolderSafety(unittest.TestCase):
+    def test_real_input_folder_is_ignored_and_untracked(self):
+        self.assertEqual(_git("check-ignore", "-q", "입력/계좌잔액.csv").returncode, 0)
+        self.assertEqual(_git("ls-files", "--", "입력").stdout.strip(), b"")
+
+    def test_templates_and_sample_stay_tracked(self):
+        for name in ("입력양식/계좌잔액.csv", "입력양식/설정.csv", "입력양식/샘플/계좌잔액.csv"):
+            self.assertEqual(_git("check-ignore", "-q", name).returncode, 1, name)
+        tracked = _git("ls-files", "-z", "--", "입력양식").stdout.decode("utf-8").split("\0")
+        for fname in SCHEMA:
+            self.assertIn("입력양식/" + fname, tracked)
+            self.assertIn("입력양식/샘플/" + fname, tracked)
+
+    def test_make_sample_writes_to_the_given_folder(self):
+        target = os.path.join(new_tmp(self), "샘플")
+        r = subprocess.run([sys.executable, MAKE_SAMPLE, target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(os.listdir(target)), sorted(SCHEMA))
+        d = load(target)
+        self.assertEqual(len(d.projects), 8)
+
+    def test_make_sample_refuses_the_real_input_folder(self):
+        before = None
+        if os.path.isdir(REAL_INPUT):
+            before = {n: os.stat(os.path.join(REAL_INPUT, n)).st_mtime_ns for n in os.listdir(REAL_INPUT)}
+        r = subprocess.run([sys.executable, MAKE_SAMPLE, REAL_INPUT], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("입력", r.stdout.decode("utf-8") + r.stderr.decode("utf-8"))
+        if before is None:
+            self.assertFalse(os.path.exists(REAL_INPUT))
+        else:
+            after = {n: os.stat(os.path.join(REAL_INPUT, n)).st_mtime_ns for n in os.listdir(REAL_INPUT)}
+            self.assertEqual(before, after)
+
+    def test_tracked_sample_matches_make_sample(self):
+        folder = sample_folder(self)
+        for fname in SCHEMA:
+            with open(os.path.join(folder, fname), "rb") as f, \
+                    open(os.path.join(ROOT, "입력양식", "샘플", fname), "rb") as g:
+                self.assertEqual(f.read(), g.read(), fname)
+
+    def test_no_test_module_points_at_the_real_input_folder(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        pat = re.compile(r"join\(ROOT, [\"']입력[\"']\)")
+        for name in sorted(os.listdir(here)):
+            if name.endswith(".py"):
+                with open(os.path.join(here, name), encoding="utf-8") as f:
+                    text = f.read()
+                self.assertIsNone(pat.search(text), name)
+                for m in re.finditer(r"make_sample\.py\"\)\]", text):
+                    self.fail("%s: make_sample.py 를 폴더 없이 실행 (실제 입력 폴더에 씀)" % name)
+
+    def test_report_cli_missing_input_folder_is_a_clear_message(self):
+        import test_report as tr
+        missing = os.path.join(new_tmp(self), "입력")
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = tr.load_cli().main(["주간", "--기준일", "2026-11-02", "--입력", missing,
+                                     "--출력", os.path.join(new_tmp(self), "o"), "--pdf", "안함"])
+        self.assertEqual(rc, 2)
+        self.assertIn("입력 폴더가 없습니다", buf.getvalue())
+        self.assertIn("입력양식", buf.getvalue())
+        self.assertNotIn("Traceback", buf.getvalue() + err.getvalue())
+
+    def test_approval_cli_missing_input_folder_is_a_clear_message(self):
+        import test_approval as ta
+        missing = os.path.join(new_tmp(self), "입력")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ta.load_approval_cli().main(["--기준일", "2026-11-02", "--입력", missing, "--수집폴더", new_tmp(self),
+                                              "--출력", os.path.join(new_tmp(self), "o"), "--열기", "안함"])
+        self.assertEqual(rc, 2)
+        self.assertIn("입력 폴더가 없습니다", buf.getvalue())
+        self.assertIn("입력양식", buf.getvalue())
+
+    def test_launchers_tell_where_the_csv_files_go(self):
+        for name in ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat"):
+            with open(os.path.join(ROOT, name), "rb") as f:
+                lines = f.read().decode("utf-8").split("\r\n")
+            run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% "))
+            notes = [ln for ln in lines[:run] if ln.lower().startswith("echo") and "입력" in ln and "입력양식" in ln]
+            self.assertEqual(len(notes), 1, name)
 
 
 if __name__ == "__main__":

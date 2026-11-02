@@ -47,6 +47,13 @@ def _say(text):
     print(mask_rrn(text))
 
 
+def _input_help(folder):
+    """입력 폴더가 없을 때의 안내 (트레이스백 대신)."""
+    return ("입력 폴더가 없습니다: %s\n"
+            "  입력양식 폴더의 CSV 양식(빈 양식)을 이 폴더에 복사하고 자료를 넣으세요. 예시 자료: %s\n"
+            "  다른 폴더를 쓰려면 --입력 <폴더> 로 지정합니다." % (folder, os.path.join("입력양식", "샘플")))
+
+
 def _positive_int(text):
     try:
         value = int(text)
@@ -175,7 +182,7 @@ def main(argv=None):
         now = dt.datetime.now()
         asof = now.date()
     if not os.path.isdir(a.입력):
-        _say("입력 폴더가 없습니다: %s" % a.입력)
+        _say(_input_help(a.입력))
         return 2
     if a.수집 == "함":
         return run_collect(a, asof, now)

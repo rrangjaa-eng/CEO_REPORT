@@ -16,13 +16,15 @@ from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num, pct  # noqa: E402
 
-SAMPLE = os.path.join(ROOT, "입력")
+from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
+
 ASOF = dt.date(2026, 11, 2)
 FORBIDDEN = ("위험", "해결방안", "권고", "우려", "추천")
 
@@ -68,8 +70,7 @@ def section(html, n):
 
 
 def setUpModule():
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
-                   stdout=subprocess.DEVNULL)
+    refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
 def kv_value(html, label):
@@ -277,7 +278,7 @@ class TestChecksAndOutput(Base):
         out = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out, True)
         r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
-                            "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
+                            "--입력", SAMPLE, "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(os.listdir(out)),
                          ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
@@ -745,7 +746,7 @@ class TestCliOutputs(unittest.TestCase):
     def test_cli_monthly_writes_both_editions(self):
         out = self.outdir()
         r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "월간", "--기준일", "2026-10-31",
-                            "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
+                            "--입력", SAMPLE, "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("집계 기간 2026-10-01 ~ 2026-10-31", r.stdout)
         self.assertEqual(sorted(os.listdir(out)),
@@ -756,7 +757,7 @@ class TestCliOutputs(unittest.TestCase):
         out = self.outdir()
         buf = io.StringIO()
         with mock.patch.object(cli, "find_browser", return_value=None), contextlib.redirect_stdout(buf):
-            rc = cli.main(["주간", "--기준일", "2026-11-02", "--출력", out])
+            rc = cli.main(["주간", "--기준일", "2026-11-02", "--입력", SAMPLE, "--출력", out])
         self.assertEqual(rc, 0)
         self.assertEqual(sorted(os.listdir(out)),
                          ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
@@ -767,7 +768,7 @@ class TestCliOutputs(unittest.TestCase):
             self.skipTest("Edge/Chrome 없음")
         out = self.outdir()
         r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
-                            "--출력", out], capture_output=True, text=True, timeout=300)
+                            "--입력", SAMPLE, "--출력", out], capture_output=True, text=True, timeout=300)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(os.listdir(out)), [
             "2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_경영관리보고.pdf",
@@ -1331,7 +1332,7 @@ class TestCliArguments(unittest.TestCase):
         self.addCleanup(shutil.rmtree, out, True)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = cli.main(["주간", "--기준일", "2026-11-02", "--출력", out, "--pdf", "안함"] + list(extra))
+            rc = cli.main(["주간", "--기준일", "2026-11-02", "--입력", SAMPLE, "--출력", out, "--pdf", "안함"] + list(extra))
         return rc, buf.getvalue(), os.listdir(out)
 
     def test_bad_start_date_is_an_error(self):

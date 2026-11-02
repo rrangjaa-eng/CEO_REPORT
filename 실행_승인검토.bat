@@ -30,6 +30,7 @@ echo https://www.python.org/downloads/ 에서 새 버전을 설치하고, 설치
 pause
 exit /b 1
 :RUN
+echo 입력 CSV는 이 폴더 안의 '입력' 폴더에서 읽습니다 (빈 양식: 입력양식 폴더, 예시 자료: 입력양식\샘플 폴더).
 echo 인트라넷 ID와 비밀번호를 물어봅니다. 비밀번호는 입력해도 화면에 보이지 않습니다.
 %PY% 승인검토.py --수집 함 %*
 set "RC=%ERRORLEVEL%"

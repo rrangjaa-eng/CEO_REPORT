@@ -39,6 +39,13 @@ def _say(text):
     print(mask_rrn(text))
 
 
+def _input_help(folder):
+    """입력 폴더가 없을 때의 안내 (트레이스백 대신)."""
+    return ("입력 폴더가 없습니다: %s\n"
+            "  입력양식 폴더의 CSV 양식(빈 양식)을 이 폴더에 복사하고 자료를 넣으세요. 예시 자료: %s\n"
+            "  다른 폴더를 쓰려면 --입력 <폴더> 로 지정합니다." % (folder, os.path.join("입력양식", "샘플")))
+
+
 def find_browser():
     for p in BROWSERS:
         if os.path.exists(p):
@@ -113,7 +120,7 @@ def main(argv=None):
             _say("시작일 형식 오류 또는 기준일보다 늦음: %s (YYYY-MM-DD, 기준일 %s 이전)" % (a.시작일, asof))
             return 2
     if not os.path.isdir(a.입력):
-        _say("입력 폴더가 없습니다: %s" % a.입력)
+        _say(_input_help(a.입력))
         return 2
     os.makedirs(a.출력, exist_ok=True)
     data = load(a.입력)

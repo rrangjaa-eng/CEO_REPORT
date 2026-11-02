@@ -24,8 +24,10 @@ from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-SAMPLE = os.path.join(ROOT, "입력")
+from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
+
 ASOF = dt.date(2026, 11, 2)
 NOW = dt.datetime(2026, 11, 2, 0, 0)
 COLLECTED = dt.datetime(2026, 11, 1, 18, 0, 0)
@@ -37,8 +39,7 @@ def mod(name):
 
 
 def setUpModule():
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
-                   stdout=subprocess.DEVNULL)
+    refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
 # ───────────── 가상 스냅숏 (PAYMENT_COLUMNS 순서) ─────────────
@@ -380,7 +381,7 @@ class TestApprovalTracer(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp()
         cls.root, cls.out = os.path.join(cls.tmp, "수집"), os.path.join(cls.tmp, "출력")
         cls.snap = write_fake_snapshot(cls.root, MINI_IDS)
-        cls.rc, cls.stdout = run_cli(["--기준일", "2026-11-02", "--수집폴더", cls.root, "--출력", cls.out, "--열기", "안함"])
+        cls.rc, cls.stdout = run_cli(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", cls.root, "--출력", cls.out, "--열기", "안함"])
         files = os.listdir(cls.out) if os.path.isdir(cls.out) else []
         cls.files = files
         cls.page = ""
@@ -445,10 +446,10 @@ class TestApprovalTracer(unittest.TestCase):
 
     def test_no_snapshot_and_bad_date(self):
         empty = new_tmp(self)
-        rc, out = run_cli(["--기준일", "2026-11-02", "--수집폴더", empty, "--출력", os.path.join(empty, "o"), "--열기", "안함"])
+        rc, out = run_cli(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", empty, "--출력", os.path.join(empty, "o"), "--열기", "안함"])
         self.assertEqual(rc, 2)
         self.assertIn("인트라넷 수집 스냅숏이 없습니다", out)
-        rc, _ = run_cli(["--기준일", "2026-13-45", "--수집폴더", self.root, "--출력", os.path.join(empty, "o"), "--열기", "안함"])
+        rc, _ = run_cli(["--기준일", "2026-13-45", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", os.path.join(empty, "o"), "--열기", "안함"])
         self.assertEqual(rc, 2)
 
 

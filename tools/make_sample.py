@@ -1,7 +1,11 @@
 """샘플 입력 자료(가상의 회사·프로젝트)와 빈 입력양식을 만든다.
 
-    python tools/make_sample.py
+    python tools/make_sample.py           ← 샘플을 입력양식/샘플 폴더에, 빈 양식을 입력양식 폴더에 쓴다
+    python tools/make_sample.py <폴더>    ← 샘플만 그 폴더에 쓴다 (테스트는 임시 폴더를 준다)
+    python 보고서.py 주간 --입력 입력양식/샘플 --기준일 2026-11-02   ← 샘플로 보고서 만들어 보기
+
 실제 회사 자료가 아니다. 프로그램 동작 확인용이다.
+실제 입력 폴더(입력)에는 쓰지 않는다: 그 폴더를 주면 아무것도 쓰지 않고 멈춘다.
 """
 import csv
 import os
@@ -163,8 +167,47 @@ S["자료차이.csv"] = [
     ["P26206 원가", "인트라넷 완료보고", "26,000,000", "WEHAGO 프로젝트 원가", "26,000,000", "확인완료"],
 ]
 
-if __name__ == "__main__":
+REAL_INPUT = os.path.join(HERE, "입력")
+TEMPLATES = os.path.join(HERE, "입력양식")
+SAMPLE_DIR = os.path.join(TEMPLATES, "샘플")
+
+
+def is_real_input(folder):
+    """사용자의 실제 입력 폴더(<프로그램 폴더>/입력)이면 True."""
+    return os.path.normcase(os.path.realpath(folder)) == os.path.normcase(os.path.realpath(REAL_INPUT))
+
+
+def write_sample(folder, data=None):
+    """샘플 CSV 12개를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
+    if is_real_input(folder):
+        raise ValueError("실제 입력 폴더에는 샘플을 쓰지 않습니다: %s" % folder)
+    data = S if data is None else data
     for name in SCHEMA:
-        write(os.path.join(HERE, "입력"), name, S.get(name, []))
-        write(os.path.join(HERE, "입력양식"), name, S["설정.csv"] if name == "설정.csv" else [])
-    print("샘플 입력과 빈 양식을 만들었습니다.")
+        write(folder, name, data.get(name, []))
+
+
+def write_templates(folder=TEMPLATES):
+    """빈 입력양식(머리글만, 설정.csv 는 기본 항목)을 folder 에 쓴다."""
+    for name in SCHEMA:
+        write(folder, name, S["설정.csv"] if name == "설정.csv" else [])
+
+
+def main(argv):
+    if len(argv) > 1:
+        print("사용법: python tools/make_sample.py [샘플을 쓸 폴더]")
+        return 2
+    if argv:
+        if is_real_input(argv[0]):
+            print("실제 입력 폴더(입력)에는 샘플을 쓰지 않습니다: %s" % argv[0])
+            return 2
+        write_sample(argv[0])
+        print("샘플 입력을 만들었습니다: %s" % argv[0])
+        return 0
+    write_sample(SAMPLE_DIR)
+    write_templates()
+    print("샘플 입력(%s)과 빈 양식(%s)을 만들었습니다." % (SAMPLE_DIR, TEMPLATES))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

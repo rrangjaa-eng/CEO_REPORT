@@ -26,7 +26,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, as_dicts, element_html, load_approval_cli,  # noqa: E402
+from sample_input import refresh as refresh_sample  # noqa: E402
+from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, SAMPLE, as_dicts, element_html, load_approval_cli,  # noqa: E402
                            text_of, write_fake_snapshot)
 from test_intranet import (PASSWORD, USER, FakeTransport, PAYMENT_HEADER, login_page,  # noqa: E402
                            make_fake_opener, payment_page, project_page, site_routes)
@@ -35,8 +36,7 @@ HEADLINE = "전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25"
 
 
 def setUpModule():
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
-                   stdout=subprocess.DEVNULL)
+    refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
 def intranet():
@@ -136,7 +136,7 @@ class _TmpMixin(object):
         self.out = os.path.join(self.tmp, "출력")
 
     def argv(self, *extra):
-        return ["--수집", "함", "--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out] + list(extra)
+        return ["--수집", "함", "--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out] + list(extra)
 
     def assert_nothing_written(self):
         self.assertEqual(entries(self.root), [], "수집 폴더에 무언가 남음")
@@ -203,7 +203,7 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
     def test_default_mode_never_asks_or_connects(self):
         write_fake_snapshot(self.root)
         rc, out, err, fake, mocks = run_cli(
-            self, ["--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
+            self, ["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
         self.assertEqual(rc, 0, out)
         for name in ("input", "getpass", "opener"):
             mocks[name].assert_not_called()
@@ -214,7 +214,7 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
     def test_explicit_no_collect_after_collect_flag_wins(self):
         write_fake_snapshot(self.root)
         rc, out, err, fake, mocks = run_cli(
-            self, ["--수집", "함", "--수집", "안함", "--기준일", "2026-11-02", "--수집폴더", self.root,
+            self, ["--수집", "함", "--수집", "안함", "--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root,
                    "--출력", self.out, "--열기", "안함"])
         self.assertEqual(rc, 0, out)
         mocks["input"].assert_not_called()
@@ -349,7 +349,7 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
         with open(os.path.join(snap, "지급요청.csv"), encoding="utf-8-sig") as f:
             self.assertIn(RRN_PARTS[0], f.read())  # 시험 준비 확인: 디스크의 옛 스냅숏에는 원래 값이 있다
         rc, out, err, fake, mocks = run_cli(
-            self, ["--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
+            self, ["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
         self.assertEqual(rc, 0, out + err)
         assert_no_rrn(self, self.out, [out, err])
         with open(os.path.join(self.out, entries(self.out)[0]), encoding="utf-8") as f:
@@ -383,7 +383,7 @@ class TestDuplicateNumbers(_TmpMixin, unittest.TestCase):
     def test_cli_stops_on_a_snapshot_with_a_repeated_number(self):
         write_fake_snapshot(self.root, extra=[list(FAKE_PAYMENTS[0])])
         rc, out, err, fake, mocks = run_cli(
-            self, ["--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
+            self, ["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
         self.assertEqual(rc, 2, out)
         self.assertIn("스냅숏을 읽지 못했습니다", out)
         self.assertIn("번호가 겹치는 줄 2건 (1201)", out)

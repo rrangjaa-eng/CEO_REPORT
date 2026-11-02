@@ -30,6 +30,7 @@ echo https://www.python.org/downloads/ 에서 새 버전을 설치하고, 설치
 pause
 exit /b 1
 :RUN
+echo 입력 CSV는 이 폴더 안의 '입력' 폴더에서 읽습니다 (빈 양식: 입력양식 폴더, 예시 자료: 입력양식\샘플 폴더).
 %PY% 보고서.py 주간 %*
 set "RC=%ERRORLEVEL%"
 echo.

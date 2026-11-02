@@ -6,3 +6,5 @@ __pycache__/
 수집/
 # WEHAGO 엑셀 등 회사 자료 (D-36)
 *.xlsx
+# 실제 입력 CSV (회사 자료). 빈 양식은 입력양식/, 예시 자료는 입력양식/샘플/ (tools/make_sample.py)
+/입력/

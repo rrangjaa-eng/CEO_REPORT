@@ -20,6 +20,7 @@ for _p in (ROOT, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from sample_input import refresh as refresh_sample  # noqa: E402
 from test_approval import (SAMPLE, element_html, edit_csv, load_approval_cli, row_html, run_cli,  # noqa: E402
                            run_node, sample_copy, script_text, span_text, text_of, week_cell, write_fake_snapshot)
 from test_approval_cli import fake_site, run_cli as run_collect_cli, sweep  # noqa: E402
@@ -44,8 +45,7 @@ def mod(name):
 
 
 def setUpModule():
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
-                   stdout=subprocess.DEVNULL)
+    refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
 def T(page, id_):
@@ -76,8 +76,7 @@ def cli_screen(test, books=True, prep=None, extra=(), input_dir=None, **book_kw)
     if prep:
         prep(os.path.join(root, "위하고"))
     argv = ["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"]
-    if input_dir:
-        argv += ["--입력", input_dir]
+    argv += ["--입력", input_dir or SAMPLE]
     rc, text = run_cli(argv + list(extra))
     page = read_only_html(out) if os.path.isdir(out) and os.listdir(out) else None
     return rc, text, page, root, out
@@ -143,7 +142,7 @@ class TestXchkScreen(unittest.TestCase):
         root, out = os.path.join(cls.tmp, "수집"), os.path.join(cls.tmp, "출력")
         write_fake_snapshot(root)
         write_fake_books(os.path.join(root, "위하고"))
-        cls.rc, cls.stdout = run_cli(["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"])
+        cls.rc, cls.stdout = run_cli(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root, "--출력", out, "--열기", "안함"])
         cls.page = read_only_html(out)
         snap = mod("snapshot").latest_snapshot(root)
         _, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "o2"), snap, ASOF, NOW, False)
@@ -346,7 +345,7 @@ class TestXchkFallback(unittest.TestCase):
         write_fake_snapshot(root)
         if prep_books:
             prep_books(os.path.join(root, "위하고"))
-        rc, text = run_cli(["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"])
+        rc, text = run_cli(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root, "--출력", out, "--열기", "안함"])
         self.assertEqual(rc, 0)
         page = read_only_html(out)
         _, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "o2"), mod("snapshot").latest_snapshot(root),
@@ -477,7 +476,7 @@ class TestXchkCollect(unittest.TestCase):
         tmp = new_tmp(self)
         root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
         write_fake_books(os.path.join(root, "위하고"))
-        argv = ["--수집", "함", "--기준일", "2026-11-02", "--수집폴더", root, "--출력", out]
+        argv = ["--수집", "함", "--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root, "--출력", out]
         rc, text, err, fake, mocks = run_collect_cli(self, argv)
         self.assertEqual(rc, 0, text)
         page = read_only_html(out)
@@ -625,7 +624,7 @@ class TestXchkPrivacy(unittest.TestCase):
         tmp = new_tmp(self)
         root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
         write_fake_books(os.path.join(root, "위하고"))
-        rc, text, err, fake, _ = run_collect_cli(self, ["--수집", "함", "--기준일", "2026-11-02", "--수집폴더", root, "--출력", out])
+        rc, text, err, fake, _ = run_collect_cli(self, ["--수집", "함", "--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root, "--출력", out])
         self.assertEqual(rc, 0)
         self.sweep_rrn([text, err, read_only_html(out)], out)
 

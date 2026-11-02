@@ -26,7 +26,8 @@ for _p in (ROOT, HERE):
 # 함수와 상수만 가져온다 (TestCase 클래스를 가져오면 시험이 두 번 돈다).
 from test_approval import FAKE_PAYMENTS, write_fake_snapshot  # noqa: E402
 
-SAMPLE = os.path.join(ROOT, "입력")
+from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
+
 ASOF = dt.date(2026, 11, 2)
 NOW = dt.datetime(2026, 11, 2, 0, 0)
 
@@ -36,8 +37,7 @@ def mod(name):
 
 
 def setUpModule():
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
-                   stdout=subprocess.DEVNULL)
+    refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
 def new_tmp(test):
