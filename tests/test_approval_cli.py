@@ -588,6 +588,13 @@ class TestStructureCheck(_TmpMixin, unittest.TestCase):
             self.assertIn(line, out)
         self.assertEqual(len(fake.calls), 4)
 
+    def test_cli_does_not_print_the_login_redirect_path(self):
+        # IN-09: 로그인 뒤 이동 위치에 ID가 들어 있어도 화면에 찍지 않는다 (있음/없음만)
+        rc, out, err, fake = self.check({("POST", "/login/submit"): (302, {"Location": "/main/someid42"}, "")})
+        self.assertIn("로그인: 성공", out)
+        self.assertIn("이동 위치 있음", out)
+        self.assertNotIn("someid42", out + err)
+
     def test_cli_prints_no_row_values(self):
         rc, out, err, fake = self.check()
         for value in ("가상음향", "가상 컨퍼런스", "44,000,000", "가상고객A", "홍길동"):
