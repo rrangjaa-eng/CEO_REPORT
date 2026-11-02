@@ -469,14 +469,39 @@ def _key(text):
     return _SPACE.sub("", text)
 
 
-def _headers_match(headers, expected, aliases):
-    if len(headers) != len(expected):
-        return False
-    for i, (got, want) in enumerate(zip(headers, expected)):
-        ok = [_key(want)] + [_key(x) for x in aliases.get(i, ())]
-        if _key(got) not in ok:
-            return False
-    return True
+def _compare_header(headers, expected, aliases):
+    """(일치 여부, 없는 이름, 새로 생긴 이름, 첫 차이 설명)"""
+    want = [_key(x) for x in expected]
+    got = [_key(x) for x in headers]
+    alias_of = {}
+    for pos, names in aliases.items():
+        for name in names:
+            alias_of[_key(name)] = want[pos]
+    got_folded = [alias_of.get(x, x) for x in got]
+    ok = len(got) == len(want)
+    first = ""
+    for i in range(max(len(got), len(want))):
+        a = want[i] if i < len(want) else None
+        b = got_folded[i] if i < len(got_folded) else None
+        if a != b:
+            ok = False
+            first = "%d번째 칸: 예상 '%s', 실제 '%s'" % (
+                i + 1, expected[i] if i < len(expected) else "(없음)",
+                headers[i] if i < len(headers) else "(없음)")
+            break
+    missing = collections.Counter(x for x in want if x)
+    missing.subtract(collections.Counter(x for x in got_folded if x))
+    names = {}
+    for raw in expected:
+        names[_key(raw)] = raw
+    miss = [names[k] for k, n in missing.items() if n > 0 for _ in range(n)]
+    extra_counter = collections.Counter(x for x in got_folded if x)
+    extra_counter.subtract(collections.Counter(x for x in want if x))
+    shown = {}
+    for raw in headers:
+        shown[_key(raw)] = raw
+    extra = [shown.get(k, k) for k, n in extra_counter.items() if n > 0 for _ in range(n)]
+    return ok, miss, extra, first
 
 
 def _is_total(cells):
@@ -505,20 +530,195 @@ def _map_project(row):
     return mapped
 
 
-def _read_list(opener, path, header, aliases, mapper):
-    _, _, text = opener.get(BASE + path)
-    page = _parse(text)
-    if _has_login_form(page):
-        raise LoginFailed("로그인 실패: ID 또는 비밀번호를 확인하세요")
+_LISTS = {
+    "payment": {"label": "지급요청", "path": "/payment/index", "header": PAYMENT_HEADER,
+                "aliases": PAYMENT_ALIASES, "mapper": _map_payment},
+    "project": {"label": "프로젝트", "path": "/project/index", "header": PROJECT_HEADER,
+                "aliases": PROJECT_ALIASES, "mapper": _map_project},
+}
+
+
+def _find_table(page, spec):
+    """머리글이 맞는 표를 찾는다. 없으면 가장 비슷한 표의 차이를 알리며 멈춘다."""
+    label = spec["label"]
+    best = None
+    best_score = 0
+    wanted = set(_key(x) for x in spec["header"] if x)
     for table in page.tables:
-        if _headers_match(table.headers, header, aliases):
-            return [mapper(r) for r in table.rows if not _is_total(r.cells)]
-    raise StructureMismatch("목록 머리글이 예상과 다름")
+        if not table.headers:
+            continue
+        ok, miss, extra, first = _compare_header(table.headers, spec["header"], spec["aliases"])
+        if ok:
+            return table
+        score = len(wanted & set(_key(x) for x in table.headers))
+        if score > best_score:
+            best, best_score = (miss, extra, first), score
+    if best is None or best_score < 2:
+        raise StructureMismatch("%s 목록 머리글 표를 찾지 못함 (화면 구조가 달라졌을 수 있음)" % label)
+    miss, extra, first = best
+    raise StructureMismatch("%s 목록 머리글이 예상과 다름 — 없음: %s / 새로 생김: %s / 첫 차이 %s" % (
+        label, ", ".join(miss) or "(없음)", ", ".join(extra) or "(없음)", first or "(칸 수 차이)"))
+
+
+def _read_rows(table, spec):
+    """표의 데이터 줄을 키가 붙은 dict로. Total 줄·빈 줄·안내 한 칸 줄은 데이터가 아니다."""
+    label = spec["label"]
+    width = len(spec["header"])
+    rows = []
+    bad = 0
+    for row in table.rows:
+        cells = row.cells
+        if _is_total(cells) or not any(cells) or len(cells) == 1:
+            continue
+        if len(cells) != width:
+            bad += 1
+            continue
+        rows.append(spec["mapper"](row))
+    if bad:
+        raise StructureMismatch("%s 목록 표 줄의 칸 수가 머리글과 다름 (%d건, 머리글 %d칸)" % (label, bad, width))
+    return rows
+
+
+def _pairs(query):
+    """'a=1&b=' → [('a','1'), ('b','')] (이름순서 그대로, 빈 항목은 건너뜀)"""
+    out = []
+    for item in query.split("&"):
+        if item:
+            name, _, value = item.partition("=")
+            out.append((name, value))
+    return out
+
+
+def _significant(pairs):
+    """값이 빈 항목은 없는 것과 같다."""
+    return set((n, v) for n, v in pairs if v != "")
+
+
+def _is_first_page_pair(name, value):
+    if value == "":
+        return True
+    if not _DIGITS.match(value):
+        return False
+    if name in _PAGE_NAMES_ONE_BASED:
+        return int(value) <= 1
+    if name in _PAGE_NAMES_ZERO_BASED:
+        return int(value) == 0
+    return False
+
+
+def _canonical(url):
+    """같은 쪽을 가리키는 주소를 같은 값으로 (page=1, 쪽 이름 없음, 끝 /0)."""
+    parts = urllib.parse.urlsplit(url)
+    path = re.sub(r"/0+$", "", parts.path)
+    pairs = sorted((n, v) for n, v in _pairs(parts.query) if v != "" and not _is_first_page_pair(n, v))
+    return path, tuple(pairs)
+
+
+def _classify_links(page, current_url, kind, list_path):
+    """쪽 이동 링크를 가려낸다. (따라갈 주소들, 알아본 쪽 링크 수, 알 수 없는 쪽 이름, 다른 조회값을 섞은 이름)"""
+    cur = urllib.parse.urlsplit(current_url)
+    cur_set = _significant(_pairs(cur.query))
+    known = FILTER_NAMES[kind] | PAGE_NAMES
+    follow = []
+    recognised = 0
+    unknown = set()
+    mixed = set()
+    for href, _text in page.links:
+        h = href.strip()
+        if not h or h.startswith("#") or h.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        try:
+            full = urllib.parse.urljoin(current_url, h).split("#", 1)[0]
+            parts = urllib.parse.urlsplit(full)
+            host = parts.hostname
+            parts.port
+        except ValueError:
+            continue
+        if parts.scheme != "https" or host != HOST:
+            continue
+        if not re.match(r"^%s(?:/[0-9]+)?$" % re.escape(list_path), parts.path):
+            continue
+        link_set = _significant(_pairs(parts.query))
+        diff = link_set ^ cur_set
+        if not diff and parts.path == cur.path:
+            continue  # 지금 보는 쪽
+        names = set(n for n, _ in diff)
+        if names <= PAGE_NAMES and all(_DIGITS.match(v) for _, v in diff):
+            recognised += 1
+            try:
+                follow.append(check_url("GET", full))
+            except BlockedRequest:
+                pass
+            continue
+        added = set((n, v) for n, v in link_set - cur_set)
+        unknown.update(n for n, v in added if n not in known and v.isdigit())
+        if any(n in PAGE_NAMES and v.isdigit() for n, v in added):
+            mixed.update(n for n, v in added if n not in PAGE_NAMES)
+    return follow, recognised, unknown, mixed
+
+
+def _collect_list(opener, kind, max_pages, progress):
+    spec = _LISTS[kind]
+    label = spec["label"]
+    list_path = spec["path"]
+    start = BASE + list_path
+    queue = [start]
+    seen = set([_canonical(start)])
+    rows = collections.OrderedDict()
+    pages = 0
+    while queue:
+        if pages >= max_pages:
+            raise StructureMismatch(
+                "%s 목록: 최대 페이지 수 %d 도달 — 남은 페이지가 있어 수집을 멈춤 (--최대페이지로 늘릴 수 있음)"
+                % (label, max_pages))
+        url = queue.pop(0)
+        _, _, text = opener.get(url)
+        pages += 1
+        page = _parse(text)
+        if _has_login_form(page):
+            raise LoginFailed("로그인 실패: ID 또는 비밀번호를 확인하세요")
+        table = _find_table(page, spec)
+        added = 0
+        empty_number = 0
+        for mapped in _read_rows(table, spec):
+            number = mapped["번호"].strip()
+            if not number:
+                empty_number += 1
+            elif number not in rows:
+                rows[number] = mapped
+                added += 1
+        if empty_number:
+            raise StructureMismatch("%s 목록: 번호 칸이 빈 줄이 %d건 있어 멈춤" % (label, empty_number))
+        if progress is not None:
+            progress(label, pages, len(rows))
+        follow, recognised, unknown, mixed = _classify_links(page, url, kind, list_path)
+        if pages == 1 and not recognised:
+            if unknown:
+                raise StructureMismatch(
+                    "%s 목록: 쪽 이동으로 보이는 링크의 조회 이름(%s)을 알 수 없어 따라가지 않고 멈춤"
+                    % (label, ", ".join(sorted(unknown))))
+            if mixed:
+                raise StructureMismatch(
+                    "%s 목록: 쪽 링크가 다른 조회 값(%s)도 함께 바꿔서 따라가지 않고 멈춤"
+                    % (label, ", ".join(sorted(mixed))))
+        if added:  # 새 줄이 없는 쪽의 링크는 따라가지 않는다(되돌이 방지)
+            for link in follow:
+                key = _canonical(link)
+                if key not in seen:
+                    seen.add(key)
+                    queue.append(link)
+    if not rows:
+        raise StructureMismatch("%s 목록 0건 — 읽은 줄이 없어 멈춤" % label)
+    return list(rows.values()), pages
 
 
 def collect(opener, user_id, password, max_pages=300, progress=None):
-    """로그인 → 지급요청 목록 → 프로젝트 목록. (이 단계: 목록마다 한 쪽만 읽는다)"""
+    """로그인 → 지급요청 목록 전 페이지 → 프로젝트 목록 전 페이지.
+
+    구조가 예상과 다르면 예외로 멈추고 아무 줄도 돌려주지 않는다(D-29).
+    ID·비밀번호는 login()에만 넘기고 어디에도 보관하지 않는다.
+    """
     info = login(opener, user_id, password)
-    payments = _read_list(opener, "/payment/index", PAYMENT_HEADER, PAYMENT_ALIASES, _map_payment)
-    projects = _read_list(opener, "/project/index", PROJECT_HEADER, PROJECT_ALIASES, _map_project)
-    return CollectResult(payments, projects, 1, 1, info)
+    payments, payment_pages = _collect_list(opener, "payment", max_pages, progress)
+    projects, project_pages = _collect_list(opener, "project", max_pages, progress)
+    return CollectResult(payments, projects, payment_pages, project_pages, info)
