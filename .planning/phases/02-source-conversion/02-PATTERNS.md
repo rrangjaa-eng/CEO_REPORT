@@ -16,16 +16,16 @@ conventions, so plans that run in parallel agree without reading each other's co
 | `입력양식/프로젝트연결.csv` | 02-02 | — | empty manual template (header only) |
 | `ceo_report/convert_projects.py` | 02-04 | — | `build_projects()` → 프로젝트.csv, `build_execs()` → 프로젝트집행.csv |
 | `ceo_report/convert_invoices.py` | 02-05 | — | `build_invoices()` → 계산서.csv |
-| `ceo_report/convert_xchk.py` | 02-06 | — | `build_xchk()` → 위하고대조.csv, `load_xchk()` for the monthly report |
-| `ceo_report/render.py`, `보고서.py` | (1) | 02-06 | monthly section 8 'WEHAGO 기준 대조' |
+| `ceo_report/convert_xchk.py` | 02-06 (wave 3) | — | `build_xchk()` → 위하고대조.csv (incl. 보통예금, D-48), `load_xchk()` for the monthly report |
+| `ceo_report/render.py`, `보고서.py` | (1) | 02-09 (wave 4) | monthly section 8 'WEHAGO 기준 대조' |
+| `tests/test_convert_reports.py` | 02-10 (wave 5) | — | report, approval and no-double-count checks on real 변환.py output |
 | `ceo_report/approval.py`, `ceo_report/approval_render.py`, `승인검토.py` | (01.1) | 02-08 (D-47) | approval screen project costs through linking.py (same rule and settings as the monthly report) |
 
 Files that NO Phase 2 plan changes (proof: `git diff --quiet cbc5497 -- <files>`): `ceo_report/calc.py`,
 `ceo_report/data.py`, `ceo_report/intranet.py`, `ceo_report/snapshot.py`, `실행_주간.bat`, `실행_월간.bat`,
 `실행_승인검토.bat`. `ceo_report/approval.py`, `ceo_report/approval_render.py` and `승인검토.py` stay unchanged through
-waves 1-2 (plans 02-01..02-06 check them against cbc5497 when they run); only plan 02-08 (wave 3, D-47) changes them, so
-plan 02-07 (same wave) leaves them out of its check.
-`cbc5497` is the code baseline for the whole phase (HEAD before the Phase 2 plans; docs-only commits after it).
+waves 1-3 (plans 02-01..02-06 check them against cbc5497 when they run); only plan 02-08 (wave 4, D-47) changes them,
+so plans 02-07, 02-09 (same wave) and 02-10 leave them out of their checks.
 
 ## 2. Output files (D-40..D-43)
 
@@ -38,7 +38,7 @@ plan 02-07 (same wave) leaves them out of its check.
 | 위하고대조.csv | generated | books 'ok' and a snapshot exists (otherwise kept untouched) | `convert_xchk.XCHK_COLUMNS` (D-44) |
 | 변환결과.txt | generated log | every run that gets past argument checks | free text, format in §6 |
 | 계좌잔액.csv, 설정.csv, 지급계획.csv, 변경내역.csv, 자료기준일.csv, 프로젝트연결.csv | manual (D-43) | never created, never written, never moved | — |
-| 입출금내역.csv, 자금일정.csv, 자료차이.csv | not touched by Phase 2 | never written (see report: undecided by CONTEXT) | — |
+| 입출금내역.csv, 자금일정.csv, 자료차이.csv | not written by Phase 2 (D-48) | never written; 입출금내역.csv and 계좌잔액.csv are read for the 보통예금 facts, 자금일정.csv for the overlap list | — |
 
 `convert.GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "변환결과.txt")`
 `convert.MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")`
@@ -119,6 +119,12 @@ failed — nothing replaced). No traceback is printed; every printed line goes t
 - Tests: unittest, synthetic data only, written to `tempfile.mkdtemp()` folders; never pass or open `입력/`,
   `수집/`, a scratchpad or any realbooks path; never pass the default CLI folders (always `--입력`, `--수집폴더`,
   `--위하고폴더` to temp folders). Import helpers and constants, never TestCase classes, from other test modules.
+- Unknown contributor rule (B5): any total, sum or cell with an unknown contributor is '' / '판단 불가'; the number of
+  unknown contributors goes to a note or 비고 only. A total over an explicitly named subset ('합계 (빈칸 제외)',
+  '금액 있는 N건') is allowed when the blank / unknown count is reported next to it.
+- Verify commands name each test class and fail on zero tests (W1):
+  `bash -o pipefail -c "python3 -m unittest discover -s tests -k <Class> -v 2>&1 | grep 'Ran [1-9]'"` per class, then the
+  full suite. grep without -q reads all output, so unittest is never cut off and pipefail keeps its exit status.
 - TDD per task: commit `test(02-NN): RED <task>` with the failing tests, then `feat(02-NN): GREEN <task>`.
   RED evidence = the failing run's last line pasted in the SUMMARY.
 - Full suite: `cd /home/user/CEO_REPORT && python3 -m unittest discover -s tests` stays green after every GREEN.
@@ -178,6 +184,12 @@ Expected cost links on FAKE_JOURNAL + LINK_EXTRA with snapshot FAKE + LINK_REQUE
 전표 1..8 코드 (8 lines, 248,400,000); 40 자동 26220 via 6001 (200,000; 200,000 + VAT 20,000 = 220,000);
 22, 23, 41 (후보 2건: 6002, 6003), 42 and 43 (후보 공유: 지급요청 6004), 44 (6005 registered 151 days before) 미연결
 (6 lines, 3,200,000). Total 15 cost lines, 251,800,000. With link_days 200, 44 becomes 자동 26201 via 6005.
+
+### OPENING_CASH, BANK_BALANCES, BANK_TX (tests/test_convert_xchk.py, plan 02-06; D-48)
+- OPENING_CASH: 전표 80 2026-01-02 · 10300 보통예금 D 300,000,000 가상은행 '전기이월' · 37500 이월이익잉여금 C 300,000,000.
+- BANK_BALANCES (계좌잔액.csv rows): 2026-10-31 운영계좌 가상은행 200,000,000 · 2026-10-31 프로젝트계좌 가상은행 145,000,000.
+- BANK_TX (입출금내역.csv rows): 2026-10-05 운영계좌 입금 110,000,000 · 2026-10-30 운영계좌 출금 53,000,000.
+- FAKE_PL_JOURNAL cash facts: 증감 45,000,000 (2026-09 −12,000,000; 2026-10 +57,000,000); with OPENING_CASH 잔액 345,000,000.
 
 ### SALES_EINVOICE (tests/test_convert_invoices.py, plan 02-05; file `전자세금계산서(매출)_20261031.xlsx`, EINVOICE_HEADER)
 | 일자 | Code | 거래처 | 유형 | 품명 | 공급가액 | 부가세 | 합계 | 차변계정 | 대변계정 | 관리 | 전표상태 |
