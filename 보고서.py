@@ -7,6 +7,8 @@
 
 입력 폴더의 CSV(엑셀에서 'CSV UTF-8' 또는 'CSV'로 저장)를 읽어
 출력 폴더에 HTML(과 PDF)을 만든다. 대표용과 경영관리용은 같은 숫자를 쓴다.
+
+종료 코드: 0 완료 · 2 입력 문제(날짜, 폴더) · 7 출력 폴더에 파일을 쓰지 못함
 """
 import argparse
 import datetime as dt
@@ -44,6 +46,13 @@ def _input_help(folder):
     return ("입력 폴더가 없습니다: %s\n"
             "  입력양식 폴더의 CSV 양식(빈 양식)을 이 폴더에 복사하고 자료를 넣으세요. 예시 자료: %s\n"
             "  다른 폴더를 쓰려면 --입력 <폴더> 로 지정합니다." % (folder, os.path.join("입력양식", "샘플")))
+
+
+def _write_help(folder, e):
+    """출력 폴더를 만들거나 쓸 수 없을 때의 안내 (트레이스백 대신)."""
+    return ("출력 폴더에 파일을 쓰지 못했습니다: %s (%s)\n"
+            "  같은 이름의 파일이 있거나 쓰기 권한이 없는 폴더입니다. --출력 <폴더> 로 다른 폴더를 지정하세요."
+            % (folder, e.strerror or type(e).__name__))
 
 
 def find_browser():
@@ -122,7 +131,11 @@ def main(argv=None):
     if not os.path.isdir(a.입력):
         _say(_input_help(a.입력))
         return 2
-    os.makedirs(a.출력, exist_ok=True)
+    try:
+        os.makedirs(a.출력, exist_ok=True)
+    except OSError as e:
+        _say(_write_help(a.출력, e))
+        return 7
     data = load(a.입력)
     R = compute(data, kind, asof, start)
     label = "주간" if kind == "weekly" else "월간"
@@ -130,8 +143,12 @@ def main(argv=None):
     made = []
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
-        with open(base + ".html", "w", encoding="utf-8") as f:
-            f.write(render(R, mode))
+        try:
+            with open(base + ".html", "w", encoding="utf-8") as f:
+                f.write(render(R, mode))
+        except OSError as e:
+            _say(_write_help(a.출력, e))
+            return 7
         made.append(base + ".html")
         if browser:
             err = to_pdf(browser, base + ".html", base + ".pdf")

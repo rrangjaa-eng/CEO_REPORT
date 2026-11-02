@@ -13,7 +13,7 @@ ID·비밀번호는 옵션·환경 변수·파일로 받지 않고 어디에도 
 
 종료 코드: 0 완료 · 2 입력 문제(날짜, 폴더, 빈 ID·비밀번호, 입력 취소, 비밀번호를 가릴 수 없는 창)
 · 3 로그인 실패·화면 구조 변경 · 4 허용 목록 밖 요청을 막음 · 5 인트라넷 연결 실패
-· 6 예상하지 못한 오류·중단 · 7 읽은 뒤 파일 저장 실패
+· 6 예상하지 못한 오류·중단 · 7 파일 저장 실패(수집한 뒤, 또는 출력 폴더에 쓸 수 없음)
 """
 import argparse
 import datetime as dt
@@ -199,6 +199,10 @@ def main(argv=None):
     except SnapshotError as e:
         _say("스냅숏을 읽지 못했습니다: %s" % e)
         return 2
+    except OSError as e:
+        _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s) — --출력 <폴더> 로 다른 폴더를 지정하세요"
+             % (a.출력, e.strerror or type(e).__name__))
+        return 7
     report(path, A, "(마지막 스냅숏)")
     if a.열기 == "열기":
         webbrowser.open(pathlib.Path(path).resolve().as_uri())

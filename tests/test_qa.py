@@ -251,3 +251,34 @@ class TestApprovalSameMinute(unittest.TestCase):
             self.assertIn("기준일 2026-11-02", f.read())
         with open(p2, encoding="utf-8") as f:
             self.assertIn("기준일 2026-12-31", f.read())
+
+
+class TestOutputFolderUnwritable(unittest.TestCase):
+    """--출력 이 파일이거나 만들 수 없는 경로면 트레이스백 대신 한 줄 안내와 종료 코드 7."""
+
+    def blocked(self):
+        tmp = new_tmp(self)
+        path = os.path.join(tmp, "출력")
+        with open(path, "w") as f:
+            f.write("x")  # 같은 이름의 파일이 있어 폴더를 만들 수 없다
+        return path
+
+    def test_report(self):
+        out = self.blocked()
+        rc, text = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", SAMPLE, "--pdf", "안함", "--출력", out])
+        self.assertEqual(rc, 7)
+        self.assertIn("출력 폴더에 파일을 쓰지 못했습니다", text)
+        self.assertIn(out, text)
+
+    def test_approval(self):
+        import contextlib
+        import io
+        out = self.blocked()
+        root = os.path.join(new_tmp(self), "수집")
+        write_fake_snapshot(root)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = load_approval_cli().main(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root,
+                                           "--출력", out, "--열기", "안함"])
+        self.assertEqual(rc, 7)
+        self.assertIn("출력 폴더에 파일을 쓰지 못했습니다", buf.getvalue())
