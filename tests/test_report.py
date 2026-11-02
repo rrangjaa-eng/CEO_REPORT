@@ -1,6 +1,9 @@
 """보고 규칙 테스트. 실행: python -m unittest discover -s tests"""
+import contextlib
 import csv
 import datetime as dt
+import importlib.util
+import io
 import os
 import re
 import shutil
@@ -8,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -66,6 +70,20 @@ def kv_value(html, label):
     """render.kv()가 쓰는 '이름 / 값' 줄에서 값 부분만 꺼낸다. 없으면 None."""
     m = re.search('<div class="kv"><span>' + re.escape(label) + '</span><span>(.*?)</span></div>', html, re.S)
     return m.group(1) if m else None
+
+
+_CLI = None
+
+
+def load_cli():
+    """보고서.py는 이름이 한글이라 import 할 수 없다. 경로로 읽어 한 번만 만든다."""
+    global _CLI
+    if _CLI is None:
+        spec = importlib.util.spec_from_file_location("report_cli", os.path.join(ROOT, "보고서.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CLI = mod
+    return _CLI
 
 
 def check_editions(test, R):
@@ -565,6 +583,99 @@ class TestCeoRulesEverywhere(unittest.TestCase):
             with self.subTest(name):
                 folder, kind, asof = make()
                 check_editions(self, compute(load(folder), kind, asof))
+
+
+class TestCliOutputs(unittest.TestCase):
+    """한 번의 명령으로 두 판의 HTML과 PDF가 나오고, 옛 PDF가 새 것으로 보고되지 않는다 (REP-01, REP-03)."""
+
+    def outdir(self):
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        return out
+
+    def test_cli_monthly_writes_both_editions(self):
+        out = self.outdir()
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "월간", "--기준일", "2026-10-31",
+                            "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("집계 기간 2026-10-01 ~ 2026-10-31", r.stdout)
+        self.assertEqual(sorted(os.listdir(out)),
+                         ["2026-10-31_월간_경영관리보고.html", "2026-10-31_월간_대표보고.html"])
+
+    def test_cli_without_browser_still_writes_html(self):
+        cli = load_cli()
+        out = self.outdir()
+        buf = io.StringIO()
+        with mock.patch.object(cli, "find_browser", return_value=None), contextlib.redirect_stdout(buf):
+            rc = cli.main(["주간", "--기준일", "2026-11-02", "--출력", out])
+        self.assertEqual(rc, 0)
+        self.assertEqual(sorted(os.listdir(out)),
+                         ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
+        self.assertIn("Edge/Chrome을 찾지 못해", buf.getvalue())
+
+    def test_cli_pdf_when_browser_available(self):
+        if load_cli().find_browser() is None:
+            self.skipTest("Edge/Chrome 없음")
+        out = self.outdir()
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
+                            "--출력", out], capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(os.listdir(out)), [
+            "2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_경영관리보고.pdf",
+            "2026-11-02_주간_대표보고.html", "2026-11-02_주간_대표보고.pdf"])
+        for name in os.listdir(out):
+            if name.endswith(".pdf"):
+                with open(os.path.join(out, name), "rb") as f:
+                    self.assertEqual(f.read(5), b"%PDF-", name)
+
+    def stale_setup(self):
+        out = self.outdir()
+        html_path = os.path.join(out, "a.html")
+        pdf_path = os.path.join(out, "a.pdf")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write("<html></html>")
+        with open(pdf_path, "wb") as f:
+            f.write(b"old")
+        return html_path, pdf_path
+
+    def test_stale_pdf_not_reported_as_new(self):
+        cli = load_cli()
+        html_path, pdf_path = self.stale_setup()
+        with mock.patch.object(cli.subprocess, "run", return_value=None):
+            err = cli.to_pdf("dummy-browser", html_path, pdf_path)
+        self.assertIsNotNone(err)
+        self.assertFalse(os.path.exists(pdf_path))
+
+    def test_locked_old_pdf_reported(self):
+        cli = load_cli()
+        html_path, pdf_path = self.stale_setup()
+        with mock.patch.object(cli.os, "remove", side_effect=PermissionError("locked")), \
+                mock.patch.object(cli.subprocess, "run", return_value=None) as run_mock:
+            err = cli.to_pdf("dummy-browser", html_path, pdf_path)
+        self.assertIsNotNone(err)
+        self.assertIn("이전 PDF", err)
+        self.assertEqual(run_mock.call_count, 0)
+
+
+class TestLaunchers(unittest.TestCase):
+    """실행_주간.bat / 실행_월간.bat: 여기서는 파일 모양과 명령 내용만 본다. Windows 실행은 사람이 확인한다 (A-E1)."""
+
+    def test_launchers_exist_and_call_cli(self):
+        for name, kind in (("실행_주간.bat", "주간"), ("실행_월간.bat", "월간")):
+            with self.subTest(name):
+                path = os.path.join(ROOT, name)
+                self.assertTrue(os.path.exists(path), name)
+                with open(path, "rb") as f:
+                    raw = f.read()
+                self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
+                self.assertGreater(raw.count(b"\n"), 0)
+                self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
+                text = raw.decode("utf-8")
+                for needle in ("chcp 65001", "%~dp0", "보고서.py " + kind, "%*", "python --version",
+                               "py -3", "python.org", "pause"):
+                    self.assertIn(needle, text, needle)
+                first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
+                self.assertLess(text.index("chcp 65001"), first_non_ascii)
 
 
 if __name__ == "__main__":
