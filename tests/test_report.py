@@ -1,4 +1,5 @@
 """보고 규칙 테스트. 실행: python -m unittest discover -s tests"""
+import csv
 import datetime as dt
 import os
 import re
@@ -18,6 +19,42 @@ from ceo_report.util import num, date, read_csv, Issues  # noqa: E402
 
 SAMPLE = os.path.join(ROOT, "입력")
 ASOF = dt.date(2026, 11, 2)
+FORBIDDEN = ("위험", "해결방안", "권고", "우려", "추천")
+
+
+def numbers_of(html):
+    """HTML 속 숫자 나열. 위험 분석 묶음과 작성 시각은 뺀다."""
+    html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
+    html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
+    html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
+    return re.findall(r"−?\d[\d,.]*", html)
+
+
+def probe_folder(test, filename, mutate):
+    """샘플 입력을 임시 폴더에 복사하고 CSV 한 개를 고쳐 쓴다. 고친 폴더 경로를 돌려준다."""
+    tmp = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, tmp)
+    folder = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, folder)
+    path = os.path.join(folder, filename)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    mutate(rows)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows(rows)
+    return folder
+
+
+def first_screen(html):
+    return html.split("<div class='toc'>")[0]
+
+
+def section(html, n):
+    """상세자료 n번 묶음 HTML (7번은 문서 끝까지)."""
+    start = html.index("<h2 id='s%d'>" % n)
+    nxt = "<h2 id='s%d'>" % (n + 1)
+    end = html.index(nxt, start) if nxt in html[start:] else len(html)
+    return html[start:end]
 
 
 def setUpModule():
@@ -159,16 +196,11 @@ class TestChecksAndOutput(Base):
 
     def test_ceo_has_no_interpretation(self):
         html = render(self.R, "ceo")
-        for word in ("위험", "해결방안", "권고", "우려", "추천"):
+        for word in FORBIDDEN:
             self.assertNotIn(word, html, word)
 
     def test_same_numbers_in_both_versions(self):
-        def numbers(html):
-            html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
-            html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
-            html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
-            return re.findall(r"−?\d[\d,.]*", html)
-        self.assertEqual(numbers(render(self.R, "ceo")), numbers(render(self.R, "mgmt")))
+        self.assertEqual(numbers_of(render(self.R, "ceo")), numbers_of(render(self.R, "mgmt")))
 
     def test_mgmt_has_risks(self):
         self.assertIn("위험 분석·해결방안", render(self.R, "mgmt"))
@@ -195,6 +227,77 @@ class TestChecksAndOutput(Base):
         self.assertEqual(sorted(os.listdir(out)),
                          ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
         shutil.rmtree(out)
+
+
+class TestUnknownBalance(unittest.TestCase):
+    """잔액 빈칸 계좌는 합계에서 빼고, 그 사실을 합계가 쓰이는 모든 곳에 보인다 (R1, D-02)."""
+    NOTE = "잔액 미확인 1계좌 (합계 제외)"
+
+    def blank_balance(self, account):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "2026-11-02" and r[1] == account:
+                    r[3] = ""
+        return probe_folder(self, "계좌잔액.csv", mutate)
+
+    def run_probe(self, account):
+        R = compute(load(self.blank_balance(account)), "weekly", ASOF)
+        return R, render(R, "ceo")
+
+    def test_blank_balance_excluded_and_shown(self):
+        R, html = self.run_probe("운영계좌")
+        s1 = R["s1"]
+        self.assertEqual(s1["total"], 212_300_000)
+        self.assertEqual(s1["bal_unknown"], 1)
+        self.assertEqual(s1["bal_unknown_names"], ["운영계좌"])
+        self.assertEqual(s1["available"], 182_300_000)
+        self.assertEqual(R["s2"]["start_unknown"], 1)
+        self.assertGreaterEqual(first_screen(html).count(self.NOTE), 3)
+        self.assertIn(self.NOTE, section(html, 1))
+        self.assertIn(self.NOTE, section(html, 2))
+
+    def test_blank_balance_listed_in_input_issues(self):
+        R, _ = self.run_probe("운영계좌")
+        self.assertTrue(any(f == "계좌잔액.csv" and "잔액 미확인" in m and "운영계좌" in m
+                            for f, _, m in R["s7"]["issues"]), R["s7"]["issues"])
+
+    def test_blank_balance_no_false_reconciliation_mismatch(self):
+        R, _ = self.run_probe("운영계좌")
+        checks = R["s7"]["checks"]
+        for c in checks:
+            self.assertTrue(c[3], c[0])
+        start = [c for c in checks if c[0].startswith("기간 시작 잔액")]
+        self.assertEqual(len(start), 1)
+        self.assertEqual((start[0][1], start[0][2]), (156_000_000, 156_000_000))
+        tr = [c for c in checks if "계좌 간 이체" in c[0]][0]
+        self.assertEqual((tr[1], tr[2]), (20_000_000, 20_000_000))
+
+    def test_unknown_balance_known_restriction_still_subtracted(self):
+        R, html = self.run_probe("프로젝트계좌")
+        s1 = R["s1"]
+        self.assertEqual(s1["total"], 386_100_000)
+        self.assertEqual(s1["restricted"], 30_000_000)
+        self.assertEqual(s1["restr_unknown"], 1)
+        self.assertEqual(s1["available"], 356_100_000)
+        self.assertEqual(s1["available"], s1["total"] - s1["restricted"])
+        self.assertEqual(s1["bal_unknown_restricted"], 30_000_000)
+        self.assertEqual(R["s2"]["start"], 356_100_000)
+        self.assertIn("사용제한 30.0 · 제한금액 미확인 1계좌 · " + self.NOTE, first_screen(html))
+        self.assertIn("사용제한 30,000,000원은 사용 가능액에서 차감", section(html, 1))
+        for c in R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+        start = [c for c in R["s7"]["checks"] if c[0].startswith("기간 시작 잔액")][0]
+        self.assertEqual((start[1], start[2]), (408_000_000, 408_000_000))
+
+    def test_cli_end_to_end_shows_unknown_balance(self):
+        folder = self.blank_balance("운영계좌")
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
+                            "--입력", folder, "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(out, "2026-11-02_주간_대표보고.html"), encoding="utf-8") as f:
+            self.assertIn(self.NOTE, f.read())
 
 
 if __name__ == "__main__":
