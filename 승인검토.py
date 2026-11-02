@@ -34,7 +34,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from ceo_report import intranet  # noqa: E402
-from ceo_report.approval import build, fmt_man, man_unit, parse_registered, project_code, scenario  # noqa: E402
+from ceo_report.approval import (book_dates_line, build, fmt_man, man_unit, parse_registered, project_code,  # noqa: E402
+                                 scenario, xchk_count_line, xchk_stop_lines)
 from ceo_report.approval_render import render_approval  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.snapshot import SnapshotError, latest_snapshot, read_snapshot, write_snapshot  # noqa: E402
@@ -58,6 +59,8 @@ def build_parser():
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--수집폴더", default=os.path.join(HERE, "수집"))
+    ap.add_argument("--위하고폴더", default=None,
+                    help="WEHAGO 엑셀(분개장·매입매출장·전자세금계산서(매입)) 폴더 (기본: <수집폴더>/위하고)")
     ap.add_argument("--열기", default="열기", choices=["열기", "안함"])
     ap.add_argument("--수집", default="안함", choices=["함", "안함"],
                     help="함: 인트라넷에서 새로 읽기 (ID·비밀번호를 화면에서 물음). 기본: 안함")
@@ -136,11 +139,16 @@ def _progress(label, page, total):
     print("%s 목록 %d쪽 읽음 (누계 %d건)" % (label, page, total))
 
 
-def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now):
-    """입력 CSV와 스냅숏 폴더로 화면 파일을 만든다. (HTML 경로, 계산 결과 A)를 돌려준다."""
+def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_dir=None):
+    """입력 CSV와 스냅숏 폴더로 화면 파일을 만든다. (HTML 경로, 계산 결과 A)를 돌려준다.
+
+    wehago_dir 가 None 이면 스냅숏 폴더들이 들어 있는 폴더 옆의 '위하고' 폴더를 쓴다 (D-31, 없으면 '자료 없음').
+    """
+    if wehago_dir is None:
+        wehago_dir = os.path.join(os.path.dirname(os.path.abspath(snap_path)), "위하고")
     d = load(input_dir)
     snap = read_snapshot(snap_path)
-    A = build(d, snap, asof, now)
+    A = build(d, snap, asof, now, wehago_dir)
     page = render_approval(A, collected_now)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "승인검토_%s.html" % dt.datetime.now().strftime("%Y%m%d_%H%M"))
@@ -172,7 +180,7 @@ def main(argv=None):
         print("인트라넷 수집 스냅숏이 없습니다: %s" % a.수집폴더)
         return 2
     try:
-        path, A = make_screen(a.입력, a.출력, snap_path, asof, now, False)
+        path, A = make_screen(a.입력, a.출력, snap_path, asof, now, False, wehago_dir=a.위하고폴더 or default_wehago(a))
     except SnapshotError as e:
         print("스냅숏을 읽지 못했습니다: %s" % e)
         return 2
@@ -182,12 +190,22 @@ def main(argv=None):
     return 0
 
 
+def default_wehago(a):
+    """--위하고폴더를 주지 않았을 때: 수집 스냅숏 옆의 위하고 폴더 (git 제외 폴더 안, D-36)."""
+    return os.path.join(a.수집폴더, "위하고")
+
+
 def report(path, A, how):
     S = scenario(A, [r["id"] for r in A["data"]["requests"]])
     low = fmt_man(S["low"])
     print("승인 검토 화면: %s" % path)
     print("인트라넷 수집 시각 %s %s" % (A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"), how))
     print("전부 승인 시 최저 잔액 %s%s · %s" % (low, man_unit(low), S["low_day"] or "-"))
+    # WEHAGO 대조: 건수와 날짜만 찍는다. 요청 값(거래처, 금액)은 찍지 않는다
+    for line in xchk_stop_lines(A)[:1]:
+        print(line)
+    print(xchk_count_line(A))
+    print(book_dates_line(A))
 
 
 def run_structure(a):
@@ -287,7 +305,7 @@ def run_collect(a, asof, now):
         snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
                                    pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages})
         where = a.출력
-        path, A = make_screen(a.입력, a.출력, snap_path, asof, now, True)
+        path, A = make_screen(a.입력, a.출력, snap_path, asof, now, True, wehago_dir=a.위하고폴더 or default_wehago(a))
     except (OSError, SnapshotError) as e:
         print("저장 실패: 인트라넷 자료는 읽었지만 파일을 쓰지 못했습니다 (%s): %s" % (where, type(e).__name__))
         return 7

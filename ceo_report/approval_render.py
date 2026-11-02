@@ -6,7 +6,8 @@ JS 계산(approvalCalc)은 같은 JSON 자료를 읽어 scenario와 같은 결�
 """
 import json
 
-from .approval import fmt_man, fmt_won, man_unit, scenario
+from .approval import (book_dates_line, book_detail_lines, fmt_man, fmt_won, man_unit, scenario, xchk_stop_lines,
+                       xchk_summary_text)
 from .render import CSS
 from .util import esc
 
@@ -35,6 +36,14 @@ tr.off td{color:var(--sub)}
 #req-controls button{min-height:44px;min-width:44px;padding:0 14px;margin-right:8px;border:1px solid var(--line);
 border-radius:6px;background:var(--soft);color:var(--ink);font:inherit;cursor:pointer}
 #attention a{color:inherit;text-decoration:underline}
+.xs{display:inline-block;padding:1px 6px;border-radius:4px;font-size:12px}
+.xs-ok{color:var(--in)}
+.xs-diff,.xs-none{color:var(--warn);outline:1px solid var(--warn)}
+.xs-paid{color:var(--sub);background:var(--soft)}
+.xs-na{color:var(--sub)}
+.amt-note{display:block;color:var(--sub);font-size:11.5px}
+#xchk-stop{margin-top:10px;padding:8px 10px;border:1px solid var(--warn);color:var(--warn);font-weight:700}
+#xchk-summary{margin:6px 0;color:var(--ink)}
 @media screen and (max-width:820px){
 .tw{max-width:100%}
 #requests td:first-child,#requests th:first-child{position:sticky;left:0;background:var(--bg);z-index:2}
@@ -216,9 +225,30 @@ def _sort_key(rq):
             -(rq["amount"] or 0), (0, int(no), "") if no.isdigit() else (1, 0, no))
 
 
+XS_CLASS = {"계산서 있음": "xs-ok", "금액 차이": "xs-diff", "계산서 없음": "xs-none", "이미 지급": "xs-paid"}
+
+
+def _chip(rq):
+    """상태 글자는 항상 보이고 색은 같은 말을 되풀이할 뿐이다. 전체 라벨은 title 에도 둔다."""
+    label = rq["xchk"]
+    return '<span class="xs %s" title="%s">%s</span>' % (XS_CLASS.get(rq["xstatus"], "xs-na"), esc(label), esc(label))
+
+
+def _amount_cell(rq):
+    """금액 칸: 금액 차이 요청은 일정에 쓰는 계산서 합계와 옆에 인트라넷 요청 금액·차액 (D-30a)."""
+    if rq["amount"] is None:
+        return _na("미확인")
+    text = esc(fmt_won(rq["schedule_amount"]))
+    if rq["amount_source"] == "WEHAGO 계산서":
+        diff = rq["schedule_amount"] - rq["amount"]
+        text += '<span class="amt-note">인트라넷 요청 %s · 차액 %s</span>' % (
+            esc(fmt_won(rq["amount"])), esc(("+" if diff > 0 else "") + fmt_won(diff)))
+    return text
+
+
 def _req_row(rq, S):
-    amount = _na("미확인") if rq["amount"] is None else esc(fmt_won(rq["amount"]))
-    amount_sr = "금액 미확인" if rq["amount"] is None else fmt_won(rq["amount"])
+    amount = _amount_cell(rq)
+    amount_sr = "금액 미확인" if rq["amount"] is None else fmt_won(rq["schedule_amount"])
     sr = "%s %s %s 승인 가정" % (rq["번호"], rq["vendor"], amount_sr)
     box = '<input type="checkbox" class="req" data-id="%s"%s>' % (
         esc(rq["id"]), " checked" if rq["toggle"] else " disabled")
@@ -233,21 +263,22 @@ def _req_row(rq, S):
             fmt_man(t[0]))
     else:
         toggle = '<td class="n r-toggle">-</td>'
-    return ('<tr data-id="%s" data-no="%s">%s<td>%s</td><td>%s</td><td class="n r-amt">%s</td><td>%s</td><td>%s</td>'
-            '%s%s</tr>') % (
-        esc(rq["id"]), esc(rq["번호"]), first, esc(rq["name"]), esc(rq["vendor"]), amount, date, rule, stage, toggle)
+    return ('<tr data-id="%s" data-no="%s">%s<td>%s</td><td>%s</td><td class="n r-amt">%s</td><td class="r-xchk">%s</td>'
+            '<td>%s</td><td>%s</td>%s%s</tr>') % (
+        esc(rq["id"]), esc(rq["번호"]), first, esc(rq["name"]), esc(rq["vendor"]), amount, _chip(rq), date, rule, stage,
+        toggle)
 
 
 def _requests_table(A, S):
     head = ('<thead><tr><th class="c1">체크 · 번호</th><th>행사명</th><th>파트너</th><th class="n">금액(원)</th>'
-            '<th>예상 지급일</th><th>근거 규칙</th><th>팀장승인</th><th>관리팀승인</th><th>사장님승인</th>'
+            '<th>WEHAGO 대조</th><th>예상 지급일</th><th>근거 규칙</th><th>팀장승인</th><th>관리팀승인</th><th>사장님승인</th>'
             '<th class="n">이 건 빼면·넣으면 최저 잔액 (백만원)</th>'
             '</tr></thead>')
     rows = sorted(A["requests_all"], key=_sort_key)
     if rows:
         body = "".join(_req_row(rq, S) for rq in rows)
     else:
-        body = '<tr><td colspan="10" class="note">승인 대기 요청 0건 (인트라넷 수집 시각 %s)</td></tr>' % esc(
+        body = '<tr><td colspan="11" class="note">승인 대기 요청 0건 (인트라넷 수집 시각 %s)</td></tr>' % esc(
             A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"))
     return '<div class="tw"><table id="requests">%s<tbody>%s</tbody></table></div>' % (head, body)
 
@@ -284,7 +315,7 @@ def _approved_table(A):
     if rows:
         body = "".join('<tr data-no="%s"><td class="a-no">%s</td><td class="a-date">%s</td><td class="n a-amt">%s</td>'
                        '<td>%s</td><td>%s</td><td>%s</td></tr>' % (
-                           esc(r["번호"]), esc(r["번호"]), esc(r["date"].isoformat()), esc(fmt_won(r["amount"])),
+                           esc(r["번호"]), esc(r["번호"]), esc(r["date"].isoformat()), _amount_cell(r),
                            esc(r["name"]), esc(r["vendor"]), esc(r["rule"])) for r in rows)
     else:
         body = '<tr><td colspan="6" class="note">승인 완료·지급 전 0건</td></tr>'
@@ -448,6 +479,61 @@ def _issues_block(A):
     return '<div id="issues"><h2 class="sec">입력 자료 확인 필요 %d건</h2>%s</div>' % (len(A["issues"]), items)
 
 
+def _xchk_stop(A):
+    """D-35a: 머리글이 다르거나 읽지 못하면 맨 위(h1 바로 뒤)에 이유를 보인다. 아니면 빈 글."""
+    lines = xchk_stop_lines(A)
+    if not lines:
+        return ""
+    return '<div id="xchk-stop">%s</div>' % "".join('<div>%s</div>' % esc(t) for t in lines)
+
+
+def _xchk_summary(A):
+    return '<div id="xchk-summary">%s</div>' % esc(xchk_summary_text(A))
+
+
+def _paid_where(rq, cutoff):
+    if rq["paid_date"] > cutoff:
+        return "지급일 %s에 확정 지급으로 일정에 둠" % rq["paid_date"].isoformat()
+    return "일정에서 뺌"
+
+
+def _already_paid_table(A):
+    head = ('<thead><tr><th>번호</th><th>파트너</th><th class="n">금액(원)</th><th>분개장 지급일</th><th>전표</th>'
+            '<th>일정</th></tr></thead>')
+    rows = sorted(A["already_paid"], key=lambda r: (r["paid_date"], r["번호"]))
+    if rows:
+        body = "".join('<tr data-no="%s"><td>%s</td><td>%s</td><td class="n">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            esc(r["번호"]), esc(r["번호"]), esc(r["vendor"]), esc(fmt_won(r["amount"])), esc(r["paid_date"].isoformat()),
+            esc(r["xrow"]["payment"]["no"]), esc(_paid_where(r, A["cutoff"]))) for r in rows)
+    else:
+        body = '<tr><td colspan="6" class="note">이미 지급 0건</td></tr>'
+    return ('<h2 class="sec">이미 지급 (분개장에서 같은 금액 출금 확인, 체크 없음)</h2>'
+            '<div class="tw"><table id="already-paid">%s<tbody>%s</tbody></table></div>' % (head, body))
+
+
+def _book_dates(A):
+    lines = [book_dates_line(A)] + book_detail_lines(A)
+    return ('<h2 class="sec">WEHAGO 장부 기준일</h2><div id="book-dates">%s</div>' %
+            "\n".join('<div class="note">%s</div>' % esc(t) for t in lines))
+
+
+def _xchk_table(A):
+    head = ('<thead><tr><th>번호</th><th>파트너</th><th class="n">인트라넷 금액(원)</th><th>대조 상태</th>'
+            '<th class="n">WEHAGO 계산서 합계(원)</th><th class="n">차액(원)</th></tr></thead>')
+    body = []
+    for rq in A["requests_all"]:
+        inv = "-" if rq["invoice_total"] is None else fmt_won(rq["invoice_total"])
+        diff = "-" if rq["diff"] is None else (("+" if rq["diff"] > 0 else "") + fmt_won(rq["diff"]))
+        amount = _na("미확인") if rq["amount"] is None else esc(fmt_won(rq["amount"]))
+        body.append('<tr data-no="%s"><td>%s</td><td>%s</td><td class="n">%s</td><td class="x-status">%s</td>'
+                    '<td class="n">%s</td><td class="n">%s</td></tr>' % (
+                        esc(rq["번호"]), esc(rq["번호"]), esc(rq["vendor"]), amount, esc(rq["xchk"]), esc(inv), esc(diff)))
+    if not body:
+        body = ['<tr><td colspan="6" class="note">대조할 요청 0건</td></tr>']
+    return ('<h2 class="sec">요청별 WEHAGO 대조 상태</h2>'
+            '<div class="tw"><table id="xchk">%s<tbody>%s</tbody></table></div>' % (head, "".join(body)))
+
+
 def render_approval(A, collected_now):
     """승인 검토 화면 HTML 한 장. collected_now: 이번 실행에서 수집했으면 True, 마지막 스냅숏을 쓰면 False."""
     data = A["data"]
@@ -459,7 +545,9 @@ def render_approval(A, collected_now):
         "<title>지급 승인 검토 · 기준일 %s</title>" % esc(A["asof"].isoformat()),
         "<style>%s%s</style></head><body><div class=\"wrap\">" % (CSS, APPROVAL_CSS),
         '<h1>지급 승인 검토<span class="badge">기준일 %s</span></h1>' % esc(A["asof"].isoformat()),
+        _xchk_stop(A),
         _headline(A, S),
+        _xchk_summary(A),
         _start_line(A, collected_now),
         _attention(A),
         '<h2 class="sec">승인 대기 요청 (체크 = 승인 가정)</h2>',
@@ -470,9 +558,12 @@ def render_approval(A, collected_now):
         '<h2 class="sec">주별 일정 (월요일 시작, 단위 원)</h2>',
         _weeks_table(A, S),
         _approved_table(A),
+        _already_paid_table(A),
         _notes_block(A),
         _unknowns_block(A),
         _unrequested_block(A),
+        _book_dates(A),
+        _xchk_table(A),
         _basis_block(A),
         _issues_block(A),
         '<script id="approval-data" type="application/json">%s</script>' % payload,

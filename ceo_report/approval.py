@@ -182,7 +182,7 @@ def _expected_date(rq, asof, now):
 
 def _as_event(rq, date):
     """승인 요청을 일정 목록(rolled·beyond)에 같이 담을 때의 모양."""
-    return {"date": date, "io": "out", "amount": rq["amount"], "firm": True, "cat": "승인 완료 지급요청",
+    return {"date": date, "io": "out", "amount": rq["schedule_amount"], "firm": True, "cat": "승인 완료 지급요청",
             "desc": rq["vendor"], "basis": "지급요청 %s" % rq["번호"], "project": rq["code"] or "", "source": "인트라넷 요청",
             "번호": rq["번호"]}
 
@@ -265,7 +265,17 @@ def _projects(projects, req_all):
     return rows, unrequested, unlinked, over
 
 
-def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates):
+def _paid_note(cutoff, paid_after):
+    """D-35b: '이미 지급' 중 분개장 지급일이 잔액 기준일 이후인 요청은 잔액에 아직 없으므로 지급일에 확정 지급으로 일정에 둔다."""
+    head = "이미 지급 중 지급일이 잔액 기준일(%s) 이후" % cutoff.isoformat()
+    if not paid_after:
+        return head + " 0건"
+    return "%s %d건 %s (잔액에 아직 없음 → 지급일에 확정 지급으로 일정에 넣음)" % (
+        head, len(paid_after), won(sum(r["schedule_amount"] for r in paid_after)))
+
+
+def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates,
+           paid_note=None):
     lines = []
     if approved_paid:
         lines.append("승인 완료·예상 지급일이 잔액 기준일(%s) 이전 또는 당일 %d건 %s (잔액에 반영된 것으로 봄)" % (
@@ -286,11 +296,141 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
                  + (" — 일반 일정 규칙대로 반영" if unmatched_exec else ""))
     lines.append("중복 제외 " + _count_text(duplicates))
     lines.append("중복 가능성 " + _count_text(possible_duplicates) + (" — 일정에 그대로 둠, 확인 필요" if possible_duplicates else ""))
+    if paid_note:
+        lines.append(paid_note)
     return lines
 
 
-def build(d, snap, asof, now):
-    """승인 검토 화면의 모든 숫자를 한 번에 만든다. d(Data)는 바꾸지 않는다."""
+def _xchk(books, match):
+    """화면이 읽는 WEHAGO 대조 묶음. 장부가 ok 가 아니면 행은 모두 '판단 불가'이고 금액은 하나도 없다."""
+    return {"state": books.state, "reason": books.reason, "book_date": books.book_date, "files": books.files,
+            "unused": list(books.unused), "header": books.header, "after_ref": books.after_ref,
+            "rows": match["rows"], "summary": match["summary"], "vendors": None, "projects": None, "unlinked": None}
+
+
+# ───────────── WEHAGO 대조 글 (화면과 CLI 가 같은 글을 쓴다) ─────────────
+_BOOK_LAST = {"분개장": "마지막 전표", "매입매출장": "마지막 전표", "전자세금계산서(매입)": "마지막 일자"}
+_FOLDER_GONE = " (폴더를 찾을 수 없음)"
+XCHK_ORDER = ("계산서 있음", "금액 차이", "계산서 없음", "이미 지급", "연결 불가")
+
+
+def _signed(v):
+    return ("+" if v > 0 else "") + fmt_won(v)
+
+
+def _n_sum(s):
+    """'3건 51,700,000' 꼴. 금액 미확인이 있으면 합계 뒤에 따로 적고, 전부 미확인이면 합계를 적지 않는다 (D-02)."""
+    if not s["count"]:
+        return "0건"
+    if s["sum"] is None:
+        return "%d건 (금액 미확인 %d건)" % (s["count"], s["unknown"])
+    text = "%d건 %s" % (s["count"], fmt_won(s["sum"]))
+    if s["unknown"]:
+        text += " 외 금액 미확인 %d건" % s["unknown"]
+    return text
+
+
+def xchk_stopped(A):
+    """머리글이 다르거나 읽지 못해 WEHAGO 대조를 멈춘 상태인가 (D-35a)."""
+    return A["xchk"]["state"] in ("머리글 다름", "읽기 실패")
+
+
+def xchk_stop_lines(A):
+    """대조를 멈췄을 때 화면 맨 위에 보이는 두 줄. 멈추지 않았으면 빈 목록."""
+    x = A["xchk"]
+    if not xchk_stopped(A):
+        return []
+    return ["WEHAGO 대조 멈춤: " + x["reason"], "대조 상태는 모두 판단 불가(%s) · 일정은 인트라넷 기준" % x["state"]]
+
+
+def xchk_not_ok_text(A):
+    """장부가 ok 가 아닐 때 요약 한 줄: 이유와 '일정은 인트라넷 기준'."""
+    x = A["xchk"]
+    reason = x["reason"].replace(_FOLDER_GONE, "")
+    if x["state"] == "자료 없음":
+        inner = "WEHAGO " + reason
+    elif x["state"] == "경과":
+        inner = "WEHAGO 자료 경과: " + reason
+    else:
+        inner = x["state"]
+    return "WEHAGO 대조: 판단 불가(%s) · 일정은 인트라넷 기준" % inner
+
+
+def xchk_summary_text(A):
+    """div#xchk-summary 한 줄 (XCHK-02, D-32)."""
+    x = A["xchk"]
+    if x["state"] != "ok":
+        return xchk_not_ok_text(A)
+    S = x["summary"]
+    parts = []
+    for status in XCHK_ORDER:
+        s = S[status]
+        if status == "금액 차이" and s["count"]:
+            parts.append("금액 차이 %d건 %s (인트라넷 요청 %s · 차액 %s, 일정은 계산서 금액)" % (
+                s["count"], fmt_won(s["invoice_sum"]), fmt_won(s["sum"]), _signed(s["diff"])))
+        elif status == "이미 지급" and s["count"]:
+            kept = len(A["paid_after_balance"])
+            if kept == 0:
+                tail = "일정에서 뺌"
+            elif kept == s["count"]:
+                tail = "일정에 둠: 지급일이 잔액 기준일 이후"
+            else:
+                tail = "일정에서 뺌 %d건 · 일정에 둠 %d건: 지급일이 잔액 기준일 이후" % (s["count"] - kept, kept)
+            parts.append("이미 지급 %s (%s)" % (_n_sum(s), tail))
+        else:
+            parts.append("%s %s" % (status, _n_sum(s)))
+    return "WEHAGO 대조 (장부 기준일 %s): %s" % (x["book_date"].isoformat(), " · ".join(parts))
+
+
+def xchk_count_line(A):
+    """CLI 가 찍는 건수만의 줄: 값이 없다."""
+    x = A["xchk"]
+    if x["state"] != "ok":
+        return xchk_not_ok_text(A)
+    return "WEHAGO 대조: " + " · ".join("%s %d건" % (st, x["summary"][st]["count"]) for st in XCHK_ORDER)
+
+
+def book_dates_line(A):
+    """'장부 기준일: 분개장 2026-10-31 (마지막 전표 …) · …' (XCHK-01, D-31). 읽은 파일이 없으면 이유."""
+    x = A["xchk"]
+    pieces = []
+    for kind, e in x["files"].items():
+        if e.get("error"):
+            pieces.append("%s %s (읽지 못함)" % (kind, e["file_date"].isoformat() if e["file_date"] else "날짜 없음"))
+        else:
+            pieces.append("%s %s (%s %s)" % (kind, e["file_date"].isoformat() if e["file_date"] else "날짜 없음",
+                                             _BOOK_LAST[kind], e["last_date"].isoformat() if e["last_date"] else "없음"))
+    if not pieces:
+        return "장부 기준일: 알 수 없음 (읽은 WEHAGO 파일 없음)"
+    return "장부 기준일: " + " · ".join(pieces)
+
+
+def book_detail_lines(A):
+    """장부 기준일 아래 설명 줄: 사용한 파일, 쓰지 않은 파일, 상태 이유, 추가 열, 기준일 이후 전표, 읽지 않은 줄 (D-35c, W-14)."""
+    x = A["xchk"]
+    lines = []
+    if x["files"]:
+        lines.append("사용한 파일: " + " · ".join(e["name"] for e in x["files"].values()))
+    if x["unused"]:
+        lines.append("사용하지 않은 파일: " + " · ".join(x["unused"]))
+    if x["state"] != "ok":
+        lines.append("대조 상태: %s — %s" % (x["state"], x["reason"]))
+    for kind, e in x["files"].items():
+        if e.get("extra_note"):
+            lines.append("%s %s" % (kind, e["extra_note"]))
+        if e.get("after_ref"):
+            lines.append("%s 장부 기준일 이후 전표 %d건 (이미 지급 판정에는 쓰지 않음)" % (kind, e["after_ref"]))
+        if e.get("skipped") or e.get("undated"):
+            lines.append("%s 합계·빈 줄 %d건 읽지 않음 · 날짜 없는 줄 %d건" % (kind, e.get("skipped", 0), e.get("undated", 0)))
+    return lines
+
+
+def build(d, snap, asof, now, wehago_dir=None):
+    """승인 검토 화면의 모든 숫자를 한 번에 만든다. d(Data)는 바꾸지 않는다.
+
+    wehago_dir: WEHAGO 엑셀 폴더. None 이면 장부 없음('자료 없음')이고 일정은 인트라넷 기준이다 (D-35).
+    """
+    from . import wehago  # wehago 가 이 모듈의 함수를 가져오므로 순환을 피해 안에서 불러온다
     R = compute(d, "weekly", asof)
     issues = Issues()
     issues.items = list(R["s7"]["issues"])
@@ -306,6 +446,13 @@ def build(d, snap, asof, now):
     days = [(monday + dt.timedelta(days=i)).isoformat() for i in range(n_days)]
     base_in, base_out, est_in = [0] * n_days, [0] * n_days, [0] * n_days
 
+    # WEHAGO 장부 읽기: 읽을 수 없어도 예외 없이 state 로만 알린다 (D-35, D-35a)
+    if wehago_dir:
+        books = wehago.load_books(wehago_dir, asof, R["settings_num"]["위험_자료경과일"])
+    else:
+        books = wehago.Books()
+        books.reason = "자료 없음: " + ", ".join(wehago.KINDS)
+
     # 요청 읽기와 예상 지급일 (A-1, A-2, A-4)
     req_all, numbers = [], set()
     for k, row in enumerate(snap.payments):
@@ -314,9 +461,19 @@ def build(d, snap, asof, now):
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
               "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "", "reason": "", "toggle": False,
               "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", ""))}
+        rq["schedule_amount"], rq["amount_source"] = rq["amount"], "인트라넷 요청"
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         numbers.add(rq["번호"])
         req_all.append(rq)
+
+    # WEHAGO 대조 (D-32): 요청마다 상태 하나. '금액 차이'는 계산서 합계로 일정에 넣는다 (D-30a)
+    match = wehago.match_requests(books, req_all)
+    for rq in req_all:
+        row = match["rows"][rq["번호"]]
+        rq["xchk"], rq["xstatus"], rq["xrow"] = row["label"], row["status"], row
+        rq["invoice_total"], rq["diff"] = row["invoice_total"], row["diff"]
+        if row["status"] == "금액 차이":
+            rq["schedule_amount"], rq["amount_source"] = row["schedule_amount"], "WEHAGO 계산서"
 
     # 입력 일정과 스냅숏 요청 맞추기 (A-3, P-6): 번호로 맞거나, 프로젝트·금액·날짜가 같으면 같은 지급으로 본다
     cands = [rq for rq in req_all if rq["status"] != "status_unknown" and rq["amount"] is not None and rq["code"]]
@@ -371,8 +528,27 @@ def build(d, snap, asof, now):
     data_requests = []
     amount_unknown, date_unknown, status_unknown, beyond_requests = [], [], [], []
     approved_paid, approved_future = [], []
+    already_paid, paid_after = [], []
     for rq in req_all:
-        if rq["status"] == "status_unknown":
+        if rq["xstatus"] == "이미 지급":
+            # 분개장에서 같은 금액으로 이미 출금됨: 일정에 두 번 넣지 않는다 (D-35). 지급일이 잔액 기준일 이후면 잔액에
+            # 아직 없으므로 그 날 확정 지급으로 남긴다 (D-35b, A-3과 같은 원칙). 체크 칸은 없다.
+            paid = rq["xrow"]["payment"]["date"]
+            rq["paid_date"] = paid
+            already_paid.append(rq)
+            if paid <= cutoff:
+                rq["reason"] = "이미 지급·일정에서 뺌"
+            else:
+                paid_after.append(rq)
+                if paid > horizon:
+                    rq["reason"] = "이미 지급·기간 밖"
+                    beyond.append(_as_event(rq, paid))
+                else:
+                    rq["reason"] = "이미 지급·지급일에 확정 지급으로 일정에 둠"
+                    base_out[_day_index(paid, monday)] += rq["schedule_amount"]
+                    if paid < monday:
+                        rolled.append(_as_event(rq, paid))
+        elif rq["status"] == "status_unknown":
             rq["reason"] = "상태 확인 필요"
             status_unknown.append(rq)
         elif rq["amount"] is None:
@@ -391,7 +567,7 @@ def build(d, snap, asof, now):
             else:
                 rq["reason"] = "승인 완료·고정 지급"
                 approved_future.append(rq)
-                base_out[_day_index(rq["date"], monday)] += rq["amount"]
+                base_out[_day_index(rq["date"], monday)] += rq["schedule_amount"]
                 if rq["date"] < monday:
                     rolled.append(_as_event(rq, rq["date"]))
         elif rq["date"] > horizon:
@@ -399,7 +575,7 @@ def build(d, snap, asof, now):
             beyond_requests.append(rq)
         else:
             rq["toggle"] = True
-            data_requests.append({"id": rq["id"], "day": _day_index(rq["date"], monday), "amount": rq["amount"]})
+            data_requests.append({"id": rq["id"], "day": _day_index(rq["date"], monday), "amount": rq["schedule_amount"]})
 
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
@@ -420,6 +596,7 @@ def build(d, snap, asof, now):
             "date_unknown": date_unknown, "beyond_requests": beyond_requests, "panel": _panel(lists),
             "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
             "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
+            "already_paid": already_paid, "paid_after_balance": paid_after, "xchk": _xchk(books, match),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
-                            possible_duplicates),
+                            possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None),
             "issues": list(issues.items)}
