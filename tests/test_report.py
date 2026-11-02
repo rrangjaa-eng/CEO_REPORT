@@ -15,7 +15,7 @@ sys.path.insert(0, ROOT)
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
-from ceo_report.util import num, date, read_csv, Issues  # noqa: E402
+from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num  # noqa: E402
 
 SAMPLE = os.path.join(ROOT, "입력")
 ASOF = dt.date(2026, 11, 2)
@@ -68,6 +68,16 @@ def kv_value(html, label):
     return m.group(1) if m else None
 
 
+def check_editions(test, R):
+    """두 판을 만들어 대표용 규칙을 확인한다: 금지어 없음, 숫자 동일, 보고 대조 전부 일치."""
+    ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+    for word in FORBIDDEN:
+        test.assertNotIn(word, ceo, word)
+    test.assertEqual(numbers_of(ceo), numbers_of(mgmt))
+    for c in R["s7"]["checks"]:
+        test.assertTrue(c[3], c[0])
+
+
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -98,6 +108,20 @@ class TestParsing(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(rows[0]["값"], "한글회사")
         shutil.rmtree(tmp)
+
+    def test_setting_num(self):
+        self.assertTrue(is_blank(""))
+        self.assertTrue(is_blank(" - "))
+        self.assertTrue(is_blank("미확인"))
+        self.assertFalse(is_blank("0"))
+        self.assertEqual(setting_num({"a": "50,000,000"}, "a", 0), (50_000_000, None))
+        self.assertEqual(setting_num({"a": "110.5"}, "a", 0), (110.5, None))
+        self.assertEqual(setting_num({"a": "100%"}, "a", 0), (100, None))
+        self.assertEqual(setting_num({"a": " 7 "}, "a", 0), (7, None))
+        self.assertEqual(setting_num({"a": ""}, "a", 9), (9, "설정 비어 있음"))
+        self.assertEqual(setting_num({}, "a", 9), (9, "설정 비어 있음"))
+        self.assertEqual(setting_num({"a": "abc"}, "a", 9), (9, "숫자 아님"))
+        self.assertIsNone(num(""))
 
     def test_bad_number_is_reported(self):
         iss = Issues()
@@ -426,6 +450,121 @@ class TestUnknownAmountsAndPastDue(Base):
             self.assertTrue(c[3], c[0])
         self.assertEqual(self.R["s2"]["vat_unknown_n"], 0)
         self.assertNotIn("부가세 미확인", first_screen(render(self.R, "ceo")))
+
+
+def _risk_part(html):
+    """경영관리용 위험 분석 묶음 (제목부터 1번 상세자료 앞까지)."""
+    return html[html.index("<h2 id='risk'>"):html.index("<h2 id='s1'>")]
+
+
+class TestSettingsAndKpi(Base):
+    """설정.csv 숫자는 쉼표·% 를 받고, 비거나 틀리면 기본값을 쓰되 숨기지 않는다 (R4, DR1)."""
+
+    def set_value(self, key, value):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == key:
+                    r[1] = value
+        return probe_folder(self, "설정.csv", mutate)
+
+    def delete_row(self, key):
+        def mutate(rows):
+            rows[:] = [r for i, r in enumerate(rows) if i == 0 or r[0] != key]
+        return probe_folder(self, "설정.csv", mutate)
+
+    def test_settings_with_commas_do_not_crash(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "위험_최소보유현금":
+                    r[1] = "50,000,000"
+                if r[0] == "위험_예산초과율":
+                    r[1] = "abc"
+        R = compute(load(probe_folder(self, "설정.csv", mutate)), "weekly", ASOF)
+        mgmt = render(R, "mgmt")
+        render(R, "ceo")
+        self.assertEqual(R["settings_num"]["위험_최소보유현금"], 50_000_000)
+        self.assertEqual(R["settings_num"]["위험_예산초과율"], 100)
+        self.assertEqual(R["settings_default"], {"위험_예산초과율": "숫자 아님"})
+        issues = R["s7"]["issues"]
+        self.assertIn(("설정.csv", 8, "예산 초과율 기준 값이 숫자가 아님: 'abc' → 기본값 100 사용"), issues)
+        for _, _, m in issues:
+            self.assertNotIn("위험", m)
+        risk = _risk_part(mgmt)
+        self.assertIn("최소 보유현금 50,000,000원", risk)
+        self.assertIn("예산 초과율 100% · 기본값 사용(숫자 아님)", risk)
+        check_editions(self, R)
+
+    def test_blank_threshold_uses_default_visibly(self):
+        cases = (("blank", lambda: self.set_value("위험_최소보유현금", ""), 4),
+                 ("row deleted", lambda: self.delete_row("위험_최소보유현금"), "-"))
+        for name, make, line in cases:
+            with self.subTest(name):
+                R = compute(load(make()), "weekly", ASOF)
+                self.assertEqual(R["settings_num"]["위험_최소보유현금"], 50_000_000)
+                self.assertEqual(R["settings_default"], {"위험_최소보유현금": "설정 비어 있음"})
+                self.assertIn(("설정.csv", line, "최소 보유현금 설정 비어 있음 → 기본값 50,000,000 사용"),
+                              R["s7"]["issues"])
+                self.assertIn("최소 보유현금 50,000,000원 · 기본값 사용(설정 비어 있음)",
+                              _risk_part(render(R, "mgmt")))
+                self.assertIn("최소 보유현금 설정 비어 있음", section(render(R, "ceo"), 7))
+                check_editions(self, R)
+
+    def test_project_show_count_setting(self):
+        R = compute(load(self.set_value("첫화면_프로젝트_표시수", "4")), "weekly", ASOF)
+        self.assertIn("표시 4건 / 전체 8건", render(R, "ceo"))
+        R = compute(load(self.set_value("첫화면_프로젝트_표시수", "-1")), "weekly", ASOF)
+        self.assertIn("표시 8건 / 전체 8건", render(R, "ceo"))
+        self.assertEqual(R["settings_default"]["첫화면_프로젝트_표시수"], "0 이상 정수 아님")
+        self.assertTrue(any("첫화면_프로젝트_표시수 값은 0 이상 정수여야 함" in m for _, _, m in R["s7"]["issues"]))
+
+    def test_kpi_values_show_unit(self):
+        vals = re.findall(r"<div class='v'>(.*?)</div>", first_screen(render(self.R, "ceo")))
+        self.assertEqual(len(vals), 4)
+        for v in vals:
+            self.assertIn("백만원", v)
+
+
+class TestCeoRulesEverywhere(unittest.TestCase):
+    """대표용 규칙(금지어 없음·숫자 동일·대조 일치)을 샘플과 이 계획의 모든 탐침 입력에서 확인한다 (REP-02)."""
+
+    def blank_balance(self, account):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "2026-11-02" and r[1] == account:
+                    r[3] = ""
+        return probe_folder(self, "계좌잔액.csv", mutate)
+
+    def setting(self, edit):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] in edit:
+                    r[1] = edit[r[0]]
+        return probe_folder(self, "설정.csv", mutate)
+
+    def test_no_interpretation_and_same_numbers_across_inputs(self):
+        def blank_vat(rows):
+            for r in rows[1:]:
+                if r[2] == "사운드랩":
+                    r[5] = ""
+        extra = [["2026-11-20", "지급", "", "추정", "거래처미지급", "", "디자인스튜디오", "청구서", "추가 청구 금액 미정"],
+                 ["2026-10-30", "지급", "5,000,000", "확정", "거래처미지급", "", "인쇄소", "청구서", "기한 경과"],
+                 ["2026-10-31", "지급", "", "확정", "거래처미지급", "", "현수막", "청구서", "금액 미정"]]
+        inputs = (
+            ("sample weekly", lambda: (SAMPLE, "weekly", ASOF)),
+            ("sample monthly", lambda: (SAMPLE, "monthly", dt.date(2026, 10, 31))),
+            ("blank 운영계좌", lambda: (self.blank_balance("운영계좌"), "weekly", ASOF)),
+            ("blank 프로젝트계좌", lambda: (self.blank_balance("프로젝트계좌"), "weekly", ASOF)),
+            ("unknown and past-due rows", lambda: (
+                probe_folder(self, "자금일정.csv", lambda rows: rows.extend(extra)), "weekly", ASOF)),
+            ("blank 사운드랩 부가세", lambda: (probe_folder(self, "프로젝트집행.csv", blank_vat), "weekly", ASOF)),
+            ("settings commas and abc", lambda: (
+                self.setting({"위험_최소보유현금": "50,000,000", "위험_예산초과율": "abc"}), "weekly", ASOF)),
+            ("blank threshold", lambda: (self.setting({"위험_최소보유현금": ""}), "weekly", ASOF)),
+        )
+        for name, make in inputs:
+            with self.subTest(name):
+                folder, kind, asof = make()
+                check_editions(self, compute(load(folder), kind, asof))
 
 
 if __name__ == "__main__":
