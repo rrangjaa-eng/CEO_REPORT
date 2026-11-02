@@ -396,6 +396,13 @@ def compute(d, kind, asof, start=None):
         evs = [ev for ev in past_all if ev["io"] == io]
         total, unknown = ssum(ev["amount"] for ev in evs)
         past_sum[io] = (None if evs and unknown == len(evs) else total, len(evs), unknown)
+    # 날짜 없는 예정금액: 첫 화면에도 건수와 확인된 금액을 보인다 (D-04). 금액 미확인 건도 건수에는 센다.
+    undated_all = undated + [ev for ev in amount_unknown if ev["date"] is None]
+    undated_sum = {}
+    for io in ("in", "out"):
+        evs = [ev for ev in undated_all if ev["io"] == io]
+        total, unknown = ssum(ev["amount"] for ev in evs)
+        undated_sum[io] = (None if evs and unknown == len(evs) else total, len(evs), unknown)
     # 부가세가 비어 있는 예정 지급은 공급가액만 반영된다. 일정에 들어간 건수를 센다.
     sched_vat = [ev for ev in dated if ev.get("vat_unknown")]
     R["s2"] = {
@@ -403,8 +410,9 @@ def compute(d, kind, asof, start=None):
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
-        "undated_in": sum(e["amount"] for e in undated if e["io"] == "in"),
-        "undated_out": sum(e["amount"] for e in undated if e["io"] == "out"),
+        "undated_in": undated_sum["in"][0], "undated_in_n": undated_sum["in"][1], "undated_in_unknown": undated_sum["in"][2],
+        "undated_out": undated_sum["out"][0], "undated_out_n": undated_sum["out"][1],
+        "undated_out_unknown": undated_sum["out"][2],
         "past_in": past_sum["in"][0], "past_in_n": past_sum["in"][1], "past_in_unknown": past_sum["in"][2],
         "past_out": past_sum["out"][0], "past_out_n": past_sum["out"][1], "past_out_unknown": past_sum["out"][2],
         "vat_unknown_n": len(sched_vat),
@@ -531,7 +539,8 @@ def compute(d, kind, asof, start=None):
         "no_budget": no_budget, "no_budget_expected": sum(P["expected"] for P in no_budget),
         "no_budget_contract": nb_contract, "no_budget_contract_missing": nb_contract_missing,
         "unlinked_txn": unlinked_txn, "unlinked_txn_total": sum(t["amount"] for t in unlinked_txn),
-        "undated_out": R["s2"]["undated_out"], "undated_out_n": sum(1 for e in undated if e["io"] == "out"),
+        "undated_out": R["s2"]["undated_out"], "undated_out_n": R["s2"]["undated_out_n"],
+        "undated_out_unknown": R["s2"]["undated_out_unknown"],
         "asof": asof_rows, "diffs": d.diffs, "issues": d.issues.items, "checks": checks,
         "stale": stale_accounts,
     }
@@ -599,12 +608,15 @@ def risks(R):
     if R["s1"]["total"] is None:
         add("중간", "자료", "현재 계좌 잔액을 확인할 수 없어 기간별 계산 잔액과 최저 잔액을 계산하지 않음.",
             "계좌잔액.csv에 보고 기준일 잔액을 입력.")
-    if s2["undated_out"]:
-        add("중간", "자금", "지급일이 없는 지급예정 %s원 (%d건)이 일정 그래프에 들어가지 않음."
-            % (won(s2["undated_out"]), R["s7"]["undated_out_n"]),
+    if s2["undated_out_n"]:
+        add("중간", "자금", "지급일이 없는 지급예정 %s (%d건%s)이 일정 그래프에 들어가지 않음."
+            % ("금액 미확인" if s2["undated_out"] is None else won(s2["undated_out"]) + "원", s2["undated_out_n"],
+               ", 금액 미확인 %d건 포함" % s2["undated_out_unknown"] if s2["undated_out_unknown"] else ""),
             "담당자에게 지급일 확정을 요청하고, 확정 전까지는 가장 이른 날짜로 가정한 잔액도 함께 검토.")
-    if s2["undated_in"]:
-        add("중간", "자금", "입금일이 없는 입금예정 %s원이 일정에 들어가지 않음." % won(s2["undated_in"]),
+    if s2["undated_in_n"]:
+        add("중간", "자금", "입금일이 없는 입금예정 %s (%d건%s)이 일정에 들어가지 않음."
+            % ("금액 미확인" if s2["undated_in"] is None else won(s2["undated_in"]) + "원", s2["undated_in_n"],
+               ", 금액 미확인 %d건 포함" % s2["undated_in_unknown"] if s2["undated_in_unknown"] else ""),
             "거래처와 입금일을 확정해 일정에 반영.")
     for P in R["s3"]["projects"]:
         if P["budget"] is not None and P["budget"] > 0 and P["expected"] * 100.0 / P["budget"] > over_pct:

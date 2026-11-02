@@ -258,8 +258,10 @@ def render(R, mode):
     la, lad = s2["min"]["all"]
     h.append(kv([("최저 계산 잔액 · 확정 일정만", _min_cell(lf, lfd, s2["vat_unknown_firm_n"])),
                  ("최저 계산 잔액 · 확정+추정", _min_cell(la, lad, s2["vat_unknown_n"])),
-                 ("날짜 없는 입금예정 / 지급예정", "%s / %s" % (M(s2["undated_in"]), M(s2["undated_out"]))),
-                 ("입금예정일 경과 미수 (일정 미포함)", M(s5["overdue_total"])),
+                 ("날짜 없는 입금예정 / 지급예정",
+                  _past_side(s2["undated_in_n"], s2["undated_in"], s2["undated_in_unknown"]) + " / " +
+                  _past_side(s2["undated_out_n"], s2["undated_out"], s2["undated_out_unknown"])),
+                 ("입금예정일 경과 미수 (일정 미포함)", "%d건 " % len(s5["overdue"]) + M(s5["overdue_total"])),
                  ("예정일 지난 미처리 입금 / 지급 (일정 미포함)",
                   _past_side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]) + " / " +
                   _past_side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"]))]))
@@ -723,7 +725,9 @@ def _s7(R):
             won(s7["no_budget_expected"]))),
         ("프로젝트 미연결 지급 (출금 내역)", "%s원 (%d건)" % (won(s7["unlinked_txn_total"]), len(s7["unlinked_txn"]))),
         ("프로젝트 미연결 집행 (집행 자료)", "%s원 (%d건)" % (won(R["s3"]["unlinked_total"]), len(R["s3"]["unlinked"]))),
-        ("지급일 미등록 지급예정", "%s원 (%d건)" % (won(s7["undated_out"]), s7["undated_out_n"])),
+        ("지급일 미등록 지급예정", "%s (%d건%s)" % (
+            "금액 미확인" if s7["undated_out"] is None else won(s7["undated_out"]) + "원", s7["undated_out_n"],
+            " · 금액 미확인 %d건" % s7["undated_out_unknown"] if s7["undated_out_unknown"] else "")),
         ("잔액 기준일이 보고일보다 이른 계좌", "%d개" % len(s7["stale"]))]))
     if s7["no_budget"]:
         rows = [[esc(P["id"]), esc(P["name"]), _na(P["budget_reason"]), W(P["contract"], "미등록"), W(P["expected"])]

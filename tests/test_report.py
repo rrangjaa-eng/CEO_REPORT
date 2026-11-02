@@ -34,18 +34,23 @@ def numbers_of(html):
     return re.findall(r"−?\d[\d,.]*", html)
 
 
-def probe_folder(test, filename, mutate):
-    """샘플 입력을 임시 폴더에 복사하고 CSV 한 개를 고쳐 쓴다. 고친 폴더 경로를 돌려준다."""
-    tmp = tempfile.mkdtemp()
-    test.addCleanup(shutil.rmtree, tmp)
-    folder = os.path.join(tmp, "입력")
-    shutil.copytree(SAMPLE, folder)
+def edit_csv(folder, filename, mutate):
+    """폴더 안의 CSV 한 개를 읽어 mutate(rows)로 고쳐 다시 쓴다."""
     path = os.path.join(folder, filename)
     with open(path, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.reader(f))
     mutate(rows)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerows(rows)
+
+
+def probe_folder(test, filename, mutate):
+    """샘플 입력을 임시 폴더에 복사하고 CSV 한 개를 고쳐 쓴다. 고친 폴더 경로를 돌려준다."""
+    tmp = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, tmp)
+    folder = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, folder)
+    edit_csv(folder, filename, mutate)
     return folder
 
 
@@ -1280,7 +1285,6 @@ class TestFirstScreenCountsD04(unittest.TestCase):
 
     def test_undated_unknown_amount_counted_not_zero(self):
         blank_out = ["", "지급", "", "추정", "미정산비용", "", "간식업체", "청구서", "금액 미정"]
-        blank_in = ["", "입금", "", "추정", "수금(미발행분)", "P26205", "H사", "계약서", "금액 미정"]
         with self.subTest("A: known + blank"):
             R = compute(load(self.add_rows(blank_out)), "weekly", ASOF)
             s2 = R["s2"]
@@ -1292,19 +1296,19 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             self.assertIn("금액 미확인 1건", val)
             self.assertEqual(R["s7"]["undated_out_n"], 5)
             check_editions(self, R)
-        with self.subTest("B: only blank on one side"):
-            sample_folder = sample_copy(self)
+        with self.subTest("B: only blank on the incoming side"):
+            folder = self.add_rows()
 
-            def drop_undated_in(rows):
-                rows[:] = [r for r in rows if not (r[0] == "" and r[1] == "입금")]
-            path = os.path.join(sample_folder, "자금일정.csv")
-            with open(path, encoding="utf-8-sig", newline="") as f:
-                rows = list(csv.reader(f))
-            drop_undated_in(rows)
-            rows.append(blank_in)
-            with open(path, "w", encoding="utf-8-sig", newline="") as f:
-                csv.writer(f).writerows(rows)
-            R = compute(load(sample_folder), "weekly", ASOF)
+            def blank_sched(rows):
+                for r in rows[1:]:
+                    if r[0] == "" and r[1] == "입금":
+                        r[2] = ""
+            edit_csv(folder, "자금일정.csv", blank_sched)
+
+            def drop_correction(rows):
+                rows[:] = [r for r in rows if r[3] != "수정"]
+            edit_csv(folder, "계산서.csv", drop_correction)
+            R = compute(load(folder), "weekly", ASOF)
             s2 = R["s2"]
             self.assertIsNone(s2["undated_in"])
             self.assertEqual((s2["undated_in_n"], s2["undated_in_unknown"]), (1, 1))
