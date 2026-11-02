@@ -328,11 +328,14 @@ def _xchk(books, match):
             "projects_without_cost": 0}
 
 
-def _xchk_full(books, match, req_all, projects, wehago):
-    """_xchk + 거래처 미지급금(D-33), 프로젝트 (도) 원가(D-34), 프로젝트 미연결 원가. 장부가 ok 가 아니면 채우지 않는다."""
+def _xchk_full(books, match, req_all, projects, wehago, approved_paid=()):
+    """_xchk + 거래처 미지급금(D-33), 프로젝트 (도) 원가(D-34), 프로젝트 미연결 원가. 장부가 ok 가 아니면 채우지 않는다.
+
+    approved_paid: 일정이 잔액에 반영된 것으로 본 승인 완료 요청(A-3). 거래처 패널도 같은 기준으로 뺀다 (WR-04).
+    """
     x = _xchk(books, match)
     if books.state == "ok":
-        x["vendors"] = wehago.vendor_payables(books, req_all, match)
+        x["vendors"] = wehago.vendor_payables(books, req_all, match, settled=[r["id"] for r in approved_paid])
         pc = wehago.project_costs(books, [p["code"] for p in projects])
         x["projects"] = _project_cost_rows(pc, projects)
         x["projects_without_cost"] = len(projects) - len(x["projects"])
@@ -518,7 +521,7 @@ def build(d, snap, asof, now, wehago_dir=None):
             "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
             "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
             "already_paid": already_paid, "paid_after_balance": paid_after,
-            "xchk": _xchk_full(books, match, req_all, projects, wehago),
+            "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None),
             "issues": list(issues.items)}

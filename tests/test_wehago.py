@@ -863,6 +863,23 @@ class TestWehagoPayables(unittest.TestCase):
                          (None, 5000000, None, "분개장 미지급금 줄 없음"))
         self.assertEqual((P["diff_count"], P["diff_sum"], P["unknown_count"], P["absent_count"]), (1, -33000000, 1, 1))
 
+    def test_requests_already_in_the_balance_are_not_counted(self):
+        """WR-04: build() 가 잔액에 반영된 것으로 보는 승인 완료 요청(A-3)은 인트라넷 쪽 합계에서 뺀다."""
+        r5104 = [r for r in self.reqs if r["번호"] == "5104"][0]
+        P = self.w.vendor_payables(self.books, self.reqs, self.m, settled=[r5104["id"]])
+        row = [r for r in P["rows"] if r["vendor"] == "가상인력"][0]
+        self.assertEqual((row["payable"], row["requested"], row["diff"]), (7700000, 0, 7700000))
+
+    def test_build_passes_its_in_balance_requests_to_the_vendor_panel(self):
+        tmp = new_tmp(self)
+        folder = os.path.join(tmp, "위하고")
+        write_fake_books(folder)
+        snap = mod("snapshot").read_snapshot(write_fake_snapshot(os.path.join(tmp, "수집")))
+        A = mod("approval").build(mod("data").load(SAMPLE), snap, ASOF, NOW, folder)
+        self.assertEqual([r["번호"] for r in A["approved_paid"]], ["5104"])
+        row = [r for r in A["xchk"]["vendors"]["rows"] if r["vendor"] == "가상인력"][0]
+        self.assertEqual((row["payable"], row["requested"], row["diff"]), (7700000, 0, 7700000))
+
     def test_status_unknown_and_already_paid_requests_are_not_counted(self):
         names = [r["vendor"] for r in self.P["rows"]]
         self.assertNotIn("가상케이터링", names)  # 5107: 상태 확인 필요

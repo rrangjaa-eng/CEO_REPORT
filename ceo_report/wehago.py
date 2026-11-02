@@ -660,8 +660,13 @@ def match_requests(books, requests):
 
 
 # ───────────── 거래처별 미지급금 (D-33) ─────────────
-def vendor_payables(books, requests, match):
-    """분개장 미지급금·미지급비용 거래처별 잔액(대변−차변) 대 인트라넷 대기·승인 요청 합계 (W-9, W-13)."""
+def vendor_payables(books, requests, match, settled=()):
+    """분개장 미지급금·미지급비용 거래처별 잔액(대변−차변) 대 인트라넷 대기·승인 요청 합계 (W-9, W-13).
+
+    settled: 일정 계산이 이미 잔액에 반영된 것으로 보는 요청 id (승인 완료·예상 지급일이 잔액 기준일 이전·당일, A-3).
+    이 요청들은 아직 줄 돈으로 세지 않는다 (WR-04: 같은 화면의 일정과 같은 기준).
+    """
+    settled = set(settled)
     out = {"rows": [], "compared": 0, "diff_count": 0, "diff_sum": 0, "unknown_count": 0, "absent_count": 0,
            "opening": False, "note": ""}
     if books.state != "ok":
@@ -681,7 +686,7 @@ def vendor_payables(books, requests, match):
     asked, intranet_names = {}, {}
     for rq in requests:
         paid = match["rows"].get(rq["번호"], {}).get("status") == "이미 지급"
-        if rq["status"] not in ("pending", "approved") or paid:
+        if rq["status"] not in ("pending", "approved") or paid or rq.get("id") in settled:
             continue
         key = norm_vendor(rq["vendor"])
         intranet_names.setdefault(key, rq["vendor"])
