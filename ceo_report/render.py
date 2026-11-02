@@ -209,6 +209,8 @@ def render(R, mode):
     out4_sub = "확정 %s · 추정 %s" % (man(s2["out4_firm"]), man(s2["out4_est"]))
     if s2["vat_unknown_n4"]:
         out4_sub += " · 부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n4"]
+    if s2["out_unknown_n4"]:
+        out4_sub += " · 금액 미확인 %d건 (합계 제외)" % s2["out_unknown_n4"]
     h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]), esc(out4_sub)))
     h.append("</div>")
     # 중앙: 프로젝트 요약 + 자금 그래프
@@ -256,8 +258,8 @@ def render(R, mode):
     h.append(chart(s2))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("최저 계산 잔액 · 확정 일정만", _min_cell(lf, lfd, s2["vat_unknown_firm_n"])),
-                 ("최저 계산 잔액 · 확정+추정", _min_cell(la, lad, s2["vat_unknown_n"])),
+    h.append(kv([("최저 계산 잔액 · 확정 일정만", _min_cell(lf, lfd, s2["vat_unknown_firm_n"], s2["out_unknown_firm_n"])),
+                 ("최저 계산 잔액 · 확정+추정", _min_cell(la, lad, s2["vat_unknown_n"], s2["out_unknown_n"])),
                  ("날짜 없는 입금예정 / 지급예정",
                   _past_side(s2["undated_in_n"], s2["undated_in"], s2["undated_in_unknown"]) + " / " +
                   _past_side(s2["undated_out_n"], s2["undated_out"], s2["undated_out_unknown"])),
@@ -320,21 +322,26 @@ def _kpi(label, value, sub, unit=True):
         esc(label), value, sub)
 
 
-def _min_cell(low, day, vat_n):
+def _min_cell(low, day, vat_n, unk_n=0):
     """최저 계산 잔액 칸. 시작 잔액을 모르면 숫자를 만들지 않고 '잔액 미확인'만 보인다."""
     if low is None:
         return _na("잔액 미확인")
-    return "%s (%s)%s" % (M(low), esc(d2s(day)), _vat_note(vat_n))
+    return "%s (%s)%s%s" % (M(low), esc(d2s(day)), _vat_note(vat_n), _unknown_out_note(unk_n))
 
 
 def _won_or_unknown(v):
     return "잔액 미확인" if v is None else won(v) + "원"
 
 
-def _min_cell_won(low, day, vat_n):
+def _min_cell_won(low, day, vat_n, unk_n=0):
     if low is None:
         return _na("잔액 미확인")
-    return esc("%s원 (%s)" % (won(low), d2s(day))) + _vat_note(vat_n)
+    return esc("%s원 (%s)" % (won(low), d2s(day))) + _vat_note(vat_n) + _unknown_out_note(unk_n)
+
+
+def _unknown_out_note(n):
+    """기간 안 날짜인데 금액을 모르는 지급예정 건수 (최저 잔액에 넣지 못함). 없으면 빈 문자열."""
+    return _na(" · 금액 미확인 %d건 (미반영)" % n) if n else ""
 
 
 def _vat_note(n):
@@ -522,8 +529,8 @@ def _s2(R):
                     won(s2["buckets"][-1]["bal_firm"]), won(s2["buckets"][-1]["bal_all"])))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만", _min_cell_won(lf, lfd, s2["vat_unknown_firm_n"])),
-                 ("기간 중 최저 계산 잔액 · 확정+추정", _min_cell_won(la, lad, s2["vat_unknown_n"]))]))
+    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만", _min_cell_won(lf, lfd, s2["vat_unknown_firm_n"], s2["out_unknown_firm_n"])),
+                 ("기간 중 최저 계산 잔액 · 확정+추정", _min_cell_won(la, lad, s2["vat_unknown_n"], s2["out_unknown_n"]))]))
     ev_rows = lambda evs: [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"),
                             W(e["amount"]) + (_na(" 부가세 미확인") if e.get("vat_unknown") and e["amount"] is not None else ""),
                             esc("확정" if e["firm"] else "추정"), esc(e["cat"]), esc(e["project"]), esc(e["desc"]),

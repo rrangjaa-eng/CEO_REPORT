@@ -458,5 +458,57 @@ class TestAllUnknownTotals(unittest.TestCase):
         self.assertEqual(val, "1건 · 계약 50,000,000원 · 예상 총집행 18,000,000원")
 
 
+# ───────────── 7. 날짜는 있고 금액을 모르는 지급예정도 4주 지급예정·최저 잔액 칸에 건수로 보인다 ─────────────
+def _kpi_sub(html, label):
+    m = re.search("<div class='l'>" + re.escape(label) + "</div><div class='v'>.*?</div><div class='s'>(.*?)</div>", html, re.S)
+    return re.sub(r"<[^>]+>", "", m.group(1)) if m else None
+
+
+FIRM_MIN = "최저 계산 잔액 · 확정 일정만"
+ALL_MIN = "최저 계산 잔액 · 확정+추정"
+
+
+class TestDatedUnknownPayments(unittest.TestCase):
+    def screen(self, edit=None):
+        import test_report as tr
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        h = render(R, "ceo")
+        return R, tr.first_screen(h), tr.section(h, 2)
+
+    def test_sample_unknown_request_is_counted(self):
+        # 샘플: P26206 프로그램 진행비 요청미지급, 2026-11-05 확정, 금액 빈칸
+        R, fs, s2 = self.screen()
+        self.assertIn("금액 미확인 1건", _kpi_sub(fs, "향후 4주 지급예정"))
+        self.assertIn("금액 미확인 1건", _kv(fs, FIRM_MIN))
+        self.assertIn("금액 미확인 1건", _kv(fs, ALL_MIN))
+        self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + FIRM_MIN))
+        self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + ALL_MIN))
+
+    def test_counts_follow_window_and_firmness(self):
+        def edit(S):
+            S["자금일정.csv"] += [
+                ["2026-11-06", "지급", "", "확정", "회사공통지출", "", "가상업체A", "청구서", ""],     # 4주 안, 확정
+                ["2026-11-20", "지급", "", "추정", "회사공통지출", "", "가상업체B", "견적", ""],       # 4주 안, 추정
+                ["2027-01-10", "지급", "", "확정", "회사공통지출", "", "가상업체C", "계약", ""],       # 4주 밖, 기간 안
+                ["2026-10-30", "지급", "", "확정", "회사공통지출", "", "가상업체D", "청구서", ""],     # 지난 날짜
+                ["", "지급", "", "확정", "회사공통지출", "", "가상업체E", "청구서", ""],               # 날짜 없음
+                ["2026-11-10", "입금", "", "확정", "수금", "", "가상고객", "계약", ""],                # 입금은 세지 않음
+            ]
+        R, fs, s2 = self.screen(edit)
+        self.assertEqual((R["s2"]["out_unknown_n4"], R["s2"]["out_unknown_firm_n"], R["s2"]["out_unknown_n"]), (3, 3, 4))
+        self.assertIn("금액 미확인 3건", _kpi_sub(fs, "향후 4주 지급예정"))
+        self.assertIn("금액 미확인 3건", _kv(fs, FIRM_MIN))
+        self.assertIn("금액 미확인 4건", _kv(fs, ALL_MIN))
+
+    def test_no_unknown_no_note(self):
+        def edit(S):
+            for r in S["프로젝트집행.csv"]:
+                if r[1] == "프로그램 진행비":
+                    r[4], r[5] = "1,000,000", "100,000"
+        R, fs, s2 = self.screen(edit)
+        self.assertNotIn("금액 미확인", _kpi_sub(fs, "향후 4주 지급예정"))
+        self.assertNotIn("금액 미확인", _kv(fs, FIRM_MIN))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -420,6 +420,8 @@ def compute(d, kind, asof, start=None):
         undated_sum[io] = (None if evs and unknown == len(evs) else total, len(evs), unknown)
     # 부가세가 비어 있는 예정 지급은 공급가액만 반영된다. 일정에 들어간 건수를 센다.
     sched_vat = [ev for ev in dated if ev.get("vat_unknown")]
+    # 날짜는 기간 안인데 금액을 모르는 지급예정: 합계·최저 잔액에 넣지 못하므로 건수를 함께 보인다 (D-02)
+    out_unk = [ev for ev in amount_unknown if ev["io"] == "out" and ev["date"] is not None and asof < ev["date"] <= horizon]
     R["s2"] = {
         "start": start_cash, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
@@ -433,6 +435,8 @@ def compute(d, kind, asof, start=None):
         "vat_unknown_n": len(sched_vat),
         "vat_unknown_n4": sum(1 for ev in sched_vat if ev["date"] <= four[-1]["to"]),
         "vat_unknown_firm_n": sum(1 for ev in sched_vat if ev["firm"]),
+        "out_unknown_n": len(out_unk), "out_unknown_firm_n": sum(1 for ev in out_unk if ev["firm"]),
+        "out_unknown_n4": sum(1 for ev in out_unk if ev["date"] <= four[-1]["to"]),
     }
     all_amt = sum(e["amount"] for e in events if e["amount"] is not None)
     parts = (sum(b[k] for b in buckets for k in ("in_firm", "in_est", "out_firm", "out_est"))
