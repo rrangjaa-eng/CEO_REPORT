@@ -1,15 +1,15 @@
 ---
 gsd_state_version: "1.0"
 status: unknown
-stopped_at: Completed 01.1-03-PLAN.md
-last_updated: "2026-11-02T10:26:39.278Z"
+stopped_at: Completed 01.1-04-PLAN.md
+last_updated: "2026-11-02T10:41:05.773Z"
 last_activity: 2026-11-02
-state_head: 430f70ff7db09da1b9148e126c6d7806a88efb2e
+state_head: e0fe16324d8b2c2e2b62a0f127c3e885e0ae1b2f
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 current_phase_name: approval-screen
 ---
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Position
 
-Phase 01.1 (approval-screen) · Plans 3 of 6 complete (01.1-01, 01.1-02, 01.1-03) · Phase 1 plans 01-01, 01-02 complete · Next: 01.1-04 (wave 2); APPR-06 and CRAWL-01..04 done in tests, human checks on the user's Windows PC pending (see .planning/WINDOWS.md)
+Phase 01.1 (approval-screen) · Plans 4 of 6 complete (01.1-01, 01.1-02, 01.1-03, 01.1-04) · Phase 1 plans 01-01, 01-02 complete · Next: 01.1-05 (wave 2), then 01.1-06; APPR-01, APPR-02, APPR-04, APPR-06 and CRAWL-01..04 done in tests, human checks on the user's Windows PC pending (see .planning/WINDOWS.md)
 Last activity: 2026-11-02
 
 ## Decisions
@@ -41,6 +41,7 @@ Last activity: 2026-11-02
 - [Phase 01.1]: 01.1-02: any list row with a differing cell count, a blank 번호, or a page link that also changes a filter value stops the run (no partial rows)
 - [Phase 01.1]: 01.1-03: structure_report ok also requires no cell-count mismatch and no paging stop, so 'matches' means a full run will not stop at page 1
 - [Phase 01.1]: 01.1-03: disk failure after a successful collection exits 7 (separate try block); the password prompt refuses an echoing getpass fallback (exit 2)
+- [Phase 01.1]: 01.1-04: duplicate project keys are 판단 불가 and never listed as 미요청 실행가; the 390px browser check runs in a 390px iframe because headless Chrome here has a 500px minimum window
 
 ## Blockers
 
@@ -55,9 +56,10 @@ Last activity: 2026-11-02
 | Phase 01.1 P01 | ~10min | 2 tasks | 8 files |
 | Phase 01.1 P02 | 6 min | 3 tasks | 3 files |
 | Phase 01.1 P03 | ~25min | 3 tasks | 4 files |
+| Phase 01.1 P04 | ~14min | 3 tasks | 3 files |
 
 ## Session
 
-**Last session:** 2026-11-02T10:26:39.239Z
-**Stopped at:** Completed 01.1-03-PLAN.md
+**Last session:** 2026-11-02T10:41:05.732Z
+**Stopped at:** Completed 01.1-04-PLAN.md
 **Resume file:** None
