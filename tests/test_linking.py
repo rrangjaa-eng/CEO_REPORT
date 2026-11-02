@@ -744,5 +744,23 @@ class TestLinkingNoSnapshot(unittest.TestCase):
         self.assertIsNone(re.search(r"\d{6}\s*[-.]?\s*\d{7}", repr(reqs)))
 
 
+class TestLinkingScope(unittest.TestCase):
+    def _git(self, *args):
+        import subprocess
+        try:
+            return subprocess.run(("git",) + args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  universal_newlines=True)
+        except OSError:
+            self.skipTest("git 없음")
+
+    def test_approval_calc_data_unchanged_and_no_02_02_commit_touches_wehago(self):
+        if self._git("rev-parse", "--verify", "-q", "cbc5497^{commit}").returncode != 0:
+            self.skipTest("cbc5497 없음")
+        diff = self._git("diff", "--quiet", "cbc5497", "--", "ceo_report/approval.py", "ceo_report/calc.py", "ceo_report/data.py")
+        self.assertEqual(diff.returncode, 0)
+        log = self._git("log", "--format=%s", "cbc5497..HEAD", "--", "ceo_report/wehago.py").stdout
+        self.assertNotIn("02-02", log)
+
+
 if __name__ == "__main__":
     unittest.main()

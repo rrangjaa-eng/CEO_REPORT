@@ -292,3 +292,42 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
                 ln["reason"] = (ln["reason"] + " · " if ln["reason"] else "") + "날짜 없음"
             _unlinked(ln, "자동 연결 후보 0건")
     return {"lines": lines, "summary": _summary(lines), "used": used}
+
+
+# ───────────── 매출 줄 연결 ─────────────
+def link_revenue(books, projects, overrides, revenue_codes=("41200",)):
+    """매출 줄(계정 revenue_codes, 금액 = 대변-차변)을 프로젝트에 잇는다 -> {"lines", "summary", "used"}.
+
+    순서: 수동 -> 적요 [코드] -> 클라이언트(norm_vendor)와 견적금액이 줄 금액과 같은 프로젝트가 정확히 하나(키가 겹치는
+    프로젝트는 후보가 아님) -> 미연결. 후보가 둘 이상이면 연결하지 않고 후보 수를 보인다.
+    """
+    journal = books.journal
+    keys = line_keys(journal)
+    codes = set(_squash(c) for c in revenue_codes)
+    lines = []
+    for i, row in enumerate(journal):
+        if _squash(row.get("account_code")) not in codes:
+            continue
+        d, c = row.get("debit"), row.get("credit")
+        lines.append(_line(i, keys[i], row, None if d is None and c is None else (c or 0) - (d or 0)))
+    used = set()
+    for ln in lines:
+        if _fixed(ln, overrides, projects, used):
+            continue
+        if ln["amount"] is None:
+            ln["reason"] = ""
+            _unlinked(ln, "금액 미확인")
+            continue
+        if not projects:
+            _unlinked(ln, NO_LIST)
+            continue
+        found = sorted(k for k, p in projects.items() if not p["dup"] and ln["vendor_norm"] and
+                       p["client_norm"] == ln["vendor_norm"] and p["quote"] == ln["amount"])
+        ln["candidates"] = len(found)
+        if len(found) == 1:
+            ln.update(project=found[0], basis="자동", label="자동 (클라이언트·견적금액)")
+        else:
+            if found:
+                ln["reason"] = ""
+            _unlinked(ln, "클라이언트·견적금액 후보 %d건" % len(found))
+    return {"lines": lines, "summary": _summary(lines), "used": used}
