@@ -22,6 +22,8 @@ KIND_HEADERS = {
                     "관리", "전표상태"),
 }
 KINDS = tuple(KIND_HEADERS)
+# 매출 계산서 원천 (D-41): 고른 매입매출장의 매출 줄이 없을 때 쓰는 별도 파일 두 가지. 매입 쪽 장부로는 고르지 않는다.
+SALES_KINDS = ("매입매출장(매출)", "전자세금계산서(매출)")
 MAX_PART_BYTES = 50 * 1024 * 1024  # 엑셀 안 부품 하나의 풀린 크기 상한 (T-01.1-41)
 MAX_COLS = 256
 _BAD = "엑셀 내부 형식이 예상과 다름"
@@ -279,8 +281,12 @@ def _is_subtotal(row):
     return False
 
 
-def read_book(path, kind, file_date=None, asof=None):
-    """한 파일을 머리글 이름으로 읽어 (행 dict 목록, 요약)을 돌려준다. 머리글이 다르면 HeaderMismatch."""
+def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
+    """한 파일을 머리글 이름으로 읽어 (행 dict 목록, 요약)을 돌려준다. 머리글이 다르면 HeaderMismatch.
+
+    keep_sales 가 참이면 매입매출장의 매출 줄을 info["sales_rows"] 에 남긴다 (매입 줄과 같은 열 + type = 매입/매출유형 글자).
+    기본값에서는 info["sales_rows"] 는 빈 목록이고 행 목록과 다른 요약 값은 이전과 같다.
+    """
     name = os.path.basename(path)
     rows = read_xlsx(path)
     cols, extra = _check_header(rows, kind, name)
@@ -293,7 +299,8 @@ def read_book(path, kind, file_date=None, asof=None):
 
     out, last = [], None
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
-            "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else ""}
+            "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
+            "sales_rows": []}
     for row in rows[1:]:
         if not any(c.strip() for c in row):
             info["skipped"] += 1
@@ -319,18 +326,24 @@ def read_book(path, kind, file_date=None, asof=None):
             item["code"] = project_code(item["memo"])
         elif kind == "매입매출장":
             sort = row[cols["구분"][0]].strip()
-            if sort != "매입":  # 매출 줄은 세지만 남기지 않는다. 사업자(주민)번호 칸은 아예 읽지 않는다 (W-11)
+            if sort != "매입":  # 매출 줄은 세고 (keep_sales 일 때만 남긴다). 사업자(주민)번호 칸은 아예 읽지 않는다 (W-11)
                 info["sales" if sort == "매출" else "other"] += 1
-                continue
+                if sort != "매출" or not keep_sales:
+                    continue
             item = {"date": date, "no": txt(row, "번호"), "vendor": txt(row, "거래처"), "item": txt(row, "품명"),
                     "supply": _amount(row[cols["공급가액"][0]]), "vat": _amount(row[cols["부가세"][0]]),
                     "total": _amount(row[cols["합계"][0]])}
             item["code"] = project_code(item["item"])
+            if sort == "매출":
+                item["type"] = txt(row, "매입/매출유형")
+                item["vendor_norm"] = norm_vendor(item["vendor"])
+                info["sales_rows"].append(item)
+                continue
         else:
             item = {"date": date, "vendor": txt(row, "거래처"), "item": txt(row, "품명"),
                     "supply": _amount(row[cols["공급가액"][0]]), "vat": _amount(row[cols["부가세"][0]]),
                     "total": _amount(row[cols["합계"][0]]), "debit_account": txt(row, "차변계정"),
-                    "slip_state": txt(row, "전표상태")}
+                    "slip_state": txt(row, "전표상태"), "credit_account": txt(row, "대변계정"), "type": txt(row, "유형")}
             item["code"] = project_code(item["item"])
         item["vendor_norm"] = norm_vendor(item["vendor"])
         out.append(item)
@@ -349,10 +362,19 @@ def _file_date(name):
     return None
 
 
+def _sales_kind_of(name):
+    """매출 계산서 원천 파일 이름의 종류 (SALES_KINDS 중 하나) 또는 None. '매입매출장' 글자를 빼고도 '매출'이 남아야 한다."""
+    if "매입매출장" in name and "매출" in name.replace("매입매출장", ""):
+        return "매입매출장(매출)"
+    if "전자세금계산서" in name and "매출" in name:
+        return "전자세금계산서(매출)"
+    return None
+
+
 def _kind_of(name):
-    """파일 이름이 속하는 종류와 읽어도 되는지. 매출 전자세금계산서는 종류는 같지만 읽지 않는다 (W-1)."""
+    """파일 이름이 속하는 종류와 읽어도 되는지. 매출 전자세금계산서·매입매출장(매출)은 종류는 같지만 매입 쪽으로는 읽지 않는다 (W-1)."""
     if "매입매출장" in name:
-        return "매입매출장", True
+        return "매입매출장", _sales_kind_of(name) is None
     if "분개장" in name:
         return "분개장", True
     if "전자세금계산서" in name:
@@ -462,6 +484,92 @@ def load_books(folder, asof, stale_days):
     if books.state == "ok":  # 부분 사용 없음: ok 일 때만 행을 준다 (D-35a)
         books.journal, books.ledger, books.einvoice = staged["분개장"], staged["매입매출장"], staged["전자세금계산서(매입)"]
     return books
+
+
+# ───────────── 매출 계산서 원천 (D-41) ─────────────
+_SALES_NONE = "자료 없음 (매출 계산서 엑셀)"
+
+
+def _sales_row(item):
+    """세 원천의 행을 같은 모양으로 (원천에 없는 열은 빈 글자)."""
+    return {"date": item["date"], "no": item.get("no", ""), "vendor": item["vendor"], "vendor_norm": item["vendor_norm"],
+            "item": item["item"], "supply": item["supply"], "vat": item["vat"], "total": item["total"],
+            "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", "")}
+
+
+def load_sales(folder, asof, books):
+    """매출 계산서 원천을 골라 읽는다 -> dict(state, reason, source, file, file_date, rows, notes). 예외를 내지 않는다.
+
+    우선순위(첫 번째로 있는 것): (a) load_books 가 고른 매입매출장의 매출 줄, (b) 가장 새 '매입매출장(매출)' xlsx,
+    (c) 가장 새 '전자세금계산서(매출)' xlsx. 고른 파일이 틀리면 낮은 원천으로 넘어가지 않는다 (새 계산서를 놓칠 수 있다).
+    state: 'ok' | '자료 없음' | '머리글 다름' | '읽기 실패'. 매출 줄이 하나도 없는 파일은 쓰지 않는다 ('자료 없음').
+    """
+    res = {"state": "자료 없음", "reason": _SALES_NONE, "source": "", "file": "", "file_date": None, "rows": [],
+           "notes": []}
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        names = []
+    found = dict((k, []) for k in SALES_KINDS)
+    lookalikes = []
+    for n in names:
+        if n.startswith("~$") or not os.path.isfile(os.path.join(folder, n)):
+            continue
+        kind = _sales_kind_of(n)
+        if kind is None:
+            continue
+        ext = os.path.splitext(n)[1].lower()
+        if ext == ".xlsx":
+            found[kind].append(n)
+        elif ext in (".xls", ".csv"):
+            lookalikes.append(n)
+    ledger = books.files.get("매입매출장") if books is not None else None
+    chosen = None   # (원천 이름, 파일 이름, 읽는 종류, 매출 줄 남김)
+    if ledger and not ledger.get("error") and (ledger.get("sales") or 0) > 0:
+        chosen = ("매입매출장", ledger["name"], "매입매출장", True)
+    else:
+        for source, read_kind in (("매입매출장(매출)", "매입매출장"), ("전자세금계산서(매출)", "전자세금계산서(매입)")):
+            if found[source]:
+                ranked = sorted(found[source], key=lambda n: (_file_date(n) or dt.date.min,
+                                                              _mtime(os.path.join(folder, n)), n))
+                chosen = (source, ranked[-1], read_kind, source == "매입매출장(매출)")
+                break
+    if chosen is None:
+        if lookalikes:
+            res["reason"] += " — .xlsx만 읽음 (%s)" % ", ".join("%s 있음" % n for n in lookalikes)
+        return res
+    source, name, read_kind, keep = chosen
+    unused = sorted(n for k in SALES_KINDS for n in found[k] if n != name)
+    if unused:
+        res["notes"].append("쓰지 않은 매출 파일: " + ", ".join(unused))
+    res["source"], res["file"], res["file_date"] = source, name, _file_date(name)
+    try:
+        rows, info = read_book(os.path.join(folder, name), read_kind, res["file_date"], asof, keep_sales=keep)
+    except HeaderMismatch as e:
+        res["state"] = "머리글 다름"
+        res["reason"] = "매출 계산서 엑셀 머리글 다름 — %s: 없는 열 %s" % (name, ", ".join(e.missing))
+        return res
+    except Exception:   # WehagoError 와 어떤 모양으로 깨진 파일이든 멈추지 않는다
+        res["state"] = "읽기 실패"
+        res["reason"] = "매출 계산서 엑셀 읽기 실패 — %s" % name
+        return res
+    if source == "전자세금계산서(매출)":
+        picked = rows
+    else:
+        picked = info["sales_rows"]
+        ignored = len(rows) + info["other"] if source == "매입매출장(매출)" else 0
+        if ignored:
+            res["notes"].append("매입매출장(매출) 파일의 매출 아닌 줄 %d건 무시" % ignored)
+    if not picked:
+        res["reason"] = "%s — %s에 매출 줄이 없음" % (_SALES_NONE, name)
+        return res
+    res["rows"] = [_sales_row(r) for r in picked]
+    res["state"], res["reason"] = "ok", ""
+    ref = books.book_date if books is not None else None
+    if res["file_date"] is not None and ref is not None and res["file_date"] < ref:
+        res["notes"].append("매출 계산서 파일 기준일 %s — 장부 기준일 %s보다 %d일 이전" % (
+            res["file_date"].isoformat(), ref.isoformat(), (ref - res["file_date"]).days))
+    return res
 
 
 # ───────────── 요청 대조 (D-32) ─────────────
