@@ -125,13 +125,13 @@ class TestParsing(unittest.TestCase):
 
     def test_cp949_csv(self):
         tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         p = os.path.join(tmp, "a.csv")
         with open(p, "w", encoding="cp949") as f:
             f.write("항목,값\n회사명,한글회사\n")
         rows, ok = read_csv(p, ["항목", "값"], Issues())
         self.assertTrue(ok)
         self.assertEqual(rows[0]["값"], "한글회사")
-        shutil.rmtree(tmp)
 
     def test_setting_num(self):
         self.assertTrue(is_blank(""))
@@ -266,21 +266,21 @@ class TestChecksAndOutput(Base):
 
     def test_missing_file_reported_not_crash(self):
         tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         shutil.copy(os.path.join(SAMPLE, "프로젝트.csv"), tmp)
         d = load(tmp)
         R = compute(d, "weekly", ASOF)
         render(R, "ceo")
         self.assertTrue(any("파일 없음" in m for _, _, m in R["s7"]["issues"]))
-        shutil.rmtree(tmp)
 
     def test_cli_writes_files(self):
         out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
         r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
                             "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(os.listdir(out)),
                          ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
-        shutil.rmtree(out)
 
 
 class TestUnknownBalance(unittest.TestCase):
