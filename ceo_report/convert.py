@@ -7,6 +7,7 @@
 """
 import collections
 import csv
+import datetime as dt
 import io
 import os
 import re
@@ -536,6 +537,105 @@ def _write_failed_lines(e):
     return out
 
 
+def _kept_invoice_reason(input_dir, sales):
+    """계산서.csv 를 만들지 못한 이유 한 줄 (D-46). 기존 계산서.csv 는 건드리지 않고 작성일을 함께 알린다."""
+    reason = sales.get("reason") or "자료 없음 (매출 계산서 엑셀)"
+    path = os.path.join(input_dir, "계산서.csv")
+    if not os.path.exists(path):
+        return reason
+    none = "자료 없음 (매출 계산서 엑셀)"
+    if sales.get("state") == "자료 없음" and reason.startswith(none):
+        reason = "매출 계산서 엑셀 없음" + reason[len(none):]
+    try:
+        day = dt.date.fromtimestamp(os.path.getmtime(path)).isoformat()
+    except (OSError, ValueError, OverflowError):
+        day = "알 수 없음"
+    return "%s → 기존 계산서.csv 유지 (갱신 안 됨, 작성일 %s)" % (reason, day)
+
+
+SCHEDULE_NOTE = "(자금일정.csv는 바꾸지 않음)"
+_UNPAID = ("요청미지급", "카드사용미결제")
+
+
+def _digits(text):
+    return re.sub(r"\D", "", text or "")
+
+
+def schedule_overlaps(input_dir, tables):
+    """(쌍 목록 또는 None, 사유): 자금일정.csv 출금 줄과 아직 나가지 않은 프로젝트집행 줄이 겹칠 수 있는 쌍. 읽기만 한다 (D-37, D-44).
+
+    겹침 = 금액이 같고(집행 줄의 공급가액, 또는 공급가액+부가세) 프로젝트번호의 숫자가 같거나 거래처 이름이 같음.
+    프로젝트집행.csv 를 이번에 만들지 못했으면 입력 폴더의 기존 파일을 읽는다. 읽을 수 없으면 None (0건과 다르다).
+    """
+    path = os.path.join(input_dir, "자금일정.csv")
+    if not os.path.exists(path):
+        return None, "자금일정.csv 없음"
+    info = {}
+    sched, ok = util.read_csv(path, data.SCHEMA["자금일정.csv"], util.Issues(), info)
+    if not ok or info.get("missing"):
+        return None, "자금일정.csv를 읽지 못함"
+    made = [t for t in tables if t.name == "프로젝트집행.csv" and t.written]
+    if made:
+        execs = made[0].rows
+    else:
+        execs, state = _read_prev_state(input_dir, "프로젝트집행.csv")
+        if state == "읽지 못함":
+            return None, "프로젝트집행.csv를 읽지 못함"
+    unpaid = [e for e in execs if (e.get("상태") or "").strip() in _UNPAID]
+    pairs = []
+    for sr in sched:
+        if (sr.get("입출금") or "").strip() not in ("출금", "지급"):
+            continue
+        amount = util.num(sr.get("금액"))
+        if amount is None:
+            continue
+        for e in unpaid:
+            supply, vat = util.num(e.get("공급가액")), util.num(e.get("부가세"))
+            if supply is None or amount not in ((supply,) if vat is None else (supply, supply + vat)):
+                continue
+            same_project = _digits(sr.get("프로젝트번호")) and _digits(sr.get("프로젝트번호")) == _digits(e.get("프로젝트번호"))
+            same_vendor = wehago.norm_vendor(sr.get("거래처")) and wehago.norm_vendor(sr.get("거래처")) == wehago.norm_vendor(e.get("거래처"))
+            if same_project or same_vendor:
+                pairs.append((sr, e, amount))
+    return pairs, ""
+
+
+def overlap_lines(input_dir, tables):
+    pairs, why = schedule_overlaps(input_dir, tables)
+    if pairs is None:
+        return ["자금일정.csv와 겹칠 수 있는 줄 판단 불가 (%s) %s" % (why, SCHEDULE_NOTE)]
+    out = ["자금일정.csv와 겹칠 수 있는 줄 %d건 %s" % (len(pairs), SCHEDULE_NOTE)]
+    for sr, e, amount in pairs:
+        parts = [(sr.get("예정일") or "").strip() or "날짜 없음", (sr.get("입출금") or "").strip(), won(amount),
+                 (sr.get("프로젝트번호") or "").strip(), (sr.get("거래처") or "").strip()]
+        vat = util.num(e.get("부가세"))
+        mine = [(e.get("상태") or "").strip(), (e.get("프로젝트번호") or "").strip(), (e.get("거래처") or "").strip(),
+                "공급가액 " + won(util.num(e.get("공급가액"))) + (" + 부가세 " + won(vat) if vat is not None else "")]
+        out.append("  겹침 자금일정 " + " ".join(x for x in parts if x) + " ↔ 프로젝트집행 " + " ".join(x for x in mine if x))
+    return out
+
+
+def input_check_lines(input_dir):
+    """data.load(입력 폴더)가 보고서 7번에 올릴 입력 확인 항목 (읽기만 한다, W-6). 변환이 끝난 폴더를 읽는다."""
+    items = data.load(input_dir).issues.items
+    out = ["보고서 입력 확인 필요 %d건" % len(items)]
+    for name, line, msg in items:
+        where = "%s번째 줄" % line if str(line).isdigit() else "전체"
+        out.append("  확인 %s %s: %s" % (name, where, msg))
+    return out
+
+
+def precheck_writable(input_dir, names):
+    """쓰기 전에 이미 있는 대상을 모두 쓰기로 열어 본다. 하나라도 안 되면 WriteFailed (아무것도 바뀌지 않음)."""
+    for name in names:
+        path = os.path.join(input_dir, name)
+        if os.path.exists(path):
+            try:
+                _check_writable(path)
+            except OSError as e:
+                raise WriteFailed(name, e)
+
+
 def _unwritten(reason):
     from . import convert_xchk
     columns = dict((n, data.SCHEMA[n]) for n in GENERATED[:5] if n in data.SCHEMA)
@@ -551,8 +651,10 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         prev[name], states[name] = _read_prev_state(input_dir, name)
     res.links = links = build_links(books, cfg, snap, input_dir, asof, now)
     sales = wehago.load_sales(wehago_dir, asof, books)
-    tables = [convert_pl.build_pl(books, cfg, prev["손익.csv"], links),
-              convert_invoices.build_invoices(sales, books, links["revenue"], links["projects"], prev["계산서.csv"], cfg)]
+    invoices = convert_invoices.build_invoices(sales, books, links["revenue"], links["projects"], prev["계산서.csv"], cfg)
+    if not invoices.written:
+        invoices.reason = _kept_invoice_reason(input_dir, sales)   # 쓸 매출 원천이 없으면 기존 계산서.csv 를 그대로 둔다 (D-46)
+    tables = [convert_pl.build_pl(books, cfg, prev["손익.csv"], links), invoices]
     if snap is None:
         tables.extend(_unwritten("인트라넷 스냅숏 없음 (기존 파일 그대로)")[2:])
     else:
@@ -598,13 +700,27 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
                 t.notes.append("이전 %s를 읽지 못해 옮길 줄을 옮기지 못함 (%s 에 원본 보관)" % (t.name, where))
     kept = [m for m in MANUAL if os.path.exists(os.path.join(input_dir, m))]
     backup_line = "이전 파일: %s (%s)" % (where, ", ".join(moved)) if backup else "이전 파일: 없음"
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross)
-    payloads = [(t.name, table_bytes(t)) for t in tables if t.written] + [("변환결과.txt", _text_bytes(lines))]
+    csv_payloads = [(t.name, table_bytes(t)) for t in tables if t.written]
     try:
-        write_files(input_dir, payloads, stamp, backup)
+        precheck_writable(input_dir, [n for n, _ in csv_payloads] + ["변환결과.txt"])   # 하나라도 잠겼으면 아무것도 바꾸지 않는다
+        if csv_payloads:
+            write_files(input_dir, csv_payloads, stamp, backup)
     except WriteFailed as e:
         res.code = 7
         res.lines = _write_failed_lines(e)
+        return res
+    # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
+    listings, summary = [], []
+    if books.state == "ok":
+        overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
+        listings = overlap + checks
+        summary = [overlap[0], checks[0]]
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings)
+    try:
+        write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)
+    except WriteFailed as e:
+        res.code = 7
+        res.lines = _write_failed_lines(e) + ["새 CSV 는 이미 바뀌었음: " + ", ".join(n for n, _ in csv_payloads)]
         return res
     res.backup = os.path.join(input_dir, "이전", backup) if backup else None
     out = []
@@ -623,6 +739,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     if _undecided(tables, cross):
         out.append("대조 판단 불가 %d건" % _undecided(tables, cross))
     out.append("대조 불일치 %d건" % _mismatches(tables, cross))
+    out.extend(summary)
     out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
     res.lines = out
     return res
