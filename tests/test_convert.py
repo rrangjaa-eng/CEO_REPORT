@@ -6,15 +6,18 @@
 import contextlib
 import csv
 import datetime as dt
+import hashlib
 import importlib
 import importlib.util
 import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -222,6 +225,243 @@ class TestConvertTracer(unittest.TestCase):
         write_convert_books(folder, journal=FAKE_PL_JOURNAL + [line])
         books = w.load_books(folder, ASOF, None)
         self.assertEqual(books.journal[-1]["sort"], "결차")
+
+
+# ───────────── Task 2: 안전한 덮어쓰기와 멈춤 상태 (D-43, D-45, D-35a) ─────────────
+RRN = re.compile(r"\d{6}\s*[-.]?\s*\d{7}")
+STAMP = "20261102_000000"
+
+
+def sha(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def tree(folder):
+    """폴더 안 모든 파일의 {상대 경로: sha256}."""
+    out = {}
+    for base, _, files in os.walk(folder):
+        for n in files:
+            full = os.path.join(base, n)
+            out[os.path.relpath(full, folder).replace(os.sep, "/")] = sha(full)
+    return out
+
+
+def read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def backup_dirs(input_dir):
+    base = os.path.join(input_dir, "이전")
+    return sorted(os.listdir(base)) if os.path.isdir(base) else []
+
+
+def convert_run(input_dir, collect, wehago_dir, stamp=None, asof=ASOF, now=NOW):
+    return mod("convert").run(input_dir, collect, wehago_dir, asof, now, stamp)
+
+
+class TestConvertSafety(unittest.TestCase):
+    def prepared(self, **kw):
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir, **kw)
+        return tmp, input_dir, collect, wehago_dir
+
+    def test_old_file_is_copied_to_a_time_folder_before_it_is_replaced(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        old = read_bytes(os.path.join(input_dir, "손익.csv"))
+        res = convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        self.assertEqual(res.code, 0, res.lines)
+        self.assertEqual(backup_dirs(input_dir), [STAMP])
+        self.assertEqual(read_bytes(os.path.join(input_dir, "이전", STAMP, "손익.csv")), old)
+        self.assertNotEqual(read_bytes(os.path.join(input_dir, "손익.csv")), old)
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "이전", STAMP, "변환결과.txt")))  # 처음엔 없었다
+        self.assertIn("이전 파일: 입력/이전/%s/ (손익.csv)" % STAMP, read_result_lines(input_dir))
+
+    def test_a_second_run_in_the_same_second_gets_a_new_folder(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        first = read_bytes(os.path.join(input_dir, "손익.csv"))
+        convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        self.assertEqual(backup_dirs(input_dir), [STAMP, STAMP + "_2"])
+        self.assertEqual(read_bytes(os.path.join(input_dir, "이전", STAMP + "_2", "손익.csv")), first)
+        self.assertTrue(os.path.exists(os.path.join(input_dir, "이전", STAMP + "_2", "변환결과.txt")))
+
+    def test_cli_backup_folder_name_is_a_time_stamp(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        names = backup_dirs(input_dir)
+        self.assertEqual(len(names), 1)
+        self.assertRegex(names[0], r"^\d{8}_\d{6}(_\d+)?$")
+
+    def test_no_backup_folder_when_nothing_existed_before(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        os.remove(os.path.join(input_dir, "손익.csv"))
+        res = convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        self.assertEqual(res.code, 0, res.lines)
+        self.assertEqual(backup_dirs(input_dir), [])
+        self.assertIn("이전 파일: 없음", read_result_lines(input_dir))
+
+    def test_manual_files_are_never_touched(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        manual = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv")
+        before = dict((n, sha(os.path.join(input_dir, n))) for n in manual)
+        full_before = tree(input_dir)
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "프로젝트연결.csv")))
+        res = convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        self.assertEqual(res.code, 0)
+        self.assertEqual(before, dict((n, sha(os.path.join(input_dir, n))) for n in manual))
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "프로젝트연결.csv")))
+        full_after = tree(input_dir)
+        convert = mod("convert")
+        for path, digest in full_after.items():
+            if full_before.get(path) != digest:
+                self.assertTrue(path in convert.GENERATED or path.startswith("이전/"), path)
+        for path in full_before:
+            self.assertIn(path, full_after, "지워진 파일: " + path)
+
+    def test_only_generated_names_may_be_written(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        before = tree(input_dir)
+        convert = mod("convert")
+        for name in convert.MANUAL:
+            with self.assertRaises(ValueError):
+                convert.write_files(input_dir, [(name, b"x")], STAMP)
+        with self.assertRaises(ValueError):
+            convert.write_files(input_dir, [("../밖.csv", b"x")], STAMP)
+        self.assertEqual(tree(input_dir), before)
+
+    def books_failure(self, tmp, input_dir, collect, wehago_dir, reason):
+        before = read_bytes(os.path.join(input_dir, "손익.csv"))
+        tree_before = tree(input_dir)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(read_bytes(os.path.join(input_dir, "손익.csv")), before)
+        lines = read_result_lines(input_dir)
+        text = "\n".join(lines)
+        self.assertIn(reason, text)
+        self.assertIn("[손익.csv] 만들지 않음 — WEHAGO 장부를 쓸 수 없음", lines)
+        self.assertIn("변환하지 않음", out)
+        self.assertIn(reason, out)
+        for path, digest in tree(input_dir).items():
+            if tree_before.get(path) != digest:
+                self.assertTrue(path == "변환결과.txt" or path.startswith("이전/"), path)
+
+    def test_missing_books_folder_stops_every_wehago_file(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        shutil.rmtree(wehago_dir)
+        self.books_failure(tmp, input_dir, collect, wehago_dir,
+                           "자료 없음: 분개장, 매입매출장, 전자세금계산서(매입) (폴더를 찾을 수 없음)")
+
+    def test_renamed_required_column_stops(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        header = ["메모" if h == "적요" else h for h in JOURNAL_HEADER]
+        write_xlsx(os.path.join(wehago_dir, "분개장_20261031.xlsx"), [header] + [list(r) for r in FAKE_PL_JOURNAL])
+        self.books_failure(tmp, input_dir, collect, wehago_dir, "머리글이 예상과 다름")
+
+    def test_non_zip_journal_stops(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        with open(os.path.join(wehago_dir, "분개장_20261031.xlsx"), "wb") as f:
+            f.write(b"not a zip")
+        self.books_failure(tmp, input_dir, collect, wehago_dir, "읽기 실패")
+
+    def test_age_alone_never_stops_conversion(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared(stamp="20261020")
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        lines = read_result_lines(input_dir)
+        self.assertTrue(any(ln.startswith("WEHAGO 장부: ") and "장부 기준일 2026-10-20 · 기준일보다 13일 이전" in ln
+                            for ln in lines), lines[:3])
+        self.assertIn("기준일보다 13일 이전", out)
+
+    def test_locked_target_stops_with_exit_7_and_changes_nothing(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        before = tree(input_dir)
+        convert = mod("convert")
+        real = convert._check_writable
+
+        def locked(path):
+            if os.path.basename(path) == "손익.csv":
+                raise PermissionError(13, "Permission denied", path)
+            return real(path)
+
+        with mock.patch.object(convert, "_check_writable", side_effect=locked):
+            rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 7, out)
+        self.assertIn("입력/손익.csv을(를) 쓸 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행)", out)
+        self.assertEqual(tree(input_dir), before)  # 이전 폴더도, 임시 파일도, 변환결과.txt 도 생기지 않는다
+
+    def test_failed_write_removes_temp_files_and_replaces_nothing(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        before = tree(input_dir)
+        convert = mod("convert")
+        real = convert._write_temp
+        calls = []
+
+        def flaky(path, payload):
+            calls.append(path)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device", path)
+            return real(path, payload)
+
+        with mock.patch.object(convert, "_write_temp", side_effect=flaky):
+            rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 7, out)
+        self.assertIn("을(를) 쓸 수 없음", out)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(tree(input_dir), before)
+
+    def test_intranet_rows_are_carried_after_the_books_rows_unchanged(self):
+        with open(os.path.join(SAMPLE, "손익.csv"), encoding="utf-8-sig", newline="") as f:
+            old = list(csv.reader(f))
+        carried = [r for r in old[1:] if r[0] == "인트라넷완료보고"]
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
+        rows = read_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(rows[3:], carried)
+        self.assertIn("  알림 이전 손익.csv의 WEHAGO 외 출처 줄 3건 그대로 옮김", read_result_lines(input_dir))
+
+    def test_unreadable_previous_file_is_reported_not_silently_dropped(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        with open(os.path.join(input_dir, "손익.csv"), "w", encoding="utf-8") as f:
+            f.write("가,나\n1,2\n")
+        res = convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
+        self.assertEqual(res.code, 0)
+        text = "\n".join(read_result_lines(input_dir))
+        self.assertIn("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (입력/이전/%s/ 에 원본 보관)" % STAMP, text)
+        self.assertTrue(os.path.exists(os.path.join(input_dir, "이전", STAMP, "손익.csv")))
+
+    def test_resident_numbers_are_masked_everywhere(self):
+        def setup(input_dir, collect, wehago_dir):
+            with open(os.path.join(input_dir, "손익.csv"), "a", encoding="utf-8", newline="") as f:
+                f.write("인트라넷완료보고,2026-10,프로젝트,강사 900101-1234567,\"1,000\",,,\n")
+
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
+        self.assertEqual(rc, 0, out)
+        csv_text = read_bytes(os.path.join(input_dir, "손익.csv")).decode("utf-8")
+        self.assertIn("강사 ******-*******", csv_text)
+        self.assertIsNone(RRN.search(csv_text))
+        self.assertIsNone(RRN.search(read_bytes(os.path.join(input_dir, "변환결과.txt")).decode("utf-8")))
+        self.assertIsNone(RRN.search(out))
+
+    def test_missing_input_folder_is_created_and_missing_manual_files_are_named(self):
+        tmp, input_dir, collect, wehago_dir = self.prepared()
+        shutil.rmtree(input_dir)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        rows = read_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(len(rows), 3)
+        text = "\n".join(read_result_lines(input_dir))
+        for name in mod("convert").MANUAL:
+            self.assertIn(name, text)
+        self.assertIn("손대지 않은 파일: 없음", text)
+        self.assertEqual(backup_dirs(input_dir), [])
+        self.assertEqual(sorted(os.listdir(input_dir)), ["변환결과.txt", "손익.csv"])
+
+    def test_backup_and_log_paths_are_git_ignored(self):
+        for rel in ("입력/이전/20261102_000000/손익.csv", "입력/변환결과.txt"):
+            rc = subprocess.call(["git", "-C", ROOT, "check-ignore", "-q", rel])
+            self.assertEqual(rc, 0, rel)
 
 
 if __name__ == "__main__":
