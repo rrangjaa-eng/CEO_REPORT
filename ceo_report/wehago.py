@@ -275,10 +275,11 @@ def _check_header(rows, kind, name):
 def _is_subtotal(row):
     """합계·소계·일계·월계·누계로 시작하거나 '거래처별 소계'를 포함한 칸이 하나라도 있는 요약 줄 (D-35c)."""
     for c in row:
-        s = c.strip()
-        if "거래처별소계" in re.sub(r"\s+", "", s):
+        s = re.sub(r"\s+", "", c)  # 실제 파일은 '합       계'처럼 글자 사이에 공백을 넣는다
+        if "거래처별소계" in s:
             return True
-        if s.lstrip("[]()<>【】「」 \t").startswith(_SUBTOTAL):
+        s = s.lstrip("[]()<>【】「」")
+        if s.startswith(_SUBTOTAL) or s.startswith(("분기누계", "반기누계")):
             return True
     return False
 
