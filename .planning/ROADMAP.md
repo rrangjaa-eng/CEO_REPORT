@@ -30,8 +30,16 @@ Plans:
 ### Phase 01.1: 지급 승인 검토 화면과 인트라넷 수집기 (INSERTED)
 
 **Goal:** 지급 요청이 들어올 때마다 더블클릭 한 번으로, 승인 대기 요청을 체크로 넣고 빼며 앞으로 8주 주별 잔액·최저점·부족 주를 바로 본다. 인트라넷(intranet.plant8.co.kr)은 로컬 수집기가 허용 경로만 읽는다(/confirm 등 쓰기 경로 차단). 설계: docs/designs/payment-approval-cash-impact.md
-**Requirements**: TBD (plan-phase에서 APPR-*, CRAWL-* 정의)
+**Requirements**: APPR-01..06, CRAWL-01..04
 **Depends on:** Phase 1
+**Success Criteria:**
+
+1. 새 요청이 온 뒤 5분 안에 전부 승인 시 최저 잔액과 날짜를 본다
+2. 체크 하나를 바꾸면 1초 안에 최저 잔액이 다시 계산된다
+3. 날짜·금액 미확인 건은 0으로 합산되지 않고 건수로 보인다
+4. 목요일 승인 전에 부족 발생 주가 있으면 첫 줄에 보인다
+5. 수집기는 허용 경로만 요청하고 /confirm·/logout·삭제 경로는 요청 전에 막힌다(자동 테스트)
+
 **Plans:** 0 plans
 
 Plans:
@@ -45,7 +53,7 @@ Plans:
 **Success Criteria:**
 
 1. WEHAGO 엑셀 → 손익·계산서 CSV 변환, 원본 합계와 일치
-2. 인트라넷 jsonl → 프로젝트·집행 CSV, 수집기록 검산값(117건 등)과 일치
+2. 인트라넷 수집 스냅숏(Phase 01.1) → 프로젝트·집행 CSV, 수집 건수·합계와 일치
 
 ### Phase 3: 배포
 
