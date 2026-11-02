@@ -243,6 +243,12 @@ class TestBuildProjects(unittest.TestCase):
         self.assertEqual(cell_rows(again), cell_rows(base))
         self.assertEqual(check_lines(again), check_lines(base))
 
+    def test_projects_of_keeps_the_unread_text_of_estimate_execution_price_and_event_date(self):
+        inp = make_inputs(projects=snapshot_projects(**{"26221": {10: "abc", 12: "협의중"}}))
+        p = inp.projects["26221"]
+        self.assertEqual((p["estimate"], p["estimate_text"], p["budget"], p["budget_text"], p["event_text"]),
+                         (None, "abc", None, "협의중", "2026-11-25"))
+
     def test_builder_does_not_touch_files(self):
         path = os.path.join(ROOT, "ceo_report", "convert_projects.py")
         with open(path, encoding="utf-8") as f:

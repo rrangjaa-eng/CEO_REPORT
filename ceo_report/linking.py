@@ -58,7 +58,10 @@ def projects_of(snap):
         out[key] = {"key": key, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),
                     "client": p.get("클라이언트", ""), "client_norm": norm_vendor(p.get("클라이언트", "")),
                     "estimate": num(p.get("사전견적")), "quote": num(p.get("견적금액")), "budget": num(p.get("실행가")),
-                    "event_date": parse_date(p.get("행사일")), "dup": False}
+                    "event_date": parse_date(p.get("행사일")), "dup": False,
+                    # 읽기 전 글자 (프로젝트.csv 를 만드는 쪽이 '숫자 아님'과 빈칸을 구별하고 행사일을 글자 그대로 쓴다)
+                    "estimate_text": (p.get("사전견적") or "").strip(), "budget_text": (p.get("실행가") or "").strip(),
+                    "event_text": (p.get("행사일") or "").strip()}
     return out
 
 
