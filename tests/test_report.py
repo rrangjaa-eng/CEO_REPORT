@@ -19,7 +19,7 @@ sys.path.insert(0, ROOT)
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
-from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num  # noqa: E402
+from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num, pct  # noqa: E402
 
 SAMPLE = os.path.join(ROOT, "입력")
 ASOF = dt.date(2026, 11, 2)
@@ -214,7 +214,7 @@ class TestProjects(Base):
 
     def test_remaining_budget_not_turned_into_payment(self):
         p = self.P("P26208")
-        self.assertEqual(p["remain"], 20_000_000 - 350_000)
+        self.assertEqual(p["remain"], round(20_000_000 * 0.70) - 350_000)
         self.assertFalse(any(e["project"] == "P26208" for e in self.R["events"]))
 
     def test_unlinked_exec(self):
@@ -583,6 +583,147 @@ class TestCeoRulesEverywhere(unittest.TestCase):
             with self.subTest(name):
                 folder, kind, asof = make()
                 check_editions(self, compute(load(folder), kind, asof))
+
+
+class TestProjectBudget(Base):
+    """원가 예산 = 사전견적 x 원가율 (D-16). 예산이 없으면 이유가 보이고 첫 화면에 건수가 나온다 (PROJ-01, PROJ-03)."""
+
+    def P(self, R, pid):
+        return next(p for p in R["s3"]["projects"] if p["id"] == pid)
+
+    def edit_projects(self, edits):
+        """edits: {프로젝트번호: 사전견적예산 새 값}. 샘플을 임시 폴더에 복사해 계산한 결과 R."""
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] in edits:
+                    r[5] = edits[r[0]]
+        return compute(load(probe_folder(self, "프로젝트.csv", mutate)), "weekly", ASOF)
+
+    def set_rate(self, value):
+        """value가 None이면 예산_원가율 행을 지운다. 행이 없으면 실패한다 (make_sample에 행이 있어야 함)."""
+        def mutate(rows):
+            idx = [i for i, r in enumerate(rows) if r and r[0] == "예산_원가율"]
+            assert idx, "설정.csv에 예산_원가율 행이 없음"
+            if value is None:
+                del rows[idx[0]]
+            else:
+                rows[idx[0]][1] = value
+        return compute(load(probe_folder(self, "설정.csv", mutate)), "weekly", ASOF)
+
+    def row(self, html_part, pid):
+        rows = re.findall(r"<tr[^>]*><td>" + pid + r"</td>.*?</tr>", html_part, re.S)
+        self.assertTrue(rows, pid)
+        return rows
+
+    def test_budget_is_estimate_times_cost_rate(self):
+        s3 = self.R["s3"]
+        self.assertEqual(s3["cost_rate"], 0.7)
+        p = self.P(self.R, "P26201")
+        self.assertEqual(p["estimate"], 300_000_000)
+        self.assertEqual(p["budget"], round(300_000_000 * 0.70))
+        self.assertEqual(p["budget"], 210_000_000)
+        self.assertIsNone(p["budget_reason"])
+        self.assertEqual(p["remain"], -28_200_000)
+        self.assertEqual(pct(p["paid_total"], p["budget"]), "33.3%")
+        q = self.P(self.R, "P26204")
+        self.assertIsNone(q["estimate"])
+        self.assertIsNone(q["budget"])
+        self.assertEqual(q["budget_reason"], "사전견적 없음")
+        self.assertEqual(s3["total"]["budget"], 465_500_000)
+        self.assertEqual(s3["total"]["budget_missing"], 1)
+        fs = first_screen(render(self.R, "ceo"))
+        self.assertIn("원가 예산 = 사전견적 × 원가율 70%", fs)
+        self.assertIn("표시 6건 / 전체 8건", fs)
+
+    def test_no_budget_reason_blank_estimate(self):
+        self.assertEqual(dict(self.R["s3"]["no_budget_reasons"]), {"사전견적 없음": 1})
+        html = render(self.R, "ceo")
+        self.assertIn("예산 미책정 1건 (사전견적 없음 1건)", first_screen(html))
+        r3 = self.row(section(html, 3), "P26204")[0]
+        for needle in ("예산 미지정", "판단 불가", "사전견적 없음"):
+            self.assertIn(needle, r3)
+        self.assertIn("사전견적 없음", self.row(section(html, 7), "P26204")[-1])
+
+    def test_no_budget_reason_zero_or_negative(self):
+        R = self.edit_projects({"P26208": "0", "P26207": "-5,000,000"})
+        for pid in ("P26208", "P26207"):
+            P = self.P(R, pid)
+            self.assertIsNone(P["budget"], pid)
+            self.assertIsNone(P["remain"], pid)
+            self.assertEqual(P["budget_reason"], "사전견적 0원 또는 음수", pid)
+            self.assertEqual(pct(P["paid_total"], P["budget"]), "판단 불가", pid)
+        html = render(R, "ceo")
+        for pid in ("P26208", "P26207"):
+            r3 = self.row(section(html, 3), pid)[0]
+            for needle in ("예산 미지정", "판단 불가", "사전견적 0원 또는 음수"):
+                self.assertIn(needle, r3, pid)
+        self.assertIn("예산 미책정 3건 (사전견적 없음 1건, 사전견적 0원 또는 음수 2건)", first_screen(html))
+        check_editions(self, R)
+
+    def test_no_budget_reason_unparseable_estimate(self):
+        R = self.edit_projects({"P26205": "약 4500만"})
+        P = self.P(R, "P26205")
+        self.assertIsNone(P["budget"])
+        self.assertIsNone(P["remain"])
+        self.assertEqual(P["budget_reason"], "사전견적 금액 해석 불가")
+        self.assertEqual(pct(P["paid_total"], P["budget"]), "판단 불가")
+        html = render(R, "ceo")
+        self.assertIn("사전견적 금액 해석 불가", self.row(section(html, 3), "P26205")[0])
+        self.assertTrue(any(f == "프로젝트.csv" and "사전견적예산 값이 숫자가 아님" in m for f, _, m in R["s7"]["issues"]))
+        self.assertIn("예산 미책정 2건 (사전견적 없음 1건, 사전견적 금액 해석 불가 1건)", first_screen(html))
+        check_editions(self, R)
+
+    def test_cost_rate_setting_error(self):
+        for bad in ("abc", "1.5", "0"):
+            with self.subTest(bad):
+                R = self.set_rate(bad)
+                self.assertIsNone(R["s3"]["cost_rate"])
+                for P in R["s3"]["projects"]:
+                    self.assertIsNone(P["budget"], P["id"])
+                    self.assertIsNone(P["remain"], P["id"])
+                    self.assertEqual(P["budget_reason"], "사전견적 없음" if P["id"] == "P26204" else "원가율 설정 오류", P["id"])
+                tot = R["s3"]["total"]
+                self.assertIsNone(tot["budget"])
+                self.assertIsNone(tot["remain"])
+                self.assertEqual(tot["budget_missing"], 8)
+                self.assertTrue(any(f == "설정.csv" and str(l) == "9" and "예산_원가율 값 오류" in m and bad in m
+                                    for f, l, m in R["s7"]["issues"]), R["s7"]["issues"])
+                self.assertNotIn("예산_원가율", R["settings_default"])
+                fs = first_screen(render(R, "ceo"))
+                self.assertIn("예산 미책정 8건 (사전견적 없음 1건, 원가율 설정 오류 7건)", fs)
+                self.assertIn("예산 미지정 (원가율 설정 오류)", fs)
+                check_editions(self, R)
+
+    def test_cost_rate_blank_uses_default_and_listed(self):
+        for name, value, line in (("blank", "", 9), ("row deleted", None, "-")):
+            with self.subTest(name):
+                R = self.set_rate(value)
+                self.assertEqual(R["s3"]["cost_rate"], 0.7)
+                self.assertEqual(self.P(R, "P26201")["budget"], 210_000_000)
+                self.assertEqual(R["settings_default"]["예산_원가율"], "설정 비어 있음")
+                self.assertIn(("설정.csv", line, "예산_원가율 설정 비어 있음 → 기본값 사용(0.70)"),
+                              [(f, int(l) if str(l).isdigit() else l, m) for f, l, m in R["s7"]["issues"]])
+        with self.subTest("70%"):
+            R = self.set_rate("70%")
+            self.assertEqual(R["s3"]["cost_rate"], 0.7)
+            self.assertEqual(self.P(R, "P26201")["budget"], 210_000_000)
+            self.assertFalse(any("예산_원가율" in m for _, _, m in R["s7"]["issues"]))
+
+    def test_project_table_columns(self):
+        html = render(self.R, "ceo")
+        s3 = section(html, 3)
+        for col in ("사전견적", "원가 예산", "예산 사유", "예산 수정일", "이번 주 지급", "누적 지급", "요청 미지급",
+                    "카드 미결제", "미요청 계획", "지급률", "예상 잔여예산"):
+            self.assertIn(col, s3, col)
+        self.assertIn('<th class="n">원가 예산</th>', first_screen(html))
+
+    def test_no_budget_row_labels(self):
+        html = render(self.R, "ceo")
+        r3 = self.row(section(html, 3), "P26204")[0]
+        self.assertIn("예산 미지정", r3)
+        self.assertIn("판단 불가", r3)
+        self.assertIn("집행계획 미등록 금액", section(html, 3))
+        self.assertIn("남은 예산은 ‘집행계획 미등록 금액’", first_screen(html))
 
 
 class TestCliOutputs(unittest.TestCase):
