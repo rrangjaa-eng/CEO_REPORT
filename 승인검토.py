@@ -34,9 +34,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from ceo_report import intranet  # noqa: E402
-from ceo_report.approval import (book_dates_line, build, fmt_man, man_unit, parse_registered, project_code,  # noqa: E402
-                                 scenario, xchk_count_line, xchk_stop_lines)
-from ceo_report.approval_render import render_approval  # noqa: E402
+from ceo_report.approval import build, fmt_man, man_unit, parse_registered, project_code, scenario  # noqa: E402
+from ceo_report.approval_render import book_dates_line, render_approval, xchk_count_line, xchk_stop_lines  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.snapshot import SnapshotError, latest_snapshot, read_snapshot, write_snapshot  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
