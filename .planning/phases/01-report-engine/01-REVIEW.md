@@ -19,7 +19,14 @@ findings:
   warning: 6
   info: 4
   total: 13
-status: issues_found
+status: fixed
+fixed_at: 2026-11-02
+fix_summary:
+  fixed: [CR-01, CR-02, CR-03, WR-01, WR-02, WR-03, WR-04, WR-05, WR-06]
+  partial: [IN-04]
+  not_attempted: [IN-01, IN-02, IN-03]
+  skipped: []
+  also_fixed: [verification-gap-first-screen-unknown-project-cost, D-04-first-screen-undated-counts]
 ---
 
 # Phase 1: Code Review Report
@@ -27,7 +34,7 @@ status: issues_found
 **Reviewed:** 2026-11-02
 **Depth:** standard
 **Files Reviewed:** 10
-**Status:** issues_found
+**Status:** fixed (Critical and Warning all fixed; see Fix Status at the end)
 
 ## Summary
 
@@ -161,6 +168,35 @@ For the version, test with `%PY% -c "import sys; sys.exit(0 if sys.version_info 
 **File:** `tests/test_report.py:64-66,128,277`
 **Issue:** `setUpModule` runs `tools/make_sample.py`, which rewrites the committed `입력/` folder on every test run. `test_cp949_csv` and `test_cli_writes_files` call `shutil.rmtree` after the assertions rather than through `addCleanup`, so a failing assertion leaves the temp folder behind.
 **Fix:** Generate the sample into a temp folder and point `SAMPLE` at it, and use `self.addCleanup(shutil.rmtree, ...)` consistently.
+
+
+## Fix Status
+
+Fixed 2026-11-02 on the current branch, one RED test commit (`test(01-fix): RED ...`) then one fix commit (`fix(01-fix): ...`) per finding. After the fixes `python3 -m unittest discover -s tests` runs 118 tests, all OK (74 before).
+
+| Finding | Status | Fix commit |
+| --- | --- | --- |
+| CR-01 no account balance becomes 0 cash | fixed | cf17d3f |
+| CR-02 unknown project cost lines hidden in remaining budget / payment rate | fixed (also closes the 01-VERIFICATION gap) | be9af95 |
+| CR-03 all-unknown totals shown as 0 | fixed | adde808 |
+| WR-01 invalid `--시작일` ignored | fixed | aa2ed15 |
+| WR-02 PDF profile, file URI, sandbox, empty file | fixed | b75b91d |
+| WR-03 blank 입금액 treated as 0 paid | fixed | f6b6235 |
+| WR-04 `read_csv` splitlines / line numbers | fixed | bcd473c |
+| WR-05 launchers: success line and Python version | fixed (static test only; Windows run is a human check) | 5f5bb40 |
+| WR-06 `compute()` mutates Data | fixed | 05fe2f7 |
+| IN-04 test temp folders leak | partial: `addCleanup` for all three leaking tests (6cde565). Generating the sample into a temp folder was not done | 6cde565 |
+| IN-01 reconciliation checks that cannot fail | not attempted (optional) | - |
+| IN-02 dead `/opt/pw-browsers` lookup | not attempted (optional; the Linux test environment uses it) | - |
+| IN-03 U+2212 minus not read back by `num()` | not attempted (optional) | - |
+
+Also fixed, from the verification report: the first-screen `날짜 없는 입금예정 / 지급예정` line and the `입금예정일 경과 미수` line now show counts as well as amounts (D-04), commit f913e7c.
+
+Notes:
+- CR-01: with no known balance, 현재 현금 and 사용 가능액 are 미확인, the balance lines and the chart balance curve are not drawn, the minimum balance shows `잔액 미확인`, and the management edition adds a data item instead of a fund risk.
+- CR-02: a project with an unknown cost line has 예상 잔여예산 `판단 불가 (미확인 원가 N건)`; the 전체 row leaves it out and says how many.
+- WR-02: besides the requested changes, `--no-first-run --disable-field-trial-config` are passed. Without `--disable-field-trial-config` a fresh profile made the bundled Chrome hang in the Linux test environment.
+- Fix verification ran in the main checkout (no worktree), Python 3.13 and 3.11. Python 3.8 was not available; the sources were parsed with `ast.parse(feature_version=(3, 8))`.
 
 ---
 
