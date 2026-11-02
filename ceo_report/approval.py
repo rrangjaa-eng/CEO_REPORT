@@ -7,7 +7,7 @@ import datetime as dt
 import re
 
 from .calc import compute
-from .util import Issues, is_blank, num, setting_num, ssum_or_none, won
+from .util import Issues, is_blank, num, setting_num, ssum, ssum_or_none, won
 from .util import date as parse_date
 
 # 새 설정의 기본값은 여기에 둔다. data.DEFAULT_SETTINGS에 넣으면 주간·월간 보고가 읽는 값이 달라진다 (P-7).
@@ -229,6 +229,42 @@ def _panel(L):
     }
 
 
+def _regular_missing(events, regular, cutoff, horizon):
+    """A-5: 정기 지출 분류 중 잔액 기준일 다음 날부터 마지막 주 일요일까지 자금일정에 한 줄도 없는 것 (설정 순서대로)."""
+    present = set(ev["cat"] for ev in events
+                  if ev["source"] == "자금일정" and ev["date"] is not None and cutoff < ev["date"] <= horizon)
+    return [c for c in regular if c not in present]
+
+
+def _projects(projects, req_all):
+    """A-6: 프로젝트별 실행가와 요청 누계 (P-4, P-5). 미요청 실행가는 참고용이며 일정에 넣지 않는다 (D-04, D-06).
+
+    프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·미승인·수락요청중인 것.
+    실행가가 비었거나 누계에 금액 미확인이 있거나 키가 겹치면 판단 불가이고, 0으로 두지 않는다.
+    """
+    keyed = [(project_code(p.get("행사명", "")) or (p.get("번호", "") or "").strip(), p) for p in projects]
+    count = {}
+    for key, _ in keyed:
+        count[key] = count.get(key, 0) + 1
+    known = [r for r in req_all if r["status"] != "status_unknown"]
+    rows = []
+    for key, p in keyed:
+        linked = [r for r in known if r["code"] == key]
+        total, unknown = ssum(r["amount"] for r in linked)
+        requested = None if unknown else total
+        budget = num(p.get("실행가"))
+        remaining = None if budget is None or requested is None else budget - requested
+        state = "판단 불가" if (remaining is None or count[key] > 1) else ""
+        rows.append({"code": key, "name": p.get("행사명", ""), "budget": budget, "requested": requested,
+                     "requested_unknown": unknown, "remaining": remaining, "state": state})
+    keys = set(count)
+    unlinked = _agg([r for r in known if r["code"] not in keys])
+    unrequested = sorted((r for r in rows if r["state"] == "" and r["remaining"] > 0),
+                         key=lambda r: -r["remaining"])
+    over = sum(1 for r in rows if r["state"] == "" and r["remaining"] <= 0)
+    return rows, unrequested, unlinked, over
+
+
 def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates):
     lines = []
     if approved_paid:
@@ -368,6 +404,7 @@ def build(d, snap, asof, now):
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests}
+    projects, unrequested, unlinked, over_requested = _projects(snap.projects, req_all)
     lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
              "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,
              "past": past, "beyond": beyond, "beyond_requests": beyond_requests,
@@ -381,7 +418,8 @@ def build(d, snap, asof, now):
             "beyond": beyond, "amount_unknown": amount_unknown, "amount_unknown_events": amount_unknown_events,
             "approved_paid": approved_paid, "approved_future": approved_future, "status_unknown": status_unknown,
             "date_unknown": date_unknown, "beyond_requests": beyond_requests, "panel": _panel(lists),
-            "vat_unknown_sched": vat_unknown_sched,
+            "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
+            "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates),
             "issues": list(issues.items)}

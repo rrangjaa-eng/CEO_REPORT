@@ -290,6 +290,37 @@ def _amount_piece(label, a):
     return text
 
 
+SHOW_UNREQUESTED = 20  # 미요청 실행가 표에 보이는 줄 수 (D-12: 표시 건수 / 전체 건수 / 전체 합계)
+
+
+def _unrequested_counts(A):
+    rows = A["unrequested"]
+    total = sum(r["remaining"] for r in rows)
+    undecided = sum(1 for r in A["projects"] if r["state"] == "판단 불가")
+    return "표시 %d건 / 전체 %d건 / 합계 %s" % (min(len(rows), SHOW_UNREQUESTED), len(rows), fmt_won(total)), undecided
+
+
+def _unlinked_line(A):
+    u = A["unlinked"]
+    if not u["n"]:
+        return "프로젝트 미연결 0건"
+    extra = "확인된 금액 " + ("없음" if u["sum"] is None else fmt_won(u["sum"]))
+    if u["unknown"]:
+        extra += ", 금액 미확인 %d건" % u["unknown"]
+    return "프로젝트 미연결 %d건 (%s)" % (u["n"], extra)
+
+
+def _unrequested_line(A):
+    counts, undecided = _unrequested_counts(A)
+    return "미요청 실행가 (참고, 일정 제외, 부가세 기준 미확인): %s, 판단 불가 %d건" % (counts, undecided)
+
+
+def _regular_line(A):
+    if A["regular_missing"]:
+        return "%s 일정 미등록" % ", ".join(A["regular_missing"])
+    return "정기 지출 일정 미등록 없음 (%s)" % ", ".join(A["regular"])
+
+
 def _unknown_lines(A):
     P, cutoff = A["panel"], A["cutoff"].isoformat()
     st = P["status_unknown"]
@@ -316,6 +347,9 @@ def _unknown_lines(A):
             A["n_weeks"], be["in"]["n"], be["out"]["n"], be["requests"]["n"]),
         bal,
         "부가세 미확인 일정 %d건 (공급가액만 반영)" % P["vat_unknown"]["n"],
+        _unlinked_line(A),
+        _unrequested_line(A),
+        _regular_line(A),
     ]
     return lines
 
@@ -323,6 +357,70 @@ def _unknown_lines(A):
 def _unknowns_block(A):
     items = "".join('<div class="note">%s</div>' % esc(t) for t in _unknown_lines(A))
     return '<div id="unknowns"><h2 class="sec">확인 필요 항목 (건수와 확인된 금액)</h2>%s</div>' % items
+
+
+def _unrequested_block(A):
+    counts, undecided = _unrequested_counts(A)
+    head = ('<thead><tr><th>프로젝트</th><th>행사명</th><th class="n">실행가(원)</th><th class="n">요청 누계(원)</th>'
+            '<th class="n">미요청 실행가(원)</th></tr></thead>')
+    rows = A["unrequested"][:SHOW_UNREQUESTED]
+    if rows:
+        body = "".join('<tr data-code="%s"><td class="u-code">%s</td><td>%s</td><td class="n">%s</td><td class="n">%s</td>'
+                       '<td class="n u-remaining">%s</td></tr>' % (
+                           esc(r["code"]), esc(r["code"]), esc(r["name"]), esc(fmt_won(r["budget"])),
+                           esc(fmt_won(r["requested"])), esc(fmt_won(r["remaining"]))) for r in rows)
+    else:
+        body = '<tr><td colspan="5" class="note">미요청 실행가 0건</td></tr>'
+    summary = "%s · 판단 불가 %d건 · 요청 누계가 실행가 이상 %d건" % (counts, undecided, A["over_requested"])
+    return ('<h2 class="sec">미요청 실행가 (참고, 일정 제외, 부가세 기준 미확인)</h2>'
+            '<div id="unrequested-sum" class="scope">%s</div>'
+            '<div class="tw"><table id="unrequested">%s<tbody>%s</tbody></table></div>' % (esc(summary), head, body))
+
+
+def _basis_block(A):
+    P, cutoff = A["panel"], A["cutoff"]
+    regular = ", ".join(A["regular"])
+    missing = ", ".join(A["regular_missing"]) or "없음"
+    balance = ("잔액 기준일 %s (계좌 잔액 입력의 가장 늦은 기준일)" % A["balance_date"].isoformat() if A["balance_date"]
+               else "잔액 기준일 없음 (계좌 잔액 입력 없음, 기준일 %s 사용)" % cutoff.isoformat())
+    lines = [
+        "가정 1 대기 요청 = 사장님승인이 '승인'이 아닌 요청(팀장·관리팀 단계 포함) · 상태 확인 필요 %d건" % P["status_unknown"]["n"],
+        "가정 2 예상 지급일 = 지급요청일이 있으면 그 날, 없으면 등록 시각(대기 요청은 지금) 이후 처음 오는 목요일 14시 → 다음 날 금요일"
+        " · 지급요청일 없음 %d건 · 지급요청일 지남·대기 중 %d건" % (P["rule_no_date"]["n"], P["rule_past"]["n"]),
+        "가정 3 승인 완료 요청 = 예상 지급일이 잔액 기준일 이후면 확정 지급, 이전 또는 당일이면 잔액에 반영된 것"
+        " · 확정 지급 %d건 · 잔액 반영 %d건" % (len(A["approved_future"]), len(A["approved_paid"])),
+        "가정 4 금액 = 인트라넷 금액 칸 값(부가세 포함 이체액) · 금액 미확인 %d건은 0이 아니라 일정에서 제외" % P["amount_unknown"]["n"],
+        "가정 5 정기 지출(%s)은 자금일정.csv에 입력 · %d주 안에 일정이 없는 분류 %s" % (regular, A["n_weeks"], missing),
+        "가정 6 미요청 실행가 = 프로젝트 실행가 − 요청 누계, 일정에 넣지 않음, 부가세 기준 미확인 · 프로젝트 미연결 %d건" % A["unlinked"]["n"],
+        "지급요청일이 기준일 이전인 대기 요청 %d건은 승인 전이라 지급될 수 없으므로 지금 기준 목요일 14시 → 금요일 규칙으로 날짜를 다시 계산"
+        % P["rule_past"]["n"],
+        "%s: 이 날 이전·당일 일정은 잔액에 반영된 것으로 보고, 이후 일정만 일정에 넣음" % balance,
+        "프로젝트집행.csv 요청미지급은 지급요청 번호가 같거나 프로젝트·금액·날짜가 같을 때만 스냅숏으로 대체: 대체 %d건 · 연결 안 된 %d건"
+        " · 중복 제외 %d건 · 중복 가능성 %d건" % (len(A["replaced"]), len(A["unmatched_exec"]), len(A["duplicates"]),
+                                          len(A["possible_duplicates"])),
+        "잔액 기준일 이후·1주 시작(%s) 전 일정 %d건은 1주 첫날에 반영" % (A["monday"].strftime("%m/%d"), len(A["rolled"])),
+    ]
+    return '<div id="basis"><h2 class="sec">계산 기준</h2>%s</div>' % "".join(
+        '<div class="note">%s</div>' % esc(t) for t in lines)
+
+
+def _attention(A):
+    """첫 화면 한 줄: 0이 아닌 미확인 항목의 건수만. 자세한 내용은 아래 div#unknowns (APPR-04, D-04)."""
+    P = A["panel"]
+    items = []
+    for n, label in ((P["amount_unknown"]["n"], "금액 미확인 요청 %d건"), (P["date_unknown"]["n"], "날짜 미확인 요청 %d건"),
+                     (P["status_unknown"]["n"], "상태 확인 필요 %d건"), (P["undated"]["n"], "날짜 없는 예정 금액 %d건"),
+                     (A["unlinked"]["n"], "프로젝트 미연결 %d건")):
+        if n:
+            items.append(label % n)
+    if A["regular_missing"]:
+        items.append("%s 일정 미등록" % ", ".join(A["regular_missing"]))
+    if A["issues"]:
+        items.append("입력 자료 확인 필요 %d건" % len(A["issues"]))
+    if not items:
+        return '<div id="attention" class="scope">확인 필요 항목 없음</div>'
+    links = " · ".join('<a href="#unknowns">%s</a>' % esc(t) for t in items)
+    return '<div id="attention" class="scope warn">확인 필요: %s → 아래 상세</div>' % links
 
 
 def _notes_block(A):
@@ -348,6 +446,7 @@ def render_approval(A, collected_now):
         '<h1>지급 승인 검토<span class="badge">기준일 %s</span></h1>' % esc(A["asof"].isoformat()),
         _headline(A, S),
         _start_line(A, collected_now),
+        _attention(A),
         '<h2 class="sec">승인 대기 요청 (체크 = 승인 가정)</h2>',
         _scope_line(A),
         _requests_table(A, S),
@@ -356,6 +455,8 @@ def render_approval(A, collected_now):
         _approved_table(A),
         _notes_block(A),
         _unknowns_block(A),
+        _unrequested_block(A),
+        _basis_block(A),
         _issues_block(A),
         '<script id="approval-data" type="application/json">%s</script>' % payload,
         '<script id="approval-calc">%s</script>' % CALC_JS,
