@@ -70,6 +70,9 @@ def find_browser():
     return None
 
 
+PDF_TIMEOUT = 120
+
+
 def _is_windows():
     return os.name == "nt"
 
@@ -93,9 +96,11 @@ def to_pdf(browser, html_path, pdf_path):
     if not _is_windows():
         cmd.insert(3, "--no-sandbox")  # Windows에서는 필요 없고, 리눅스(루트 실행·시험 환경)에서만 쓴다
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
-    except Exception as e:  # noqa: BLE001
-        return "PDF 실패: %s" % e
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=PDF_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "PDF 실패: 브라우저가 %d초 안에 끝나지 않음" % PDF_TIMEOUT
+    except Exception as e:  # noqa: BLE001  명령 줄(임시 프로필 경로)은 보이지 않는다
+        return "PDF 실패: 브라우저를 실행하지 못함 (%s)" % (getattr(e, "strerror", None) or type(e).__name__)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
     if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
@@ -141,6 +146,7 @@ def main(argv=None):
     label = "주간" if kind == "weekly" else "월간"
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
+    pdf_failed = False
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
         try:
@@ -153,13 +159,16 @@ def main(argv=None):
         if browser:
             err = to_pdf(browser, base + ".html", base + ".pdf")
             if err:
-                _say(err)
+                _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+                pdf_failed = True
             else:
                 made.append(base + ".pdf")
     _say("보고 기준일 %s · 집계 기간 %s ~ %s" % (asof, R["period"][0], R["period"][1]))
     _say("만든 파일:")
     for m in made:
         _say("  " + m)
+    if pdf_failed:
+        _say("PDF: 만들지 못한 것은 HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
     if a.pdf == "만듦" and not browser:
         _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
     if R["s2"]["out_missing"]:

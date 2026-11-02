@@ -301,3 +301,37 @@ class TestCsvOpenElsewhere(unittest.TestCase):
         self.assertTrue(any(f == "자금일정.csv" and "열 수 없음" in m and "엑셀" in m for f, _, m in R["s7"]["issues"]),
                         R["s7"]["issues"])
         self.assertEqual(R["s2"]["min"]["firm"], (None, None))
+
+
+class TestPdfFailureMessage(unittest.TestCase):
+    """PDF를 못 만들면 어느 파일인지와 대신 할 일(HTML 인쇄 → PDF로 저장)을 한국어로 알린다."""
+
+    def test_names_file_and_fallback(self):
+        from unittest import mock
+        from test_approval import load_report_cli
+        cli = load_report_cli()
+        with mock.patch.object(cli, "find_browser", return_value="/없는/브라우저"), \
+                mock.patch.object(cli, "to_pdf", return_value="PDF 실패 (브라우저가 파일을 만들지 않음)"):
+            rc, out = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", SAMPLE])
+        self.assertEqual(rc, 0)
+        self.assertIn("2026-11-02_주간_대표보고.pdf", out)
+        self.assertIn("2026-11-02_주간_경영관리보고.pdf", out)
+        self.assertIn("'PDF로 저장'", out)
+
+    def test_timeout_is_korean(self):
+        import subprocess
+        from unittest import mock
+        from test_approval import load_report_cli
+        cli = load_report_cli()
+        tmp = new_tmp(self)
+        html = os.path.join(tmp, "a.html")
+        with open(html, "w", encoding="utf-8") as f:
+            f.write("<html></html>")
+
+        def slow(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 120)
+        with mock.patch.object(cli.subprocess, "run", side_effect=slow):
+            err = cli.to_pdf("b", html, os.path.join(tmp, "a.pdf"))
+        self.assertIn("120초", err)
+        self.assertNotIn("timed out", err)
+        self.assertNotIn("--user-data-dir", err)
