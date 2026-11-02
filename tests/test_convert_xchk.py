@@ -194,7 +194,8 @@ class TestXchkTracer(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_builder_does_not_touch_files(self):
-        src = open(mod("convert_xchk").__file__, encoding="utf-8").read()
+        with open(mod("convert_xchk").__file__, encoding="utf-8") as f:
+            src = f.read()
         self.assertNotIn("open(", src)
         self.assertNotIn("'w'", src)
         self.assertNotIn('"w"', src)
