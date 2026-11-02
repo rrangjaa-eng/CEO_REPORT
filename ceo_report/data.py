@@ -49,6 +49,15 @@ def _check(issues, row, col, value, allowed):
     return True
 
 
+def _outflow(iss, row, col, value):
+    """지급(출금) 금액이 음수·괄호면 절댓값을 쓰고 입력 확인 목록에 남긴다: 지급을 입금으로 바꾸지 않는다 (지급을 줄이지 않음)."""
+    if value is not None and value < 0:
+        iss.add(row["_file"], row["_line"], "%s 값이 음수: '%s' → 지급 금액 %s원으로 처리 (지급을 줄이지 않음)"
+                % (col, row.get(col, ""), "{:,}".format(-value)))
+        return -value
+    return value
+
+
 def load(folder):
     iss = Issues()
     d = Data()
@@ -88,6 +97,8 @@ def load(folder):
         if not _check(iss, r, "입출금", t["io"], ["입금", "출금"]) or t["date"] is None or t["amount"] is None:
             iss.add(r["_file"], r["_line"], "일자·입출금·금액 중 확인 불가 → 합계에서 제외")
             continue
+        if t["io"] == "출금":
+            t["amount"] = _outflow(iss, r, "금액", t["amount"])
         d.txns.append(t)
 
     # 자금일정 (프로젝트 밖 지급, 기타 입금)
@@ -99,6 +110,8 @@ def load(folder):
              "basis": r.get("근거", ""), "memo": r.get("비고", ""), "source": "자금일정", "row": r}
         if not _check(iss, r, "입출금", s["io"], ["입금", "지급"]):
             continue
+        if s["io"] == "지급":
+            s["amount"] = _outflow(iss, r, "금액", s["amount"])
         _check(iss, r, "확정여부", r.get("확정여부", ""), ["확정", "추정"])
         if s["amount"] is None:
             iss.add(r["_file"], r["_line"], "금액 미확인 → 일정 합계에서 제외, 건수만 표시")
@@ -136,6 +149,8 @@ def load(folder):
              "firm": r.get("확정여부", "") == "확정", "basis": r.get("근거", ""), "row": r}
         if not _check(iss, r, "상태", e["state"], EXEC_STATES):
             continue
+        e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
+        e["vat"] = _outflow(iss, r, "부가세", e["vat"])
         if e["project"] not in d.projects:
             iss.add(r["_file"], r["_line"], "프로젝트번호 '%s'가 프로젝트.csv에 없음 (프로젝트 미연결로 집계)" % e["project"])
         if e["state"] == "집행계획미요청" and not e["basis"]:

@@ -134,5 +134,70 @@ class TestRrnMasked(unittest.TestCase):
         self.assertIn(MASK, buf.getvalue())
 
 
+# ───────────── 2. 음수·괄호 금액이 지급을 입금으로 바꾸지 않는다 ─────────────
+def _issue_texts(R):
+    return [(f, l, m) for f, l, m in R["s7"]["issues"]]
+
+
+class TestNegativeOutflow(unittest.TestCase):
+    def base(self):
+        return compute(load(sample_folder(self)), "weekly", ASOF)
+
+    def test_schedule_payment_bracketed_amount_stays_outflow(self):
+        def edit(S):
+            S["자금일정.csv"].append(["2026-11-05", "지급", "(30,000,000)", "확정", "회사공통지출", "", "가상업체", "청구서", ""])
+            S["자금일정.csv"].append(["2026-11-06", "지급", "-2,000,000", "추정", "회사공통지출", "", "가상업체2", "견적", ""])
+        base = self.base()
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertEqual(R["s2"]["out4_firm"] - base["s2"]["out4_firm"], 30000000)
+        self.assertEqual(R["s2"]["out4_est"] - base["s2"]["out4_est"], 2000000)
+        self.assertEqual(R["s2"]["in4_firm"], base["s2"]["in4_firm"])
+        self.assertEqual(R["s2"]["min"]["firm"][0], base["s2"]["min"]["firm"][0] - 30000000)
+        line = len(make_sample_module().S["자금일정.csv"]) + 2  # 머리글 1줄 + 기존 줄 다음
+        hits = [x for x in _issue_texts(R) if x[0] == "자금일정.csv" and "(30,000,000)" in x[2]]
+        self.assertEqual(len(hits), 1, _issue_texts(R))
+        self.assertEqual(hits[0][1], line)
+        self.assertIn("음수", hits[0][2])
+        self.assertTrue(any(x[0] == "자금일정.csv" and "-2,000,000" in x[2] for x in _issue_texts(R)))
+
+    def test_bank_withdrawal_negative_amount_stays_outflow(self):
+        def edit(S):
+            S["입출금내역.csv"][0][3] = "-11,000,000"   # 2026-10-27 프로젝트계좌 출금
+            S["입출금내역.csv"][1][3] = "(8,000,000)"   # 2026-10-28 운영계좌 출금
+        base = self.base()
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertEqual(R["s1"]["out"], base["s1"]["out"])
+        self.assertEqual(R["s1"]["in"], base["s1"]["in"])
+        self.assertEqual(R["s1"]["start_calc"], base["s1"]["start_calc"])
+        msgs = [x for x in _issue_texts(R) if x[0] == "입출금내역.csv"]
+        self.assertTrue(any(x[1] == 2 and "-11,000,000" in x[2] for x in msgs), msgs)
+        self.assertTrue(any(x[1] == 3 and "(8,000,000)" in x[2] for x in msgs), msgs)
+
+    def test_project_exec_negative_supply_stays_outflow(self):
+        def edit(S):
+            for r in S["프로젝트집행.csv"]:
+                if r[1] == "음향·조명":           # P26201 요청미지급 40,000,000 + 4,000,000 (2026-11-13)
+                    r[4] = "(40,000,000)"
+                    r[5] = "-4,000,000"
+        base = self.base()
+        d = load(sample_folder(self, edit))
+        R = compute(d, "weekly", ASOF)
+        self.assertEqual(R["s2"]["out4_firm"], base["s2"]["out4_firm"])
+        self.assertEqual(R["s2"]["min"], base["s2"]["min"])
+        P = {x["id"]: x for x in R["s3"]["projects"]}["P26201"]
+        P0 = {x["id"]: x for x in base["s3"]["projects"]}["P26201"]
+        self.assertEqual(P["requested"], P0["requested"])
+        msgs = [x for x in _issue_texts(R) if x[0] == "프로젝트집행.csv"]
+        self.assertTrue(any("공급가액" in x[2] and "(40,000,000)" in x[2] for x in msgs), msgs)
+        self.assertTrue(any("부가세" in x[2] and "-4,000,000" in x[2] for x in msgs), msgs)
+
+    def test_approval_schedule_keeps_outflow(self):
+        def edit(S):
+            S["자금일정.csv"].append(["2026-11-05", "지급", "(30,000,000)", "확정", "회사공통지출", "", "가상업체", "청구서", ""])
+        _, A0 = approval_page(self, sample_folder(self))
+        _, A = approval_page(self, sample_folder(self, edit))
+        self.assertEqual(sum(A["data"]["base_out"]) - sum(A0["data"]["base_out"]), 30000000)
+
+
 if __name__ == "__main__":
     unittest.main()
