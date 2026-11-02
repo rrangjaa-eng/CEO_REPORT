@@ -574,6 +574,11 @@ def match_requests(books, requests):
 
     같은 지급 줄·같은 계산서를 두 요청이 가리키면 둘 다 연결 불가이며, 결과는 요청 순서와 무관하다. books 와 requests 는 바꾸지 않는다.
     """
+    seen = set()
+    for rq in requests:  # 결과는 번호로 찾는다: 번호가 겹치면 한 요청의 상태가 다른 요청에 덮어써진다 (WR-07)
+        if rq["번호"] in seen:
+            raise ValueError("지급요청 번호가 겹침: '%s' — 요청을 구별할 수 없음" % rq["번호"])
+        seen.add(rq["번호"])
     rows = {}
     if books.state != "ok":
         text = _NOT_OK_LABEL.get(books.state, _NOT_OK_LABEL["자료 없음"])

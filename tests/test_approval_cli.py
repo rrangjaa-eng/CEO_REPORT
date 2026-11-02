@@ -358,6 +358,38 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
         self.assertIn("개인 강의 ******-*******", page)
 
 
+class TestDuplicateNumbers(_TmpMixin, unittest.TestCase):
+    """WR-07: 같은 번호의 다른 줄은 조용히 버리지 않고 멈춘다. 같은 줄을 두 번 읽은 것은 문제가 아니다."""
+
+    def setUp(self):
+        self.make_tmp()
+
+    def collect(self, payments):
+        opener = intranet().make_opener(transport=FakeTransport(site_routes(payments, FAKE_PROJECTS)), proxies={},
+                                        delay=0, sleep=lambda s: None)
+        return intranet().collect(opener, USER, PASSWORD)
+
+    def test_same_number_with_different_cells_stops_the_crawl(self):
+        other = list(FAKE_PAYMENTS[2])
+        other[5] = "1,000"
+        with self.assertRaises(intranet().StructureMismatch) as cm:
+            self.collect(list(FAKE_PAYMENTS) + [other])
+        self.assertIn("번호가 같은데 내용이 다른 줄 1건 (5103)", str(cm.exception))
+
+    def test_the_same_row_read_twice_is_kept_once(self):
+        result = self.collect(list(FAKE_PAYMENTS) + [list(FAKE_PAYMENTS[2])])
+        self.assertEqual([p["번호"] for p in result.payments], [r[0] for r in FAKE_PAYMENTS])
+
+    def test_cli_stops_on_a_snapshot_with_a_repeated_number(self):
+        write_fake_snapshot(self.root, extra=[list(FAKE_PAYMENTS[0])])
+        rc, out, err, fake, mocks = run_cli(
+            self, ["--기준일", "2026-11-02", "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
+        self.assertEqual(rc, 2, out)
+        self.assertIn("스냅숏을 읽지 못했습니다", out)
+        self.assertIn("번호가 겹치는 줄 2건 (1201)", out)
+        self.assertEqual(entries(self.out), [])
+
+
 class TestApprovalCollectStops(_TmpMixin, unittest.TestCase):
     def setUp(self):
         self.make_tmp()

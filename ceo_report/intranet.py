@@ -714,6 +714,7 @@ def _collect_list(opener, kind, max_pages, progress):
         table = _find_table(page, spec)
         added = 0
         empty_number = 0
+        clashes = []
         for mapped in _read_rows(table, spec):
             number = mapped["번호"].strip()
             if not number:
@@ -721,8 +722,13 @@ def _collect_list(opener, kind, max_pages, progress):
             elif number not in rows:
                 rows[number] = mapped
                 added += 1
+            elif rows[number] != mapped:
+                clashes.append(number)  # 같은 번호의 다른 줄: 조용히 버리지 않는다 (WR-07). 같은 줄을 다시 읽은 것은 괜찮다
         if empty_number:
             raise StructureMismatch("%s 목록: 번호 칸이 빈 줄이 %d건 있어 멈춤" % (label, empty_number))
+        if clashes:
+            raise StructureMismatch("%s 목록: 번호가 같은데 내용이 다른 줄 %d건 (%s) — 번호로 요청을 구별할 수 없어 멈춤"
+                                    % (label, len(clashes), ", ".join(sorted(set(clashes))[:5])))
         if progress is not None:
             progress(label, pages, len(rows))
         follow, recognised, unknown, mixed, _ = _classify_links(page, url, kind, list_path)

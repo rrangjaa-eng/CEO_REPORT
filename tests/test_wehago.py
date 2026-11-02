@@ -1271,6 +1271,17 @@ class TestWehagoInvoiceClaims(unittest.TestCase):
 
 
 # ───────────── WR-01: 승인 전 요청·등록일 없는 요청은 금액만으로 '이미 지급'이 되지 않는다 ─────────────
+class TestWehagoDuplicateNumbers(unittest.TestCase):
+    def test_match_refuses_duplicate_numbers_instead_of_overwriting(self):
+        """WR-07: 번호가 겹치면 한 요청의 상태가 다른 요청에 덮어써진다. 조용히 덮지 않고 멈춘다."""
+        books = mem_books(ledger=[(dt.date(2026, 10, 1), "가상제작", "26201", 110000000)])
+        reqs = [mem_req("", None, vendor="없는곳"), mem_req("", 110000000)]
+        reqs[1]["id"] = "r2"
+        with self.assertRaises(ValueError) as cm:
+            mod("wehago").match_requests(books, reqs)
+        self.assertIn("번호가 겹침", str(cm.exception))
+
+
 class TestWehagoPaidNeedsApproval(unittest.TestCase):
     def setUp(self):
         self.w = mod("wehago")

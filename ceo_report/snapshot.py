@@ -124,4 +124,23 @@ def read_snapshot(path):
         want = info.get(key, "")
         if not want.isdigit() or int(want) != len(got):
             raise SnapshotError("%s 건수가 수집정보와 다릅니다: 수집정보 %s건, 파일 %d건" % (label, want or "없음", len(got)))
+    _check_numbers(payments)
     return Snapshot(path, collected, payments, projects, info)
+
+
+def _check_numbers(payments):
+    """지급요청 번호는 요청을 가리키는 열쇠다: 비었거나 겹치면 한 요청의 대조 결과가 다른 요청에 덮어써진다 (WR-07, D-29)."""
+    numbers = [(p.get("번호") or "").strip() for p in payments]
+    empty = sum(1 for n in numbers if not n)
+    count = {}
+    for n in numbers:
+        if n:
+            count[n] = count.get(n, 0) + 1
+    dup = sorted(n for n, k in count.items() if k > 1)
+    problems = []
+    if empty:
+        problems.append("번호가 빈 줄 %d건" % empty)
+    if dup:
+        problems.append("번호가 겹치는 줄 %d건 (%s)" % (sum(count[n] for n in dup), ", ".join(dup[:5]) + (" 외" if len(dup) > 5 else "")))
+    if problems:
+        raise SnapshotError("%s: 지급요청 %s — 요청을 구별할 수 없어 멈춤" % (PAYMENT_FILE, " · ".join(problems)))

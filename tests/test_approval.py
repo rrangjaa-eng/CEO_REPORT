@@ -293,6 +293,22 @@ class TestSnapshotFormat(unittest.TestCase):
             s.read_snapshot(folder)
         self.assertIn("건수", str(cm.exception))
 
+    def test_duplicate_or_empty_request_number_stops(self):
+        """WR-07: 지급요청 번호는 요청을 가리키는 열쇠다. 비었거나 겹치면 덮어쓰지 않고 멈춘다 (D-29)."""
+        s = mod("snapshot")
+        cases = (([r[0] for r in FAKE_PAYMENTS[:3]] + ["5103"], "번호가 겹치는 줄 2건 (5103)"),
+                 ([r[0] for r in FAKE_PAYMENTS[:3]] + [""], "번호가 빈 줄 1건"),
+                 (["", ""], "번호가 빈 줄 2건"))
+        for numbers, text in cases:
+            tmp = new_tmp(self)
+            rows = [[no] + list(FAKE_PAYMENTS[i % len(FAKE_PAYMENTS)][1:]) for i, no in enumerate(numbers)]
+            folder = s.write_snapshot(tmp, COLLECTED, as_dicts(rows, s.PAYMENT_COLUMNS),
+                                      as_dicts(FAKE_PROJECTS, s.PROJECT_COLUMNS))
+            with self.assertRaises(s.SnapshotError) as cm:
+                s.read_snapshot(folder)
+            self.assertIn(text, str(cm.exception))
+            self.assertIn("지급요청", str(cm.exception))
+
     def test_same_time_twice_is_refused(self):
         s = mod("snapshot")
         tmp = new_tmp(self)
