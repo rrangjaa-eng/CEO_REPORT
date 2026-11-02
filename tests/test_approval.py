@@ -897,5 +897,243 @@ class TestApprovalPanel(unittest.TestCase):
                       T(page, "unknowns"))
 
 
+# ───────────── plan 01.1-04 Task 2: A-5, A-6, 계산 기준, 글자·단위 ─────────────
+FORBIDDEN_WORDS = ("위험", "해결방안", "권고", "우려", "추천")
+
+
+def scenario_of(A):
+    return mod("approval").scenario(A, all_ids(A))
+
+
+class TestApprovalProjects(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        snap = write_fake_snapshot(os.path.join(cls.tmp, "수집"))
+        path, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_project_rows(self):
+        rows = {p["code"]: p for p in self.A["projects"]}
+        self.assertEqual([p["code"] for p in self.A["projects"]], ["26201", "26220", "26221", "26203"])
+        self.assertEqual((rows["26201"]["budget"], rows["26201"]["requested"], rows["26201"]["remaining"]),
+                         (300000000, 44264000, 255736000))
+        self.assertEqual((rows["26220"]["budget"], rows["26220"]["requested"]), (250000000, 166000000))
+        self.assertEqual((rows["26203"]["budget"], rows["26203"]["requested"]), (60000000, 49500000))
+        self.assertEqual(rows["26201"]["name"], "가상 컨퍼런스")
+        self.assertEqual(rows["26201"]["state"], "")
+        r = rows["26221"]
+        self.assertIsNone(r["budget"])
+        self.assertIsNone(r["requested"])
+        self.assertEqual((r["requested_unknown"], r["state"]), (1, "판단 불가"))
+        self.assertIsNone(r["remaining"])
+
+    def test_unrequested_table_and_summary(self):
+        frag = element_html(self.page, "unrequested")
+        rows = rows_of(frag)
+        self.assertEqual([cell_text(x, "u-code") for x in rows], ["26201", "26220", "26203"])
+        self.assertEqual([cell_text(x, "u-remaining") for x in rows], ["255,736,000", "84,000,000", "10,500,000"])
+        self.assertNotIn("26221", text_of(frag))
+        self.assertEqual([x["code"] for x in self.A["unrequested"]], ["26201", "26220", "26203"])
+        self.assertIn("표시 3건 / 전체 3건 / 합계 350,236,000", T(self.page, "unrequested-sum"))
+
+    def test_unknowns_a6_lines(self):
+        u = T(self.page, "unknowns")
+        self.assertIn("프로젝트 미연결 1건 (확인된 금액 2,200,000)", u)
+        self.assertIn("미요청 실행가 (참고, 일정 제외, 부가세 기준 미확인): 표시 3건 / 전체 3건 / 합계 350,236,000, "
+                      "판단 불가 1건", u)
+        self.assertIn("부가세 일정 미등록", u)
+        self.assertEqual((self.A["unlinked"]["n"], self.A["unlinked"]["sum"]), (1, 2200000))
+        self.assertEqual(self.A["regular_missing"], ["부가세"])
+
+    def test_a5_probe_missing_payroll(self):
+        page, A = build_screen(self, lambda folder: edit_csv(
+            folder, "자금일정.csv", lambda rows: rows.__setitem__(slice(None), [r for r in rows if r[4:5] != ["급여"]])))
+        self.assertEqual(A["regular_missing"], ["급여", "부가세"])
+        self.assertIn("급여, 부가세 일정 미등록", T(page, "unknowns"))
+
+    def test_a6_probe_unlinked_request(self):
+        extra = [["9100", "가상 미연결 행사", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "1,000,000", "2026-11-13",
+                  "홍길동", "승인", "승인", "미승인"]]
+        page, A = build_screen(self, extra=extra)
+        self.assertIn("프로젝트 미연결 2건 (확인된 금액 3,200,000)", T(page, "unknowns"))
+        self.assertEqual(A["unlinked"]["n"], 2)
+
+    def test_unrequested_never_enters_the_schedule(self):
+        snapshot = mod("snapshot")
+        tmp = new_tmp(self)
+        projects = [list(r) for r in FAKE_PROJECTS]
+        for r in projects:
+            r[12] = "999,000,000"  # 실행가를 바꿔도 일정은 그대로여야 한다
+        snap = snapshot.write_snapshot(os.path.join(tmp, "수집"), COLLECTED, as_dicts(FAKE_PAYMENTS, snapshot.PAYMENT_COLUMNS),
+                                       as_dicts(projects, snapshot.PROJECT_COLUMNS))
+        path, A2 = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+        self.assertNotEqual([p["remaining"] for p in A2["projects"]], [p["remaining"] for p in self.A["projects"]])
+        self.assertEqual(scenario_of(A2), scenario_of(self.A))
+        self.assertEqual(A2["data"], self.A["data"])
+
+    def test_duplicate_project_key_is_not_judged(self):
+        snapshot = mod("snapshot")
+        tmp = new_tmp(self)
+        projects = [list(r) for r in FAKE_PROJECTS] + [list(FAKE_PROJECTS[0])]
+        snap = snapshot.write_snapshot(os.path.join(tmp, "수집"), COLLECTED, as_dicts(FAKE_PAYMENTS, snapshot.PAYMENT_COLUMNS),
+                                       as_dicts(projects, snapshot.PROJECT_COLUMNS))
+        path, A2 = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+        states = [p["state"] for p in A2["projects"] if p["code"] == "26201"]
+        self.assertEqual(states, ["판단 불가", "판단 불가"])
+        self.assertNotIn("26201", [p["code"] for p in A2["unrequested"]])
+
+    def test_requested_total_covering_the_budget_is_counted(self):
+        extra = [["9101", "[26203] 가상 전시부스", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "20,000,000", "2026-11-13",
+                  "김철수", "승인", "승인", "미승인"]]
+        page, A = build_screen(self, extra=extra)
+        self.assertEqual(A["over_requested"], 1)
+        self.assertEqual([p["code"] for p in A["unrequested"]], ["26201", "26220"])
+        self.assertIn("요청 누계가 실행가 이상 1건", T(page, "unrequested-sum"))
+
+    def test_basis_lines(self):
+        b = T(self.page, "basis")
+        for k in range(1, 7):
+            self.assertIn("가정 %d " % k, b)
+        for line in ("가정 1 대기 요청 = 사장님승인이 '승인'이 아닌 요청(팀장·관리팀 단계 포함) · 상태 확인 필요 1건",
+                     "지급요청일 없음 2건", "지급요청일 지남·대기 중 1건",
+                     "확정 지급 2건", "잔액 반영 1건",
+                     "금액 미확인 1건은 0이 아니라 일정에서 제외",
+                     "일정이 없는 분류 부가세", "프로젝트 미연결 1건",
+                     "잔액 기준일 2026-11-02", "1주 시작(11/02)", "대체 2건"):
+            self.assertIn(line, b)
+
+    def test_issues_block_lists_input_issues(self):
+        page, A = build_screen(self, lambda folder: edit_csv(
+            folder, "설정.csv", lambda rows: set_setting(rows, "승인검토_주수", "abc")))
+        n = len(A["issues"])
+        self.assertGreaterEqual(n, 1)
+        self.assertIn("입력 자료 확인 필요 %d건" % n, T(page, "issues"))
+        self.assertIn("기본값 8 사용", T(page, "issues"))
+        self.assertIn("입력 자료 확인 필요 %d건 → 아래 상세" % n, T(page, "attention"))
+
+
+class TestApprovalLayout(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        snap = write_fake_snapshot(os.path.join(cls.tmp, "수집"))
+        path, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_attention_line(self):
+        t = T(self.page, "attention")
+        self.assertTrue(t.startswith("확인 필요: 금액 미확인 요청 1건 · 상태 확인 필요 1건 · 날짜 없는 예정 금액 6건 · "
+                                     "프로젝트 미연결 1건 · 부가세 일정 미등록"), t)
+        self.assertTrue(t.endswith(" → 아래 상세"), t)
+        tail = len(self.A["issues"])
+        if tail:
+            self.assertIn(" · 입력 자료 확인 필요 %d건 → 아래 상세" % tail, t)
+        else:
+            self.assertTrue(t.endswith("부가세 일정 미등록 → 아래 상세"), t)
+
+    def test_every_item_links_to_unknowns(self):
+        frag = element_html(self.page, "attention")
+        hrefs = re.findall(r'<a [^>]*href="([^"]*)"', frag)
+        self.assertGreaterEqual(len(hrefs), 5)
+        self.assertEqual(set(hrefs), {"#unknowns"})
+
+    def test_nothing_to_report(self):
+        A = copy.deepcopy(self.A)
+
+        def zero(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("n", "unknown") and isinstance(v, int):
+                        node[k] = 0
+                    elif k == "sum":
+                        node[k] = None
+                    else:
+                        zero(v)
+
+        zero(A["panel"])
+        A["regular_missing"] = []
+        A["unlinked"] = {"n": 0, "sum": None, "unknown": 0}
+        A["issues"] = []
+        page = mod("approval_render").render_approval(A, False)
+        self.assertEqual(T(page, "attention"), "확인 필요 항목 없음")
+
+    def test_block_order(self):
+        p = self.page
+        marks = ["<h1", 'id="headline"', 'id="h-est"', 'id="start-line"', 'id="attention"', 'id="req-scope"',
+                 '<table id="requests"', '<table id="weeks"', '<table id="approved"', 'id="schedule-notes"',
+                 'id="unknowns"', '<table id="unrequested"', 'id="basis"', 'id="issues"']
+        at = [p.index(m) for m in marks]
+        self.assertEqual(at, sorted(at), list(zip(marks, at)))
+        self.assertEqual(len(set(at)), len(at))
+
+
+class TestApprovalEscapingAndUnits(unittest.TestCase):
+    def test_intranet_text_is_escaped(self):
+        snapshot = mod("snapshot")
+        tmp = new_tmp(self)
+        extra = [["9200", "<script>alert(1)</script>", '"><img src=x onerror=alert(1)>', "2026-11-01 10:00:00", "2026-11-20",
+                  "1,000,000", "2026-11-13", "<b>등록자</b>", "승인", "승인", "미승인"],
+                 ["9201", "[26201] 가상 컨퍼런스", "가상기기", "2026-11-01 10:00:00", "2026-11-20", "9,000,000", "2026-11-13",
+                  "홍길동", "<i>x</i>", "승인", "미승인"]]
+        projects = [list(r) for r in FAKE_PROJECTS]
+        projects[0][5] = "[26201]<script>alert(2)</script>"
+        snap = snapshot.write_snapshot(os.path.join(tmp, "수집"), COLLECTED,
+                                       as_dicts([list(r) for r in FAKE_PAYMENTS] + extra, snapshot.PAYMENT_COLUMNS),
+                                       as_dicts(projects, snapshot.PROJECT_COLUMNS))
+        path, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", page)
+        self.assertIn("&quot;&gt;&lt;img", page)
+        self.assertIn("&lt;script&gt;alert(2)&lt;/script&gt;", page)
+        self.assertIn("&lt;i&gt;x&lt;/i&gt;", page)
+        for raw in ("<script>alert(1)", "<img src=x", "<script>alert(2)", "<i>x</i>", "<b>등록자"):
+            self.assertNotIn(raw, page)
+        payload = script_text(page, "approval-data")
+        for name in ("alert", "img", "등록자", "가상기기", "가상 미연결"):
+            self.assertNotIn(name, payload)
+        self.assertEqual(json.loads(payload), A["data"])
+
+    @unittest.skipIf(shutil.which("node") is None, "node 없음")
+    def test_formatters_agree_between_python_and_js(self):
+        a, util = mod("approval"), mod("util")
+        man_cases = [(98236000, "98.2"), (250000, "0.3"), (350000, "0.4"), (-301764000, "−301.8"), (0, "0.0"),
+                     (30000, "30,000원"), (-49999, "−49,999원"), (None, "미확인")]
+        won_cases = [264000, -1100000, 0]
+        for v, text in man_cases:
+            self.assertEqual(a.fmt_man(v), text, v)
+        for v in won_cases:
+            self.assertEqual(a.fmt_won(v), util.won(v))
+        tmp = new_tmp(self)
+        page, A = full_screen(self)
+        js = script_text(page, "approval-calc")
+        path = os.path.join(tmp, "fmt.js")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(js + "\nconsole.log(JSON.stringify([%s, %s]));\n" % (
+                json.dumps([v for v, _ in man_cases]) + ".map(fmtMan)", json.dumps(won_cases) + ".map(fmtWon)"))
+        out = subprocess.run(["node", path], check=True, stdout=subprocess.PIPE).stdout.decode("utf-8")
+        got_man, got_won = json.loads(out)
+        self.assertEqual(got_man, [t for _, t in man_cases])
+        self.assertEqual(got_won, [util.won(v) for v in won_cases])
+
+    def test_no_recommendation_words(self):
+        page, A = full_screen(self)
+        for w in FORBIDDEN_WORDS:
+            self.assertNotIn(w, page)
+        self.assertNotIn("위험_최소보유현금", page)
+        self.assertIn("최소 보유현금", page)
+
+
 if __name__ == "__main__":
     unittest.main()
