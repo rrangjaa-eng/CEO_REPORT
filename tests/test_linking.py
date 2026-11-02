@@ -570,5 +570,179 @@ class TestLinkingManual(unittest.TestCase):
         self.assertEqual(rows, [mod("linking").LINK_COLUMNS])
 
 
+# ───────────── Task 3: 매출 줄, 스냅숏 없음, 가리기 ─────────────
+def setup_rev(test, projects=None, extra=None):
+    L = mod("linking")
+    books, reqs, projs = setup_cost(test, journal=FAKE_JOURNAL + REV_LINES, extra=extra, projects=projects)
+    return L, books, reqs, projs
+
+
+class TestLinkingRevenue(unittest.TestCase):
+    def test_truth_5_labels_projects_and_summary(self):
+        L, books, _, projects = setup_rev(self)
+        res = L.link_revenue(books, projects, {})
+        n = by_no(res)
+        self.assertEqual(len(res["lines"]), 4)
+        (a,) = n["30"]
+        self.assertEqual((a["project"], a["basis"], a["label"], a["amount"], a["account_code"]),
+                         ("26201", "코드", "코드 [26201]", 100000000, "41200"))
+        (b,) = n["31"]
+        self.assertEqual((b["project"], b["basis"], b["label"], b["amount"], b["request"]),
+                         ("26203", "자동", "자동 (클라이언트·견적금액)", 75000000, None))
+        (c,) = n["32"]
+        self.assertEqual((c["project"], c["basis"], c["label"], c["amount"]),
+                         (None, "미연결", "미연결 (코드 없음 · 클라이언트·견적금액 후보 0건)", 20000000))
+        (d,) = n["38"]
+        self.assertEqual((d["project"], d["basis"], d["amount"]), (None, "미연결", -1000000))
+        self.assertEqual(cnt(res), {"수동": (0, 0), "코드": (1, 100000000), "자동": (1, 75000000), "미연결": (2, 19000000)})
+        self.assertEqual(total(res), 194000000)
+        self.assertEqual(res["used"], set())
+
+    def test_revenue_total_is_every_revenue_line(self):
+        L, books, _, projects = setup_rev(self)
+        res = L.link_revenue(books, projects, {})
+        rows = [r for r in books.journal if r["account_code"] == "41200"]
+        self.assertEqual(len(res["lines"]), len(rows))
+        self.assertEqual(total(res), sum((r["credit"] or 0) - (r["debit"] or 0) for r in rows))
+
+    def test_two_candidates_stay_unlinked_with_the_count(self):
+        twin = [list(r) for r in FAKE_PROJECTS] + [list(FAKE_PROJECTS[3])]
+        twin[-1][0], twin[-1][5] = "26230", "[26230] 가상 전시부스 둘째"
+        L, books, _, projects = setup_rev(self, projects=twin)
+        res = L.link_revenue(books, projects, {})
+        (b,) = by_no(res)["31"]
+        self.assertEqual((b["project"], b["basis"], b["label"], b["candidates"]),
+                         (None, "미연결", "미연결 (클라이언트·견적금액 후보 2건)", 2))
+        self.assertEqual(total(res), 194000000)
+
+    def test_duplicate_key_project_is_not_a_candidate(self):
+        dup = [list(r) for r in FAKE_PROJECTS] + [list(FAKE_PROJECTS[3])]
+        L, books, _, projects = setup_rev(self, projects=dup)
+        self.assertTrue(projects["26203"]["dup"])
+        (b,) = by_no(L.link_revenue(books, projects, {}))["31"]
+        self.assertEqual((b["basis"], b["label"]), ("미연결", "미연결 (코드 없음 · 클라이언트·견적금액 후보 0건)"))
+
+    def test_other_client_or_other_amount_is_no_candidate(self):
+        other = [list(r) for r in FAKE_PROJECTS]
+        other[3][11] = "76,000,000"
+        L, books, _, projects = setup_rev(self, projects=other)
+        self.assertEqual(by_no(L.link_revenue(books, projects, {}))["31"][0]["basis"], "미연결")
+
+    def test_code_not_in_the_project_list_is_named(self):
+        line = [_jl(dt.date(2026, 10, 29), 39, "41200", "수입수수료", None, 5000000, "가상고객Z", "[26998] 없는 행사"),
+                _jl(dt.date(2026, 10, 29), 39, "10800", "수입수수료미수금", 5000000, None, "가상고객Z", "[26998] 없는 행사")]
+        L = mod("linking")
+        books, _, projects = setup_cost(self, journal=FAKE_JOURNAL + line)
+        (ln,) = by_no(L.link_revenue(books, projects, {}))["39"]
+        self.assertEqual(ln["label"], "미연결 (코드 26998 프로젝트 목록에 없음 · 클라이언트·견적금액 후보 0건)")
+
+    def test_manual_row_wins_and_costs_ignore_it(self):
+        L, books, reqs, projects = setup_rev(self)
+        key = ("2026-10-28", "32", 2)
+        res = L.link_revenue(books, projects, {key: "26220"})
+        (c,) = by_no(res)["32"]
+        self.assertEqual((c["project"], c["basis"], c["label"]), ("26220", "수동", "수동 (프로젝트연결.csv)"))
+        self.assertEqual(res["used"], set([key]))
+        self.assertEqual(cnt(res), {"수동": (1, 20000000), "코드": (1, 100000000), "자동": (1, 75000000), "미연결": (1, -1000000)})
+        costs = L.link_costs(books, reqs, projects, {key: "26220"})
+        self.assertEqual(costs["used"], set())
+        self.assertEqual(L.unused_links(books, {key: "26220"}, costs["used"]), [(key, "26220", "원가·매출 줄이 아님")])
+        both = costs["used"] | res["used"]
+        self.assertEqual(L.unused_links(books, {key: "26220"}, both), [])
+
+    def test_manual_beats_a_code_on_revenue(self):
+        L, books, _, projects = setup_rev(self)
+        key = ("2026-09-15", "30", 2)
+        (a,) = by_no(L.link_revenue(books, projects, {key: "26221"}))["30"]
+        self.assertEqual((a["project"], a["basis"]), ("26221", "수동"))
+
+    def test_unknown_revenue_amount_is_unknown_not_zero(self):
+        blank = [_jl(dt.date(2026, 10, 29), 39, "41200", "수입수수료", None, None, "가상고객D", "금액 빈칸")]
+        L = mod("linking")
+        books, _, projects = setup_cost(self, journal=FAKE_JOURNAL + blank)
+        res = L.link_revenue(books, projects, {})
+        (ln,) = by_no(res)["39"]
+        self.assertEqual((ln["amount"], ln["basis"], ln["label"]), (None, "미연결", "미연결 (금액 미확인)"))
+        self.assertEqual(res["summary"]["미연결"], {"count": 1, "sum": 0, "unknown": 1})
+
+    def test_revenue_codes_come_from_the_argument(self):
+        L, books, _, projects = setup_rev(self)
+        self.assertEqual(L.link_revenue(books, projects, {}, revenue_codes=("99999",))["lines"], [])
+        res = L.link_revenue(books, projects, {}, revenue_codes=("10800",))
+        self.assertEqual(set(ln["account_code"] for ln in res["lines"]), {"10800"})
+
+    def test_pure_and_order_independent(self):
+        import copy
+        L, books, _, projects = setup_rev(self)
+        before = (copy.deepcopy(books.journal), copy.deepcopy(projects))
+        res = L.link_revenue(books, projects, {})
+        self.assertEqual((books.journal, projects), before)
+        books2, _, projects2 = setup_cost(self, journal=list(reversed(FAKE_JOURNAL + REV_LINES)))
+        got = L.link_revenue(books2, projects2, {})
+        pick = lambda r: sorted((x["no"], x["amount"], x["project"], x["basis"], x["label"]) for x in r["lines"])
+        self.assertEqual(pick(got), pick(res))
+
+
+class TestLinkingNoSnapshot(unittest.TestCase):
+    def test_projects_of_none_and_costs_accept_codes_as_is(self):
+        L = mod("linking")
+        self.assertEqual(len(L.projects_of(None)), 0)
+        books, reqs, _ = setup_cost(self, journal=FAKE_JOURNAL + LINK_EXTRA)
+        res = L.link_costs(books, reqs, L.projects_of(None), {})
+        n = by_no(res)
+        (b,) = n["23"]
+        self.assertEqual((b["project"], b["basis"], b["label"]), ("26999", "코드", "코드 [26999] (프로젝트 목록 없음)"))
+        (a,) = n["1"]
+        self.assertEqual((a["project"], a["basis"], a["label"]), ("26201", "코드", "코드 [26201] (프로젝트 목록 없음)"))
+        self.assertEqual(res["summary"]["자동"], {"count": 0, "sum": 0, "unknown": 0})
+        self.assertEqual(n["40"][0]["label"], "미연결 (코드 없음 · 프로젝트 목록 없음)")
+        self.assertEqual(n["22"][0]["basis"], "미연결")
+        self.assertEqual(total(res), 251800000)
+
+    def test_no_line_is_linked_automatically_even_with_requests(self):
+        L = mod("linking")
+        books, reqs, _ = setup_cost(self, journal=FAKE_JOURNAL + LINK_EXTRA)
+        self.assertTrue(any(r["번호"] == "6001" for r in reqs))
+        res = L.link_costs(books, reqs, {}, {})
+        self.assertEqual([ln["label"] for ln in res["lines"] if ln["basis"] == "자동"], [])
+
+    def test_manual_without_snapshot_uses_the_plain_label(self):
+        L = mod("linking")
+        books, reqs, _ = setup_cost(self, journal=FAKE_JOURNAL)
+        res = L.link_costs(books, reqs, {}, {KEY22: "26221"})
+        self.assertEqual(by_no(res)["22"][0]["label"], "수동 (프로젝트연결.csv)")
+
+    def test_revenue_without_snapshot(self):
+        L = mod("linking")
+        books, _, _ = setup_cost(self, journal=FAKE_JOURNAL + REV_LINES)
+        res = L.link_revenue(books, L.projects_of(None), {})
+        n = by_no(res)
+        self.assertEqual((n["30"][0]["project"], n["30"][0]["basis"], n["30"][0]["label"]),
+                         ("26201", "코드", "코드 [26201] (프로젝트 목록 없음)"))
+        self.assertEqual(n["31"][0]["basis"], "미연결")
+        self.assertEqual(n["31"][0]["label"], "미연결 (코드 없음 · 프로젝트 목록 없음)")
+        self.assertEqual(res["summary"]["자동"]["count"], 0)
+        self.assertEqual(total(res), 194000000)
+
+    def test_rrn_in_request_name_and_memo_is_masked(self):
+        L = mod("linking")
+        extra = [["6101", "[26201] 강사 900101-1234567", "가상강사", "2026-10-20 09:00:00", "2026-11-20", "800,000", "",
+                  "홍길동", "승인", "승인", "승인"]]
+        tmp = new_tmp(self)
+        snap = link_snapshot(os.path.join(tmp, "s"), extra=extra)
+        reqs = L.requests_of(snap, ASOF, NOW)
+        (r,) = [x for x in reqs if x["번호"] == "6101"]
+        self.assertEqual(r["name"], "[26201] 강사 ******-*******")
+        self.assertEqual(r["code"], "26201")
+        books = write_link_books(os.path.join(tmp, "b"), FAKE_JOURNAL)
+        res = L.link_costs(books, reqs, L.projects_of(snap), {})
+        (ln,) = by_no(res)["22"]
+        self.assertIn("******-*******", ln["memo"])
+        self.assertIsNone(re.search(r"\d{6}\s*[-.]?\s*\d{7}", repr(res["lines"])))
+        # 가상강사 800,000 은 요청 6101 의 후보: 줄 22 가 자동 연결된다 (같은 거래처·금액·기간)
+        self.assertEqual((ln["basis"], ln["request"], ln["project"]), ("자동", "6101", "26201"))
+        self.assertIsNone(re.search(r"\d{6}\s*[-.]?\s*\d{7}", repr(reqs)))
+
+
 if __name__ == "__main__":
     unittest.main()
