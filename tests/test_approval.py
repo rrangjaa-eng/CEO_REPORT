@@ -1135,5 +1135,214 @@ class TestApprovalEscapingAndUnits(unittest.TestCase):
         self.assertIn("최소 보유현금", page)
 
 
+# ───────────── plan 01.1-04 Task 3: 실제 브라우저 (APPR-01) ─────────────
+def class_screen(cls):
+    """setUpClass 안에서 쓰는 full_screen: (page, A)."""
+    tmp = tempfile.mkdtemp()
+    cls.addClassCleanup(shutil.rmtree, tmp, True)
+    snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+    path, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+    with open(path, encoding="utf-8") as f:
+        return f.read(), A
+
+
+_REPORT_CLI = None
+
+
+def load_report_cli():
+    """보고서.py를 경로로 읽는다 (find_browser 를 쓰려고)."""
+    global _REPORT_CLI
+    if _REPORT_CLI is None:
+        spec = importlib.util.spec_from_file_location("report_cli", os.path.join(ROOT, "보고서.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _REPORT_CLI = m
+    return _REPORT_CLI
+
+
+MIN_WINDOW_WIDTH = 500
+
+
+def browser_dom(test, page, script, size=(1280, 900)):
+    """화면 파일 뒤에 script 를 붙여 헤드리스 브라우저로 열고, 끝난 뒤의 DOM 글을 돌려준다.
+
+    네트워크 없이 file:// 로만 연다. 보고서.py to_pdf 와 같은 머리 없는 실행 옵션을 쓴다."""
+    browser = load_report_cli().find_browser()
+    if browser is None:
+        test.skipTest("브라우저 없음")
+    tmp = new_tmp(test)
+    path = os.path.join(tmp, "screen.html")
+    assert "</body>" in page
+    doc = page.replace("</body>", "<script>%s</script></body>" % script)
+    if size[0] < MIN_WINDOW_WIDTH:
+        # 이 브라우저는 창을 500px 아래로 줄이지 못한다(--window-size=390,844 도 500x701 이 된다).
+        # 폭 390px 의 iframe 안에 화면을 넣어, 그 안의 배치 폭과 미디어 쿼리가 390px 로 계산되게 한다.
+        inner = json.dumps(doc).replace("</", "<\\/").replace("<!--", "<\\!--")
+        doc = ('<!DOCTYPE html><html><body style="margin:0"><iframe id="f" style="width:%dpx;height:%dpx;border:0"></iframe>'
+               '<script>var f=document.getElementById("f");f.onload=function(){var a=f.contentDocument.body.attributes;'
+               'for(var i=0;i<a.length;i++){if(a[i].name.indexOf("data-")===0)document.body.setAttribute(a[i].name,a[i].value);}};'
+               'f.srcdoc=%s;</script></body></html>') % (size[0], size[1], inner)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(doc)
+    profile = os.path.join(tmp, "profile")
+    cmd = [browser, "--headless", "--disable-gpu", "--user-data-dir=" + profile, "--no-first-run",
+           "--disable-field-trial-config", "--disable-background-networking", "--disable-component-update",
+           "--window-size=%d,%d" % size, "--dump-dom", pathlib_uri(path)]
+    if os.name != "nt":
+        cmd.insert(2, "--no-sandbox")
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=120)
+    return r.stdout.decode("utf-8", "replace")
+
+
+def pathlib_uri(path):
+    import pathlib
+    return pathlib.Path(path).resolve().as_uri()
+
+
+def body_attr(dom, name):
+    m = re.search(r"<body[^>]*\b%s=\"([^\"]*)\"" % re.escape(name), dom)
+    return m.group(1) if m else None
+
+
+UNCHECK_5103 = """
+(function(){
+  var tr=document.querySelector('tr[data-no="5103"]');
+  var box=tr.querySelector('input.req');
+  var t0=performance.now();
+  box.checked=false;
+  box.dispatchEvent(new Event('change',{bubbles:true}));
+  document.body.setAttribute('data-ms',String(performance.now()-t0));
+})();
+"""
+
+
+class TestApprovalBrowser(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.page, cls.A = class_screen(cls)
+
+    def test_uncheck_updates_headline_in_under_a_second(self):
+        dom = browser_dom(self, self.page, UNCHECK_5103)
+        self.assertEqual(T(dom, "h-low"), "258.7")
+        self.assertEqual(T(dom, "h-label"), "체크한 3건 승인 시")
+        self.assertEqual(week_cell(dom, 7, "w-level"), "")
+        ms = body_attr(dom, "data-ms")
+        self.assertIsNotNone(ms, "주입한 시간 측정이 돌지 않음")
+        self.assertLess(float(ms), 1000)
+
+    def test_screen_file_is_git_ignored(self):
+        if shutil.which("git") is None:
+            self.skipTest("git 없음")
+        r = subprocess.run(["git", "check-ignore", "-q", "출력/승인검토_20261102_0900.html"], cwd=ROOT)
+        self.assertEqual(r.returncode, 0)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node 없음")
+class TestApprovalSpeed(unittest.TestCase):
+    def test_56_days_500_requests_all_toggles_under_a_second(self):
+        page, A = full_screen(self)
+        js = script_text(page, "approval-calc")
+        tmp = new_tmp(self)
+        path = os.path.join(tmp, "speed.js")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(js + """
+var days=[],bi=[],bo=[],ei=[],reqs=[],ids=[],i;
+for(i=0;i<56;i++){days.push('d'+i);bi.push(1000);bo.push(500);ei.push(10);}
+for(i=0;i<500;i++){reqs.push({id:'r'+i,day:i%56,amount:100000+i});ids.push('r'+i);}
+var data={asof:'d0',start:1000000000,reserve:1000,days:days,
+  weeks:[[0,6],[7,13],[14,20],[21,27],[28,34],[35,41],[42,48],[49,55]],
+  base_in:bi,base_out:bo,est_in:ei,requests:reqs};
+var t0=Date.now();var r=approvalCalc(data,ids);var ms=Date.now()-t0;
+console.log(JSON.stringify({ms:ms,toggles:Object.keys(r.toggle).length}));
+""")
+        out = json.loads(subprocess.run(["node", path], check=True, stdout=subprocess.PIPE).stdout.decode("utf-8"))
+        self.assertEqual(out["toggles"], 500)
+        self.assertLess(out["ms"], 1000)
+
+
+MEASURE = """
+(function(){
+  var b=document.body;
+  var tr=document.querySelector('tr[data-no="5103"]');
+  var td=tr.querySelector('td');
+  var lab=td.querySelector('label');
+  var tw=document.getElementById('requests').parentNode;
+  b.setAttribute('data-iw',String(window.innerWidth));
+  b.setAttribute('data-sw',String(document.documentElement.scrollWidth));
+  b.setAttribute('data-pos',getComputedStyle(td).position);
+  b.setAttribute('data-left',getComputedStyle(td).left);
+  b.setAttribute('data-lh',String(lab.getBoundingClientRect().height));
+  b.setAttribute('data-twsw',String(tw.scrollWidth));
+  b.setAttribute('data-twcw',String(tw.clientWidth));
+  b.setAttribute('data-class',tw.className);
+})();
+"""
+
+
+class TestApprovalWidths(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.page, cls.A = class_screen(cls)
+
+    def test_phone_width(self):
+        dom = browser_dom(self, self.page, MEASURE, size=(390, 844))
+        self.assertEqual(float(body_attr(dom, "data-iw")), 390)
+        self.assertLessEqual(float(body_attr(dom, "data-sw")), 390)
+        self.assertEqual(body_attr(dom, "data-pos"), "sticky")
+        self.assertEqual(body_attr(dom, "data-left"), "0px")
+        self.assertGreaterEqual(float(body_attr(dom, "data-lh")), 44)
+        self.assertEqual(body_attr(dom, "data-class"), "tw")
+
+    def test_desk_width_shows_every_request_column(self):
+        dom = browser_dom(self, self.page, MEASURE, size=(1280, 900))
+        self.assertEqual(float(body_attr(dom, "data-iw")), 1280)
+        self.assertLessEqual(float(body_attr(dom, "data-sw")), 1280)
+        self.assertEqual(body_attr(dom, "data-twsw"), body_attr(dom, "data-twcw"))
+
+
+CLICK_BUTTONS = """
+(function(){
+  var b=document.body;
+  function snap(tag){
+    b.setAttribute('data-'+tag+'-label',document.getElementById('h-label').textContent);
+    b.setAttribute('data-'+tag+'-low',document.getElementById('h-low').textContent);
+    var dis=document.querySelector('tr[data-no="5106"] input.req');
+    b.setAttribute('data-'+tag+'-dis',String(dis.checked));
+  }
+  document.getElementById('check-none').click();
+  snap('none');
+  document.getElementById('check-all').click();
+  snap('all');
+})();
+"""
+
+
+class TestApprovalControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.page, cls.A = class_screen(cls)
+
+    def test_buttons_exist_with_labels_and_touch_height(self):
+        self.assertEqual(T(self.page, "check-all"), "전부 체크")
+        self.assertEqual(T(self.page, "check-none"), "전부 해제")
+        self.assertLess(self.page.index('id="check-all"'), self.page.index('<table id="requests"'))
+        self.assertRegex(self.page, r"button[^{]*\{[^}]*min-height:44px")
+
+    def test_headline_is_a_polite_live_region(self):
+        self.assertRegex(self.page, r'<div[^>]*id="headline"[^>]*aria-live="polite"')
+
+    def test_check_none_and_check_all_in_a_browser(self):
+        dom = browser_dom(self, self.page, CLICK_BUTTONS)
+        self.assertEqual(body_attr(dom, "data-none-label"), "체크한 0건 승인 시")
+        self.assertEqual(body_attr(dom, "data-none-low"), "305.2")
+        self.assertEqual(body_attr(dom, "data-all-label"), "전부 승인 시")
+        self.assertEqual(body_attr(dom, "data-all-low"), "98.2")
+        self.assertEqual(body_attr(dom, "data-none-dis"), "false")
+        self.assertEqual(body_attr(dom, "data-all-dis"), "false")
+
+    def test_page_has_no_network_or_external_resource(self):
+        self.assertIsNone(re.search(r"fetch\(|XMLHttpRequest|src=|https?://", self.page))
+
+
 if __name__ == "__main__":
     unittest.main()
