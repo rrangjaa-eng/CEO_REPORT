@@ -819,5 +819,157 @@ class TestLaunchers(unittest.TestCase):
                 self.assertLess(text.index("chcp 65001"), first_non_ascii)
 
 
+class TestUserRulesLocked(Base):
+    """남은 Phase 1 요구를 샘플의 정확한 값으로 못 박는다. 앞 10개는 지금 동작을 고정하는 잠금 테스트다 (A-09)."""
+
+    def edit(self, filename, mutate):
+        return compute(load(probe_folder(self, filename, mutate)), "weekly", ASOF)
+
+    def test_outflows_split_by_category(self):
+        self.assertEqual(self.R["s1"]["by_cat"], {"프로젝트지급": [0, 20_200_000], "회사공통지출": [0, 8_000_000],
+                                                  "고객입금": [55_000_000, 0], "카드대금": [0, 12_400_000]})
+        self.assertNotIn("계좌간이체", self.R["s1"]["by_cat"])
+
+    def test_min_balance_firm_and_estimate(self):
+        mn = self.R["s2"]["min"]
+        self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
+        self.assertEqual(mn["all"], (148_300_000, dt.date(2027, 4, 25)))
+        fs = first_screen(render(self.R, "ceo"))
+        self.assertIn("최저 계산 잔액 · 확정 일정만", fs)
+        self.assertIn("최저 계산 잔액 · 확정+추정", fs)
+
+    def test_profit_and_cash_kept_apart(self):
+        rows = {x["target"]: x for x in self.R["s4"]["sources"]["WEHAGO"]["table"]}
+        co = rows["회사 전체"]
+        self.assertEqual((co["cur"]["revenue"], co["cur"]["direct"], co["cur"]["gp"], co["cur"]["common"], co["cur"]["np"]),
+                         (30_000_000, 20_400_000, 9_600_000, 30_000_000, -20_400_000))
+        self.assertTrue(co["cur"]["provisional"])
+        self.assertEqual(co["ytd"]["revenue"], 1_380_000_000)
+        self.assertEqual(co["ytd"]["np"], 111_600_000)
+        team = rows["기획1팀"]
+        self.assertEqual(team["cur"]["gp"], 5_280_000)
+        self.assertIsNone(team["cur"]["np"])
+        fs = first_screen(render(self.R, "ceo"))
+        kpis = fs.split("<div class='kpis'>")[1].split("<div class='mid'>")[0]
+        self.assertIn("현재 현금 (계좌 합계)", kpis)
+        self.assertNotIn("이익", kpis)
+        self.assertIn("매출·이익 (2026-11)", fs)
+
+    def test_pl_sources_separate(self):
+        self.assertEqual(list(self.R["s4"]["sources"]), ["WEHAGO", "인트라넷완료보고"])
+        s4 = section(render(self.R, "ceo"), 4)
+        self.assertIn("WEHAGO 손익 (최근 반영월 2026-11)", s4)
+        self.assertIn("인트라넷완료보고 손익 (최근 반영월 2026-10)", s4)
+
+    def test_unrecognized_and_unknown_cost(self):
+        projects = {p["id"]: p for p in self.R["s3"]["projects"]}
+        self.assertEqual(projects["P26201"]["unrecognized"], 360_000_000)
+        self.assertEqual(self.R["s4"]["unrecognized"], 618_000_000)
+        self.assertEqual(self.R["s4"]["unrecognized_missing"], 1)
+        self.assertIsNone(projects["P26206"]["profit_end"])
+        row = re.findall(r"<tr[^>]*><td>P26206</td>.*?</tr>", section(render(self.R, "ceo"), 4), re.S)[0]
+        self.assertIn("판단 불가", row)
+        self.assertIn("미확인 원가 1건", row)
+        intra = {x["target"].split(" ")[0]: x for x in self.R["s4"]["sources"]["인트라넷완료보고"]["table"]}
+        self.assertIsNone(intra["P26206"]["ytd"]["gp"])
+
+    def test_receivable_amounts_and_overdue_days(self):
+        s5 = self.R["s5"]
+        self.assertEqual((s5["contract"], s5["issued"], s5["unissued"], s5["ar"]),
+                         (828_000_000, 358_000_000, 470_000_000, 228_800_000))
+        self.assertEqual([(v["project"], v["overdue_days"], v["outstanding"]) for v in s5["overdue"]],
+                         [("P26202", 33, 110_000_000)])
+
+    def test_specials_listed_separately(self):
+        self.assertEqual(sorted(v["kind"] for v in self.R["s5"]["specials"]), ["선수금", "선수금", "수정", "취소"])
+        self.assertIn("선수금·취소·환불·수정 (4건)", section(render(self.R, "ceo"), 5))
+
+    def test_nonproject_obligations_by_category(self):
+        by_cat = self.R["s6"]["by_cat"]
+        want = {"급여", "회사부담금", "임차료", "구독료", "세금", "카드대금", "차입금원금", "차입금이자", "보증금", "설비·이전"}
+        self.assertTrue(want <= set(by_cat), want - set(by_cat))
+        self.assertEqual(by_cat["급여"]["total"], 270_000_000)
+
+    def test_changes_and_plan_vs_actual(self):
+        s7 = self.R["s7"]
+        self.assertEqual([c["field"] for c in s7["changes"]], ["예산", "입금예정일", "지급예정액"])
+        self.assertEqual(s7["unplanned_total"], 3_700_000)
+        self.assertEqual({x["vendor"] for x in s7["pva"] if x["unplanned"]}, {"케이터링", "꽃장식"})
+
+    def test_unreflected_scope_items(self):
+        s7 = self.R["s7"]
+        self.assertEqual([p["id"] for p in s7["no_budget"]], ["P26204"])
+        self.assertEqual(s7["unlinked_txn_total"], 1_500_000)
+        self.assertEqual(s7["undated_out"], 105_000_000)
+        self.assertEqual(s7["undated_out_n"], 4)
+        self.assertEqual([a["name"] for a in s7["asof"]], ["은행 잔액 확인", "회계 반영 (WEHAGO)", "인트라넷 갱신"])
+        self.assertEqual(len(s7["diffs"]), 2)
+        self.assertEqual(sum(1 for x in s7["diffs"] if x["state"] == "미확인"), 1)
+
+    def test_invoice_unknown_counts_shown(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "P26203" and r[3] == "발행":
+                    r[5] = ""
+                if r[0] == "P26204" and r[3] == "수정":
+                    r[4] = ""
+        R = self.edit("계산서.csv", mutate)
+        by = {x["P"]["id"]: x for x in R["s5"]["by_project"]}
+        a = by["P26203"]
+        self.assertEqual((a["issued"], a["issued_unknown"], a["ar"], a["ar_unknown"]), (80_000_000, 0, None, 1))
+        b = by["P26204"]
+        self.assertEqual((b["issued"], b["issued_unknown"], b["unissued"], b["ar"], b["ar_unknown"]),
+                         (0, 1, None, None, 1))
+        s5 = R["s5"]
+        self.assertEqual((s5["ar"], s5["ar_unknown_n"]), (132_000_000, 2))
+        self.assertEqual((s5["issued"], s5["issued_unknown_n"]), (350_000_000, 1))
+        self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (428_000_000, 2))
+        html = render(R, "ceo")
+        sec5 = section(html, 5)
+        row_a = re.findall(r"<tr[^>]*><td>P26203</td>.*?</tr>", sec5, re.S)[0]
+        self.assertIn("미확인 1건", row_a)
+        self.assertNotIn('<td class="n">0</td>', row_a)
+        row_b = re.findall(r"<tr[^>]*><td>P26204</td>.*?</tr>", sec5, re.S)[0]
+        self.assertIn("외 미확인 1건", row_b)
+        self.assertIn("판단 불가", row_b)
+        tot = re.findall(r'<tr class="tot">.*?</tr>', sec5, re.S)[0]
+        for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 2건"):
+            self.assertIn(needle, tot, needle)
+        value = kv_value(first_screen(html), "발행 후 미수")
+        self.assertIn("132.0", value)
+        self.assertIn("미확인 2건", value)
+        check_editions(self, R)
+        self.assertEqual((self.R["s5"]["ar_unknown_n"], self.R["s5"]["issued_unknown_n"],
+                          self.R["s5"]["unissued_unknown_n"]), (0, 0, 1))
+
+    def test_blank_plan_amount_not_zero(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[1] == "P26203" and r[2] == "전시제작사":
+                    r[3] = ""
+        R = self.edit("지급계획.csv", mutate)
+        item = next(x for x in R["s7"]["pva"] if x["vendor"] == "전시제작사")
+        self.assertIsNone(item["plan"])
+        self.assertEqual(item["plan_unknown"], 1)
+        self.assertFalse(item["unplanned"])
+        self.assertEqual(R["s7"]["plan_total"], 36_900_000)
+        self.assertEqual(R["s7"]["plan_unknown_n"], 1)
+        s7 = section(render(R, "ceo"), 7)
+        row = re.findall(r"<tr[^>]*><td>P26203</td><td>전시제작사</td>.*?</tr>", s7, re.S)[0]
+        self.assertIn("미확인", row)
+        self.assertNotIn("계획 없음", row)
+        self.assertIn("계획 금액 미확인 1건", s7)
+
+    def test_blank_contract_not_zero(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "P26204":
+                    r[7] = ""
+        R = self.edit("프로젝트.csv", mutate)
+        self.assertEqual(R["s7"]["no_budget_contract"], 0)
+        self.assertEqual(R["s7"]["no_budget_contract_missing"], 1)
+        self.assertIn("계약금액 미등록 1건", section(render(R, "ceo"), 7))
+
+
 if __name__ == "__main__":
     unittest.main()
