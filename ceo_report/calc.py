@@ -285,6 +285,15 @@ def compute(d, kind, asof, start=None):
                 low, low_d = bal, day
         mins[mode] = (low, low_d)
     four = buckets[:4]
+    # 예정일이 지난 미처리: 확인된 금액만 합산하고, 건수는 금액 미확인 건도 센다. 일정·최저 잔액에는 넣지 않는다.
+    past_all = past + [ev for ev in amount_unknown if ev["date"] is not None and ev["date"] <= asof]
+    past_sum = {}
+    for io in ("in", "out"):
+        evs = [ev for ev in past_all if ev["io"] == io]
+        total, unknown = ssum(ev["amount"] for ev in evs)
+        past_sum[io] = (None if evs and unknown == len(evs) else total, len(evs), unknown)
+    # 부가세가 비어 있는 예정 지급은 공급가액만 반영된다. 일정에 들어간 건수를 센다.
+    sched_vat = [ev for ev in dated if ev.get("vat_unknown")]
     R["s2"] = {
         "start": start_cash, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
@@ -292,6 +301,11 @@ def compute(d, kind, asof, start=None):
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
         "undated_in": sum(e["amount"] for e in undated if e["io"] == "in"),
         "undated_out": sum(e["amount"] for e in undated if e["io"] == "out"),
+        "past_in": past_sum["in"][0], "past_in_n": past_sum["in"][1], "past_in_unknown": past_sum["in"][2],
+        "past_out": past_sum["out"][0], "past_out_n": past_sum["out"][1], "past_out_unknown": past_sum["out"][2],
+        "vat_unknown_n": len(sched_vat),
+        "vat_unknown_n4": sum(1 for ev in sched_vat if ev["date"] <= four[-1]["to"]),
+        "vat_unknown_firm_n": sum(1 for ev in sched_vat if ev["firm"]),
     }
     all_amt = sum(e["amount"] for e in events if e["amount"] is not None)
     parts = (sum(b[k] for b in buckets for k in ("in_firm", "in_est", "out_firm", "out_est"))
@@ -331,27 +345,47 @@ def compute(d, kind, asof, start=None):
         if s["date"] is None:
             g["undated"] += 1
     vendors = OrderedDict()
+
+    def _vendor(name):
+        return vendors.setdefault(name, {"total": 0, "next": None, "n": 0, "unknown": 0, "vat_unknown": 0})
+
     for s in nonproj:
         if not s["vendor"]:
             continue
-        v = vendors.setdefault(s["vendor"], {"total": 0, "next": None, "n": 0})
-        v["total"] += s["amount"] or 0
+        v = _vendor(s["vendor"])
+        if s["amount"] is None:
+            v["unknown"] += 1
+        else:
+            v["total"] += s["amount"]
         v["n"] += 1
         if s["date"] and (v["next"] is None or s["date"] < v["next"]):
             v["next"] = s["date"]
     for e in d.execs:
         if e["state"] == "요청미지급" and e["vendor"]:
-            v = vendors.setdefault(e["vendor"], {"total": 0, "next": None, "n": 0})
-            v["total"] += (e["supply"] or 0) + (e["vat"] or 0)
+            v = _vendor(e["vendor"])
+            if e["supply"] is None:
+                v["unknown"] += 1
+            else:
+                v["total"] += e["supply"]
+                if e["vat"] is None:
+                    v["vat_unknown"] += 1
+                else:
+                    v["total"] += e["vat"]
             v["n"] += 1
             if e["date"] and (v["next"] is None or e["date"] < v["next"]):
                 v["next"] = e["date"]
+    for v in vendors.values():
+        if v["unknown"] == v["n"]:
+            v["total"] = None  # 모든 줄이 금액 미확인이면 합계는 0이 아니라 미확인
     dup = [s for s in d.schedule if "프로젝트" in s["cat"]]
     for s in dup:
         d.issues.add(s["row"]["_file"], s["row"]["_line"],
                      "자금일정에 프로젝트 지급(%s)이 있음 — 프로젝트집행.csv와 중복일 수 있음" % s["cat"])
-    R["s6"] = {"by_cat": by_cat6, "vendors": sorted(vendors.items(), key=lambda kv: -kv[1]["total"]),
-               "total": sum(g["total"] for g in by_cat6.values())}
+    R["s6"] = {"by_cat": by_cat6,
+               "vendors": sorted(vendors.items(), key=lambda kv: (kv[1]["total"] is None, -(kv[1]["total"] or 0))),
+               "total": sum(g["total"] for g in by_cat6.values()),
+               "undated_n": sum(g["undated"] for g in by_cat6.values()),
+               "unknown_n": sum(g["unknown"] for g in by_cat6.values())}
 
     # ───────────── 7. 변동과 자료 반영 범위 ─────────────
     changes = [c for c in d.changes if c["date"] and p0 <= c["date"] <= p1]

@@ -193,9 +193,11 @@ def render(R, mode):
         len(s1["accounts"]), _bank_dates(s1)) + _bal_note(s1))))
     h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note + _bal_note(s1))))
     h.append(_kpi("향후 4주 입금예정", M(s2["in4_firm"] + s2["in4_est"]),
-                  "확정 %s · 추정 %s" % (man(s2["in4_firm"]), man(s2["in4_est"]))))
-    h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]),
-                  "확정 %s · 추정 %s" % (man(s2["out4_firm"]), man(s2["out4_est"]))))
+                  esc("확정 %s · 추정 %s" % (man(s2["in4_firm"]), man(s2["in4_est"])))))
+    out4_sub = "확정 %s · 추정 %s" % (man(s2["out4_firm"]), man(s2["out4_est"]))
+    if s2["vat_unknown_n4"]:
+        out4_sub += " · 부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n4"]
+    h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]), esc(out4_sub)))
     h.append("</div>")
     # 중앙: 프로젝트 요약 + 자금 그래프
     h.append("<div class='mid'><div>")
@@ -225,10 +227,13 @@ def render(R, mode):
     h.append(chart(s2))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("최저 계산 잔액 · 확정 일정만", "%s (%s)" % (M(lf), d2s(lfd))),
-                 ("최저 계산 잔액 · 확정+추정", "%s (%s)" % (M(la), d2s(lad))),
+    h.append(kv([("최저 계산 잔액 · 확정 일정만", "%s (%s)%s" % (M(lf), esc(d2s(lfd)), _vat_note(s2["vat_unknown_firm_n"]))),
+                 ("최저 계산 잔액 · 확정+추정", "%s (%s)%s" % (M(la), esc(d2s(lad)), _vat_note(s2["vat_unknown_n"]))),
                  ("날짜 없는 입금예정 / 지급예정", "%s / %s" % (M(s2["undated_in"]), M(s2["undated_out"]))),
-                 ("입금예정일 경과 미수 (일정 미포함)", M(s5["overdue_total"]))]))
+                 ("입금예정일 경과 미수 (일정 미포함)", M(s5["overdue_total"])),
+                 ("예정일 지난 미처리 입금 / 지급 (일정 미포함)",
+                  _past_side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]) + " / " +
+                  _past_side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"]))]))
     h.append("</div></div>")
     # 하단 4칸
     h.append("<div class='low'>")
@@ -236,7 +241,8 @@ def render(R, mode):
     h.append("<div class='card'><h4>미수·미지급</h4>%s</div>" % kv([
         ("발행 후 미수", M(s5["ar"])), ("그중 입금예정일 경과", M(s5["overdue_total"])),
         ("프로젝트 요청 미지급", M(tot["requested"])), ("카드 미결제 (프로젝트)", M(tot["card_unpaid"])),
-        ("프로젝트 밖 지급예정", M(s6["total"]))]))
+        ("프로젝트 밖 지급예정 (등록분 전체)", M(s6["total"]) + esc(" · 날짜 없음 %d건" % s6["undated_n"]) +
+         (esc(" · 금액 미확인 %d건" % s6["unknown_n"]) if s6["unknown_n"] else ""))]))
     h.append("<div class='card'><h4>계산서 미발행</h4>%s</div>" % kv([
         ("계약금액", M(s5["contract"])), ("발행금액", M(s5["issued"])), ("미발행금액", M(s5["unissued"])),
         ("완료 후 미발행 프로젝트", "%d건" % len([x for x in s5["unissued_aged"] if x["unissued"] > 0])),
@@ -275,6 +281,19 @@ def render(R, mode):
 def _kpi(label, value, sub):
     return "<div class='kpi'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
         esc(label), value, sub)
+
+
+def _vat_note(n):
+    """부가세 빈칸으로 공급가액만 반영된 건수 표시 (없으면 빈 문자열)."""
+    return _na(" · 부가세 미확인 %d건" % n) if n else ""
+
+
+def _past_side(n, amt, unk):
+    """예정일 지난 미처리 한쪽(입금 또는 지급): 건수와 확인된 금액, 금액 미확인 건수."""
+    out = "%d건 " % n + M(amt)
+    if unk:
+        out += _na(" · 금액 미확인 %d건" % unk)
+    return out
 
 
 def _bal_note(s1):
@@ -365,8 +384,9 @@ def _s2(R):
     s2 = R["s2"]
     h = [_h2(2, "앞으로의 입금·지급 일정과 계산 잔액")]
     h.append("<div class='note'>%s</div>" % esc(
-        "시작값은 보고 기준일 사용 가능액 %s원%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠."
-        % (won(s2["start"]), _bal_note({"bal_unknown": s2["start_unknown"]}))))
+        "시작값은 보고 기준일 사용 가능액 %s원%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠.%s"
+        % (won(s2["start"]), _bal_note({"bal_unknown": s2["start_unknown"]}),
+           " 부가세 미확인 %d건은 공급가액만 반영." % s2["vat_unknown_n"] if s2["vat_unknown_n"] else "")))
     rows = []
     for b in s2["buckets"]:
         rows.append([esc(b["label"]), esc("%s ~ %s" % (d2s(b["from"]), d2s(b["to"]))), W(b["in_firm"]), W(b["in_est"]),
@@ -379,9 +399,12 @@ def _s2(R):
                 won(s2["buckets"][-1]["bal_firm"]), won(s2["buckets"][-1]["bal_all"])))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만", "%s원 (%s)" % (won(lf), d2s(lfd))),
-                 ("기간 중 최저 계산 잔액 · 확정+추정", "%s원 (%s)" % (won(la), d2s(lad)))]))
-    ev_rows = lambda evs: [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"), W(e["amount"]),
+    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만",
+                  esc("%s원 (%s)" % (won(lf), d2s(lfd))) + _vat_note(s2["vat_unknown_firm_n"])),
+                 ("기간 중 최저 계산 잔액 · 확정+추정",
+                  esc("%s원 (%s)" % (won(la), d2s(lad))) + _vat_note(s2["vat_unknown_n"]))]))
+    ev_rows = lambda evs: [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"),
+                            W(e["amount"]) + (_na(" 부가세 미확인") if e.get("vat_unknown") and e["amount"] is not None else ""),
                             esc("확정" if e["firm"] else "추정"), esc(e["cat"]), esc(e["project"]), esc(e["desc"]),
                             esc(e["basis"]), esc(e["source"])] for e in evs]
     head = ["예정일", "구분", "금액", "확정", "분류", "프로젝트", "거래처·내용", "근거", "원천"]
@@ -400,7 +423,8 @@ def _s2(R):
     h.append("<h3>기간 내 예정 전체 (%d건)</h3>" % len(dated))
     h.append(table(head, ev_rows(dated), num_cols=(2,)))
     h.append("<div class='note'>프로젝트 카드 미결제는 카드대금 일정(자금일정)에 포함되므로 여기서 따로 더하지 않음. "
-             "프로젝트 지급요청은 공급가액+부가세(실제 출금액)로 반영.</div>")
+             "프로젝트 지급요청은 공급가액+부가세(실제 출금액)로 반영. "
+             "부가세가 비어 있으면 공급가액만 반영하고 ‘부가세 미확인’으로 표시.</div>")
     return "".join(h)
 
 
@@ -514,6 +538,15 @@ def _s5(R):
     return "".join(h)
 
 
+def _vendor_unknown(v):
+    parts = []
+    if v["unknown"]:
+        parts.append("미확인 %d건" % v["unknown"])
+    if v["vat_unknown"]:
+        parts.append("부가세 미확인 %d건" % v["vat_unknown"])
+    return _na(" · ".join(parts)) if parts else ""
+
+
 def _s6(R):
     s6 = R["s6"]
     h = [_h2(6, "프로젝트 밖에서 나가는 돈과 남은 지급의무")]
@@ -524,8 +557,8 @@ def _s6(R):
     h.append(table(["분류", "건수", "금액", "지급일 없음", "금액 미확인"], rows, num_cols=(2,),
                    total=["합계", "", W(s6["total"]), "", ""]))
     h.append("<h3>거래처별 미지급 잔액과 가장 가까운 지급일 (프로젝트 지급요청 포함)</h3>")
-    rows = [[esc(k), "%d건" % v["n"], W(v["total"]), esc(d2s(v["next"]))] for k, v in s6["vendors"]]
-    h.append(table(["거래처", "건수", "미지급 잔액", "가장 가까운 지급일"], rows, num_cols=(2,)))
+    rows = [[esc(k), "%d건" % v["n"], W(v["total"]), _vendor_unknown(v), esc(d2s(v["next"]))] for k, v in s6["vendors"]]
+    h.append(table(["거래처", "건수", "미지급 잔액", "금액 미확인", "가장 가까운 지급일"], rows, num_cols=(2,)))
     h.append("<h3>지급 항목 전체</h3>")
     rows = [[esc(s["cat"]), esc(d2s(s["date"])), W(s["amount"]), esc("확정" if s["firm"] else "추정"), esc(s["vendor"]),
              esc(s["basis"]), esc(s["memo"])] for g in s6["by_cat"].values() for s in g["rows"]]
