@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Position
 
-Phase 01.1 (approval-screen) · Plans 6 of 6 complete (01.1-01 .. 01.1-06) · Phase 1 plans 01-01, 01-02 complete · Next: orchestrator verification of 01.1 and ticking XCHK-01..04 / APPR-05 in REQUIREMENTS.md; human checks on the user's Windows PC pending (see .planning/WINDOWS.md) · Phase 02 (source-conversion): plans 02-01 (변환.py, 손익.csv company rows, safe write) and 02-02 (linking.py D-38 engine, 프로젝트연결.csv template) complete; next 02-03
+Phase 01.1 (approval-screen) · Plans 6 of 6 complete (01.1-01 .. 01.1-06) · Phase 1 plans 01-01, 01-02 complete · Next: orchestrator verification of 01.1 and ticking XCHK-01..04 / APPR-05 in REQUIREMENTS.md; human checks on the user's Windows PC pending (see .planning/WINDOWS.md) · Phase 02 (source-conversion): plans 02-01 (변환.py, 손익.csv company rows, safe write), 02-02 (linking.py D-38 engine, 프로젝트연결.csv template) and 02-03 (snapshot + linking in convert.run, 손익.csv 팀/프로젝트/미연결 rows with per-month sum checks, [연결] work list in 변환결과.txt) complete; next 02-04
 Last activity: 2026-11-02
 
 ## Decisions
