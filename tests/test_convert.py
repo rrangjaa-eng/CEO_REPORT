@@ -464,5 +464,255 @@ class TestConvertSafety(unittest.TestCase):
             self.assertEqual(rc, 0, rel)
 
 
+# ───────────── Task 3: 계정 설정(D-39), 잠정(Q-3), 금액 없는 줄, 실행_변환.bat ─────────────
+def add_settings(input_dir, *rows):
+    """설정.csv 끝에 '변환_*' 행을 붙인다 (시험용 임시 복사본에만)."""
+    with open(os.path.join(input_dir, "설정.csv"), "a", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        for r in rows:
+            w.writerow(r)
+
+
+def settings_only(test, *rows):
+    """설정.csv 만 있는 임시 입력 폴더."""
+    folder = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, folder, True)
+    with open(os.path.join(folder, "설정.csv"), "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["항목", "값"])
+        for r in rows:
+            w.writerow(r)
+    return folder
+
+
+class TestConvertConfig(unittest.TestCase):
+    def test_sample_copy_has_every_default_and_no_notes(self):
+        convert = mod("convert")
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        cfg, notes = convert.read_config(input_dir)
+        self.assertEqual(notes, [])
+        self.assertEqual(dict(cfg), {
+            "revenue_codes": ("41200",), "receivable_codes": ("10800",), "direct_prefixes": ("6",),
+            "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
+            "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
+            "closing_sorts": ("결차", "결대"), "link_days": 90, "card_words": ("카드",)})
+
+    def test_every_item_is_read_from_the_settings(self):
+        convert = mod("convert")
+        folder = settings_only(
+            self, ["변환_매출계정", "41200, 41300"], ["변환_매출채권계정", "10900"], ["변환_직접비코드", "6,7"],
+            ["변환_직접비표시", "(원가)"], ["변환_공통비코드", "8,9"], ["변환_공통비표시", "(관리)"],
+            ["변환_미지급계정", "25300"], ["변환_현금계정", "10300,10310"], ["변환_부가세대급금계정", "13500"],
+            ["변환_결산구분", "결산 , 결차"], ["변환_자동연결일수", "30"], ["변환_카드거래처", "카드,체크"])
+        cfg, notes = convert.read_config(folder)
+        self.assertEqual(notes, [])
+        self.assertTrue(cfg.from_file)
+        self.assertEqual(cfg["revenue_codes"], ("41200", "41300"))
+        self.assertEqual(cfg["receivable_codes"], ("10900",))
+        self.assertEqual(cfg["direct_prefixes"], ("6", "7"))
+        self.assertEqual(cfg["direct_mark"], "(원가)")
+        self.assertEqual(cfg["common_prefixes"], ("8", "9"))
+        self.assertEqual(cfg["common_mark"], "(관리)")
+        self.assertEqual(cfg["payable_codes"], ("25300",))
+        self.assertEqual(cfg["cash_codes"], ("10300", "10310"))
+        self.assertEqual(cfg["closing_sorts"], ("결산", "결차"))
+        self.assertEqual(cfg["link_days"], 30)
+        self.assertEqual(cfg["card_words"], ("카드", "체크"))
+
+    def test_bad_values_fall_back_to_the_default_with_a_note(self):
+        convert = mod("convert")
+        folder = settings_only(self, ["변환_매출계정", "abc"], ["변환_자동연결일수", "-3"], ["변환_현금계정", "10300,x1"],
+                               ["변환_직접비표시", ""], ["변환_결산구분", "-"], ["변환_자동연결일수", "-3"],
+                               ["변환_공통비코드", "8.5"], ["변환_카드거래처", "3.5"])
+        cfg, notes = convert.read_config(folder)
+        self.assertEqual(cfg["revenue_codes"], ("41200",))
+        self.assertEqual(cfg["link_days"], 90)
+        self.assertEqual(cfg["cash_codes"], ("10300",))
+        self.assertEqual(cfg["direct_mark"], "(도)")
+        self.assertEqual(cfg["closing_sorts"], ("결차", "결대"))
+        self.assertEqual(cfg["common_prefixes"], ("8",))
+        self.assertIn("설정 변환_매출계정 값 'abc' 사용할 수 없음 → 기본값 41200", notes)
+        self.assertIn("설정 변환_자동연결일수 값 '-3' 사용할 수 없음 → 기본값 90", notes)
+        self.assertIn("설정 변환_현금계정 값 '10300,x1' 사용할 수 없음 → 기본값 10300", notes)
+        self.assertIn("설정 변환_직접비표시 비어 있음 → 기본값 (도)", notes)
+        self.assertIn("설정 변환_결산구분 비어 있음 → 기본값 결차,결대", notes)
+        self.assertIn("설정 변환_공통비코드 값 '8.5' 사용할 수 없음 → 기본값 8", notes)
+
+    def test_zero_link_days_is_allowed_and_unknown_items_are_reported(self):
+        convert = mod("convert")
+        folder = settings_only(self, ["변환_자동연결일수", "0"], ["변환_매출계좌", "41200"], ["회사명", "가상"])
+        cfg, notes = convert.read_config(folder)
+        self.assertEqual(cfg["link_days"], 0)
+        self.assertEqual(notes, ["설정 변환_매출계좌 알 수 없는 변환 항목 → 무시"])
+
+    def test_missing_settings_file_uses_defaults_with_a_note(self):
+        convert = mod("convert")
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        cfg, notes = convert.read_config(folder)
+        self.assertEqual(dict(cfg), dict(convert.DEFAULT_CONFIG))
+        self.assertEqual(notes, ["설정.csv 없음 → 변환 설정 기본값 사용"])
+        self.assertFalse(os.path.exists(os.path.join(folder, "설정.csv")))
+
+    def test_the_settings_file_is_never_written(self):
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        add_settings(input_dir, ["변환_공통비코드", "8,9"], ["변환_매출계정", "abc"])
+        write_convert_books(wehago_dir)
+        before = sha(os.path.join(input_dir, "설정.csv"))
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(sha(os.path.join(input_dir, "설정.csv")), before)
+
+    def test_common_codes_from_settings_change_the_csv_and_the_listing(self):
+        def setup(input_dir, collect, wehago_dir):
+            add_settings(input_dir, ["변환_공통비코드", "8,9"])
+
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
+        self.assertEqual(rc, 0, out)
+        rows = read_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(rows[2][1:], "2026-10,회사,회사 전체,94000000,249500000,4900000,Y".split(","))
+        lines = read_result_lines(input_dir)
+        self.assertIn("  대조 공통비 (8xxxx,9xxxx 차변−대변): 원본 6,900,000 · CSV 6,900,000 → 일치", lines)
+        text = "\n".join(lines)
+        self.assertIn("손익.csv에 넣지 않은 손익 계정: 45100 (도)외주비 1줄 500,000\n", text + "\n")
+        self.assertIn("93100 이자비용 1줄 400,000", text)
+        self.assertIn("설정: 설정.csv 변환 항목 반영", lines)
+
+    def test_bad_revenue_code_falls_back_and_is_reported(self):
+        def setup(input_dir, collect, wehago_dir):
+            add_settings(input_dir, ["변환_매출계정", "abc"])
+
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
+        self.assertEqual(rc, 0, out)
+        lines = read_result_lines(input_dir)
+        self.assertIn("  알림 설정 변환_매출계정 값 'abc' 사용할 수 없음 → 기본값 41200", lines)
+        self.assertIn("  대조 매출 (41200 대변−차변): 원본 194,000,000 · CSV 194,000,000 → 일치", lines)
+
+    def test_revenue_code_from_settings_moves_the_revenue(self):
+        def setup(input_dir, collect, wehago_dir):
+            add_settings(input_dir, ["변환_매출계정", "45100"])
+
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
+        rows = read_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(rows[2][4], "-500000")  # 45100 차변 500,000 → 대변−차변
+        self.assertIn("  대조 매출 (45100 대변−차변): 원본 -500,000 · CSV -500,000 → 일치".replace("-", "−"),
+                      read_result_lines(input_dir))
+
+
+CLOSE_DEBIT = jl_sort(dt.date(2026, 10, 31), 90, "결차", "37500", "이월이익잉여금", 0, None, "", "연말 결산")
+
+
+class TestConvertProvisional(unittest.TestCase):
+    def pl_rows(self, journal, setup=None):
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=journal, setup=setup)
+        self.assertEqual(rc, 0, out)
+        return [r for r in read_rows(os.path.join(input_dir, "손익.csv"))[1:] if r[0] == "WEHAGO"], input_dir
+
+    def test_without_closing_lines_every_month_is_provisional(self):
+        rows, _ = self.pl_rows(FAKE_PL_JOURNAL)
+        self.assertEqual([r[7] for r in rows], ["Y", "Y"])
+
+    def test_a_closing_line_in_the_year_makes_all_its_months_final(self):
+        rows, input_dir = self.pl_rows(FAKE_PL_JOURNAL + [CLOSE_DEBIT])
+        self.assertEqual([(r[1], r[7]) for r in rows], [("2026-09", ""), ("2026-10", "")])
+        self.assertEqual([r[4:7] for r in rows], [["100000000", "10000000", "2000000"],
+                                                  ["94000000", "249500000", "4500000"]])  # 결산 줄은 손익 합계를 바꾸지 않는다
+
+    def test_a_closing_line_of_last_year_only_closes_last_year(self):
+        line = jl_sort(dt.date(2025, 12, 31), 91, "결대", "37500", "이월이익잉여금", None, 0, "", "전기 결산")
+        rows, _ = self.pl_rows(FAKE_PL_JOURNAL + [line])
+        self.assertEqual([(r[1], r[4:7], r[7]) for r in rows],
+                         [("2025-12", ["0", "0", "0"], ""), ("2026-09", ["100000000", "10000000", "2000000"], "Y"),
+                          ("2026-10", ["94000000", "249500000", "4500000"], "Y")])
+
+    def test_closing_words_come_from_the_settings(self):
+        other = jl_sort(dt.date(2026, 10, 31), 92, "결산", "37500", "이월이익잉여금", 0, None, "", "연말 결산")
+
+        def setup(input_dir, collect, wehago_dir):
+            add_settings(input_dir, ["변환_결산구분", "결산"])
+
+        rows, _ = self.pl_rows(FAKE_PL_JOURNAL + [other], setup=setup)
+        self.assertEqual([r[7] for r in rows], ["", ""])
+        rows, _ = self.pl_rows(FAKE_PL_JOURNAL + [CLOSE_DEBIT], setup=setup)  # 기본 낱말은 더 이상 결산이 아니다
+        self.assertEqual([r[7] for r in rows], ["Y", "Y"])
+
+    def test_a_line_without_any_amount_blanks_that_month_and_the_check_cannot_judge(self):
+        blank = jl_sort(dt.date(2026, 10, 5), 93, "대체", "41200", "수입수수료", None, None, "가상고객X", "금액 없음")
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=FAKE_PL_JOURNAL + [blank])
+        self.assertEqual(rc, 0, out)
+        rows = read_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(rows[1][4:7], ["100000000", "10000000", "2000000"])
+        self.assertEqual(rows[2][4:7], ["", "249500000", "4500000"])  # 매출 칸은 0이 아니라 빈칸
+        lines = read_result_lines(input_dir)
+        self.assertIn("  알림 금액 없는 손익 줄 1건 (2026-10 매출) → 그 달 칸 비움", lines)
+        self.assertIn("  대조 매출 (41200 대변−차변): 원본 194,000,000 · CSV 미확인 → 판단 불가", lines)
+        self.assertIn("  대조 직접비 (6xxxx (도) 차변−대변): 원본 259,500,000 · CSV 259,500,000 → 일치", lines)
+        self.assertIn("대조 불일치 0건", lines)
+        self.assertIn("대조 판단 불가 1건", lines)
+        self.assertIn("대조 판단 불가 1건", out)
+        d = mod("data").load(input_dir)
+        R = mod("calc").compute(d, "monthly", dt.date(2026, 10, 31))
+        company = [t for t in R["s4"]["sources"]["WEHAGO"]["table"] if t["unit"] == "회사"][0]
+        self.assertIsNone(company["cur"]["revenue"])
+        self.assertIsNone(company["ytd"]["revenue"])
+
+    def test_a_line_without_a_date_is_listed_and_the_check_does_not_hide_it(self):
+        undated = [None, 94, "대체", "61101", "행사외주비(도)", 700000, None, "가상기타", "V000", "날짜 없음"]
+        tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=FAKE_PL_JOURNAL + [undated])
+        lines = read_result_lines(input_dir)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("  알림 날짜 없는 손익 줄 1건 (직접비) 700,000", lines)
+        self.assertIn("  대조 직접비 (6xxxx (도) 차변−대변): 원본 260,200,000 · CSV 259,500,000 → 불일치", lines)
+        self.assertIn("대조 불일치 1건", lines)
+
+
+class TestConvertLauncher(unittest.TestCase):
+    NAME = "실행_변환.bat"
+
+    def raw(self, name=None):
+        with open(os.path.join(ROOT, name or self.NAME), "rb") as f:
+            return f.read()
+
+    def lines(self, name=None):
+        return self.raw(name).decode("utf-8").split("\r\n")
+
+    def test_bytes_are_utf8_crlf_without_bom_and_chcp_comes_first(self):
+        raw = self.raw()
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
+        text = raw.decode("utf-8")
+        first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
+        self.assertLess(text.index("chcp 65001"), first_non_ascii)
+
+    def test_same_shape_as_the_monthly_launcher_except_three_lines(self):
+        month = self.lines("실행_월간.bat")
+        mine = self.lines()
+        self.assertEqual(len(month), len(mine))
+        diff = [i for i, (a, b) in enumerate(zip(month, mine)) if a != b]
+        self.assertEqual(len(diff), 3, diff)
+        echo, run, ok = diff
+        self.assertTrue(mine[echo].lower().startswith("echo ") and "입력" in mine[echo] and "입력양식" in mine[echo])
+        self.assertEqual(mine[run], "%PY% 변환.py %*")
+        self.assertEqual(mine[ok], "echo 변환을 마쳤습니다. 입력\\변환결과.txt에 원본 합계 대조가 있습니다.")
+        self.assertLess(echo, run)
+
+    def test_one_pushd_one_note_exit_code_flow(self):
+        lines = self.lines()
+        self.assertEqual(len([i for i, ln in enumerate(lines) if ln.strip() == 'pushd "%~dp0"']), 1)
+        run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% "))
+        notes = [ln for ln in lines[:run] if ln.lower().startswith("echo") and "입력" in ln and "입력양식" in ln]
+        self.assertEqual(len(notes), 1)
+        rc = next(i for i, ln in enumerate(lines) if ln == 'set "RC=%ERRORLEVEL%"')
+        ok = next(i for i, ln in enumerate(lines) if "변환을 마쳤습니다" in ln)
+        fail = next(i for i, ln in enumerate(lines) if "오류가 발생했습니다" in ln)
+        self.assertLess(run, rc)
+        self.assertLess(rc, fail)
+        self.assertLess(fail, ok)
+        self.assertEqual(lines[-2], "exit /b %RC%")
+        self.assertEqual(sum(1 for ln in lines if ln.strip().lower().startswith("exit /b")), 2)
+        checks = [ln for ln in lines if "version_info" in ln and "(3, 8)" in ln]
+        self.assertEqual(len(checks), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -354,7 +354,7 @@ class TestInputFolderSafety(unittest.TestCase):
         self.assertIn("입력양식", buf.getvalue())
 
     def test_launchers_tell_where_the_csv_files_go(self):
-        for name in ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat"):
+        for name in ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat", "실행_변환.bat"):
             with open(os.path.join(ROOT, name), "rb") as f:
                 lines = f.read().decode("utf-8").split("\r\n")
             run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% "))
@@ -512,7 +512,7 @@ class TestDatedUnknownPayments(unittest.TestCase):
 
 # ───────────── 8. 실행 파일은 UNC 경로(\\서버\공유)에서도 프로그램 폴더로 옮겨 간다 ─────────────
 class TestLaunchersPushd(unittest.TestCase):
-    NAMES = ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat")
+    NAMES = ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat", "실행_변환.bat")
 
     def lines(self, name):
         with open(os.path.join(ROOT, name), "rb") as f:
