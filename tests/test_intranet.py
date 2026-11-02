@@ -560,25 +560,25 @@ class TestTransportSafety(unittest.TestCase):
 
 def paged_routes(extra=None):
     """지급요청 3쪽(쪽 번호 쿼리) + 프로젝트 2쪽(뒤 숫자 꼴)."""
-    pay_links = [("1", "/payment/index?page=1"), ("2", "/payment/index?page=2"),
-                 ("3", "/payment/index?page=3"), (">", "/payment/index?page=3"),
-                 ("승인구분 3", "/payment/index?confirm=3"), ("정렬", "/payment/index?search=가상"),
-                 ("삭제", "/payment/delete/5101"), ("로그아웃", "/logout")]
+    pay_links = [("/payment/index?page=1", "1"), ("/payment/index?page=2", "2"),
+                 ("/payment/index?page=3", "3"), ("/payment/index?page=3", ">"),
+                 ("/payment/index?confirm=3", "승인구분 3"), ("/payment/index?search=가상", "정렬"),
+                 ("/payment/delete/5101", "삭제"), ("/logout", "로그아웃")]
     routes = site_routes(extra={
         ("GET", "/payment/index"): (200, {}, payment_page(
             [prow(5101, amount="44,000,000"), prow(5102)], links=pay_links)),
         ("GET", "/payment/index?page=2"): (200, {}, payment_page(
             [prow(5102), prow(5103), prow(5104)],
-            links=[("1", "/payment/index?page=1"), ("2", "/payment/index?page=2"),
-                   ("3", "/payment/index?page=3")])),
+            links=[("/payment/index?page=1", "1"), ("/payment/index?page=2", "2"),
+                   ("/payment/index?page=3", "3")])),
         ("GET", "/payment/index?page=3"): (200, {}, payment_page(
             [prow(5105), prow(5106, amount="")],
-            links=[("1", "/payment/index?page=1"), ("2", "/payment/index?page=2")])),
+            links=[("/payment/index?page=1", "1"), ("/payment/index?page=2", "2")])),
         ("GET", "/project/index"): (200, {}, project_page(
             [jrow(26218, 901), jrow(26219, 902)],
-            links=[("2", "/project/index/20"), (">", "/project/index/20")])),
+            links=[("/project/index/20", "2"), ("/project/index/20", ">")])),
         ("GET", "/project/index/20"): (200, {}, project_page(
-            [jrow(26220, 903)], links=[("1", "/project/index")], total=False)),
+            [jrow(26220, 903)], links=[("/project/index", "1")], total=False)),
     })
     routes.update(extra or {})
     return routes
@@ -728,7 +728,7 @@ class TestStructureStops(unittest.TestCase):
 
     def test_unknown_paging_query_name_stops_without_requesting_it(self):
         module = intranet()
-        links = [("2", "/payment/index?pg2=2"), ("3", "/payment/index?pg2=3")]
+        links = [("/payment/index?pg2=2", "2"), ("/payment/index?pg2=3", "3")]
         exc, fake = collect_raises(self, self.payment_route(links=links))
         self.assertIsInstance(exc, module.StructureMismatch)
         self.assertIn("pg2", str(exc))
@@ -736,7 +736,7 @@ class TestStructureStops(unittest.TestCase):
 
     def test_page_link_that_also_changes_a_filter_stops(self):
         module = intranet()
-        links = [("2", "/payment/index?gyear=2026&page=2")]
+        links = [("/payment/index?gyear=2026&page=2", "2")]
         exc, fake = collect_raises(self, self.payment_route(links=links))
         self.assertIsInstance(exc, module.StructureMismatch)
         self.assertIn("gyear", str(exc))
