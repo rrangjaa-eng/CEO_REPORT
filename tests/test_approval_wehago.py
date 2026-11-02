@@ -551,8 +551,11 @@ class TestXchkPanels(unittest.TestCase):
         t = T(self.page, "xchk-unlinked")
         self.assertTrue(t.startswith("프로젝트 미연결 원가 2건 1,100,000"), t)
         rows = [cells(r) for r in body_rows(self.page, "xchk-unlinked")]
-        self.assertIn(["2026-10-29", "가상강사", "가상 개인강사 ******-******* 강사료", "800,000"], rows)
-        self.assertIn(["2026-10-29", "가상기타", "[26999] 가상 기타 행사", "300,000"], rows)
+        # D-47: 미연결 원가 표에 마지막 '연결' 열(그 줄의 연결 설명)이 생겼다. 앞의 네 칸은 01.1 그대로, 다섯째 칸만 새로 맞춘다
+        self.assertIn(["2026-10-29", "가상강사", "가상 개인강사 ******-******* 강사료", "800,000",
+                       "미연결 (코드 없음 · 자동 연결 후보 0건)"], rows)
+        self.assertIn(["2026-10-29", "가상기타", "[26999] 가상 기타 행사", "300,000",
+                       "미연결 (코드 26999 프로젝트 목록에 없음 · 자동 연결 후보 0건)"], rows)
         self.assertEqual(len(rows), 2)  # 계정 Code 4xxxx 인 (도)외주비 줄은 원가가 아니다
 
     def test_panel_order(self):
