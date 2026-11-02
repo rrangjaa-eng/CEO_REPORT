@@ -631,5 +631,273 @@ class TestWehagoPrivacy(unittest.TestCase):
         self.assertEqual(got["item"], "[26201] ******-******* 강의")
 
 
+
+# ───────────── Task 3: 대조 엔진 ─────────────
+def label(m, no):
+    return m["rows"][no]["label"]
+
+
+def with_journal(test, extra=(), edit=None, **kw):
+    """FAKE_JOURNAL 을 고쳐 장부를 쓰고 읽는다 (edit(줄) 은 줄을 새로 돌려준다)."""
+    journal = [edit(list(r)) if edit else list(r) for r in FAKE_JOURNAL] + [list(r) for r in extra]
+    return load(folder_with(test, journal=journal, **kw))
+
+
+def pay_line(no=25, date=dt.date(2026, 10, 30), amount=49500000, vendor="주식회사 가상부스", memo="[26203] 가상 전시부스 지급"):
+    return _jl(date, no, "25300", "미지급금", amount, None, vendor, memo)
+
+
+class TestWehagoMatch(unittest.TestCase):
+    def setUp(self):
+        self.w = mod("wehago")
+        self.books = load(folder_with(self))
+        self.reqs = requests_all()
+        self.m = self.w.match_requests(self.books, self.reqs)
+
+    def test_the_nine_labels(self):
+        want = {
+            "1201": "계산서 있음",
+            "5102": "계산서 없음",
+            "5103": "금액 차이 (계산서 165,000,000 · 차액 +4,500,000)",
+            "5104": "계산서 있음",
+            "5105": "연결 불가 (계산서 후보 2건)",
+            "5106": "연결 불가 (금액 미확인)",
+            "5107": "연결 불가 (거래처 후보 0건)",
+            "5108": "계산서 있음 (전자세금계산서)",
+            "5109": "이미 지급 (분개장 2026-10-30 전표 20)",
+        }
+        self.assertEqual(dict((no, label(self.m, no)) for no in want), want)
+        status = dict((no, self.m["rows"][no]["status"]) for no in want)
+        self.assertEqual(status, {"1201": "계산서 있음", "5102": "계산서 없음", "5103": "금액 차이", "5104": "계산서 있음",
+                                  "5105": "연결 불가", "5106": "연결 불가", "5107": "연결 불가", "5108": "계산서 있음",
+                                  "5109": "이미 지급"})
+
+    def test_row_fields(self):
+        r = self.m["rows"]
+        self.assertEqual((r["5103"]["invoice_total"], r["5103"]["diff"]), (165000000, 4500000))
+        self.assertEqual((r["1201"]["invoice_total"], r["1201"]["diff"], r["1201"]["source"]), (44000000, 0, "매입매출장"))
+        self.assertEqual(r["5108"]["source"], "전자세금계산서(매입)")
+        self.assertEqual(r["5105"]["candidates"], 2)
+        self.assertEqual(r["5109"]["payment"], {"date": dt.date(2026, 10, 30), "no": "20", "amount": 49500000})
+        self.assertIsNone(r["1201"]["payment"])
+
+    def test_schedule_amount_uses_the_wehago_total_only_for_amount_differences(self):
+        r = self.m["rows"]
+        self.assertEqual(r["5103"]["schedule_amount"], 165000000)  # D-30a
+        self.assertEqual(r["1201"]["schedule_amount"], 44000000)
+        self.assertEqual(r["5105"]["schedule_amount"], 3300000)
+        self.assertIsNone(r["5106"]["schedule_amount"])
+
+    def test_one_combined_invoice_turns_5105_into_an_amount_difference(self):
+        led = [r for r in FAKE_LEDGER if r[2] not in (7, 8)]
+        led.append(_L("매입", "2026-10-25", 7, "(주) 가상버스", "000-00-00006", "[26221] 가상 워크숍 버스", 3300000, 330000))
+        m = self.w.match_requests(load(folder_with(self, ledger=led)), self.reqs)
+        self.assertEqual(label(m, "5105"), "금액 차이 (계산서 3,630,000 · 차액 +330,000)")
+        self.assertEqual(m["rows"]["5105"]["schedule_amount"], 3630000)
+
+    def test_summary(self):
+        S = self.m["summary"]
+        for status in ("계산서 있음", "금액 차이", "계산서 없음", "이미 지급", "연결 불가", "판단 불가"):
+            self.assertIn(status, S)
+        self.assertEqual((S["계산서 있음"]["count"], S["계산서 있음"]["sum"], S["계산서 있음"]["unknown"]), (3, 51700000, 0))
+        d = S["금액 차이"]
+        self.assertEqual((d["count"], d["sum"], d["invoice_sum"], d["diff"]), (1, 160500000, 165000000, 4500000))
+        self.assertEqual((S["계산서 없음"]["count"], S["계산서 없음"]["sum"]), (1, 264000))
+        self.assertEqual((S["이미 지급"]["count"], S["이미 지급"]["sum"]), (1, 49500000))
+        c = S["연결 불가"]
+        self.assertEqual((c["count"], c["sum"], c["unknown"]), (3, 4400000, 1))
+        self.assertEqual(S["판단 불가"]["count"], 0)
+
+    def test_an_all_unknown_status_has_no_sum_instead_of_zero(self):
+        only = [r for r in self.reqs if r["번호"] == "5106"]
+        S = self.w.match_requests(self.books, only)["summary"]
+        self.assertEqual((S["연결 불가"]["count"], S["연결 불가"]["sum"], S["연결 불가"]["unknown"]), (1, None, 1))
+
+    def test_norm_vendor(self):
+        for name in ("(주)가상음향", "㈜가상음향", "주식회사 가상음향", "가상 음향", "가상음향(주)"):
+            self.assertEqual(self.w.norm_vendor(name), "가상음향", name)
+
+    def test_result_does_not_depend_on_request_order_and_nothing_is_mutated(self):
+        before = (copy.deepcopy(self.reqs), copy.deepcopy(self.books.__dict__))
+        again = self.w.match_requests(self.books, list(reversed(self.reqs)))
+        self.assertEqual(again, self.m)
+        self.assertEqual((self.reqs, self.books.__dict__), before)
+
+    def test_two_payment_lines_make_the_payment_doubtful(self):
+        books = with_journal(self, extra=[pay_line()])
+        m = self.w.match_requests(books, self.reqs)
+        self.assertEqual(label(m, "5109"), "연결 불가 (지급 후보 2건)")
+        self.assertNotEqual(m["rows"]["5109"]["status"], "이미 지급")
+
+    def test_payment_dated_before_registration_is_not_a_payment(self):
+        def earlier(r):
+            if r[1] == 20:
+                r[0] = serial(dt.date(2026, 10, 28))  # 5109 등록일(10-29)보다 앞
+            return r
+        m = self.w.match_requests(with_journal(self, edit=earlier), self.reqs)
+        self.assertEqual(label(m, "5109"), "계산서 있음")
+
+    def test_payment_must_carry_the_same_project_code(self):
+        def other_code(r):
+            if r[1] == 20:
+                r[9] = "[26299] 다른 행사 지급"
+            return r
+        self.assertNotEqual(self.w.match_requests(with_journal(self, edit=other_code), self.reqs)["rows"]["5109"]["status"],
+                            "이미 지급")
+
+        def no_code(r):
+            if r[1] == 20:
+                r[9] = "지급"
+            return r
+        m = self.w.match_requests(with_journal(self, edit=no_code), self.reqs)
+        self.assertEqual(label(m, "5109"), "이미 지급 (분개장 2026-10-30 전표 20)")
+
+    def test_payment_must_be_on_a_payable_account(self):
+        def bank(r):
+            if r[1] == 20 and r[4] == "미지급금":
+                r[4] = "보통예금"
+            return r
+        self.assertNotEqual(self.w.match_requests(with_journal(self, edit=bank), self.reqs)["rows"]["5109"]["status"],
+                            "이미 지급")
+
+    def test_one_payment_line_cannot_pay_two_requests(self):
+        twin = copy.deepcopy([r for r in self.reqs if r["번호"] == "5109"][0])
+        twin["번호"], twin["id"] = "5113", "r99"
+        m = self.w.match_requests(self.books, self.reqs + [twin])
+        for no in ("5109", "5113"):
+            self.assertEqual(m["rows"][no]["status"], "연결 불가", no)
+            self.assertTrue(label(m, no).startswith("연결 불가 (지급 후보"), no)
+
+    def test_one_invoice_cannot_match_two_requests(self):
+        twin = copy.deepcopy([r for r in self.reqs if r["번호"] == "1201"][0])
+        twin["번호"], twin["id"] = "5112", "r99"
+        m = self.w.match_requests(self.books, self.reqs + [twin])
+        self.assertEqual(label(m, "1201"), "연결 불가 (계산서 후보 공유)")
+        self.assertEqual(label(m, "5112"), "연결 불가 (계산서 후보 공유)")
+        self.assertEqual(label(m, "5104"), "계산서 있음")
+
+    def test_books_that_are_not_ok_make_every_request_undecidable(self):
+        cases = (("경과", dict(stamp="20261025"), "판단 불가(WEHAGO 자료 경과)"),
+                 ("자료 없음", dict(drop=("분개장",)), "판단 불가(WEHAGO 자료 없음)"))
+        for state, kw, text in cases:
+            books = load(folder_with(self, **kw))
+            self.assertEqual(books.state, state)
+            m = self.w.match_requests(books, self.reqs)
+            self.assertEqual(set(r["label"] for r in m["rows"].values()), set([text]))
+            self.assertEqual(set(r["status"] for r in m["rows"].values()), set(["판단 불가"]))
+            for rq in self.reqs:
+                self.assertEqual(m["rows"][rq["번호"]]["schedule_amount"], rq["amount"])
+            self.assertEqual(m["summary"]["판단 불가"]["count"], 9)
+            self.assertEqual(m["summary"]["이미 지급"]["count"], 0)
+
+    def test_header_mismatch_and_read_failure_labels(self):
+        folder = folder_with(self)
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER[:-1]] + [r[:-1] for r in FAKE_JOURNAL])
+        m = self.w.match_requests(load(folder), self.reqs)
+        self.assertEqual(set(r["label"] for r in m["rows"].values()), set(["판단 불가(머리글 다름)"]))
+        folder = folder_with(self)
+        write_junk(kind_path(folder, "분개장"))
+        m = self.w.match_requests(load(folder), self.reqs)
+        self.assertEqual(set(r["label"] for r in m["rows"].values()), set(["판단 불가(WEHAGO 읽기 실패)"]))
+        self.assertFalse([1 for r in m["rows"].values() if r["status"] == "이미 지급"])
+
+
+class TestWehagoPayables(unittest.TestCase):
+    def setUp(self):
+        self.w = mod("wehago")
+        self.books = load(folder_with(self))
+        self.reqs = requests_all()
+        self.m = self.w.match_requests(self.books, self.reqs)
+        self.P = self.w.vendor_payables(self.books, self.reqs, self.m)
+
+    def row(self, r):
+        return (r["vendor"], r["payable"], r["requested"], r["diff"])
+
+    def test_the_d33_truth(self):
+        P = self.P
+        self.assertEqual((P["compared"], P["diff_count"], P["diff_sum"], P["unknown_count"]), (9, 6, 10976000, 1))
+        self.assertEqual((P["opening"], P["note"]), (False, "기초잔액 미반영"))
+        self.assertEqual(len(P["rows"]), 7)
+        rows = [self.row(r) for r in P["rows"]]
+        self.assertEqual(rows[:3], [("㈜가상제작", 165000000, 160500000, 4500000), ("가상임대", 3000000, 0, 3000000),
+                                    ("(주) 가상버스", 5940000, 3300000, 2640000)])
+        self.assertEqual(rows[3:6], [("가상꽃", 0, 2200000, -2200000), ("가상인력", 7700000, 5500000, 2200000),
+                                     ("가상 조명", 1100000, 264000, 836000)])
+        last = P["rows"][6]
+        self.assertEqual((last["vendor"], last["diff"], last["requested"], last["requested_unknown"]),
+                         ("가상숙박", None, None, 1))
+
+    def test_status_unknown_and_already_paid_requests_are_not_counted(self):
+        names = [r["vendor"] for r in self.P["rows"]]
+        self.assertNotIn("가상케이터링", names)  # 5107: 상태 확인 필요
+        self.assertNotIn("가상부스", names)
+        self.assertNotIn("주식회사 가상부스", names)  # 5109 는 이미 지급이고 미지급금도 0
+
+    def test_opening_balance_line_removes_the_label(self):
+        opening = _jl(dt.date(2026, 1, 2), 0, "25300", "미지급금", None, 1000000, "가상임대", "전기이월")
+        books = with_journal(self, extra=[opening])
+        P = self.w.vendor_payables(books, self.reqs, self.w.match_requests(books, self.reqs))
+        self.assertEqual((P["opening"], P["note"]), (True, ""))
+        rent = [r for r in P["rows"] if r["vendor"] == "가상임대"][0]
+        self.assertEqual((rent["payable"], rent["diff"]), (4000000, 4000000))
+        self.assertEqual(P["diff_sum"], 11976000)
+
+    def test_opening_text_on_a_non_payable_line_does_not_count(self):
+        other = _jl(dt.date(2026, 1, 2), 0, "10300", "보통예금", 1000000, None, "가상임대", "전기이월")
+        books = with_journal(self, extra=[other])
+        self.assertFalse(self.w.vendor_payables(books, self.reqs, self.w.match_requests(books, self.reqs))["opening"])
+
+    def test_books_that_are_not_ok_give_no_rows(self):
+        books = load(folder_with(self, stamp="20261025"))
+        P = self.w.vendor_payables(books, self.reqs, self.w.match_requests(books, self.reqs))
+        self.assertEqual((P["rows"], P["compared"], P["diff_count"], P["unknown_count"]), ([], 0, 0, 0))
+
+    def test_inputs_are_not_changed(self):
+        before = (copy.deepcopy(self.reqs), copy.deepcopy(self.books.__dict__), copy.deepcopy(self.m))
+        self.w.vendor_payables(self.books, self.reqs, self.m)
+        self.assertEqual((self.reqs, self.books.__dict__, self.m), before)
+
+
+class TestWehagoProjectCost(unittest.TestCase):
+    KEYS = set(["26201", "26220", "26221", "26203"])
+
+    def setUp(self):
+        self.w = mod("wehago")
+        self.books = load(folder_with(self))
+
+    def test_the_d34_truth(self):
+        pc = self.w.project_costs(self.books, self.KEYS)
+        self.assertEqual(dict((k, v["cost"]) for k, v in pc["by_code"].items()),
+                         {"26201": 40000000, "26220": 158000000, "26221": 5400000, "26203": 45000000})
+        self.assertEqual((pc["unlinked"]["count"], pc["unlinked"]["sum"]), (2, 1100000))
+        lines = [(l["date"], l["vendor"], l["memo"], l["amount"]) for l in pc["unlinked"]["lines"]]
+        self.assertEqual(lines, [(dt.date(2026, 10, 29), "가상강사", "가상 개인강사 ******-******* 강사료", 800000),
+                                 (dt.date(2026, 10, 29), "가상기타", "[26999] 가상 기타 행사", 300000)])
+        self.assertEqual(len(pc["by_code"]["26220"]["lines"]), 4)
+
+    def test_account_code_starting_with_4_is_not_cost(self):
+        pc = self.w.project_costs(self.books, self.KEYS)
+        every = [l["amount"] for v in pc["by_code"].values() for l in v["lines"]] + \
+                [l["amount"] for l in pc["unlinked"]["lines"]]
+        self.assertNotIn(500000, every)
+
+    def test_credit_lines_reduce_cost(self):
+        credit = _jl(dt.date(2026, 10, 29), 30, "61101", "행사외주비(도)", None, 1000000, "가상음향", "[26201] 환불")
+        books = with_journal(self, extra=[credit])
+        self.assertEqual(self.w.project_costs(books, self.KEYS)["by_code"]["26201"]["cost"], 39000000)
+
+    def test_a_line_with_no_amount_is_counted_not_zeroed(self):
+        blank = _jl(dt.date(2026, 10, 29), 31, "61101", "행사외주비(도)", None, None, "가상음향", "[26201] 금액 없음")
+        books = with_journal(self, extra=[blank])
+        pc = self.w.project_costs(books, self.KEYS)
+        self.assertEqual(pc["by_code"]["26201"]["cost"], 40000000)
+        self.assertEqual(pc["by_code"]["26201"]["unknown"], 1)
+
+    def test_books_that_are_not_ok_give_nothing(self):
+        books = load(folder_with(self, stamp="20261025"))
+        pc = self.w.project_costs(books, self.KEYS)
+        self.assertEqual((pc["by_code"], pc["unlinked"]["count"], pc["unlinked"]["lines"]), ({}, 0, []))
+
+
 if __name__ == "__main__":
     unittest.main()
