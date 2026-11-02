@@ -31,6 +31,7 @@ from test_approval_wehago import body_rows, cells  # noqa: E402
 from test_convert import ASOF, NOW, cli_argv, run_convert  # noqa: E402
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
 from test_convert_e2e import full_company, run_core  # noqa: E402
+from test_approval_linking import with_status_check  # noqa: E402
 from test_linking import write_links_csv  # noqa: E402
 from test_monthly_xchk import (BASE_ASOF, STAMP, WEEKLY_ASOF, editions_ok, plain, run_cli,  # noqa: E402
                                section8, summary_rows, table_cells, weekly_baseline)
@@ -118,14 +119,18 @@ class TestConvertedReports(unittest.TestCase):
 
 # ───────────── Task 1: 변환 뒤 같은 지급을 두 번 세지 않음 (D-42, D-50) ─────────────
 def copy_without_request_rows(test, input_dir):
-    """변환 결과 폴더의 복사본에서 프로젝트집행.csv 의 '지급요청'이 근거에 있는 줄을 모두 뺀다."""
+    """변환 결과 폴더의 복사본에서 프로젝트집행.csv 의 '지급요청'이 근거에 있는 줄을 모두 뺀다.
+
+    '상태 확인 필요' 줄(02-REVIEW CR-03 / D-52)은 남긴다: 승인 화면은 그 요청을 일정에 넣지 않으므로(01.1, '확인 필요') 이 줄을
+    대신하지 않고 입력 줄 그대로 둔다 (number_kept). 두 폴더에 모두 있어야 '요청이 줄을 대신한다'만 비교된다.
+    """
     folder = os.path.join(tempfile.mkdtemp(), "입력")
     test.addCleanup(shutil.rmtree, os.path.dirname(folder), True)
     shutil.copytree(input_dir, folder)
 
     def drop(rows):
         col = rows[0].index("근거")
-        rows[:] = [rows[0]] + [r for r in rows[1:] if "지급요청" not in r[col]]
+        rows[:] = [rows[0]] + [r for r in rows[1:] if "지급요청" not in r[col] or "상태 확인 필요" in r[col]]
     edit_csv(folder, "프로젝트집행.csv", drop)
     return folder
 
@@ -160,13 +165,19 @@ class TestConvertedNoDouble(unittest.TestCase):
 
     def test_calc_events_name_each_payment_request_number_at_most_once(self):
         seen = collections.Counter(n for ev in self.exec_events() for n in request_numbers(ev["basis"]))
-        self.assertEqual(sorted(seen), ["1201", "5102", "5103", "5104", "5105", "5106", "5108"])
+        self.assertEqual(sorted(seen), ["1201", "5102", "5103", "5104", "5105", "5106", "5107", "5108"])
         self.assertEqual([n for n, c in seen.items() if c > 1], [])
 
-    def test_requests_already_paid_or_without_a_known_state_are_not_events(self):
+    def test_requests_already_paid_are_not_events_and_unknown_state_is_an_estimate(self):
         named = set(n for ev in self.exec_events() for n in request_numbers(ev["basis"]))
         self.assertNotIn("5109", named)   # 장부에서 이미 지급
-        self.assertNotIn("5107", named)
+        # 02-REVIEW CR-03 / D-52: 사장님승인 '반려'(읽지 못한 상태)는 버리지 않고 추정 지급으로 남긴다 (예전: 일정에 없음)
+        unknown = [ev for ev in self.exec_events() if "5107" in request_numbers(ev["basis"])]
+        self.assertEqual([(ev["amount"], ev["firm"]) for ev in unknown], [(1100000, False)])
+        self.assertIn("상태 확인 필요 (반려)", unknown[0]["basis"])
+        # 승인 화면은 01.1 규칙대로 그 요청을 '확인 필요'로 세고, 입력 줄은 번호가 같아도 대신하지 않고 남긴다
+        self.assertEqual([r["번호"] for r in self.A["status_unknown"]], ["5107"])
+        self.assertIn(["5107"], [request_numbers(ev["basis"]) for ev in self.A["number_kept"]])
 
     def test_events_naming_5103_sum_to_the_larger_invoice_amount(self):
         events = [ev for ev in self.exec_events() if "5103" in request_numbers(ev["basis"])]
@@ -244,7 +255,11 @@ def assert_equal_surfaces(test, month_page, screen_page, A, label):
     for code, row in screen.items():
         test.assertIn(code, monthly, "%s %s: 월간 표에 없음" % (label, code))
         test.assertEqual(row[4], head(monthly[code]["WEHAGO 원가"]), "%s %s WEHAGO (도) 원가" % (label, code))
-        test.assertEqual(row[3], head(monthly[code]["요청 누계"]), "%s %s 요청 누계" % (label, code))
+        # 월간 요청 누계는 '상태 확인 필요' 요청도 넣는다 (02-REVIEW CR-03 / D-52), 승인 화면은 01.1 규칙대로 뺀다
+        screen_value = None if row[3].startswith("판단 불가") else int(row[3].replace(",", ""))
+        want = with_status_check(A, code, screen_value)
+        test.assertEqual("판단 불가" if want is None else "{:,}".format(want), head(monthly[code]["요청 누계"]),
+                         "%s %s 요청 누계" % (label, code))
     for code, row in monthly.items():
         if code not in screen:   # 원가 줄이 없는 프로젝트는 승인 표에 없다 (01.1 규칙)
             test.assertEqual(row["원가 줄"], "0줄", "%s %s" % (label, code))

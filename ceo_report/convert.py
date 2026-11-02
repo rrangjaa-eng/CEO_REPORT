@@ -310,7 +310,7 @@ def _books_line(books, asof):
     return " · ".join(parts)
 
 
-_COUNT_LABEL = re.compile(r"^(프로젝트 수|지급요청 건수|지급요청 금액 미확인)|건수|(빈칸|줄 수|원가 줄)$")
+_COUNT_LABEL = re.compile(r"^(프로젝트 수|지급요청 건수|지급요청 금액 미확인|지급요청마다)|건수|(빈칸|줄 수|원가 줄)$")
 
 
 def check_text(c):
@@ -492,12 +492,24 @@ def xchk_meta(books, snap, now):
     return meta
 
 
+def status_warning(links):
+    """스냅숏의 지급요청이 모두 사장님승인 빈칸이면 한 줄 경고 (D-52: 수집이 그 칸을 놓친 것일 수 있다). 아니면 None."""
+    requests = (links or {}).get("requests") or []
+    if not requests or any(rq.get("status_text") for rq in requests):
+        return None
+    return ("경고: 인트라넷 지급요청 %d건 모두 사장님승인 빈칸 — 스냅숏 수집 확인 필요 "
+            "(모두 '상태 확인 필요'로 요청미지급(추정)·요청 누계에 넣음)" % len(requests))
+
+
 def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
                  snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None, cross=(), listings=()):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
            _books_line(books, asof),
            snap_line]
+    warning = status_warning(links)
+    if warning:
+        out.append(warning)
     if cfg_notes:
         out.append("설정: 변환 항목 확인 필요 %d건" % len(cfg_notes))
         out.extend("  알림 " + n for n in cfg_notes)
@@ -730,6 +742,9 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         late = (asof - books.book_date).days
         out.append("WEHAGO 장부 기준일 %s%s" % (books.book_date.isoformat(),
                                              " · 기준일보다 %d일 이전" % late if late > 0 else ""))
+    warning = status_warning(res.links)
+    if warning:
+        out.append(warning)
     for t in tables:
         out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "[%s] 만들지 않음 — %s" % (t.name, t.reason))
     if res.links is not None:

@@ -940,7 +940,18 @@ def _xk_status(X):
         if c != 0:
             text += " " + _xk_money_note(v["amount"], v["note"])
         parts.append(text)
-    return total + " (" + " · ".join(parts) + ")"
+    return total + " (" + " · ".join(parts) + ")" + " · " + _xk_status_check(X)
+
+
+def _xk_status_check(X):
+    """사장님승인을 읽지 못한 요청 (D-52): '상태 확인 필요 N건 금액'. 사실이므로 두 판 모두 싣는다."""
+    if not X.get("has_status_check"):
+        return _na("상태 확인 필요 판단 불가 (위하고대조.csv에 줄 없음 — 다시 변환)")
+    f = X["status_check"]
+    if f["count"] is None:
+        return _na("상태 확인 필요 판단 불가")
+    text = "상태 확인 필요 %d건" % f["count"]
+    return text + (" " + _xk_money_note(f["amount"], f["note"]) if f["count"] else "")
 
 
 def _xk_projects(X):
@@ -1082,6 +1093,17 @@ def _xk_status_table(X):
                                      rows, num_cols=(1, 2, 3, 4)))
 
 
+def _xk_status_check_table(X):
+    lines = X.get("status_check_lines") or []
+    if not lines:
+        return "<div class='note'>%s</div>" % esc("상태 확인 필요 지급요청 없음")
+    rows = [[esc(ln["key"]), esc(ln["vendor"]), esc(ln["label"]), _xk_amount(ln["amount"], ln["memo"]), esc(ln["memo"])]
+            for ln in lines]
+    f = X["status_check"]
+    total = ["합계", "", "", _xk_amount(f["amount"], f["note"]), esc(f["note"])]
+    return _idt("xchk-status-check", table(["번호", "거래처", "사장님승인", "금액", "프로젝트"], rows, num_cols=(3,), total=total))
+
+
 def _xk_projects_table(X):
     rows = []
     for p in X["projects"]:
@@ -1177,6 +1199,7 @@ def _xk_detail(X):
     h = ["<div id='xchk-detail'>",
          "<div class='note'>상세 (경영관리용). 값은 위하고대조.csv의 사실이며, 차이는 두 값을 모두 알 때만 계산 (모르면 ‘판단 불가’).</div>",
          "<h3>지급요청 대조 (상태별)</h3>", _xk_status_table(X),
+         "<h3>상태 확인 필요 지급요청 (사장님승인 빈칸·알 수 없는 값, 요청 누계·프로젝트밖요청에 포함)</h3>", _xk_status_check_table(X),
          "<h3>프로젝트별 (도)원가 · 실행가 · 요청 누계</h3>", _xk_projects_table(X),
          "<h3>프로젝트 밖 지급요청</h3>", _xk_outside_table(X),
          "<h3>프로젝트 미연결 원가 줄</h3>", _xk_lines_table("xchk-unlinked", X["unlinked_lines"], X["unlinked"]),

@@ -36,7 +36,8 @@ def requests_of(snap, asof, now):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
-              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": ""}
+              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "",
+              "status_text": (row.get("사장님승인") or "").strip()}   # 읽은 그대로 (D-52 '상태 확인 필요 (<값>)')
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         out.append(rq)
     return out

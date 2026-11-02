@@ -266,11 +266,14 @@ class TestXchkFacts(unittest.TestCase):
         for r in self.table.rows:
             if not seen or seen[-1] != r["구분"]:
                 seen.append(r["구분"])
-        self.assertEqual(seen, ["기준", "요청상태", "프로젝트원가", "프로젝트밖요청", "미연결원가", "미연결원가줄", "거래처미지급",
+        # 02-REVIEW CR-03 / D-52: 요청상태 뒤에 상태 확인 필요 요청의 합계·목록 줄이 온다
+        self.assertEqual(seen, ["기준", "요청상태", "요청상태확인필요", "요청상태확인필요줄", "프로젝트원가", "프로젝트밖요청",
+                                "미연결원가", "미연결원가줄", "거래처미지급",
                                 "거래처미지급요약", "매출계약", "매출미연결", "매출미연결줄", "보통예금", "보통예금월"])
 
     def test_request_total_per_project(self):
-        want = {"26201": ("44264000", "2", ""), "26220": ("166000000", "2", ""),
+        # 26201 은 상태 확인 필요(반려) 5107 1,100,000 을 포함한다 (02-REVIEW CR-03 / D-52; 예전 44264000 · 2건)
+        want = {"26201": ("45364000", "3", "상태 확인 필요 1건 포함"), "26220": ("166000000", "2", ""),
                 "26221": ("", "2", "금액 미확인 1건"), "26203": ("49500000", "1", "")}
         for key, expected in want.items():
             self.assertEqual(cells(one(self, self.table, "프로젝트원가", key, "요청 누계")), expected, key)
@@ -279,10 +282,10 @@ class TestXchkFacts(unittest.TestCase):
         items = [r["항목"] for r in self.table.rows if r["구분"] == "프로젝트원가" and r["대상"] == "26201"]
         self.assertEqual(items, ["WEHAGO 원가", "실행가", "요청 누계"])
 
-    def test_request_total_follows_the_approval_rule(self):
-        # 요청 누계 = 코드가 프로젝트 키이고 상태를 읽은 요청 (반려 5107 은 상태를 읽지 못해 빠진다)
+    def test_request_total_counts_every_request_of_the_project(self):
+        # 요청 누계 = 코드가 프로젝트 키인 모든 요청 (D-52: 상태를 읽지 못한 반려 5107 도 넣는다; 예전 규칙은 승인 화면처럼 뺐다)
         for key in ("26201", "26220", "26221", "26203"):
-            mine = [r for r in self.x.requests if r["code"] == key and r["status"] != "status_unknown"]
+            mine = [r for r in self.x.requests if r["code"] == key]
             known = [r["amount"] for r in mine if r["amount"] is not None]
             row = one(self, self.table, "프로젝트원가", key, "요청 누계")
             self.assertEqual(row["건수"], str(len(mine)))
@@ -406,7 +409,7 @@ class TestXchkFacts(unittest.TestCase):
         got = mod("convert_xchk").load_xchk(os.path.join(tmp, "입력"))
         self.assertEqual(got["state"], "ok", got["reason"])
         by = dict((p["key"], p) for p in got["projects"])
-        self.assertEqual((by["26201"]["requested"], by["26201"]["requested_count"]), (44264000, 2))
+        self.assertEqual((by["26201"]["requested"], by["26201"]["requested_count"]), (45364000, 3))   # D-52: 5107 포함
         self.assertEqual((by["26221"]["requested"], by["26221"]["requested_count"], by["26221"]["requested_note"]),
                          (None, 2, "금액 미확인 1건"))
         self.assertEqual((got["outside"]["amount"], got["outside"]["count"]), (2200000, 1))
@@ -758,7 +761,7 @@ class TestXchkLoad(unittest.TestCase):
         self.assertEqual(by["26220"]["cost_vs_budget"], 158000000 - 250000000)
         self.assertEqual(by["26203"]["cost_vs_budget"], 45000000 - 60000000)
         self.assertIsNone(by["26221"]["cost_vs_budget"])               # 실행가 빈칸
-        self.assertEqual(by["26201"]["request_vs_cost"], 44264000 - 50000000)
+        self.assertEqual(by["26201"]["request_vs_cost"], 45364000 - 50000000)   # D-52: 상태 확인 필요 5107 포함
         self.assertEqual(by["26220"]["request_vs_cost"], 166000000 - 158000000)
         self.assertEqual(by["26203"]["request_vs_cost"], 49500000 - 45000000)
         self.assertIsNone(by["26221"]["request_vs_cost"])              # 요청 금액 미확인 1건

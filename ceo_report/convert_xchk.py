@@ -81,22 +81,58 @@ def _status_rows(match):
     return rows
 
 
-def _readable(requests):
-    """승인 화면과 같은 규칙: 상태를 읽은 요청만 요청 누계에 든다."""
-    return [r for r in requests if r["status"] != "status_unknown"]
+def _is_unknown(r):
+    return r["status"] not in ("approved", "pending")
+
+
+def _request_note(rows):
+    """요청 누계·프로젝트밖요청 비고: 금액 미확인 건수, 그리고 상태 확인 필요(D-52) 요청이 섞였으면 그 건수."""
+    unknown = sum(1 for r in rows if r["amount"] is None)
+    odd = sum(1 for r in rows if _is_unknown(r))
+    return " · ".join(x for x in (_unknown_note(unknown, "건"), "상태 확인 필요 %d건 포함" % odd if odd else "") if x)
 
 
 def _request_rows(projects, requests):
-    """프로젝트밖요청: 프로젝트 목록에 없는 코드의 요청 합계 (승인 화면 A-6 과 같은 규칙)."""
-    outside = [r for r in _readable(requests) if r["code"] not in projects]
-    total, unknown = _known_sum([r["amount"] for r in outside])
-    return [_row("프로젝트밖요청", "합계", "", "인트라넷 요청", total, len(outside), _unknown_note(unknown, "건"))]
+    """프로젝트밖요청: 프로젝트 목록에 없는 코드의 요청 합계. 상태를 읽지 못한 요청도 넣는다 (D-52, 비고에 건수)."""
+    outside = [r for r in requests if r["code"] not in projects]
+    total, _ = _known_sum([r["amount"] for r in outside])
+    return [_row("프로젝트밖요청", "합계", "", "인트라넷 요청", total, len(outside), _request_note(outside))]
+
+
+STATUS_CHECK = "요청상태확인필요"
+
+
+def _status_check_rows(requests):
+    """요청상태확인필요 (D-52): 사장님승인이 빈칸이거나 알 수 없는 값인 요청의 합계 줄과 요청마다 한 줄 (번호 순)."""
+    bad = sorted((r for r in requests if _is_unknown(r)), key=lambda r: _no_key(r["번호"]))
+    total, unknown = _known_sum([r["amount"] for r in bad])
+    rows = [_row(STATUS_CHECK, "합계", "", "인트라넷 요청", total, len(bad),
+                 " · ".join(x for x in (_unknown_note(unknown, "건"), "요청 누계·프로젝트밖요청·프로젝트집행(요청미지급 추정)에 넣음") if x))]
+    for r in bad:
+        rows.append(_row(STATUS_CHECK + "줄", r["번호"], r["vendor"], "사장님승인 '%s'" % (r.get("status_text") or ""), r["amount"], 1,
+                         " ".join(x for x in (r["code"] or "", r["name"]) if x)))
+    return rows
+
+
+def _no_key(n):
+    n = str(n)
+    return (0, int(n), n) if n.isdigit() else (1, 0, n)
+
+
+REQUEST_TOTAL_LABEL = "지급요청 건수 = 요청 누계 건수 합계 + 프로젝트밖요청 건수"
+
+
+def request_total_check(requests, rows):
+    """모든 지급요청(상태를 읽지 못한 것 포함)이 요청 누계(프로젝트 목록 안) 또는 프로젝트밖요청 중 한 곳에 든다 (D-52, CR-03)."""
+    counts = [int(r["건수"]) for r in rows if r.get("건수", "").isdigit() and (
+        (r["구분"] == "프로젝트원가" and r["항목"] == "요청 누계") or r["구분"] == "프로젝트밖요청")]
+    return Check(REQUEST_TOTAL_LABEL, len(requests), sum(counts))
 
 
 def _cost_rows(projects, costs, requests):
     """프로젝트원가: 프로젝트마다 WEHAGO 원가 (모든 날짜의 줄), 실행가, 요청 누계 (코드가 프로젝트 키이고 상태를 읽은 요청)."""
     rows = []
-    known = _readable(requests)
+    known = list(requests)   # 상태를 읽지 못한 요청도 든다 (D-52: 버리지 않음, 비고에 건수)
     for key in _project_keys(projects, costs["lines"]):
         p = projects.get(key)
         mine = [ln for ln in costs["lines"] if ln["project"] == key]
@@ -108,8 +144,8 @@ def _cost_rows(projects, costs, requests):
                 ["실행가 빈칸"] if p["budget"] is None else [])
             rows.append(_row("프로젝트원가", key, name, "실행가", p["budget"], None, " · ".join(notes)))
             asked = [r for r in known if r["code"] == key]
-            total, unknown = _known_sum([r["amount"] for r in asked])
-            rows.append(_row("프로젝트원가", key, name, "요청 누계", total, len(asked), _unknown_note(unknown, "건")))
+            total, _ = _known_sum([r["amount"] for r in asked])
+            rows.append(_row("프로젝트원가", key, name, "요청 누계", total, len(asked), _request_note(asked)))
     return rows
 
 
@@ -168,12 +204,12 @@ def _unlinked_revenue_rows(revenue):
 
 
 def _status_note(requests):
-    """상태를 읽지 못한 요청은 누계에 넣지 않는다: 그 사실과 번호·금액을 알린다 (조용히 빼지 않음)."""
-    bad = [r for r in requests if r["status"] == "status_unknown"]
+    """상태를 읽지 못한 요청(D-52)은 요청 누계·프로젝트밖요청에 넣고 요청상태확인필요 줄로 따로 보인다: 그 사실과 번호·금액."""
+    bad = [r for r in requests if _is_unknown(r)]
     if not bad:
         return []
-    listing = ", ".join("%s %s %s" % (r["번호"], r["vendor"], won(r["amount"])) for r in bad)
-    return ["상태 확인 필요 지급요청 %d건은 요청 누계·프로젝트밖요청에 넣지 않음 (승인 화면과 같은 규칙): %s" % (len(bad), listing)]
+    listing = ", ".join("%s %s %s (%s)" % (r["번호"], r["vendor"], won(r["amount"]), r.get("status_text") or "빈칸") for r in bad)
+    return ["상태 확인 필요 지급요청 %d건은 요청 누계·프로젝트밖요청에 넣음 (D-52, 승인 화면은 '확인 필요'로 셈): %s" % (len(bad), listing)]
 
 
 # ───────────── 보통예금 (D-48) ─────────────
@@ -326,6 +362,7 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     revenue_rows = _revenue_rows(projects, revenue, project_rows)
     unlinked_revenue = _unlinked_revenue_rows(revenue)
     rows.extend(status_rows)
+    rows.extend(_status_check_rows(requests))
     rows.extend(cost_rows)
     rows.extend(_request_rows(projects, requests))
     rows.extend(unlinked_rows)
@@ -346,6 +383,7 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
                         _sum_cells(sales + [sales_total])))
     checks.append(Check("지급요청 건수 = 요청상태 건수 합계", len(requests),
                         sum(int(r["건수"]) for r in status_rows if r["항목"] == "인트라넷 요청")))
+    checks.append(request_total_check(requests, rows))
     source_lines = sum(1 for ln in costs["lines"] if ln["project"] is None)
     checks.append(Check("미연결 원가 줄", source_lines, sum(1 for r in unlinked_rows if r["구분"] == "미연결원가줄")))
     checks.append(Check("현금계정 증감 = 보통예금월 WEHAGO 증감 합계", move_total,
@@ -360,6 +398,7 @@ class _Unreadable(Exception):
 
 def _blank_result(state, reason):
     return {"state": state, "reason": reason, "meta": collections.OrderedDict(), "status": collections.OrderedDict(),
+            "status_check": _fact(None), "status_check_lines": [], "has_status_check": False,
             "projects": [], "outside": _fact(None), "unlinked": _fact(None), "unlinked_lines": [], "vendors": [],
             "vendor_summary": dict.fromkeys(("compared", "note", "diff_sum", "diff_count", "diff_note", "unknown_count",
                                              "unknown_note")),
@@ -438,6 +477,11 @@ def _load_rows(rows):
                 st["amount"], st["count"], st["note"] = row["_amount"], row["_count"], row["비고"]
         elif kind == "프로젝트밖요청":
             out["outside"] = _fact(row)
+        elif kind == STATUS_CHECK:
+            out["status_check"], out["has_status_check"] = _fact(row), True
+        elif kind == STATUS_CHECK + "줄":
+            out["status_check_lines"].append({"key": row["대상"], "vendor": row["이름"], "label": row["항목"],
+                                              "amount": row["_amount"], "memo": row["비고"]})
         elif kind == "거래처미지급":
             if item == "WEHAGO 미지급":
                 out["vendors"].append({"vendor": row["이름"], "payable": row["_amount"], "payable_note": row["비고"],

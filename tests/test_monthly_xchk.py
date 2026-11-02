@@ -40,6 +40,7 @@ STAMP = re.compile(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 
 STATUS_TEXT = ("계산서 있음 3건 51,700,000 · 금액 차이 1건 160,500,000 · 계산서 없음 1건 264,000 · 이미 지급 1건 49,500,000 · "
                "연결 불가 3건 금액 판단 불가 (미확인 1건) · 판단 불가 0건")
+STATUS_CHECK_TEXT = "상태 확인 필요 1건 1,100,000"   # 02-REVIEW CR-03 / D-52: 반려 5107
 PROJECT_TEXT = ("258,400,000 (4개 프로젝트 · 실행가 입력 3건 합계 610,000,000 · 실행가 빈칸 1건 · "
                 "원가가 실행가보다 큰 프로젝트 0건)")
 REVENUE_TEXT = ("194,000,000 · 프로젝트 연결 175,000,000 · 미연결 2줄 19,000,000 · "
@@ -206,7 +207,7 @@ class TestMonthlySection(unittest.TestCase):
     def test_payment_request_row_counts_by_status(self):
         for mode, page in self.pages.items():
             with self.subTest(mode):
-                self.assertEqual(summary_rows(page)["지급요청 대조"], "9건 (%s)" % STATUS_TEXT)
+                self.assertEqual(summary_rows(page)["지급요청 대조"], "9건 (%s) · %s" % (STATUS_TEXT, STATUS_CHECK_TEXT))
 
     def test_project_cost_row(self):
         for mode, page in self.pages.items():
@@ -357,7 +358,8 @@ class TestMonthlyDetail(unittest.TestCase):
         a = rows["26201"]
         self.assertEqual((a["프로젝트"], a["WEHAGO 원가"], a["원가 줄"], a["실행가"], a["원가−실행가"]),
                          ("가상 컨퍼런스", "50,000,000", "2줄", "300,000,000", "−250,000,000"))
-        self.assertEqual((a["요청 누계"], a["요청 건수"], a["요청 누계−원가"]), ("44,264,000", "2건", "−5,736,000"))
+        # D-52: 상태 확인 필요(반려) 5107 1,100,000 포함 (예전 44,264,000 · 2건 · −5,736,000)
+        self.assertEqual((a["요청 누계"], a["요청 건수"], a["요청 누계−원가"]), ("45,364,000", "3건", "−4,636,000"))
         b = rows["26220"]
         self.assertEqual((b["WEHAGO 원가"], b["실행가"], b["원가−실행가"], b["요청 누계"]),
                          ("158,000,000", "250,000,000", "−92,000,000", "166,000,000"))

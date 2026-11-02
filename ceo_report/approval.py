@@ -449,7 +449,8 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
               "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "", "reason": "", "toggle": False,
               "scheduled": False,  # 8주 일정에 금액이 실제로 들어갔는가 (WR-06)
-              "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", ""))}
+              "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", "")),
+              "status_text": (row.get("사장님승인") or "").strip()}   # linking.requests_of 와 같은 모양 (D-52 근거 글자)
         rq["schedule_amount"], rq["amount_source"] = rq["amount"], "인트라넷 요청"
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         req_all.append(rq)

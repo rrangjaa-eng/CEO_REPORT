@@ -421,6 +421,18 @@ def both(test, input_dir=None, journal=None):
     return page, A, monthly, path
 
 
+def with_status_check(A, key, requested):
+    """승인 화면 요청 누계 + 같은 코드의 '상태 확인 필요' 요청 (02-REVIEW CR-03 / D-52).
+
+    승인 화면은 01.1 규칙대로 사장님승인을 읽지 못한 요청을 요청 누계에서 빼고 '확인 필요'로 센다. 월간 8번(위하고대조)은 D-52 로
+    그 요청을 요청 누계에 넣는다. 그래서 두 화면의 요청 누계는 그 요청만큼 다르다 (금액을 모르면 월간은 판단 불가).
+    """
+    extra = [r for r in A["requests_all"] if r["status"] == "status_unknown" and r["code"] == key]
+    if requested is None or any(r["amount"] is None for r in extra):
+        return None
+    return requested + sum(r["amount"] for r in extra)
+
+
 class TestApprovalMonthlyEqual(unittest.TestCase):
     """RED 증거 (계획 W6): 이 클래스를 계획 02-08 의 연결 배선이 없는 커밋 6e3b9be(RED Task 1 tracer)에서 돌리면 7개 중 4개가 실패한다
     (26220 승인 158,000,000 대 월간 158,200,000, 미연결 7건 대 6건). 배선이 있는 Task 1·2 GREEN 뒤에는 모두 통과하므로
@@ -440,7 +452,7 @@ class TestApprovalMonthlyEqual(unittest.TestCase):
                 continue
             seen += 1
             self.assertEqual(row["cost"], p["cost"], "%s %s WEHAGO 원가" % (label, p["key"]))
-            self.assertEqual(row["requested"], p["requested"], "%s %s 요청 누계" % (label, p["key"]))
+            self.assertEqual(with_status_check(A, p["key"], row["requested"]), p["requested"], "%s %s 요청 누계" % (label, p["key"]))
             self.assertEqual(table_costs(page)[p["key"]], "미확인" if p["cost"] is None else "{:,}".format(p["cost"]),
                              "%s %s 화면 글자" % (label, p["key"]))
         self.assertEqual(seen, len(by_code), label)   # 승인 화면의 모든 행이 월간에도 있다

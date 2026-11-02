@@ -541,13 +541,15 @@ def total_of(rows):
     return sum(int(r[4] or 0) + int(r[5] or 0) for r in rows)
 
 
-REQUEST_ROWS = [   # 번호 순: 5102, 5105, 5106, 5108
+REQUEST_ROWS = [   # 번호 순: 5102, 5105, 5106, 5107 (02-REVIEW CR-03 / D-52: 사장님승인 '반려'는 상태 확인 필요 → 추정 줄), 5108
     ("26201", "[26201] 가상 컨퍼런스", "가상조명", "요청미지급", "264000", "", "2026-11-06", "추정",
      "지급요청 5102 (인트라넷 금액, 부가세 포함 여부 미확인)"),
     ("26221", "[26221] 가상 워크숍", "가상버스", "요청미지급", "3300000", "", "2026-11-10", "확정",
      "지급요청 5105 (인트라넷 금액, 부가세 포함 여부 미확인)"),
     ("26221", "[26221] 가상 워크숍", "가상숙박", "요청미지급", "", "", "2026-11-17", "추정",
      "지급요청 5106 (인트라넷 금액, 부가세 포함 여부 미확인)"),
+    ("26201", "[26201] 가상 컨퍼런스", "가상케이터링", "요청미지급", "1100000", "", "2026-11-06", "추정",
+     "지급요청 5107 상태 확인 필요 (반려) (인트라넷 금액, 부가세 포함 여부 미확인)"),
     ("26299", "[26299] 목록에 없는 행사", "가상꽃", "요청미지급", "2200000", "", "2026-11-06", "추정",
      "지급요청 5108 (인트라넷 금액, 부가세 포함 여부 미확인)"),
 ]
@@ -569,26 +571,26 @@ class TestBuildExecsRequests(unittest.TestCase):
         for no, want in ((22, BASE_ROWS[9]), (23, BASE_ROWS[10]), (37, BASE_ROWS[0])):
             self.assertEqual(by_slip(t, no)[3:], want[3:])
 
-    def test_four_request_rows_follow_the_wehago_rows_in_number_order(self):
+    def test_five_request_rows_follow_the_wehago_rows_in_number_order(self):
         t = full_table()
         rows = cell_rows(t)
-        self.assertEqual(rows[11:15], REQUEST_ROWS)
-        self.assertEqual(t.extra["cost_portions"][11:15], [None] * 4)
+        self.assertEqual(rows[11:16], REQUEST_ROWS)
+        self.assertEqual(t.extra["cost_portions"][11:16], [None] * 5)
 
     def test_no_payment_is_counted_twice(self):
         t = full_table()
-        for number in ("5107", "5109"):
-            self.assertEqual(naming(t, number), [], number)
+        self.assertEqual(naming(t, "5109"), [])
         self.assertEqual(by_slip(t, 3)[3], "지급완료")
         self.assertTrue([n for n in t.notes if n.startswith("지급요청 5109: 이미 지급") and n.endswith("→ 넣지 않음")], t.notes)
-        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5108"):
+        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5107", "5108"):
             self.assertEqual(len(naming(t, number)), 1, number)
 
     def test_request_count_and_money_checks_read_match(self):
         t = full_table()
         lines = lines_of(t)
-        for want in ("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 3 + 요청 줄 4 + 이미 지급 1: 원본 8 · CSV 8 → 일치",
-                     "지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
+        for want in ("지급요청 건수: 승인·대기 8 + 상태 확인 필요 1 = 원가 줄에 표시 3 + 요청 줄 5 + 이미 지급 1: 원본 9 · CSV 9 → 일치",
+                     "지급요청 금액 (금액 있는 승인·대기·상태 확인 필요 8건) = 원가 줄 표시 + 요청 줄 + 이미 지급: "
+                     "원본 266,364,000 · CSV 266,364,000 → 일치",
                      "지급요청 금액 미확인: 원본 1 · CSV 1 → 일치",
                      "계산서·요청 금액이 다르면 큰 쪽: 지급요청을 가리키는 줄 합계 = max(계산서, 요청): 원본 216,700,000 · CSV 216,700,000 → 일치"):
             self.assertIn(want, lines)
@@ -600,10 +602,13 @@ class TestBuildExecsRequests(unittest.TestCase):
         self.assertEqual(total_of(naming(t, "5103")), 165000000)
         self.assertEqual(len(naming(t, "5103")), 1)
 
-    def test_status_unknown_request_is_skipped_with_a_note(self):
+    def test_status_unknown_request_is_an_estimated_row_with_a_note(self):
+        # 02-REVIEW CR-03 / D-52: 사장님승인을 읽지 못한 요청은 버리지 않고 요청미지급(추정) 줄로 넣는다 (예전: 넣지 않음)
         t = full_table()
-        self.assertIn("상태 확인 필요 1건 → 프로젝트집행에 넣지 않음", t.notes)
-        self.assertTrue([n for n in t.notes if "5107" in n and "1,100,000" in n], t.notes)
+        self.assertIn("상태 확인 필요 1건 → 요청미지급(추정)으로 넣음 (D-52: 사장님승인이 빈칸이거나 알 수 없는 값)", t.notes)
+        self.assertTrue([n for n in t.notes if "5107" in n and "1,100,000" in n and "(반려)" in n], t.notes)
+        row = naming(t, "5107")
+        self.assertEqual([(r[3], r[4], r[7]) for r in row], [("요청미지급", "1100000", "추정")])
 
     def test_duplicate_possible_notes_name_the_requests_added_next_to_unpaid_rows(self):
         t = full_table()
@@ -631,7 +636,8 @@ class TestBuildExecsRequests(unittest.TestCase):
         self.assertEqual((diff[0][3], diff[0][4], diff[0][5], diff[0][6]), ("요청미지급", "4000000", "", "2026-11-13"))
         self.assertEqual(diff[0][8], "지급요청 1201 차액 (인트라넷 요청 44,000,000 − 계산서 40,000,000)")
         self.assertEqual(total_of(naming(t, "1201")), 44000000)
-        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 3 + 요청 줄 4 + 이미 지급 1: 원본 8 · CSV 8 → 일치", lines_of(t))
+        self.assertIn("지급요청 건수: 승인·대기 8 + 상태 확인 필요 1 = 원가 줄에 표시 3 + 요청 줄 5 + 이미 지급 1: 원본 9 · CSV 9 → 일치",
+                      lines_of(t))
 
     def test_invoice_above_the_request_with_an_ambiguous_group_adds_the_request_and_a_diff_row(self):
         second = [_jl(dt.date(2026, 10, 27), 70, "61101", "행사외주비(도)", 150000000, None, "가상제작", "[26220] 가상 전시 제작 2차"),
@@ -649,9 +655,10 @@ class TestBuildExecsRequests(unittest.TestCase):
         self.assertTrue([n for n in t.notes if "5103" in n and "중복 가능" in n], t.notes)
         self.assertEqual(by_slip(t, 2)[8], "WEHAGO 2026-10-21 전표 2")
         lines = lines_of(t)
-        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 2 + 요청 줄 5 + 이미 지급 1: 원본 8 · CSV 8 → 일치", lines)
-        self.assertIn("지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
+        self.assertIn("지급요청 건수: 승인·대기 8 + 상태 확인 필요 1 = 원가 줄에 표시 2 + 요청 줄 6 + 이미 지급 1: 원본 9 · CSV 9 → 일치",
                       lines)
+        self.assertIn("지급요청 금액 (금액 있는 승인·대기·상태 확인 필요 8건) = 원가 줄 표시 + 요청 줄 + 이미 지급: "
+                      "원본 266,364,000 · CSV 266,364,000 → 일치", lines)
         for c in t.checks:
             self.assertEqual(mod("convert").check_result(c), "일치", c.label)
 
@@ -663,10 +670,10 @@ class TestBuildExecsRequests(unittest.TestCase):
         self.assertIn("지급요청 5104: 계산서의 원가 줄이 이미 지급완료 → 요청 줄 넣지 않음 (원가 줄에 번호 표시)", t.notes)
         self.assertEqual(by_slip(t, 5)[3], "지급완료")
         lines = lines_of(t)
-        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 2 + 요청 줄 4 + 이미 지급 1 + 이미 지급된 원가 줄 1: 원본 8 · CSV 8 → 일치",
-                      lines)
-        self.assertIn("지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
-                      lines)
+        self.assertIn("지급요청 건수: 승인·대기 8 + 상태 확인 필요 1 = 원가 줄에 표시 2 + 요청 줄 5 + 이미 지급 1 + 이미 지급된 원가 줄 1: "
+                      "원본 9 · CSV 9 → 일치", lines)
+        self.assertIn("지급요청 금액 (금액 있는 승인·대기·상태 확인 필요 8건) = 원가 줄 표시 + 요청 줄 + 이미 지급: "
+                      "원본 266,364,000 · CSV 266,364,000 → 일치", lines)
 
     def test_unknown_request_amount_with_an_invoice_gives_a_note_and_no_diff_row(self):
         inp = exec_inputs(FAKE_PL_JOURNAL)
@@ -700,12 +707,12 @@ class TestBuildExecsRequests(unittest.TestCase):
 
     def test_previous_plan_rows_are_carried_with_the_new_project_number(self):
         t = full_table()
-        carried = cell_rows(t)[15:]
+        carried = cell_rows(t)[16:]
         self.assertEqual([(r[0], r[1], r[3]) for r in carried],
                          [("26201", "케이터링", "집행계획미요청"), ("26201", "영상·중계", "집행계획미요청"),
                           ("26203", "현장 인력", "집행계획미요청"), ("P26207", "공연", "집행계획미요청")])
         self.assertEqual(carried[0][4:], ("55,000,000", "5,500,000", "2026-11-25", "추정", "계약서"))
-        self.assertEqual(t.extra["cost_portions"][15:], [None] * 4)
+        self.assertEqual(t.extra["cost_portions"][16:], [None] * 4)
         self.assertIn("이전 프로젝트집행.csv 줄 20건 옮기지 않음 (WEHAGO·인트라넷으로 다시 만듦)", t.notes)
         self.assertTrue([n for n in t.notes if "P26207" in n and "번호 그대로" in n], t.notes)
         unpaid = [n for n in t.notes if "아직 나가지 않은 돈" in n]
@@ -716,11 +723,11 @@ class TestBuildExecsRequests(unittest.TestCase):
     def test_without_the_project_list_the_linked_keys_and_request_codes_are_used(self):
         inp = exec_inputs(FAKE_PL_JOURNAL)
         t = mod("convert_projects").build_execs(inp.books, inp.costs, inp.requests, inp.match, prev_execs(), inp.cfg)
-        self.assertEqual([r[0] for r in cell_rows(t)[15:]], ["26201", "26201", "26203", "P26207"])
+        self.assertEqual([r[0] for r in cell_rows(t)[16:]], ["26201", "26201", "26203", "P26207"])
 
     def test_nothing_is_carried_when_there_is_no_previous_file_and_no_note_is_made_up(self):
         t = full_table(prev=[])
-        self.assertEqual(len(t.rows), 15)
+        self.assertEqual(len(t.rows), 16)
         self.assertFalse([n for n in t.notes if "이전 프로젝트집행.csv" in n])
 
     def test_second_run_on_its_own_output_gives_the_same_rows(self):
@@ -752,13 +759,13 @@ class TestBuildExecsNoDouble(unittest.TestCase):
         tmp, input_dir, d = self._written()
         R = mod("calc").compute(d, "weekly", dt.date(2026, 11, 2))
         events = [e for e in R["events"] if e["source"] == "프로젝트집행"]
-        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5108"):
+        # 5107 (사장님승인 '반려' = 상태 확인 필요)도 한 번 들어간다 (02-REVIEW CR-03 / D-52, 예전: 들어가지 않음)
+        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5107", "5108"):
             named = [e for e in events if re.search(r"지급요청 %s(?!\d)" % number, e["basis"] or "")]
             self.assertEqual(len(named), 1, number)
         five = [e for e in events if "지급요청 5103" in (e["basis"] or "")]
         self.assertEqual(sum(e["amount"] for e in five), 165000000)
-        for number in ("5107", "5109"):
-            self.assertFalse([e for e in events if "지급요청 %s" % number in (e["basis"] or "")])
+        self.assertFalse([e for e in events if "지급요청 5109" in (e["basis"] or "")])
 
     def test_approval_screen_replaces_the_rows_that_name_a_scheduled_request_and_schedules_none_twice(self):
         approval, snapshot = mod("approval"), mod("snapshot")
