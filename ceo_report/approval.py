@@ -345,15 +345,16 @@ def _xchk(books, match):
             "projects_without_cost": 0}
 
 
-def _xchk_full(books, match, req_all, projects, wehago, approved_paid=()):
+def _xchk_full(books, match, req_all, projects, wehago, approved_paid=(), links=None):
     """_xchk + 거래처 미지급금(D-33), 프로젝트 (도) 원가(D-34), 프로젝트 미연결 원가. 장부가 ok 가 아니면 채우지 않는다.
 
     approved_paid: 일정이 잔액에 반영된 것으로 본 승인 완료 요청(A-3). 거래처 패널도 같은 기준으로 뺀다 (WR-04).
+    links: linking.link_costs 결과 (D-47). None 이면 01.1 처럼 적요 [코드]만 본다.
     """
     x = _xchk(books, match)
     if books.state == "ok":
         x["vendors"] = wehago.vendor_payables(books, req_all, match, settled=[r["id"] for r in approved_paid])
-        pc = wehago.project_costs(books, [p["code"] for p in projects])
+        pc = wehago.project_costs(books, [p["code"] for p in projects], links=links)
         x["projects"] = _project_cost_rows(pc, projects)
         x["projects_without_cost"] = len(projects) - len(x["projects"])
         x["unlinked"] = pc["unlinked"]
@@ -365,10 +366,40 @@ def _masked(rows):
     return [dict((k, mask_rrn(v) if isinstance(v, str) else v) for k, v in row.items()) for row in rows]
 
 
-def build(d, snap, asof, now, wehago_dir=None):
+def _link_notes(notes, issues):
+    """프로젝트연결.csv 읽기 알림을 화면의 '입력 자료 확인 필요'에 옮긴다 ('없음 (수동 지정 0건)'은 빈 파일과 같으므로 뺀다)."""
+    for note in notes:
+        if note.endswith("없음 (수동 지정 0건)"):
+            continue
+        rest = note[len("프로젝트연결.csv"):].strip()
+        m = re.match(r"^(\d+)번째 줄: (.*)$", rest)
+        issues.add("프로젝트연결.csv", m.group(1) if m else "-", m.group(2) if m else rest)
+
+
+def _link_costs(books, req_all, snap, input_dir, issues):
+    """D-47: 월간 보고(변환.py)와 같은 linking.link_costs. 입력 폴더가 있으면 수동 지정(프로젝트연결.csv)과 설정.csv 변환_* 네 값을
+    변환.py 와 같은 읽기(linking.read_links, convert.read_config)로 쓴다. 입력 폴더가 없으면 수동 지정 없이 linking 의 기본값이다.
+    (linking·convert 는 이 모듈을 가져오므로 순환을 피해 함수 안에서 불러온다.)
+    """
+    from . import linking
+    overrides, settings = {}, {}
+    if input_dir:
+        from . import convert
+        overrides, notes = linking.read_links(input_dir)
+        _link_notes(notes, issues)
+        cfg, cfg_notes = convert.read_config(input_dir)
+        for note in cfg_notes:
+            if note.startswith("설정 "):   # '설정.csv 없음 / 읽지 못함'은 화면이 따로 알린다 (01.1 건수를 바꾸지 않음)
+                issues.add("설정.csv", "-", note[len("설정 "):])
+        settings = dict((k, cfg[k]) for k in ("link_days", "direct_prefixes", "direct_mark", "vat_codes"))
+    return linking.link_costs(books, req_all, linking.projects_of(snap), overrides, **settings)
+
+
+def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
     """승인 검토 화면의 모든 숫자를 한 번에 만든다. d(Data)는 바꾸지 않는다.
 
     wehago_dir: WEHAGO 엑셀 폴더. None 이면 장부 없음('자료 없음')이고 일정은 인트라넷 기준이다 (D-35).
+    input_dir: 입력 폴더. 있으면 프로젝트 원가의 연결(D-38)에 수동 지정과 설정.csv 변환_* 값을 쓴다 (D-47).
     """
     from . import wehago  # wehago 가 이 모듈의 함수를 가져오므로 순환을 피해 안에서 불러온다
     R = compute(d, "weekly", asof)
@@ -550,6 +581,8 @@ def build(d, snap, asof, now, wehago_dir=None):
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests, "no_calc": no_calc}
     projects, unrequested, unlinked, over_requested = _projects(_masked(snap.projects), req_all)
+    # D-47: 프로젝트 (도) 원가는 월간 보고와 같은 D-38 연결로 (수동 → [코드] → 자동 → 미연결). 장부가 ok 가 아니면 연결하지 않는다 (A-4)
+    links = _link_costs(books, req_all, snap, input_dir, issues) if books.state == "ok" else None
     lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
              "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,
              "past": past, "beyond": beyond, "beyond_requests": beyond_requests,
@@ -566,7 +599,7 @@ def build(d, snap, asof, now, wehago_dir=None):
             "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
             "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
             "already_paid": already_paid, "paid_after_balance": paid_after, "in_missing": in_missing, "no_in": no_in,
-            "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid),
+            "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid, links),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,
                             _account_notes(accounts, cutoff, newest, stale_in), number_kept),

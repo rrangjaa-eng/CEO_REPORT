@@ -159,7 +159,7 @@ def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_
         wehago_dir = os.path.join(os.path.dirname(os.path.abspath(snap_path)), "위하고")
     d = load(input_dir)
     snap = read_snapshot(snap_path)
-    A = build(d, snap, asof, now, wehago_dir)
+    A = build(d, snap, asof, now, wehago_dir, input_dir=input_dir)
     page = render_approval(A, collected_now)
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.join(out_dir, "승인검토_%s" % dt.datetime.now().strftime("%Y%m%d_%H%M"))

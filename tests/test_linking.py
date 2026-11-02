@@ -753,10 +753,11 @@ class TestLinkingScope(unittest.TestCase):
         except OSError:
             self.skipTest("git 없음")
 
-    def test_approval_calc_data_unchanged_and_no_02_02_commit_touches_wehago(self):
+    def test_calc_data_unchanged_and_no_02_02_commit_touches_wehago(self):
         if self._git("rev-parse", "--verify", "-q", "cbc5497^{commit}").returncode != 0:
             self.skipTest("cbc5497 없음")
-        diff = self._git("diff", "--quiet", "cbc5497", "--", "ceo_report/approval.py", "ceo_report/calc.py", "ceo_report/data.py")
+        # approval.py 는 계획 02-08(D-47: 승인 화면도 D-38 연결)이 일부러 바꾼다: 02-02 때의 "approval.py 그대로" 확인에서 뺀다
+        diff = self._git("diff", "--quiet", "cbc5497", "--", "ceo_report/calc.py", "ceo_report/data.py")
         self.assertEqual(diff.returncode, 0)
         log = self._git("log", "--format=%s", "cbc5497..HEAD", "--", "ceo_report/wehago.py").stdout
         self.assertNotIn("02-02", log)

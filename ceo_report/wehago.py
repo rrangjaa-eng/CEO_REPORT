@@ -836,11 +836,31 @@ def vendor_payables(books, requests, match, settled=()):
 
 
 # ───────────── 프로젝트 (도) 원가 (D-34) ─────────────
-def project_costs(books, project_keys):
-    """(도) 원가(계정과목에 '(도)', 계정 Code 6xxxx)의 차변−대변을 적요 [코드]로 프로젝트에 잇는다 (W-10)."""
+def _link_items(links):
+    """linking.link_costs 결과의 줄 -> 승인 화면 모양의 항목 (date, vendor, memo, amount + basis, label, request)."""
+    return [(ln["project"], {"date": ln["date"], "vendor": ln["vendor"], "memo": ln["memo"], "amount": ln["amount"],
+                             "basis": ln["basis"], "label": ln["label"], "request": ln["request"]})
+            for ln in links["lines"]]
+
+
+def project_costs(books, project_keys, links=None):
+    """(도) 원가(계정과목에 '(도)', 계정 Code 6xxxx)의 차변−대변을 적요 [코드]로 프로젝트에 잇는다 (W-10).
+
+    links 가 있으면(linking.link_costs 결과, D-47) 연결 규칙은 거기서 정해진 것을 그대로 쓴다: 근거가 '미연결'이 아닌 줄은
+    프로젝트 목록에 없는 번호라도 그 프로젝트 아래에, '미연결' 줄은 unlinked 에 둔다. 항목은 date·vendor·memo·amount 에
+    basis·label·request 가 더해진다. 이 모듈은 linking 을 가져올 수 없다(linking 이 이 모듈을 가져옴). links=None 이면 01.1 의 코드만 보는 경로다.
+    """
     out = {"by_code": {}, "unlinked": {"count": 0, "sum": 0, "unknown": 0, "lines": []}}
     if books.state != "ok":
         return out
+    if links is not None:
+        linked, loose = {}, []
+        for project, item in _link_items(links):
+            if project is None:
+                loose.append(item)
+            else:
+                linked.setdefault(project, []).append(item)
+        return _cost_result(out, linked, loose)
     keys = set(str(k) for k in project_keys)
     linked, loose = {}, []
     for line in books.journal:
@@ -852,6 +872,10 @@ def project_costs(books, project_keys):
             linked.setdefault(line["code"], []).append(item)
         else:
             loose.append(item)
+    return _cost_result(out, linked, loose)
+
+
+def _cost_result(out, linked, loose):
     for code, lines in linked.items():
         total, unknown = ssum_or_none(i["amount"] for i in lines)
         out["by_code"][code] = {"cost": total, "lines": lines, "unknown": unknown}
