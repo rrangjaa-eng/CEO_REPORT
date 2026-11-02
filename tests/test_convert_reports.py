@@ -12,6 +12,7 @@ import datetime as dt
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,12 +26,14 @@ for _p in (ROOT, HERE):
 from ceo_report import approval, calc, data, snapshot  # noqa: E402
 from ceo_report.convert_xchk import load_xchk  # noqa: E402
 from ceo_report.render import render  # noqa: E402
-from test_approval import edit_csv  # noqa: E402
+from test_approval import edit_csv, load_approval_cli, set_setting  # noqa: E402
+from test_approval_wehago import body_rows, cells  # noqa: E402
 from test_convert import ASOF, NOW, cli_argv, run_convert  # noqa: E402
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
-from test_convert_e2e import full_company  # noqa: E402
+from test_convert_e2e import full_company, run_core  # noqa: E402
+from test_linking import write_links_csv  # noqa: E402
 from test_monthly_xchk import (BASE_ASOF, STAMP, WEEKLY_ASOF, editions_ok, plain, run_cli,  # noqa: E402
-                               section8, summary_rows, weekly_baseline)
+                               section8, summary_rows, table_cells, weekly_baseline)
 from test_report import check_editions  # noqa: E402
 
 REQUEST_NO = re.compile(r"지급요청 (\d+)(?!\d)")
@@ -201,6 +204,148 @@ class TestConvertedNoDouble(unittest.TestCase):
         self.assertEqual([r["번호"] for r in self.A["amount_unknown"]], ["5106"])
         self.assertEqual([request_numbers(ev["basis"]) for ev in self.A["amount_unknown_events"]], [["5106"]])
         self.assertEqual([r["번호"] for r in self.B["amount_unknown"]], ["5106"])
+
+
+# ───────────── Task 2: 승인 화면 = 월간 8번 (변환 결과 폴더에서, D-47) ─────────────
+def screen_for(test, tmp, input_dir, collect, wehago_dir):
+    """승인 화면을 변환 결과 폴더로 만든다 -> (page, A)."""
+    out = os.path.join(tmp, "승인출력")
+    path, A = load_approval_cli().make_screen(input_dir, out, snapshot.latest_snapshot(collect), ASOF, NOW, False,
+                                              wehago_dir=wehago_dir)
+    with open(path, encoding="utf-8") as f:
+        return f.read(), A
+
+
+def monthly_projects(page):
+    """월간 8번 프로젝트 표 -> {번호: 줄}"""
+    return dict((r["번호"], r) for r in table_cells(page, "xchk-projects"))
+
+
+def screen_projects(page):
+    """승인 화면 프로젝트 표 -> {코드: [코드, 이름, 실행가, 요청 누계, WEHAGO 원가, ...]}"""
+    return dict((cells(r)[0], cells(r)) for r in body_rows(page, "xchk-projects"))
+
+
+def monthly_unlinked(page):
+    """월간 8번 미연결 원가 -> (건수, 금액 글자). 상세 표의 합계 줄과 요약 줄이 같아야 한다."""
+    lines = table_cells(page, "xchk-unlinked")
+    total = [r for r in lines if r["전표"] == "합계"][0]["금액"]
+    return len(lines) - 1, total
+
+
+def head(text):
+    """'판단 불가 (미확인 1건)' 처럼 뒤에 설명이 붙은 글자는 앞 낱말만 비교한다."""
+    return "판단 불가" if text.startswith("판단 불가") else text
+
+
+def assert_equal_surfaces(test, month_page, screen_page, A, label):
+    monthly, screen = monthly_projects(month_page), screen_projects(screen_page)
+    test.assertTrue(screen, label)
+    for code, row in screen.items():
+        test.assertIn(code, monthly, "%s %s: 월간 표에 없음" % (label, code))
+        test.assertEqual(row[4], head(monthly[code]["WEHAGO 원가"]), "%s %s WEHAGO (도) 원가" % (label, code))
+        test.assertEqual(row[3], head(monthly[code]["요청 누계"]), "%s %s 요청 누계" % (label, code))
+    for code, row in monthly.items():
+        if code not in screen:   # 원가 줄이 없는 프로젝트는 승인 표에 없다 (01.1 규칙)
+            test.assertEqual(row["원가 줄"], "0줄", "%s %s" % (label, code))
+    count, total = monthly_unlinked(month_page)
+    u = A["xchk"]["unlinked"]
+    test.assertEqual(count, u["count"], label)
+    test.assertEqual(total, "{:,}".format(u["sum"]), label)
+    test.assertEqual(summary_rows(month_page)["프로젝트 미연결 원가"], "%d줄 %s" % (count, total), label)
+    test.assertIn("프로젝트 미연결 원가 %d건 %s" % (u["count"], total), plain(screen_page), label)
+
+
+class TestConvertedApprovalEqual(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.holder = Holder()
+        cls.tmp, cls.input_dir, cls.collect, cls.wehago_dir = converted_company(cls.holder)
+        cls.dflt = cls.reports(cls.input_dir)
+        # 사람이 프로젝트연결.csv 한 줄과 설정.csv 한 값을 고친 뒤 다시 변환한다
+        write_links_csv(cls.input_dir, [["2026-10-29", "22", "1", "26221"]])
+        edit_csv(cls.input_dir, "설정.csv", lambda rows: set_setting(rows, "변환_자동연결일수", "200"))
+        res = run_core(cls.input_dir, cls.collect, cls.wehago_dir, "20261102_000001")
+        assert res.code == 0, res.lines
+        cls.linked = cls.reports(cls.input_dir)
+
+    @classmethod
+    def reports(cls, input_dir):
+        rc, out, pages, _ = run_cli(cls.holder, input_dir, "월간", BASE_ASOF)
+        assert rc == 0, out
+        screen_page, A = screen_for(cls.holder, cls.tmp, input_dir, cls.collect, cls.wehago_dir)
+        return pages, screen_page, A
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.holder.doCleanups()
+
+    def test_default_settings_per_project_cost_and_request_total_equal(self):
+        pages, screen_page, A = self.dflt
+        for mode in ("ceo", "mgmt"):
+            self.assertIn("258,400,000", plain(section8(pages[mode])))
+        assert_equal_surfaces(self, pages["mgmt"], screen_page, A, "default")
+
+    def test_default_known_numbers(self):
+        pages, screen_page, A = self.dflt
+        monthly, screen = monthly_projects(pages["mgmt"]), screen_projects(screen_page)
+        self.assertEqual(sorted(screen), ["26201", "26203", "26220", "26221"])
+        self.assertEqual(dict((k, v["WEHAGO 원가"]) for k, v in monthly.items()),
+                         {"26201": "50,000,000", "26220": "158,000,000", "26221": "5,400,000", "26203": "45,000,000"})
+        self.assertEqual(monthly_unlinked(pages["mgmt"]), (2, "1,100,000"))
+        self.assertEqual((A["xchk"]["unlinked"]["count"], A["xchk"]["unlinked"]["sum"]), (2, 1100000))
+
+    def test_an_unknown_request_total_reads_the_same_on_both_surfaces(self):
+        pages, screen_page, A = self.dflt
+        self.assertTrue(monthly_projects(pages["mgmt"])["26221"]["요청 누계"].startswith("판단 불가"))
+        self.assertEqual(screen_projects(screen_page)["26221"][3], "판단 불가")
+        self.assertIsNone([r for r in A["xchk"]["projects"] if r["code"] == "26221"][0]["requested"])
+
+    def test_manual_link_and_link_days_after_converting_again_equal_on_both_surfaces(self):
+        pages, screen_page, A = self.linked
+        assert_equal_surfaces(self, pages["mgmt"], screen_page, A, "manual + 200")
+
+    def test_the_manual_link_moves_the_cost_and_shrinks_the_unlinked_list_on_both_surfaces(self):
+        pages, screen_page, A = self.linked
+        self.assertEqual(monthly_projects(pages["mgmt"])["26221"]["WEHAGO 원가"], "6,200,000")   # 5,400,000 + 800,000
+        self.assertEqual(screen_projects(screen_page)["26221"][4], "6,200,000")
+        self.assertEqual(monthly_unlinked(pages["mgmt"]), (1, "300,000"))
+        self.assertEqual((A["xchk"]["unlinked"]["count"], A["xchk"]["unlinked"]["sum"]), (1, 300000))
+
+    def test_the_second_conversion_ends_with_zero_mismatches(self):
+        with open(os.path.join(self.input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+            self.assertEqual(f.read().splitlines()[-1], "대조 불일치 0건")
+
+    def test_the_total_project_cost_is_the_same_in_the_summary_and_on_the_screen(self):
+        for pages, screen_page, A in (self.dflt, self.linked):
+            total = sum(r["cost"] for r in A["xchk"]["projects"])
+            self.assertTrue(summary_rows(pages["ceo"])["프로젝트 (도)원가"].startswith("{:,} (".format(total)))
+
+
+# ───────────── Task 2: 회사 자료가 git 에 들어가지 않음 (D-45, T-02-31) ─────────────
+class TestConvertedIgnored(unittest.TestCase):
+    PATHS = ("입력/변환결과.txt", "입력/위하고대조.csv", "입력/이전/x.csv", "수집/위하고/전자세금계산서(매출)_20261031.xlsx")
+
+    def check_ignore(self, path):
+        try:
+            return subprocess.run(["git", "-C", ROOT, "check-ignore", "-q", path],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+        except OSError:
+            self.skipTest("git 없음")
+
+    def test_generated_and_collected_company_files_are_ignored(self):
+        for path in self.PATHS:
+            with self.subTest(path):
+                rc = self.check_ignore(path)
+                if rc not in (0, 1):
+                    self.skipTest("git 저장소 아님")
+                self.assertEqual(rc, 0, "%s 가 git 무시 목록에 없음" % path)
+
+    def test_the_blank_templates_are_not_ignored(self):
+        rc = self.check_ignore("입력양식/설정.csv")
+        if rc not in (0, 1):
+            self.skipTest("git 저장소 아님")
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":
