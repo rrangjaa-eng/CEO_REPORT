@@ -22,7 +22,9 @@ for _p in (ROOT, HERE):
 
 from test_approval import (SAMPLE, element_html, edit_csv, load_approval_cli, row_html, run_cli,  # noqa: E402
                            run_node, sample_copy, script_text, span_text, text_of, week_cell, write_fake_snapshot)
-from test_wehago import (FAKE_JOURNAL, FAKE_LEDGER, requests_all, serial, write_fake_books)  # noqa: E402
+from test_approval_cli import fake_site, run_cli as run_collect_cli, sweep  # noqa: E402
+from test_wehago import (EINVOICE_HEADER, FAKE_EINVOICE, FAKE_JOURNAL, FAKE_LEDGER, JOURNAL_HEADER, LEDGER_HEADER,  # noqa: E402
+                         _jl, _L, requests_all, serial, write_fake_books, write_xlsx)
 
 ASOF = dt.date(2026, 11, 2)
 NOW = dt.datetime(2026, 11, 2, 0, 0)
@@ -72,7 +74,7 @@ def cli_screen(test, books=True, prep=None, extra=(), input_dir=None, **book_kw)
     if books:
         write_fake_books(os.path.join(root, "위하고"), **book_kw)
     if prep:
-        prep(root)
+        prep(os.path.join(root, "위하고"))
     argv = ["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"]
     if input_dir:
         argv += ["--입력", input_dir]
@@ -318,6 +320,172 @@ class TestXchkPaidAfterBalance(unittest.TestCase):
     def test_summary_line_names_the_kept_payment(self):
         page, _ = self.run_probe("2026-10-29", dt.date(2026, 10, 30))
         self.assertIn("이미 지급 1건 49,500,000 (일정에 둠: 지급일이 잔액 기준일 이후)", T(page, "xchk-summary"))
+
+
+# ───────────── Task 2: 없음·경과·머리글 다름·읽기 실패 ─────────────
+NOT_OK_LABELS = {"자료 없음": "판단 불가(WEHAGO 자료 없음)", "경과": "판단 불가(WEHAGO 자료 경과)",
+                 "머리글 다름": "판단 불가(머리글 다름)", "읽기 실패": "판단 불가(WEHAGO 읽기 실패)"}
+
+
+def plain_data():
+    """위하고 폴더 없이 만든 화면의 계산 자료 (인트라넷만 쓴 일정)."""
+    tmp = tempfile.mkdtemp()
+    try:
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        A = mod("approval").build(mod("data").load(SAMPLE), mod("snapshot").read_snapshot(snap), ASOF, NOW)
+        return A["data"]
+    finally:
+        shutil.rmtree(tmp, True)
+
+
+class TestXchkFallback(unittest.TestCase):
+    def fallback(self, prep_books, state, label=None):
+        """prep_books(folder) 로 이상한 장부를 만들고 CLI 와 make_screen 으로 화면을 만든다."""
+        tmp = new_tmp(self)
+        root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
+        write_fake_snapshot(root)
+        if prep_books:
+            prep_books(os.path.join(root, "위하고"))
+        rc, text = run_cli(["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"])
+        self.assertEqual(rc, 0)
+        page = read_only_html(out)
+        _, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "o2"), mod("snapshot").latest_snapshot(root),
+                                               ASOF, NOW, False)
+        self.assertEqual(A["xchk"]["state"], state)
+        self.assertTrue(T(page, "headline").startswith(HEAD_INTRANET), T(page, "headline"))
+        want = label or NOT_OK_LABELS[state]
+        self.assertEqual(len(re.findall(r'<td class="x-status">', page)), 9)
+        for rq in A["requests_all"]:
+            self.assertEqual(td(table_row(page, "xchk", rq["번호"]), "x-status"), want)
+            self.assertEqual(td(req_row(page, rq["번호"]), "r-xchk"), want)
+        self.assertEqual(re.findall(r'<tr[^>]*data-no=', element_html(page, "already-paid")), [])
+        self.assertEqual(A["already_paid"], [])
+        self.assertEqual(A["data"], plain_data())  # 일정 숫자도 금액도 인트라넷만 쓴 것과 같다
+        self.assertNotIn("165,000,000", page)  # WEHAGO 금액이 어디에도 없다
+        self.assertEqual(sum(1 for r in A["requests_all"] if r["amount_source"] != "인트라넷 요청"), 0)
+        return page, A, text
+
+    def test_no_folder(self):
+        page, A, text = self.fallback(None, "자료 없음")
+        self.assertEqual(T(page, "xchk-summary"), NO_BOOKS)
+        self.assertIn("폴더를 찾을 수 없음", T(page, "book-dates"))
+        self.assertIn(NO_BOOKS, text)
+        self.assertNotIn('id="xchk-stop"', page)
+        self.assertTrue(T(page, "book-dates").startswith("장부 기준일: 알 수 없음"))
+
+    def test_stale_files(self):
+        page, A, text = self.fallback(lambda f: write_fake_books(f, stamp="20261025"), "경과")
+        s = T(page, "xchk-summary")
+        self.assertTrue(s.startswith("WEHAGO 대조: 판단 불가(WEHAGO 자료 경과: "), s)
+        self.assertIn("2026-10-25", s)
+        self.assertTrue(s.endswith(" · 일정은 인트라넷 기준"), s)
+        self.assertIn("2026-10-25", T(page, "book-dates"))
+        self.assertIn("자료 경과", text)
+
+    def test_header_mismatch_stops_the_cross_check(self):
+        def prep(folder):
+            write_fake_books(folder)
+            header = ["메모" if h == "적요" else h for h in JOURNAL_HEADER]
+            write_xlsx(os.path.join(folder, "분개장_20261031.xlsx"), [header] + [list(r) for r in FAKE_JOURNAL])
+        page, A, text = self.fallback(prep, "머리글 다름", "판단 불가(머리글 다름)")
+        self.assertTrue(after_h1(page).startswith('<div id="xchk-stop"'), after_h1(page))
+        self.assertLess(page.index('id="xchk-stop"'), page.index('id="headline"'))
+        stop = T(page, "xchk-stop")
+        self.assertIn("WEHAGO 대조 멈춤: 분개장_20261031.xlsx 머리글이 예상과 다름 — 없음: 적요 · 추가: 메모", stop)
+        self.assertIn("대조 상태는 모두 판단 불가(머리글 다름) · 일정은 인트라넷 기준", stop)
+        self.assertEqual(text.splitlines()[3], "WEHAGO 대조 멈춤: 분개장_20261031.xlsx 머리글이 예상과 다름 — 없음: 적요 · 추가: 메모")
+
+    def test_missing_ledger_column_names_the_file(self):
+        def prep(folder):
+            write_fake_books(folder)
+            header = ["품목" if h == "품명" else h for h in LEDGER_HEADER]
+            write_xlsx(os.path.join(folder, "매입매출장_20261031.xlsx"), [header] + [list(r) for r in FAKE_LEDGER])
+        page, A, text = self.fallback(prep, "머리글 다름", "판단 불가(머리글 다름)")
+        self.assertIn("매입매출장_20261031.xlsx 머리글이 예상과 다름 — 없음: 품명 · 추가: 품목", T(page, "xchk-stop"))
+
+    def test_unreadable_journal(self):
+        def prep(folder):
+            write_fake_books(folder)
+            with open(os.path.join(folder, "분개장_20261031.xlsx"), "wb") as f:
+                f.write(bytes(range(256)) * 8)
+        page, A, text = self.fallback(prep, "읽기 실패")
+        self.assertTrue(after_h1(page).startswith('<div id="xchk-stop"'))
+        self.assertIn("읽기 실패", T(page, "xchk-stop"))
+        self.assertIn("읽기 실패", text)
+
+
+class TestXchkExtraColumns(unittest.TestCase):
+    """D-35c: 추가 열만으로는 멈추지 않는다. 기준일 이후 전표는 세어 보인다."""
+
+    def test_extra_ledger_column_is_ignored_and_named(self):
+        def prep(folder):
+            write_fake_books(folder)
+            rows = [LEDGER_HEADER + ["비고"]] + [list(r) + [""] for r in FAKE_LEDGER]
+            write_xlsx(os.path.join(folder, "매입매출장_20261031.xlsx"), rows)
+        rc, text, page, _, _ = cli_screen(self, books=False, prep=prep)
+        self.assertEqual(rc, 0)
+        self.assertTrue(T(page, "headline").startswith(HEAD_ALL), T(page, "headline"))
+        self.assertNotIn('id="xchk-stop"', page)
+        self.assertEqual(T(page, "xchk-summary"), SUMMARY_OK)
+        book = T(page, "book-dates")
+        self.assertTrue(book.startswith(BOOK_DATES), book)
+        self.assertIn("매입매출장 추가 열 무시: 비고", book)
+        self.assertNotIn("전표 0건", book)
+
+    def test_rows_after_the_book_date_are_counted(self):
+        journal = list(FAKE_JOURNAL) + [_jl(dt.date(2026, 11, 15), 30, "81900", "임차료", 1000, None, "가상임대", "11월 임차료"),
+                                        _jl(dt.date(2026, 11, 15), 30, "26200", "미지급비용", None, 1000, "가상임대", "11월 임차료")]
+        rc, text, page, _, _ = cli_screen(self, journal=journal)
+        self.assertEqual(rc, 0)
+        self.assertIn("분개장 장부 기준일 이후 전표 2건", T(page, "book-dates"))
+        self.assertTrue(T(page, "book-dates").startswith(BOOK_DATES.replace("마지막 전표 2026-10-30", "마지막 전표 2026-11-15")),
+                        T(page, "book-dates"))
+        self.assertTrue(T(page, "xchk-summary").startswith("WEHAGO 대조 (장부 기준일 2026-10-31)"))
+        self.assertIn("이미 지급 1건 49,500,000", T(page, "xchk-summary"))
+
+    def test_payment_after_the_book_date_is_not_a_paid_request(self):
+        rows = copy.deepcopy(FAKE_JOURNAL)
+        for r in rows:
+            if r[1] == 20:
+                r[0] = serial(dt.date(2026, 11, 1))  # 장부 기준일(2026-10-31) 다음 날 출금
+        rc, text, page, _, _ = cli_screen(self, journal=rows)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("이미 지급 1건", T(page, "xchk-summary"))
+        self.assertIsNone(table_row(page, "already-paid", "5109"))
+        self.assertIsNotNone(table_row(page, "approved", "5109"))
+
+
+class TestXchkAmountRule(unittest.TestCase):
+    """D-30a: 금액 차이 요청은 승인 완료여도 계산서 합계로 고정 지급."""
+
+    def test_approved_request_uses_the_invoice_total(self):
+        ledger = list(FAKE_LEDGER)
+        ledger[6:8] = [_L("매입", "2026-10-25", 7, "(주) 가상버스", "000-00-00006", "[26221] 가상 워크숍 버스", 3300000, 330000)]
+        rc, text, page, _, _ = cli_screen(self, ledger=ledger)
+        self.assertEqual(rc, 0)
+        row = table_row(page, "approved", "5105")
+        self.assertIn("3,630,000", td(row, "a-amt"))
+        self.assertIn("인트라넷 요청 3,300,000 · 차액 +330,000", td(row, "a-amt"))
+        self.assertEqual(week_cell(page, 1, "w-out"), "93,030,000")
+        self.assertTrue(T(page, "headline").startswith("전부 승인 시 최저 잔액 142.9 백만원"), T(page, "headline"))
+
+
+class TestXchkCollect(unittest.TestCase):
+    """실행_승인검토.bat 경로(--수집 함): 장부가 있으면 대조가 같이 나오고 ID·비밀번호는 어디에도 남지 않는다 (APPR-06)."""
+
+    def test_collection_run_carries_the_cross_check(self):
+        tmp = new_tmp(self)
+        root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
+        write_fake_books(os.path.join(root, "위하고"))
+        argv = ["--수집", "함", "--기준일", "2026-11-02", "--수집폴더", root, "--출력", out]
+        rc, text, err, fake, mocks = run_collect_cli(self, argv)
+        self.assertEqual(rc, 0, text)
+        page = read_only_html(out)
+        self.assertIn("143.2", T(page, "headline"))
+        self.assertIn("WEHAGO 대조 (장부 기준일 2026-10-31)", T(page, "xchk-summary"))
+        self.assertIn("WEHAGO 대조: 계산서 있음 3건", text)
+        self.assertTrue(mocks["browser"].called)
+        sweep(self, tmp, [text, err, page], fake)
 
 
 if __name__ == "__main__":
