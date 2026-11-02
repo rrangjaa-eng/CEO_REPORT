@@ -267,7 +267,7 @@ class TestXchkFacts(unittest.TestCase):
             if not seen or seen[-1] != r["구분"]:
                 seen.append(r["구분"])
         self.assertEqual(seen, ["기준", "요청상태", "프로젝트원가", "프로젝트밖요청", "미연결원가", "미연결원가줄", "거래처미지급",
-                                "거래처미지급요약", "매출계약", "매출미연결", "매출미연결줄"])
+                                "거래처미지급요약", "매출계약", "매출미연결", "매출미연결줄", "보통예금", "보통예금월"])
 
     def test_request_total_per_project(self):
         want = {"26201": ("44264000", "2", ""), "26220": ("166000000", "2", ""),
@@ -552,7 +552,8 @@ class TestXchkCash(unittest.TestCase):
         self.assertEqual([r["대상"] for r in picked(t, "보통예금월", item="WEHAGO 증감")], ["2026-09", "2026-10"])
         self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["금액"], "-12000000")
         self.assertEqual(month(self, t, "2026-10", "WEHAGO 증감")["금액"], "57000000")
-        self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["건수"], "3")
+        self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["건수"], "2")
+        self.assertEqual(month(self, t, "2026-10", "WEHAGO 증감")["건수"], "7")
 
     def test_missing_bank_files_read_blank_with_the_file_name(self):
         _, t = cash_table()
@@ -639,9 +640,9 @@ class TestXchkCash(unittest.TestCase):
     def test_a_cash_line_without_amount_blanks_totals_and_the_check_is_undecided(self):
         unknown = _jl(dt.date(2026, 10, 30), 82, "10300", "보통예금", None, None, "가상은행", "금액 미정")
         _, t = cash_table(journal=OPENING_CASH + [unknown])
-        self.assertEqual(cells(cash(self, t, "WEHAGO 증감 (전체 기간)")), ("", "4", "금액 미확인 1줄"))
+        self.assertEqual(cells(cash(self, t, "WEHAGO 증감 (전체 기간)")), ("", "10", "금액 미확인 1줄"))
         self.assertEqual(cash(self, t, "WEHAGO 잔액 (장부 기준일)")["금액"], "")
-        self.assertEqual(cells(month(self, t, "2026-10", "WEHAGO 증감")), ("", "4", "금액 미확인 1줄"))
+        self.assertEqual(cells(month(self, t, "2026-10", "WEHAGO 증감")), ("", "8", "금액 미확인 1줄"))
         self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["금액"], "-12000000")
         self.assertIn("현금계정 증감 = 보통예금월 WEHAGO 증감 합계: 원본 미확인 · CSV 미확인 → 판단 불가", check_lines(t))
 

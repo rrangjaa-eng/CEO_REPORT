@@ -104,8 +104,9 @@ def _cost_rows(projects, costs, requests):
         name = p["name"] if p is not None else NOT_LISTED
         rows.append(_row("프로젝트원가", key, name, "WEHAGO 원가", total, len(mine), _unknown_note(unknown, "줄")))
         if p is not None:
-            rows.append(_row("프로젝트원가", key, name, "실행가", p["budget"], None,
-                             "" if p["budget"] is not None else "실행가 빈칸"))
+            notes = (["프로젝트번호 겹침 (첫 줄의 실행가)"] if p.get("dup") else []) + (
+                ["실행가 빈칸"] if p["budget"] is None else [])
+            rows.append(_row("프로젝트원가", key, name, "실행가", p["budget"], None, " · ".join(notes)))
             asked = [r for r in known if r["code"] == key]
             total, unknown = _known_sum([r["amount"] for r in asked])
             rows.append(_row("프로젝트원가", key, name, "요청 누계", total, len(asked), _unknown_note(unknown, "건")))
@@ -175,6 +176,139 @@ def _status_note(requests):
     return ["상태 확인 필요 지급요청 %d건은 요청 누계·프로젝트밖요청에 넣지 않음 (승인 화면과 같은 규칙): %s" % (len(bad), listing)]
 
 
+# ───────────── 보통예금 (D-48) ─────────────
+OPENING_WORDS = ("전기이월", "기초잔액")
+NO_OPENING = "판단 불가 — 기초 잔액 줄 없음"
+CASH_OPENING = "기초 잔액"
+CASH_CHANGE = "WEHAGO 증감 (전체 기간)"
+CASH_BALANCE = "WEHAGO 잔액 (장부 기준일)"
+CASH_BANK = "계좌잔액.csv 잔액 합계"
+MONTH_CHANGE = "WEHAGO 증감"
+MONTH_BANK = "입출금내역 증감 (입금−출금)"
+
+
+def _squash(text):
+    return re.sub(r"\s+", "", text or "")
+
+
+def _line_net(line):
+    d, c = line.get("debit"), line.get("credit")
+    return None if d is None and c is None else (d or 0) - (c or 0)
+
+
+def _bank_balance(rows):
+    """(합계, 계좌 수, 비고): 계좌명마다 기준일이 가장 늦은 줄의 잔액을 더한다. 모르는 것이 하나라도 있으면 합계는 None."""
+    if rows is None:
+        return None, None, "계좌잔액.csv 없음"
+    if not rows:
+        return None, None, "계좌잔액.csv 줄 없음"
+    latest, undated = {}, 0
+    for r in rows:
+        day = util.date(r.get("기준일"))
+        if day is None:
+            undated += 1
+            continue
+        account, balance = (r.get("계좌명") or "").strip(), num(r.get("잔액"))
+        cur = latest.get(account)
+        if cur is None or day > cur[0]:
+            latest[account] = (day, [balance])
+        elif day == cur[0]:
+            cur[1].append(balance)
+    unknown = sum(1 for _, balances in latest.values() if None in balances or len(set(balances)) > 1)
+    parts = (["기준일 확인 불가 %d건" % undated] if undated else []) + (["금액 미확인 %d건" % unknown] if unknown else [])
+    if parts:
+        return None, len(latest), " · ".join(parts)
+    total = sum(balances[0] for _, balances in latest.values())
+    return total, len(latest), "기준일 " + ", ".join(sorted(set(d.isoformat() for d, _ in latest.values())))
+
+
+def _tx_months(rows):
+    """입출금내역 줄 -> ({연월: 합계·건수·모르는 줄}, 날짜를 읽지 못한 줄 수). 출금은 부호와 관계없이 나간 돈이다."""
+    months, undated = {}, 0
+    for r in rows:
+        day = util.date(r.get("일자"))
+        if day is None:
+            undated += 1
+            continue
+        e = months.setdefault(day.strftime("%Y-%m"), {"sum": 0, "count": 0, "amount_unknown": 0, "io_unknown": 0})
+        e["count"] += 1
+        io, amount = (r.get("입출금") or "").strip(), num(r.get("금액"))
+        if io not in ("입금", "출금"):
+            e["io_unknown"] += 1
+        elif amount is None:
+            e["amount_unknown"] += 1
+        else:
+            e["sum"] += amount if io == "입금" else -abs(amount)
+    return months, undated
+
+
+def _bank_month_row(ym, ym_rows, undated):
+    """보통예금월 입출금내역 줄 하나. ym_rows: None(파일 없음) 또는 _tx_months 결과."""
+    if ym_rows is None:
+        return _row("보통예금월", ym, "", MONTH_BANK, None, None, "입출금내역.csv 없음")
+    if undated:
+        return _row("보통예금월", ym, "", MONTH_BANK, None, None, "일자 확인 불가 %d건" % undated)
+    e = ym_rows.get(ym)
+    if e is None:
+        return _row("보통예금월", ym, "", MONTH_BANK, None, None, "입출금내역 없음")
+    parts = (["금액 미확인 %d건" % e["amount_unknown"]] if e["amount_unknown"] else []) + (
+        ["입출금 구분 확인 불가 %d건" % e["io_unknown"]] if e["io_unknown"] else [])
+    return _row("보통예금월", ym, "", MONTH_BANK, None if parts else e["sum"], e["count"], " · ".join(parts))
+
+
+def _cash_rows(books, cfg, bank):
+    """(줄, 알림, 원본 증감 합계). 현금 줄 = 설정 현금계정. 전기이월·기초잔액 줄은 기초 잔액이고 어느 증감에도 넣지 않는다 (X-3)."""
+    codes = set(_squash(c) for c in cfg["cash_codes"])
+    cash = [ln for ln in books.journal if _squash(ln["account_code"]) in codes]
+    opening = [ln for ln in cash if any(w in _squash(ln["memo"]) for w in OPENING_WORDS)]
+    moves = [ln for ln in cash if not any(w in _squash(ln["memo"]) for w in OPENING_WORDS)]
+    notes = []
+    open_total, open_unknown = _known_sum([_line_net(ln) for ln in opening])
+    move_total, move_unknown = _known_sum([_line_net(ln) for ln in moves])
+    ref = books.book_date
+    undated = [ln for ln in moves if ln["date"] is None]
+    later = [ln for ln in moves if ln["date"] is not None and ref is not None and ln["date"] > ref]
+    upto = [ln for ln in moves if ln["date"] is not None and (ref is None or ln["date"] <= ref)]
+    upto_total, upto_unknown = _known_sum([_line_net(ln) for ln in upto])
+    if not opening:
+        balance, balance_note = None, NO_OPENING
+        if moves:
+            notes.append("보통예금 기초 잔액(전기이월·기초잔액) 줄이 없어 장부 잔액은 판단 불가")
+    elif open_unknown:
+        balance, balance_note = None, "기초 잔액 " + _unknown_note(open_unknown, "줄")
+    elif undated:
+        balance, balance_note = None, "현금 줄 날짜 없음 %d줄 — 장부 기준일 이전인지 알 수 없음" % len(undated)
+    elif upto_unknown:
+        balance, balance_note = None, _unknown_note(upto_unknown, "줄")
+    else:
+        balance = open_total + upto_total
+        balance_note = "장부 기준일 이후 %d줄 제외" % len(later) if later else ""
+    amount, accounts, bank_note = _bank_balance(bank.get("balances"))
+    rows = [_row("보통예금", "", "", CASH_OPENING, open_total if opening else None, len(opening),
+                 NO_OPENING if not opening else _unknown_note(open_unknown, "줄")),
+            _row("보통예금", "", "", CASH_CHANGE, move_total, len(moves), _unknown_note(move_unknown, "줄")),
+            _row("보통예금", "", "", CASH_BALANCE, balance, None, balance_note),
+            _row("보통예금", "", "", CASH_BANK, amount, accounts, bank_note)]
+    if bank.get("balances") is not None:
+        notes.append("계좌잔액.csv는 현금계정 밖 계좌도 담을 수 있음")
+    tx = bank.get("transactions")
+    tx_months, tx_undated = (None, 0) if tx is None else _tx_months(tx)
+    by_month = {}
+    for ln in moves:
+        if ln["date"] is not None:
+            by_month.setdefault(ln["date"].strftime("%Y-%m"), []).append(ln)
+    for ym in sorted(by_month):
+        lines = by_month[ym]
+        total, unknown = _known_sum([_line_net(ln) for ln in lines])
+        rows.append(_row("보통예금월", ym, "", MONTH_CHANGE, total, len(lines), _unknown_note(unknown, "줄")))
+        rows.append(_bank_month_row(ym, tx_months, tx_undated))
+    if tx_months:
+        only = sorted(set(tx_months) - set(by_month))
+        if only:
+            notes.append("입출금내역 %s 월은 분개장 현금 줄이 없어 보통예금월에 싣지 않음" % ", ".join(only))
+    return rows, notes, move_total
+
+
 def _source_total(books, cfg, kind):
     """장부 분개장에서 바로 구한 합계 (연결 결과를 거치지 않는다). 금액을 모르는 줄이 있으면 None."""
     return _known_sum([_net(line, kind) for line in books.journal if _classify(line, cfg) == kind])[0]
@@ -182,6 +316,7 @@ def _source_total(books, cfg, kind):
 
 def build_xchk(books, costs, revenue, projects, requests, match, project_rows, meta, cfg, bank):
     """위하고대조.csv 표. 입력은 바꾸지 않고 파일은 열지 않는다 (bank: {"balances": 줄 또는 None, "transactions": 줄 또는 None})."""
+    bank = bank or {}
     if books.state != "ok":
         return Table(XCHK_FILE, XCHK_COLUMNS, [], written=False, reason="WEHAGO 장부를 쓸 수 없음")
     rows = _meta_rows(meta)
@@ -197,6 +332,8 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     rows.extend(_vendor_rows(books, requests, match))
     rows.extend(revenue_rows)
     rows.extend(unlinked_revenue)
+    cash_rows, cash_notes, move_total = _cash_rows(books, cfg, bank)
+    rows.extend(cash_rows)
 
     checks = []
     wehago_cells = [r for r in cost_rows if r["항목"] == "WEHAGO 원가"]
@@ -211,7 +348,9 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
                         sum(int(r["건수"]) for r in status_rows if r["항목"] == "인트라넷 요청")))
     source_lines = sum(1 for ln in costs["lines"] if ln["project"] is None)
     checks.append(Check("미연결 원가 줄", source_lines, sum(1 for r in unlinked_rows if r["구분"] == "미연결원가줄")))
-    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, _status_note(requests))
+    checks.append(Check("현금계정 증감 = 보통예금월 WEHAGO 증감 합계", move_total,
+                        _sum_cells([r for r in cash_rows if r["구분"] == "보통예금월" and r["항목"] == MONTH_CHANGE])))
+    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, _status_note(requests) + cash_notes)
 
 
 # ───────────── load_xchk ─────────────
@@ -222,8 +361,20 @@ class _Unreadable(Exception):
 def _blank_result(state, reason):
     return {"state": state, "reason": reason, "meta": collections.OrderedDict(), "status": collections.OrderedDict(),
             "projects": [], "outside": _fact(None), "unlinked": _fact(None), "unlinked_lines": [], "vendors": [],
-            "vendor_summary": {}, "revenue": [], "revenue_unlinked": _fact(None), "revenue_unlinked_lines": [],
-            "cash": {}, "cash_months": [], "totals": {}}
+            "vendor_summary": dict.fromkeys(("compared", "note", "diff_sum", "diff_count", "diff_note", "unknown_count",
+                                             "unknown_note")),
+            "revenue": [], "revenue_unlinked": _fact(None), "revenue_unlinked_lines": [],
+            "cash": _blank_cash(), "cash_months": [], "totals": dict.fromkeys(TOTAL_KEYS)}
+
+
+TOTAL_KEYS = ("contract_sum", "contract_registered", "contract_unregistered", "budget_sum", "budget_known", "budget_blank",
+              "budget_dup", "over_budget")
+
+
+def _blank_cash():
+    return {"opening": None, "opening_lines": None, "opening_note": "", "change": None, "change_lines": None,
+            "change_note": "", "balance": None, "balance_note": "", "bank_balance": None, "bank_accounts": None,
+            "bank_note": "", "balance_diff": None}
 
 
 def _fact(row):
@@ -253,17 +404,19 @@ def _parse(row):
 
 def _project_of(row):
     return {"key": row["대상"], "name": row["이름"], "cost": None, "cost_lines": None, "cost_note": "", "budget": None,
-            "budget_note": "", "requested": None, "requested_count": None, "requested_note": ""}
+            "budget_note": "", "has_budget": False, "requested": None, "requested_count": None,
+            "requested_note": "", "cost_vs_budget": None, "request_vs_cost": None}
 
 
 def _contract_of(row):
     return {"key": row["대상"], "name": row["이름"], "wehago": None, "wehago_lines": None, "wehago_note": "",
-            "contract": None, "contract_note": "", "quote": None, "quote_note": ""}
+            "has_contract": False, "contract": None, "contract_note": "", "quote": None, "quote_note": ""}
 
 
 def _load_rows(rows):
     out = _blank_result("ok", "")
     projects, contracts = collections.OrderedDict(), collections.OrderedDict()
+    months = collections.OrderedDict()
     for row in rows:
         kind, item = row.get("구분", ""), row.get("항목", "")
         if kind == "기준":
@@ -273,7 +426,7 @@ def _load_rows(rows):
             if item == "WEHAGO 원가":
                 p["cost"], p["cost_lines"], p["cost_note"] = row["_amount"], row["_count"], row["비고"]
             elif item == "실행가":
-                p["budget"], p["budget_note"] = row["_amount"], row["비고"]
+                p["budget"], p["budget_note"], p["has_budget"] = row["_amount"], row["비고"], True
             elif item == "요청 누계":
                 p["requested"], p["requested_count"], p["requested_note"] = row["_amount"], row["_count"], row["비고"]
         elif kind == "요청상태":
@@ -305,9 +458,19 @@ def _load_rows(rows):
             if item == "WEHAGO 매출":
                 c["wehago"], c["wehago_lines"], c["wehago_note"] = row["_amount"], row["_count"], row["비고"]
             elif item == "계약금액 (수동 입력)":
-                c["contract"], c["contract_note"] = row["_amount"], row["비고"]
+                c["contract"], c["contract_note"], c["has_contract"] = row["_amount"], row["비고"], True
             elif item == "견적금액":
                 c["quote"], c["quote_note"] = row["_amount"], row["비고"]
+        elif kind == "보통예금":
+            _load_cash(out["cash"], row)
+        elif kind == "보통예금월":
+            m = months.setdefault(row["대상"], {"month": row["대상"], "wehago": None, "wehago_lines": None,
+                                              "wehago_note": "", "bank": None, "bank_count": None, "bank_note": "",
+                                              "diff": None})
+            if item == "WEHAGO 증감":
+                m["wehago"], m["wehago_lines"], m["wehago_note"] = row["_amount"], row["_count"], row["비고"]
+            else:
+                m["bank"], m["bank_count"], m["bank_note"] = row["_amount"], row["_count"], row["비고"]
         elif kind == "매출미연결":
             out["revenue_unlinked"] = _fact(row)
         elif kind == "매출미연결줄":
@@ -320,7 +483,53 @@ def _load_rows(rows):
                                           "amount": row["_amount"], "memo": row["비고"]})
     out["projects"] = list(projects.values())
     out["revenue"] = list(contracts.values())
+    out["cash_months"] = list(months.values())
+    _derive(out)
     return out
+
+
+def _load_cash(cash, row):
+    item, amount, count, note = row["항목"], row["_amount"], row["_count"], row["비고"]
+    if item == "기초 잔액":
+        cash["opening"], cash["opening_lines"], cash["opening_note"] = amount, count, note
+    elif item == "WEHAGO 증감 (전체 기간)":
+        cash["change"], cash["change_lines"], cash["change_note"] = amount, count, note
+    elif item == "WEHAGO 잔액 (장부 기준일)":
+        cash["balance"], cash["balance_note"] = amount, note
+    elif item == "계좌잔액.csv 잔액 합계":
+        cash["bank_balance"], cash["bank_accounts"], cash["bank_note"] = amount, count, note
+
+
+def _minus(a, b):
+    return None if a is None or b is None else a - b
+
+
+def _derive(out):
+    """차이는 파일에 없는 사실이 아니라 두 사실의 뺄셈이다: 두 값을 모두 알 때만 구하고 아니면 None (0 아님)."""
+    for p in out["projects"]:
+        dup = "프로젝트번호 겹침" in p["budget_note"]
+        p["cost_vs_budget"] = None if dup else _minus(p["cost"], p["budget"])
+        p["request_vs_cost"] = _minus(p["requested"], p["cost"])
+    for v in out["vendors"]:
+        v["diff"] = _minus(v["payable"], v["requested"])
+    cash = out["cash"]
+    if cash["opening"] is not None:
+        cash["balance_diff"] = _minus(cash["balance"], cash["bank_balance"])
+    for m in out["cash_months"]:
+        m["diff"] = _minus(m["wehago"], m["bank"])
+    listed = [p for p in out["projects"] if p["has_budget"]]
+    dup = [p for p in listed if "프로젝트번호 겹침" in p["budget_note"]]
+    known = [p for p in listed if p["budget"] is not None and p not in dup]
+    blank = [p for p in listed if p["budget"] is None and p not in dup]
+    contracts = [c for c in out["revenue"] if c["has_contract"]]
+    registered = [c for c in contracts if c["contract"] is not None]
+    out["totals"] = {
+        "contract_sum": sum(c["contract"] for c in registered), "contract_registered": len(registered),
+        "contract_unregistered": len(contracts) - len(registered),
+        "budget_sum": sum(p["budget"] for p in known), "budget_known": len(known), "budget_blank": len(blank),
+        "budget_dup": len(dup),
+        "over_budget": sum(1 for p in known if p["cost"] is not None and p["cost"] > p["budget"]),
+    }
 
 
 def load_xchk(input_dir):
