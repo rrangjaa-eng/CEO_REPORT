@@ -7,6 +7,7 @@ import collections
 import csv
 import io
 import os
+import re
 import shutil
 
 from . import data, util, wehago
@@ -97,9 +98,82 @@ def write_table(path, table):
         f.write(table_bytes(table))
 
 
+# 설정.csv 항목 이름 → (cfg 키, 값 종류). 종류: 숫자목록(쉼표로 나눈 숫자) | 낱말 | 낱말목록 | 정수(0 이상)
+CONFIG_ITEMS = (
+    ("변환_매출계정", "revenue_codes", "숫자목록"),
+    ("변환_매출채권계정", "receivable_codes", "숫자목록"),
+    ("변환_직접비코드", "direct_prefixes", "숫자목록"),
+    ("변환_직접비표시", "direct_mark", "낱말"),
+    ("변환_공통비코드", "common_prefixes", "숫자목록"),
+    ("변환_공통비표시", "common_mark", "낱말"),
+    ("변환_미지급계정", "payable_codes", "숫자목록"),
+    ("변환_현금계정", "cash_codes", "숫자목록"),
+    ("변환_부가세대급금계정", "vat_codes", "숫자목록"),
+    ("변환_결산구분", "closing_sorts", "낱말목록"),
+    ("변환_자동연결일수", "link_days", "정수"),
+    ("변환_카드거래처", "card_words", "낱말목록"),
+)
+
+
+def _split(raw):
+    return tuple(x.strip() for x in str(raw).split(",") if x.strip())
+
+
+def _parse_config_value(kind, raw):
+    """설정 글자 → 값. 쓸 수 없으면 None."""
+    text = str(raw).strip()
+    if kind == "낱말":
+        return text or None
+    if kind == "정수":
+        return int(text) if re.match(r"^[0-9]+$", text) else None
+    items = _split(text)
+    if not items:
+        return None
+    if kind == "숫자목록" and not all(re.match(r"^[0-9]+$", x) for x in items):
+        return None
+    return items
+
+
+def _config_text(value):
+    return ",".join(value) if isinstance(value, tuple) else str(value)
+
+
 def read_config(input_dir):
-    """설정.csv 의 변환 항목 → (cfg, notes). 설정.csv 는 읽기만 한다."""
-    return Config(DEFAULT_CONFIG), []
+    """설정.csv 의 '변환_*' 항목 → (cfg, notes). 설정.csv 는 읽기만 한다 (D-39).
+
+    없거나 비었거나 쓸 수 없는 값은 기본값을 쓰고 notes 에 이유를 남긴다. 행이 없는 항목은 조용히 기본값이다.
+    """
+    cfg = Config(DEFAULT_CONFIG)
+    notes = []
+    path = os.path.join(input_dir, "설정.csv")
+    if not os.path.exists(path):
+        return cfg, ["설정.csv 없음 → 변환 설정 기본값 사용"]
+    info = {}
+    rows, ok = util.read_csv(path, ["항목", "값"], util.Issues(), info)
+    if not ok or info.get("missing"):
+        return cfg, ["설정.csv를 읽지 못함 → 변환 설정 기본값 사용"]
+    found = collections.OrderedDict()
+    for r in rows:
+        item = r.get("항목", "")
+        if item.startswith("변환_"):
+            found[item] = r.get("값", "")  # 같은 항목이 또 나오면 뒤의 줄이 이긴다 (data.load 와 같음)
+    known = dict((item, (key, kind)) for item, key, kind in CONFIG_ITEMS)
+    for item, raw in found.items():
+        if item not in known:
+            notes.append("설정 %s 알 수 없는 변환 항목 → 무시" % item)
+            continue
+        key, kind = known[item]
+        default = _config_text(DEFAULT_CONFIG[key])
+        if util.is_blank(raw):
+            notes.append("설정 %s 비어 있음 → 기본값 %s" % (item, default))
+            continue
+        value = _parse_config_value(kind, raw)
+        if value is None:
+            notes.append("설정 %s 값 '%s' 사용할 수 없음 → 기본값 %s" % (item, raw, default))
+            continue
+        cfg[key] = value
+    cfg.from_file = bool(found)
+    return cfg, notes
 
 
 def _read_prev_state(input_dir, name):
@@ -236,6 +310,10 @@ def _mismatches(tables):
     return sum(1 for t in tables if t.written for c in t.checks if check_result(c) == "불일치")
 
 
+def _undecided(tables):
+    return sum(1 for t in tables if t.written for c in t.checks if check_result(c) == "판단 불가")
+
+
 def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
@@ -260,6 +338,8 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept):
     missing = [m for m in MANUAL if m not in kept]
     if missing:
         out.append("없는 수동 파일 (사람이 관리, 만들지 않음): " + ", ".join(missing))
+    if _undecided(tables):
+        out.append("대조 판단 불가 %d건" % _undecided(tables))
     out.append("대조 불일치 %d건" % _mismatches(tables))
     return out
 
@@ -318,6 +398,8 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "%s 만들지 않음 — %s" % (t.name, t.reason))
     if backup:
         out.append(backup_line)
+    if _undecided(tables):
+        out.append("대조 판단 불가 %d건" % _undecided(tables))
     out.append("대조 불일치 %d건" % _mismatches(tables))
     out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
     res.lines = out
