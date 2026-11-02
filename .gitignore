@@ -1,3 +1,4 @@
 출력/
 __pycache__/
 *.pyc
+.planning/milestone.lock

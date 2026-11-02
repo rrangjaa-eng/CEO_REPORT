@@ -9,6 +9,11 @@
       "status": "pending"
     },
     {
+      "number": "01.1",
+      "name": "지급 승인 검토 화면",
+      "status": "pending"
+    },
+    {
       "number": "2",
       "name": "원천자료 변환",
       "status": "pending"
@@ -24,5 +29,5 @@
     "label": "Debug the blocker",
     "reason": "Blocked · 1 blocker(s) — resolve before continuing"
   },
-  "updated_at": "2026-11-02T07:25:50.952Z"
+  "updated_at": "2026-11-02T07:27:13.600Z"
 }
