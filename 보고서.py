@@ -47,6 +47,13 @@ def find_browser():
 
 
 def to_pdf(browser, html_path, pdf_path):
+    # 이전 실행의 PDF가 남아 있으면 새로 만든 것으로 착각하므로 먼저 지운다.
+    # Windows에서 PDF 뷰어가 열려 있으면 지울 수 없다.
+    if os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+        except OSError as e:
+            return "PDF 실패: 이전 PDF를 지우지 못함 (PDF 파일을 닫고 다시 실행): %s" % e
     url = "file:///" + os.path.abspath(html_path).replace("\\", "/").lstrip("/")
     cmd = [browser, "--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer",
            "--print-to-pdf=" + os.path.abspath(pdf_path), url]
