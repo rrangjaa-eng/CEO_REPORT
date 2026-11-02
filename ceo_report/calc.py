@@ -4,17 +4,18 @@ import datetime as dt
 from collections import OrderedDict, defaultdict
 
 from .data import DEFAULT_SETTINGS, TRANSFER
-from .util import setting_num, ssum, won, d2s
+from .util import is_blank, setting_num, ssum, won, d2s
 
 DAY = dt.timedelta(days=1)
 
 # 숫자로 읽는 설정 항목과 입력 확인 목록에 쓰는 이름 (이름에 해석·권고 낱말을 넣지 않는다)
 NUM_SETTINGS = ("첫화면_프로젝트_표시수", "위험_최소보유현금", "위험_미수경과일", "위험_미발행경과일", "위험_자료경과일",
-                "위험_예산초과율")
+                "위험_예산초과율", "예산_원가율")
+BUDGET_REASONS = ("사전견적 없음", "사전견적 0원 또는 음수", "사전견적 금액 해석 불가", "원가율 설정 오류")
 SETTING_LABELS = {
     "첫화면_프로젝트_표시수": "첫화면_프로젝트_표시수", "위험_최소보유현금": "최소 보유현금",
     "위험_미수경과일": "미수 경과일 기준", "위험_미발행경과일": "미발행 경과일 기준",
-    "위험_자료경과일": "자료 경과일 기준", "위험_예산초과율": "예산 초과율 기준",
+    "위험_자료경과일": "자료 경과일 기준", "위험_예산초과율": "예산 초과율 기준", "예산_원가율": "예산_원가율",
 }
 
 
@@ -58,10 +59,24 @@ def compute(d, kind, asof, start=None):
             value, reason = setting_num(d.settings, key, default)
         if key == "첫화면_프로젝트_표시수" and reason is None and (not isinstance(value, int) or value < 0):
             value, reason = default, "0 이상 정수 아님"
+        if key == "예산_원가율" and reason != "설정 비어 있음":
+            # 원가율은 틀린 값을 기본값으로 바꾸지 않는다: 오류로 알리고 어느 프로젝트도 원가 예산을 계산하지 않는다 (D-16)
+            raw = d.settings.get(key)
+            if reason is None and "%" in str(raw):
+                value = value / 100.0
+            if reason is not None or not (0 < value <= 1):
+                R["settings_num"][key] = None
+                d.issues.add("설정.csv", d.settings_line.get(key, "-"),
+                             "예산_원가율 값 오류: '%s' (0 초과 1 이하 숫자, 예: 0.70) → 모든 프로젝트 원가 예산 계산 안 함" % raw)
+                continue
+            R["settings_num"][key] = value
+            continue
         if reason is not None:
             label, raw = SETTING_LABELS[key], d.settings.get(key)
             tail = "→ 기본값 %s 사용" % _fmt_setting(default)
-            if reason == "설정 비어 있음":
+            if key == "예산_원가율":
+                msg = "예산_원가율 설정 비어 있음 → 기본값 사용(0.70)"
+            elif reason == "설정 비어 있음":
                 msg = "%s 설정 비어 있음 %s" % (label, tail)
             elif reason == "숫자 아님":
                 msg = "%s 값이 숫자가 아님: '%s' %s" % (label, raw, tail)
@@ -137,7 +152,7 @@ def compute(d, kind, asof, start=None):
     # ───────────── 3. 프로젝트별 예산·지급 ─────────────
     proj = OrderedDict()
     for pid in d.project_order:
-        proj[pid] = _blank_proj(d.projects[pid])
+        proj[pid] = _blank_proj(d.projects[pid], R["settings_num"]["예산_원가율"])
     unlinked_exec = []
     for e in d.execs:
         if e["project"] not in proj:
@@ -178,7 +193,11 @@ def compute(d, kind, asof, start=None):
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
     tot["budget"], tot["budget_missing"] = ssum(P["budget"] for P in plist)
+    tot["estimate"], tot["estimate_missing"] = ssum(P["estimate"] for P in plist)
     tot["remain"] = sum(P["remain"] for P in plist if P["remain"] is not None)
+    if plist and tot["budget_missing"] == len(plist):
+        tot["budget"] = None  # 원가 예산이 하나도 없으면 합계는 0이 아니라 판단 불가 (D-02)
+        tot["remain"] = None
     tot["paid_cash"], tot["paid_cash_unknown"] = ssum(P["paid_cash"] for P in plist)
     tot["unknown_cost"] = sum(P["unknown_cost"] for P in plist)
     budgeted = [P for P in plist if P["budget"] is not None]
@@ -189,8 +208,14 @@ def compute(d, kind, asof, start=None):
     shown = ranked[:n_show]
     rest = ranked[n_show:]
     ue_tot, ue_unknown = ssum(e["supply"] for e in unlinked_exec)
+    reason_n = OrderedDict()
+    for reason in BUDGET_REASONS:
+        n = sum(1 for P in plist if P["budget_reason"] == reason)
+        if n:
+            reason_n[reason] = n
     R["s3"] = {"projects": plist, "ranked": ranked, "shown": shown, "rest": rest, "total": tot,
-               "unlinked": unlinked_exec, "unlinked_total": ue_tot}
+               "unlinked": unlinked_exec, "unlinked_total": ue_tot,
+               "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
     linked_lines = sum(len(P["lines"]) for P in plist)
     checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄", len(d.execs), linked_lines + len(unlinked_exec),
                    len(d.execs) == linked_lines + len(unlinked_exec)))
@@ -459,10 +484,21 @@ def compute(d, kind, asof, start=None):
     return R
 
 
-def _blank_proj(p):
+def _blank_proj(p, rate):
+    """프로젝트 한 건의 빈 집계 틀. 원가 예산 = 사전견적 x 원가율. 만들 수 없으면 예산은 None, 이유를 남긴다 (D-16)."""
     P = dict(p)
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
               "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0})
+    est = P["estimate"]
+    P["budget"], P["budget_reason"] = None, None
+    if est is None:
+        P["budget_reason"] = "사전견적 없음" if is_blank(P["estimate_raw"]) else "사전견적 금액 해석 불가"
+    elif est <= 0:
+        P["budget_reason"] = "사전견적 0원 또는 음수"
+    elif rate is None:
+        P["budget_reason"] = "원가율 설정 오류"
+    else:
+        P["budget"] = int(round(est * rate))
     return P
 
 

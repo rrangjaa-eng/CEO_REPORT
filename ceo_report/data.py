@@ -34,6 +34,7 @@ DEFAULT_SETTINGS = {
     "위험_미발행경과일": "30",
     "위험_자료경과일": "7",
     "위험_예산초과율": "100",
+    "예산_원가율": "0.70",
 }
 
 
@@ -117,7 +118,8 @@ def load(folder):
         d.projects[pid] = {
             "id": pid, "name": r.get("프로젝트명", ""), "team": r.get("팀", "") or "팀 미지정",
             "client": r.get("클라이언트", ""), "state": r.get("상태", ""),
-            "budget": num(r.get("사전견적예산"), iss, r, "사전견적예산"),
+            "estimate": num(r.get("사전견적예산"), iss, r, "사전견적예산"),
+            "estimate_raw": r.get("사전견적예산", ""),
             "budget_date": date(r.get("예산수정일"), iss, r, "예산수정일"),
             "contract": num(r.get("계약금액"), iss, r, "계약금액"),
             "recognized": num(r.get("매출반영누계"), iss, r, "매출반영누계"),

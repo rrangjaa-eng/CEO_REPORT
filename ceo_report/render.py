@@ -202,13 +202,16 @@ def render(R, mode):
     h.append("</div>")
     # 중앙: 프로젝트 요약 + 자금 그래프
     h.append("<div class='mid'><div>")
-    h.append("<h3 style='margin-top:0'>프로젝트 예산·지급 (공급가액 기준, 카드는 총액)</h3>")
+    h.append("<h3 style='margin-top:0'>프로젝트 원가 예산·지급 (공급가액 기준, 카드는 총액)</h3>")
     tot = s3["total"]
-    h.append("<div class='scope'>표시 %d건 / 전체 %d건 (예산 큰 순) · 전체 예산 %s · 예산 미지정 %d건 · 단위 백만원</div>"
-             % (len(s3["shown"]), len(s3["projects"]), man(tot["budget"]), tot["budget_missing"]))
+    h.append("<div class='scope'>%s</div>"
+             % esc("표시 %d건 / 전체 %d건 (원가 예산 큰 순) · 원가 예산 = 사전견적 × 원가율 %s · 전체 원가 예산 %s · 단위 백만원"
+                   % (len(s3["shown"]), len(s3["projects"]), _rate_text(s3), man(tot["budget"], "판단 불가"))))
     rows = []
     for P in s3["shown"]:
-        rows.append([esc(P["id"]), esc(_short(P["name"], 22)), M(P["budget"], "예산 미지정"), M(P["paid_period"]),
+        rows.append([esc(P["id"]), esc(_short(P["name"], 22)),
+                     M(P["budget"], "예산 미지정 (%s)" % P["budget_reason"] if P["budget_reason"] else "예산 미지정"),
+                     M(P["paid_period"]),
                      M(P["paid_total"]), M(P["requested"] + P["card_unpaid"]), M(P["planned"]),
                      esc(pct(P["paid_total"], P["budget"])), M(P["remain"], "판단 불가")])
     if s3["rest"]:
@@ -216,13 +219,15 @@ def render(R, mode):
         rows.append(([esc("외 %d건" % len(r)), "", M(_sum_opt(x["budget"] for x in r)),
                       M(sum(x["paid_period"] for x in r)), M(sum(x["paid_total"] for x in r)),
                       M(sum(x["requested"] + x["card_unpaid"] for x in r)), M(sum(x["planned"] for x in r)), "", ""], "sub"))
-    total_row = ["전체", "%d건" % len(s3["projects"]), M(tot["budget"]), M(tot["paid_period"]), M(tot["paid_total"]),
+    note_nb = _no_budget_note(s3)
+    total_row = ["전체", esc("%d건" % len(s3["projects"]) + (" · " + note_nb if note_nb else "")),
+                 M(tot["budget"], "판단 불가"), M(tot["paid_period"]), M(tot["paid_total"]),
                  M(tot["requested"] + tot["card_unpaid"]), M(tot["planned"]),
-                 esc(pct(tot["paid_budgeted"], tot["budget"])) + "<sup>①</sup>", M(tot["remain"]) + "<sup>①</sup>"]
-    h.append(table(["번호", "프로젝트", "예산", per + " 지급", "누적 지급", "요청·카드 미결제", "미요청 계획", "지급률",
+                 esc(pct(tot["paid_budgeted"], tot["budget"])) + "<sup>①</sup>", M(tot["remain"], "판단 불가") + "<sup>①</sup>"]
+    h.append(table(["번호", "프로젝트", "원가 예산", per + " 지급", "누적 지급", "요청·카드 미결제", "미요청 계획", "지급률",
                     "예상 잔여예산"], rows, num_cols=(2, 3, 4, 5, 6, 7, 8), total=total_row))
-    h.append("<div class='note'>① 예산이 지정된 프로젝트만 계산. 예상 잔여예산 = 예산 − (누적 지급 + 요청 미지급 + 카드 미결제 + 미요청 계획). "
-             "남은 예산은 지급예정으로 바꾸지 않음.</div>")
+    h.append("<div class='note'>① 예산이 지정된 프로젝트만 계산. 예상 잔여예산 = 원가 예산 − (누적 지급 + 요청 미지급 + 카드 미결제 + 미요청 계획). "
+             "남은 예산은 ‘집행계획 미등록 금액’이며 지급예정으로 바꾸지 않음.</div>")
     h.append("</div><div>")
     h.append("<h3 style='margin-top:0'>%s</h3>" % esc("기간별 자금 (시작: 사용 가능액 %s%s)" % (man(s2["start"]), _bal_note(s1))))
     h.append(chart(s2))
@@ -309,6 +314,19 @@ def _bank_dates(s1):
     if not ds:
         return "자료 없음"
     return d2s(ds[0]) if len(ds) == 1 else "%s~%s" % (d2s(ds[0]), d2s(ds[-1]))
+
+
+def _no_budget_note(s3):
+    """'예산 미책정 N건 (사유별 건수)'. 없으면 빈 글자."""
+    reasons = s3["no_budget_reasons"]
+    if not reasons:
+        return ""
+    return "예산 미책정 %d건 (%s)" % (sum(reasons.values()), ", ".join("%s %d건" % (k, n) for k, n in reasons.items()))
+
+
+def _rate_text(s3):
+    rate = s3["cost_rate"]
+    return "원가율 설정 오류" if rate is None else "%g%%" % round(rate * 100, 6)
 
 
 def _short(s, n):
@@ -434,24 +452,30 @@ def _s3(R, per):
     s3 = R["s3"]
     tot = s3["total"]
     h = [_h2(3, "프로젝트별 예산·지급·남은 집행")]
-    h.append("<div class='scope'>전체 %d건 모두 표시 · 예산 미지정 %d건</div>" % (len(s3["projects"]), tot["budget_missing"]))
+    note_nb = _no_budget_note(s3)
+    h.append("<div class='scope'>%s</div>" % esc("전체 %d건 모두 표시 · 원가 예산 = 사전견적 × 원가율 %s" % (len(s3["projects"]), _rate_text(s3))
+                                                   + (" · " + note_nb if note_nb else "")))
     rows = []
     for P in s3["ranked"]:
-        rows.append([esc(P["id"]), esc(P["name"]), esc(P["team"]), esc(P["state"]), W(P["budget"], "예산 미지정"),
+        rows.append([esc(P["id"]), esc(P["name"]), esc(P["team"]), esc(P["state"]), W(P["estimate"], "-"),
+                     W(P["budget"], "예산 미지정"), _na(P["budget_reason"]) if P["budget_reason"] else "",
                      esc(d2s(P["budget_date"], "-")), W(P["paid_period"]), W(P["paid_total"]),
                      W(P["paid_cash"], "부가세 미확인"), W(P["requested"]), W(P["card_unpaid"]), W(P["planned"]),
                      W(P["expected"]), esc(pct(P["paid_total"], P["budget"])), W(P["remain"], "판단 불가"),
                      esc("%d건" % P["unknown_cost"]) if P["unknown_cost"] else ""])
-    h.append(table(["번호", "프로젝트", "팀", "상태", "예산(사전견적)", "예산 수정일", per + " 지급", "누적 지급",
+    h.append(table(["번호", "프로젝트", "팀", "상태", "사전견적", "원가 예산", "예산 사유", "예산 수정일", per + " 지급", "누적 지급",
                     "지급 실출금(VAT포함)", "요청 미지급", "카드 미결제", "미요청 계획", "예상 총집행", "지급률", "예상 잔여예산",
-                    "금액 미확인"], rows, num_cols=(4, 6, 7, 8, 9, 10, 11, 12, 13, 14),
-                   total=["전체", "%d건" % len(s3["projects"]), "", "", W(tot["budget"]), "", W(tot["paid_period"]),
+                    "금액 미확인"], rows, num_cols=(4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16),
+                   total=["전체", "%d건" % len(s3["projects"]), "", "", W(tot["estimate"]), W(tot["budget"], "판단 불가"),
+                          esc(note_nb), "", W(tot["paid_period"]),
                           W(tot["paid_total"]), W(tot["paid_cash"]), W(tot["requested"]), W(tot["card_unpaid"]),
                           W(tot["planned"]), W(tot["expected"]), esc(pct(tot["paid_budgeted"], tot["budget"])),
-                          W(tot["remain"]), "%d건" % tot["unknown_cost"]]))
-    h.append("<div class='note'>예산·지급·요청·계획은 공급가액. 카드 사용액은 총액. ‘지급 실출금’은 지급완료분 공급가액+부가세. "
-             "누적 지급 = 지급완료 + 카드결제완료. 예산 미지정이면 지급률·잔여예산은 ‘판단 불가’. "
-             "예상 잔여예산은 집행계획이 등록되지 않은 금액이며 지급예정이 아님. 합계의 지급률·잔여예산은 예산 지정 프로젝트만.</div>")
+                          W(tot["remain"], "판단 불가"), "%d건" % tot["unknown_cost"]]))
+    h.append("<div class='note'>원가 예산 = 사전견적(예상 매출) × 원가율 (설정.csv 예산_원가율, 기본 0.70). "
+             "사전견적이 없거나 0원 이하·해석 불가이거나 원가율 설정 오류면 ‘예산 미지정’, 지급률·잔여예산은 ‘판단 불가’, 이유는 ‘예산 사유’ 열. "
+             "지급·요청·계획은 공급가액. 카드 사용액은 총액. ‘지급 실출금’은 지급완료분 공급가액+부가세. "
+             "누적 지급 = 지급완료 + 카드결제완료. "
+             "예상 잔여예산은 ‘집행계획 미등록 금액’이며 지급예정이 아님. 합계의 지급률·잔여예산은 예산 지정 프로젝트만.</div>")
     if s3["unlinked"]:
         h.append("<h3>프로젝트 미연결 집행 (%d건, %s원)</h3>" % (len(s3["unlinked"]), won(s3["unlinked_total"])))
         h.append(_exec_table(s3["unlinked"]))
@@ -591,8 +615,9 @@ def _s7(R):
         ("지급일 미등록 지급예정", "%s원 (%d건)" % (won(s7["undated_out"]), s7["undated_out_n"])),
         ("잔액 기준일이 보고일보다 이른 계좌", "%d개" % len(s7["stale"]))]))
     if s7["no_budget"]:
-        rows = [[esc(P["id"]), esc(P["name"]), W(P["contract"], "미등록"), W(P["expected"])] for P in s7["no_budget"]]
-        h.append(table(["번호", "예산 미지정 프로젝트", "계약금액", "예상 총집행"], rows, num_cols=(2, 3)))
+        rows = [[esc(P["id"]), esc(P["name"]), _na(P["budget_reason"]), W(P["contract"], "미등록"), W(P["expected"])]
+                for P in s7["no_budget"]]
+        h.append(table(["번호", "예산 미지정 프로젝트", "예산 사유", "계약금액", "예상 총집행"], rows, num_cols=(3, 4)))
     h.append("<h3>자료 기준일</h3>")
     rows = [[esc(a["name"]), esc(d2s(a["date"])), esc("" if a["age"] is None else "%d일 전" % a["age"]), esc(a["memo"])]
             for a in s7["asof"]]
