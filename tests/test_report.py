@@ -971,5 +971,104 @@ class TestUserRulesLocked(Base):
         self.assertIn("계약금액 미등록 1건", section(render(R, "ceo"), 7))
 
 
+_BASE_R = None
+
+
+def sample_result():
+    global _BASE_R
+    if _BASE_R is None:
+        _BASE_R = compute(load(SAMPLE), "weekly", ASOF)
+    return _BASE_R
+
+
+def sample_copy(test):
+    """샘플 입력 전체를 임시 폴더에 복사해 폴더 경로를 돌려준다 (파일 지우기·여러 칸 고치기용)."""
+    tmp = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, tmp, True)
+    folder = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, folder)
+    return folder
+
+
+def kpi_value(html, label):
+    """첫 화면 KPI 칸의 값 부분 HTML. 없으면 None."""
+    m = re.search(r"<div class='l'>" + re.escape(label) + r"</div><div class='v'>(.*?)</div>", html, re.S)
+    return m.group(1) if m else None
+
+
+class TestNoBalanceKnown(unittest.TestCase):
+    """CR-01: 알려진 계좌 잔액이 하나도 없으면 현재 현금은 0이 아니라 미확인이다. 그래프·최저 잔액도 0에서 시작하지 않는다."""
+
+    def no_file(self):
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "계좌잔액.csv"))
+        return folder
+
+    def all_blank(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                r[3] = ""
+        return probe_folder(self, "계좌잔액.csv", mutate)
+
+    def cases(self):
+        return (("계좌잔액.csv 없음", self.no_file()), ("모든 잔액 칸 빈칸", self.all_blank()))
+
+    def test_total_and_available_are_unknown_not_zero(self):
+        for name, folder in self.cases():
+            with self.subTest(name):
+                R = compute(load(folder), "weekly", ASOF)
+                self.assertIsNone(R["s1"]["total"])
+                self.assertIsNone(R["s1"]["available"])
+                self.assertIsNone(R["s1"]["start_calc"])
+                self.assertIsNone(R["s1"]["start_bank"])
+                self.assertIsNone(R["s2"]["start"])
+
+    def test_schedule_and_minimum_do_not_start_from_zero(self):
+        for name, folder in self.cases():
+            with self.subTest(name):
+                R = compute(load(folder), "weekly", ASOF)
+                s2 = R["s2"]
+                for b in s2["buckets"]:
+                    self.assertIsNone(b["bal_firm"])
+                    self.assertIsNone(b["bal_all"])
+                self.assertEqual(s2["min"]["firm"], (None, None))
+                self.assertEqual(s2["min"]["all"], (None, None))
+                # 입금·지급 금액 자체는 그대로 계산된다
+                self.assertGreater(sum(b["out_firm"] for b in s2["buckets"]), 0)
+
+    def test_first_screen_shows_unknown_balance(self):
+        for name, folder in self.cases():
+            with self.subTest(name):
+                R = compute(load(folder), "weekly", ASOF)
+                html = render(R, "ceo")
+                fs = first_screen(html)
+                cash = kpi_value(fs, "현재 현금 (계좌 합계)")
+                self.assertIn("미확인", cash)
+                self.assertNotIn("0.0", cash)
+                self.assertIn("미확인", kpi_value(fs, "사용 가능액"))
+                self.assertIn("잔액 미확인", fs)
+                self.assertNotIn("<polyline", fs)
+                for lab in ("최저 계산 잔액 · 확정 일정만", "최저 계산 잔액 · 확정+추정"):
+                    val = kv_value(fs, lab)
+                    self.assertIn("잔액 미확인", val, lab)
+                    self.assertNotRegex(val, r"\d")
+                s2h = section(html, 2)
+                self.assertIn("잔액 미확인", s2h)
+                self.assertNotIn("미확인원", s2h)
+
+    def test_management_risk_has_no_fund_risk_from_fabricated_zero(self):
+        for name, folder in self.cases():
+            with self.subTest(name):
+                R = compute(load(folder), "weekly", ASOF)
+                for r in R["risks"]:
+                    self.assertNotIn("최저 계산 잔액", r["fact"], r)
+                html = render(R, "mgmt")
+                self.assertIn("위험 분석·해결방안", html)
+                check_editions(self, R)
+
+    def test_balance_known_sample_unchanged(self):
+        self.assertEqual(sample_result()["s2"]["min"]["firm"], (19_800_000, dt.date(2027, 4, 25)))
+
+
 if __name__ == "__main__":
     unittest.main()
