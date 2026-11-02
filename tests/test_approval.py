@@ -804,5 +804,98 @@ class TestReportsUnchanged(unittest.TestCase):
         self.assertEqual(sc(A, all_ids(A)), sc(base, all_ids(base)))
 
 
+# ───────────── plan 01.1-04 Task 1: 미확인 항목 화면 (APPR-04) ─────────────
+def cell_text(row, cls):
+    """tr 안쪽 HTML에서 class 가 cls 인 td 글. 없으면 None."""
+    m = re.search(r'<td[^>]*class="[^"]*\b%s\b[^"]*"[^>]*>(.*?)</td>' % re.escape(cls), row or "", re.S)
+    return text_of(m.group(1)) if m else None
+
+
+def rows_of(fragment):
+    """표 안쪽 HTML의 tr 들 (머리글 제외)."""
+    return [m for m in re.findall(r"<tr[^>]*>.*?</tr>", fragment or "", re.S) if "<td" in m]
+
+
+def build_screen(test, mutate_input=None, extra=None):
+    """(page, A): 가상 스냅숏 전체 + 입력 폴더(필요하면 고쳐서)로 만든 화면."""
+    folder = SAMPLE
+    if mutate_input is not None:
+        folder = sample_copy(test)
+        mutate_input(folder)
+    return full_screen(test, folder, extra=extra)
+
+
+class TestApprovalPanel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        snap = write_fake_snapshot(os.path.join(cls.tmp, "수집"))
+        path, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            cls.page = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_unknowns_panel_lines(self):
+        u = T(self.page, "unknowns")
+        for line in (
+                "금액 미확인 요청 1건 (일정 제외)",
+                "날짜 미확인 요청 0건 (일정 제외)",
+                "상태 확인 필요 1건 (일정 제외, 확인된 금액 1,100,000)",
+                "지급요청일 없음 2건 (목요일 14시 승인 → 금요일 지급 규칙으로 계산)",
+                "지급요청일 지남·대기 중 1건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)",
+                "날짜 없는 예정 금액: 입금 2건 38,800,000 · 지급 4건 105,000,000",
+                "예정일이 잔액 기준일(2026-11-02) 이전 또는 당일인 미처리: 입금 1건 110,000,000 · 지급 0건",
+                "기간 밖(8주 이후): 입금 1건 · 지급 26건 · 대기 요청 0건",
+                "잔액 미확인 0계좌",
+                "부가세 미확인 일정 0건 (공급가액만 반영)"):
+            self.assertIn(line, u)
+
+    def test_panel_is_counts_of_the_lists(self):
+        P = self.A["panel"]
+        self.assertEqual(P["amount_unknown"]["n"], len(self.A["amount_unknown"]))
+        self.assertEqual((P["status_unknown"]["n"], P["status_unknown"]["sum"]), (1, 1100000))
+        self.assertEqual(P["undated"]["n"], 6)
+        self.assertEqual((P["pending"]["n"], P["pending"]["sum"], P["pending"]["unknown"]), (5, 206964000, 1))
+
+    def test_unknown_amount_event_is_listed_not_summed(self):
+        u = T(self.page, "unknowns")
+        self.assertIn("금액 미확인 일정 1건 (일정 제외)", u)
+
+    def test_scope_line_and_amount_cells(self):
+        self.assertEqual(T(self.page, "req-scope"), "대기 요청 5건 · 확인된 금액 합계 206,964,000 · 금액 미확인 1건")
+        r = by_no(self.A)
+        self.assertEqual(cell_text(row_html(self.page, r["5106"]["id"]), "r-amt"), "미확인")
+        for rq in self.A["requests_all"]:
+            self.assertNotEqual(cell_text(row_html(self.page, rq["id"]), "r-amt"), "0", rq["번호"])
+
+    def test_scope_line_all_unknown_amounts_is_not_zero(self):
+        folder_page, A = full_screen(self, ids=("5106",))
+        self.assertEqual(T(folder_page, "req-scope"), "대기 요청 1건 · 확인된 금액 합계 없음 · 금액 미확인 1건")
+
+    def test_stage_columns(self):
+        row = row_html(self.page, by_no(self.A)["5103"]["id"])
+        self.assertEqual([cell_text(row, c) for c in ("s-team", "s-mgmt", "s-boss")], ["수락요청중", "미승인", "미승인"])
+        for h in ("팀장승인", "관리팀승인", "사장님승인"):
+            self.assertIn(h, T(self.page, "requests"))
+
+    def test_approved_table(self):
+        frag = element_html(self.page, "approved")
+        self.assertIsNotNone(frag)
+        rows = rows_of(frag)
+        self.assertEqual([cell_text(x, "a-no") for x in rows], ["5109", "5105"])
+        self.assertEqual([cell_text(x, "a-date") for x in rows], ["2026-11-06", "2026-11-10"])
+        self.assertEqual([cell_text(x, "a-amt") for x in rows], ["49,500,000", "3,300,000"])
+        self.assertNotIn("<input", frag)
+
+    def test_probe_a_past_line_names_the_balance_date(self):
+        page, A = build_screen(self, lambda folder: edit_csv(
+            folder, "계좌잔액.csv", lambda rows: [r.__setitem__(0, "2026-10-30") for r in rows if r[0] == "2026-11-02"]))
+        self.assertIn("예정일이 잔액 기준일(2026-10-30) 이전 또는 당일인 미처리: 입금 1건 110,000,000 · 지급 0건",
+                      T(page, "unknowns"))
+
+
 if __name__ == "__main__":
     unittest.main()
