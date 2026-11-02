@@ -289,5 +289,286 @@ class TestLinkingTracer(unittest.TestCase):
         self.assertEqual(L.LINK_COLUMNS, ["전표일자", "전표번호", "줄", "프로젝트번호"])
 
 
+# ───────────── Task 2: 요청 하나로 자동 연결, 후보 여럿·공유, 기간, 수동 지정 ─────────────
+def cost_extra(test, link_days=90, **kw):
+    """FAKE_JOURNAL + LINK_EXTRA, 스냅숏 FAKE + LINK_REQUESTS 로 link_costs 결과를 돌려준다."""
+    L = mod("linking")
+    books, reqs, projects = setup_cost(test, journal=FAKE_JOURNAL + LINK_EXTRA)
+    return L.link_costs(books, reqs, projects, kw.pop("overrides", {}), link_days=link_days, **kw), books, reqs, projects
+
+
+class TestLinkingAuto(unittest.TestCase):
+    def test_truth_3_labels_and_summary(self):
+        res, _, _, _ = cost_extra(self)
+        n = by_no(res)
+        (a,) = n["40"]
+        self.assertEqual((a["project"], a["basis"], a["request"], a["label"], a["amount"]),
+                         ("26220", "자동", "6001", "자동 (지급요청 6001)", 200000))
+        (b,) = n["41"]
+        self.assertEqual((b["project"], b["basis"], b["label"], b["candidates"]),
+                         (None, "미연결", "미연결 (자동 연결 후보 2건: 지급요청 6002, 6003)", 2))
+        for no in ("42", "43"):
+            (c,) = n[no]
+            self.assertEqual((c["project"], c["basis"], c["label"], c["candidates"]),
+                             (None, "미연결", "미연결 (자동 연결 후보 공유: 지급요청 6004)", 1))
+        (d,) = n["44"]
+        self.assertEqual((d["project"], d["basis"], d["label"]), (None, "미연결", "미연결 (코드 없음 · 자동 연결 후보 0건)"))
+        self.assertEqual(n["22"][0]["label"], "미연결 (코드 없음 · 자동 연결 후보 0건)")
+        self.assertEqual(n["23"][0]["label"], "미연결 (코드 26999 프로젝트 목록에 없음 · 자동 연결 후보 0건)")
+        self.assertEqual(cnt(res), {"수동": (0, 0), "코드": (8, 248400000), "자동": (1, 200000), "미연결": (6, 3200000)})
+        self.assertEqual(len(res["lines"]), 15)
+        self.assertEqual(total(res), 251800000)
+        self.assertEqual(sum(v["count"] for v in res["summary"].values()), 15)
+
+    def test_auto_amount_equals_request_only_with_vat_added(self):
+        res, _, reqs, _ = cost_extra(self)
+        line = by_no(res)["40"][0]
+        self.assertEqual(line["amount"] + 20000, dict((r["번호"], r) for r in reqs)["6001"]["amount"])
+
+    def test_longer_window_links_line_44(self):
+        res, _, _, _ = cost_extra(self, link_days=200)
+        (d,) = by_no(res)["44"]
+        self.assertEqual((d["project"], d["basis"], d["request"], d["label"]),
+                         ("26201", "자동", "6005", "자동 (지급요청 6005)"))
+        self.assertEqual(cnt(res)["자동"], (2, 1200000))
+        self.assertEqual(total(res), 251800000)
+
+    def test_window_edges_are_inclusive(self):
+        res, _, _, _ = cost_extra(self, link_days=151)
+        self.assertEqual(by_no(res)["44"][0]["basis"], "자동")
+        res, _, _, _ = cost_extra(self, link_days=150)
+        self.assertEqual(by_no(res)["44"][0]["basis"], "미연결")
+
+    def test_zero_days_leaves_line_40_unlinked(self):
+        res, _, _, _ = cost_extra(self, link_days=0)
+        (a,) = by_no(res)["40"]
+        self.assertEqual((a["basis"], a["label"]), ("미연결", "미연결 (코드 없음 · 자동 연결 후보 0건)"))
+        self.assertEqual(total(res), 251800000)
+
+    def test_a_line_before_the_registration_date_is_not_linked(self):
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        later = [dict(r, registered=dt.datetime(2026, 10, 31, 9, 0)) if r["번호"] == "6001" else r for r in reqs]
+        res = L.link_costs(books, later, projects, {})
+        self.assertEqual(by_no(res)["40"][0]["basis"], "미연결")
+
+    def test_unreadable_registration_or_unknown_amount_is_never_a_candidate(self):
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        for change in ({"registered": None}, {"amount": None}):
+            bad = [dict(r, **change) if r["번호"] == "6001" else r for r in reqs]
+            out = L.link_costs(books, bad, projects, {})
+            self.assertEqual(by_no(out)["40"][0]["basis"], "미연결", change)
+
+    def test_request_with_code_outside_the_project_list_is_never_a_candidate(self):
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        bad = [dict(r, code="26999") if r["번호"] == "6001" else r for r in reqs]
+        self.assertEqual(by_no(L.link_costs(books, bad, projects, {}))["40"][0]["basis"], "미연결")
+        bad = [dict(r, code=None) if r["번호"] == "6001" else r for r in reqs]
+        self.assertEqual(by_no(L.link_costs(books, bad, projects, {}))["40"][0]["basis"], "미연결")
+
+    def test_other_vendor_or_other_amount_is_not_a_candidate(self):
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        bad = [dict(r, vendor="가상다른곳") if r["번호"] == "6001" else r for r in reqs]
+        self.assertEqual(by_no(L.link_costs(books, bad, projects, {}))["40"][0]["basis"], "미연결")
+        bad = [dict(r, amount=221000) if r["번호"] == "6001" else r for r in reqs]
+        self.assertEqual(by_no(L.link_costs(books, bad, projects, {}))["40"][0]["basis"], "미연결")
+        # 공급가액과 같아도 연결된다
+        ok = [dict(r, amount=200000) if r["번호"] == "6001" else r for r in reqs]
+        self.assertEqual(by_no(L.link_costs(books, ok, projects, {}))["40"][0]["request"], "6001")
+
+    def test_request_status_does_not_matter(self):
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        for status in ("approved", "pending", "status_unknown"):
+            other = [dict(r, status=status) if r["번호"] == "6001" else r for r in reqs]
+            self.assertEqual(by_no(L.link_costs(books, other, projects, {}))["40"][0]["basis"], "자동", status)
+
+    def test_a_request_that_is_candidate_of_two_lines_links_neither(self):
+        # 6001 은 줄 40 의 하나뿐인 후보지만, 다른 줄(같은 거래처·같은 금액)도 후보로 삼으면 둘 다 미연결
+        twin = [_jl(_D, 45, "61101", "행사외주비(도)", 220000, None, "가상조명", "조명 또 추가"),
+                _jl(_D, 45, "10300", "보통예금", None, 220000, "가상조명", "조명 또 추가")]
+        L = mod("linking")
+        books, reqs, projects = setup_cost(self, journal=FAKE_JOURNAL + LINK_EXTRA + twin)
+        res = L.link_costs(books, reqs, projects, {})
+        n = by_no(res)
+        self.assertEqual(n["40"][0]["label"], "미연결 (자동 연결 후보 공유: 지급요청 6001)")
+        self.assertEqual(n["45"][0]["label"], "미연결 (자동 연결 후보 공유: 지급요청 6001)")
+        self.assertEqual(total(res), 251800000 + 220000)
+
+    def test_vat_total_needs_exactly_one_cost_line_of_the_vendor_in_the_slip(self):
+        two = [_jl(_D, 46, "61101", "행사외주비(도)", 100000, None, "가상조명", "조명 A"),
+               _jl(_D, 46, "61101", "행사외주비(도)", 100000, None, "가상조명", "조명 B"),
+               _jl(_D, 46, "13500", "부가세대급금", 20000, None, "가상조명", "조명 VAT"),
+               _jl(_D, 46, "25300", "미지급금", None, 220000, "가상조명", "조명")]
+        L = mod("linking")
+        books, reqs, projects = setup_cost(self, journal=FAKE_JOURNAL + two)
+        res = L.link_costs(books, reqs, projects, {})
+        self.assertEqual([ln["basis"] for ln in by_no(res)["46"]], ["미연결", "미연결"])
+
+    def test_unknown_amount_is_counted_as_unknown_never_zero(self):
+        blank = [_jl(_D, 47, "61101", "행사외주비(도)", None, None, "가상조명", "금액 빈칸"),
+                 _jl(_D, 47, "10300", "보통예금", None, None, "가상조명", "금액 빈칸"),
+                 _jl(_D, 48, "61101", "행사외주비(도)", None, None, "가상조명", "[26201] 금액 빈칸 코드")]
+        L = mod("linking")
+        books, reqs, projects = setup_cost(self, journal=FAKE_JOURNAL + blank)
+        res = L.link_costs(books, reqs, projects, {})
+        (a,) = by_no(res)["47"]
+        self.assertEqual((a["amount"], a["basis"], a["label"]), (None, "미연결", "미연결 (금액 미확인)"))
+        (b,) = by_no(res)["48"]
+        self.assertEqual((b["amount"], b["basis"], b["label"]), (None, "코드", "코드 [26201]"))
+        self.assertEqual(res["summary"]["미연결"], {"count": 3, "sum": 1100000, "unknown": 1})
+        self.assertEqual(res["summary"]["코드"]["unknown"], 1)
+        self.assertEqual(res["summary"]["코드"]["sum"], 248400000)
+
+    def test_order_does_not_change_the_result(self):
+        L = mod("linking")
+
+        def content(res, books):
+            out = {}
+            for ln in res["lines"]:
+                out[(ln["date"], ln["no"], ln["account_code"], ln["vendor"], ln["memo"], ln["amount"])] = (
+                    ln["project"], ln["basis"], ln["label"], ln["request"])
+            return out
+
+        res, books, reqs, projects = cost_extra(self)
+        want = content(res, books)
+        rev_journal = list(reversed(FAKE_JOURNAL + LINK_EXTRA))
+        books2, reqs2, projects2 = setup_cost(self, journal=rev_journal)
+        got = L.link_costs(books2, list(reversed(reqs2)), projects2, {})
+        self.assertEqual(content(got, books2), want)
+        self.assertEqual(got["summary"], res["summary"])
+        self.assertEqual(len(got["lines"]), 15)
+
+    def test_pure_with_auto_inputs_unchanged(self):
+        import copy
+        res, books, reqs, projects = cost_extra(self)
+        L = mod("linking")
+        before = (copy.deepcopy(books.journal), copy.deepcopy(reqs), copy.deepcopy(projects))
+        L.link_costs(books, reqs, projects, {"x": "y"})
+        self.assertEqual((books.journal, reqs, projects), before)
+
+    def test_settings_prefix_and_mark_come_from_the_arguments(self):
+        res, _, _, _ = cost_extra(self, direct_prefixes=("4",), direct_mark="(도)")
+        self.assertEqual([ln["account_code"] for ln in res["lines"]], ["45100"])
+        res, _, _, _ = cost_extra(self, direct_mark="(판)")
+        self.assertEqual(res["lines"], [])
+
+
+KEY22 = ("2026-10-29", "22", 1)
+
+
+class TestLinkingManual(unittest.TestCase):
+    def _links(self, rows, header=None):
+        input_dir = os.path.join(new_tmp(self), "입력")
+        write_links_csv(input_dir, rows, header)
+        return mod("linking").read_links(input_dir)
+
+    def test_missing_file_gives_empty_and_note(self):
+        L = mod("linking")
+        self.assertEqual(L.read_links(os.path.join(new_tmp(self), "없는폴더")), ({}, ["프로젝트연결.csv 없음 (수동 지정 0건)"]))
+
+    def test_header_only_file_gives_nothing_and_no_note(self):
+        self.assertEqual(self._links([]), ({}, []))
+
+    def test_truth_4_manual_rows_win_over_code_and_auto(self):
+        L = mod("linking")
+        input_dir = os.path.join(new_tmp(self), "입력")
+        write_links_csv(input_dir, [["2026-10-29", "22", "1", "26221"], ["2026-10-30", "41", "1", "26201"],
+                                    ["2026-10-20", "1", "1", "26220"], ["2026-10-01", "99", "1", "26201"],
+                                    ["2026-10-20", "1", "2", "26201"]])
+        overrides, notes = L.read_links(input_dir)
+        self.assertEqual(notes, [])
+        self.assertEqual(len(overrides), 5)
+        res, books, reqs, projects = cost_extra(self, overrides=overrides)
+        n = by_no(res)
+        for no, proj in (("22", "26221"), ("41", "26201")):
+            (ln,) = n[no]
+            self.assertEqual((ln["project"], ln["basis"], ln["label"], ln["request"]),
+                             (proj, "수동", "수동 (프로젝트연결.csv)", None))
+        (one,) = n["1"]
+        self.assertEqual((one["project"], one["basis"], one["code"]), ("26220", "수동", "26201"))
+        self.assertEqual(cnt(res), {"수동": (3, 41300000), "코드": (7, 208400000),
+                                    "자동": (1, 200000), "미연결": (4, 1900000)})
+        self.assertEqual(total(res), 251800000)
+        self.assertEqual(res["used"], set([KEY22, ("2026-10-30", "41", 1), ("2026-10-20", "1", 1)]))
+        un = L.unused_links(books, overrides, res["used"])
+        self.assertEqual(un, [(("2026-10-01", "99", 1), "26201", "지정한 줄 없음"),
+                              (("2026-10-20", "1", 2), "26201", "원가·매출 줄이 아님")])
+
+    def test_conflicting_duplicate_rows_are_both_ignored(self):
+        overrides, notes = self._links([["2026-10-29", "22", "1", "26221"], ["2026.10.29", "22", "1", "26220"]])
+        self.assertEqual(overrides, {})
+        self.assertEqual(notes, ["프로젝트연결.csv 같은 줄(2026-10-29 22-1)에 다른 프로젝트 지정 → 둘 다 무시"])
+
+    def test_same_row_twice_with_same_project_is_one(self):
+        overrides, notes = self._links([["2026-10-29", "22", "1", "26221"], ["2026-10-29", "22", "1", "26221"]])
+        self.assertEqual(overrides, {KEY22: "26221"})
+        self.assertEqual(notes, [])
+
+    def test_excel_style_values_still_match(self):
+        overrides, notes = self._links([["2026.10.29", "22.0", "1", "[26221]"], ["20261030", " 41 ", "1.0", " 26201 "]])
+        self.assertEqual(overrides, {KEY22: "26221", ("2026-10-30", "41", 1): "26201"})
+        self.assertEqual(notes, [])
+        res, _, _, _ = cost_extra(self, overrides=overrides)
+        self.assertEqual(by_no(res)["22"][0]["basis"], "수동")
+
+    def test_extra_columns_are_ignored(self):
+        overrides, notes = self._links([["2026-10-29", "22", "1", "26221", "메모"]],
+                                       header=["전표일자", "전표번호", "줄", "프로젝트번호", "비고"])
+        self.assertEqual((overrides, notes), ({KEY22: "26221"}, []))
+
+    def test_bad_rows_are_ignored_with_the_file_line_number(self):
+        overrides, notes = self._links([["2026-10-29", "22", "1", "26221"], ["2026-10-30", "41", "x", "26201"],
+                                        ["아님", "41", "1", "26201"], ["2026-10-30", "", "1", "26201"],
+                                        ["2026-10-30", "41", "0", "26201"], ["2026-10-30", "41", "1", ""]])
+        self.assertEqual(overrides, {KEY22: "26221"})
+        self.assertEqual(notes, [
+            "프로젝트연결.csv 3번째 줄: 줄 값이 1 이상 정수가 아님 → 무시",
+            "프로젝트연결.csv 4번째 줄: 전표일자를 날짜로 읽지 못함 → 무시",
+            "프로젝트연결.csv 5번째 줄: 전표번호가 비어 있음 → 무시",
+            "프로젝트연결.csv 6번째 줄: 줄 값이 1 이상 정수가 아님 → 무시",
+            "프로젝트연결.csv 7번째 줄: 프로젝트번호가 비어 있음 → 무시"])
+
+    def test_file_without_required_columns_applies_nothing(self):
+        overrides, notes = self._links([["2026-10-29", "22", "26221"]], header=["전표일자", "전표번호", "프로젝트번호"])
+        self.assertEqual(overrides, {})
+        self.assertTrue(any("필수 열 없음: 줄" in n for n in notes), notes)
+
+    def test_manual_project_not_in_the_list_still_applies_with_a_note_in_the_label(self):
+        L = mod("linking")
+        res, _, _, _ = cost_extra(self, overrides={KEY22: "26999"})
+        (ln,) = by_no(res)["22"]
+        self.assertEqual((ln["project"], ln["basis"], ln["label"]),
+                         ("26999", "수동", "수동 (프로젝트연결.csv · 프로젝트 목록에 없는 번호)"))
+
+    def test_manual_beats_a_code(self):
+        res, _, _, _ = cost_extra(self, overrides={("2026-10-20", "1", 1): "26220"})
+        (ln,) = by_no(res)["1"]
+        self.assertEqual((ln["project"], ln["basis"]), ("26220", "수동"))
+
+    def test_read_links_does_not_write(self):
+        L = mod("linking")
+        input_dir = os.path.join(new_tmp(self), "입력")
+        path = write_links_csv(input_dir, [["2026-10-29", "22", "1", "26221"]])
+        with open(path, "rb") as f:
+            before = f.read()
+        before_names = sorted(os.listdir(input_dir))
+        L.read_links(input_dir)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(sorted(os.listdir(input_dir)), before_names)
+
+    def test_template_has_bom_and_only_the_header(self):
+        path = os.path.join(ROOT, "입력양식", "프로젝트연결.csv")
+        with open(path, "rb") as f:
+            raw = f.read()
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
+        rows = list(csv.reader(raw.decode("utf-8-sig").splitlines()))
+        self.assertEqual(rows, [mod("linking").LINK_COLUMNS])
+
+
 if __name__ == "__main__":
     unittest.main()
