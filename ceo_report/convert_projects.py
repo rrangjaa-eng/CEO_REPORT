@@ -419,8 +419,10 @@ def _requests_part(groups, requests, match):
             claims[id(g)] += 1
     unpaid_by_vendor = collections.Counter(g["vendor_norm"] for g in groups if g["state"] in ("요청미지급", "카드사용미결제"))
     entries = []
+    # invoice: 번호 -> 큰 쪽(D-50)을 따질 WEHAGO 금액 (계산서 합계 또는 자동 연결된 줄의 합계)
+    # covered: 번호 -> 원가 줄이 맡은 요청 금액 (min(요청, WEHAGO)), excess: 번호 -> 요청이 더 커서 넣은 차액 줄 금액
     state = {"annotated": 0, "added": 0, "paid": 0, "skipped": 0, "naming": {}, "paid_nos": [], "skipped_nos": [],
-             "invoice": {}}   # invoice: 번호 -> 큰 쪽(D-50)을 따질 WEHAGO 금액 (계산서 합계 또는 자동 연결된 줄의 합계)
+             "invoice": {}, "covered": {}, "excess": {}}
     for rq in sorted(active, key=lambda r: _no_key(r["번호"])):
         no = rq["번호"]
         m = rows_of.get(no, fallback)
@@ -445,38 +447,79 @@ def _requests_part(groups, requests, match):
                 state["annotated"] += 1
                 state["naming"][no] = "annotated"
                 state["invoice"][no] = invoice
+                state["covered"][no] = min(rq["amount"], invoice)
                 if rq["amount"] > invoice:
+                    state["excess"][no] = rq["amount"] - invoice
                     entries.append((_no_key(no), 1, _request_row(
                         rq, rq["amount"] - invoice,
                         "지급요청 %s 차액 (인트라넷 요청 %s − 계산서 %s)" % (no, won(rq["amount"]), won(invoice)))))
                 continue
             if g["state"] in ("지급완료", "카드결제완료"):
+                # 계산서 몫은 이미 나갔다. 요청이 더 크면 그 차액은 아직 나갈 수 있는 돈이다: 요청미지급(추정) 줄로 둔다 (CR-02, D-50).
+                # 그래서 이 요청을 가리키는 줄의 합 = max(계산서, 요청) = 승인 화면의 일정 금액 (D-30b)
+                g["basis"] += " · 지급요청 %s" % no
                 state["skipped"] += 1
                 state["skipped_nos"].append(no)
-                text = "지급요청 %s: 계산서의 원가 줄이 이미 지급완료 → 넣지 않음" % no
+                state["naming"][no] = "skipped"
+                state["invoice"][no] = invoice
+                state["covered"][no] = min(rq["amount"], invoice)
                 if rq["amount"] > invoice:
-                    text += " (요청 금액이 계산서보다 %s원 큼 — 차액은 넣지 않았으니 확인)" % won(rq["amount"] - invoice)
-                notes.append(text)
+                    state["excess"][no] = rq["amount"] - invoice
+                    row = _request_row(rq, rq["amount"] - invoice, "지급요청 %s 차액 (인트라넷 요청 %s − 계산서 %s, 계산서는 이미 지급)"
+                                       % (no, won(rq["amount"]), won(invoice)))
+                    row["확정여부"] = "추정"
+                    entries.append((_no_key(no), 1, row))
+                    notes.append("지급요청 %s: 계산서의 원가 줄이 이미 지급완료 → 요청 금액이 계산서보다 큰 차액 %s원만 요청미지급(추정)으로 넣음 (확인 필요)"
+                                 % (no, won(rq["amount"] - invoice)))
+                else:
+                    notes.append("지급요청 %s: 계산서의 원가 줄이 이미 지급완료 → 요청 줄 넣지 않음 (원가 줄에 번호 표시)" % no)
                 continue
         # 요청 줄로 넣는다
         state["added"] += 1
         state["naming"][no] = "added"
-        if has_invoice and rq["amount"] is not None and invoice is not None:
+        if not has_invoice:
+            invoice = _linked_total(linked.get(no, []))
+        if rq["amount"] is not None and invoice is not None:
             state["invoice"][no] = invoice
         entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s (인트라넷 금액, 부가세 포함 여부 미확인)" % no)))
+        if rq["amount"] is not None and invoice is not None and invoice > rq["amount"]:
+            entries.append((_no_key(no), 1, _request_row(
+                rq, invoice - rq["amount"],
+                "지급요청 %s 차액 (계산서 %s − 인트라넷 요청 %s)" % (no, won(invoice), won(rq["amount"])))))
         if has_invoice:
             notes.append("지급요청 %s: 계산서 있음이나 원가 줄을 하나로 정하지 못함 → 요청으로 넣음 (중복 가능)" % no)
-            if rq["amount"] is not None and invoice is not None and invoice > rq["amount"]:
-                entries.append((_no_key(no), 1, _request_row(
-                    rq, invoice - rq["amount"],
-                    "지급요청 %s 차액 (계산서 %s − 인트라넷 요청 %s)" % (no, won(invoice), won(rq["amount"])))))
         elif linked.get(no):
             notes.append("지급요청 %s: 자동 연결된 원가 줄을 하나로 정하지 못하거나 합계를 몰라 요청으로 넣음 (중복 가능)" % no)
         elif unpaid_by_vendor.get(norm_vendor(rq["vendor"])):
             notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[norm_vendor(rq["vendor"])]))
     entries.sort(key=lambda e: (e[0], e[1]))
-    state.update(entries=entries, notes=notes, active=active)
+    state.update(entries=entries, notes=notes, active=active, groups=groups)
     return state
+
+
+_REQUEST_ROW = re.compile(r"^지급요청 (\d+)(?! 차액)")
+_EXCESS_ROW = re.compile(r"^지급요청 (\d+) 차액 \(인트라넷 요청")
+
+
+def amount_check(known, part, rows):
+    """금액 있는 요청의 합 = 원가 줄이 맡은 몫(min(요청, WEHAGO)) + 요청 줄 + 요청이 더 커서 넣은 차액 줄 + 이미 지급.
+
+    요청 줄과 차액 줄은 쓰인 줄(rows)에서 읽는다: 이미 지급된 원가 줄 뒤에 차액이 빠지면 CSV 쪽이 모자라 '불일치' (CR-02).
+    part: covered (번호 -> 원가 줄이 맡은 몫), paid_nos (이미 지급 번호).
+    """
+    by_no = dict((rq["번호"], rq) for rq in known)
+    covered = sum(part["covered"].get(n, 0) for n in by_no)
+    paid_amount = sum(by_no[n]["amount"] for n in part["paid_nos"] if n in by_no)
+    row_amount = 0
+    for r in rows:
+        text = r.get("근거") or ""
+        excess, request = _EXCESS_ROW.match(text), _REQUEST_ROW.match(text)
+        if excess and excess.group(1) in by_no:
+            row_amount += (num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0)
+        elif request and request.group(1) in by_no:
+            row_amount += num(r["공급가액"]) or 0
+    return Check("지급요청 금액 (금액 있는 승인·대기 %d건) = 원가 줄 표시 + 요청 줄 + 이미 지급" % len(known),
+                 sum(rq["amount"] for rq in known), covered + row_amount + paid_amount)
 
 
 def _request_checks(part, rows, requests, match):
@@ -489,30 +532,49 @@ def _request_checks(part, rows, requests, match):
         len(active), part["annotated"], part["added"], part["paid"])
     if part["skipped"]:
         label += " + 이미 지급된 원가 줄 %d" % part["skipped"]
-    by_no = dict((rq["번호"], rq) for rq in known)
-    skipped_amount = sum(by_no[n]["amount"] for n in part["skipped_nos"] if n in by_no)
-    annotated_amount = sum(rq["amount"] for rq in known if part["naming"].get(rq["번호"]) == "annotated")
-    paid_amount = sum(by_no[n]["amount"] for n in part["paid_nos"] if n in by_no)
-    row_amount = sum(num(r["공급가액"]) or 0 for r in request_rows)
     checks = [
         Check(label, len(active), csv_count),
-        Check("지급요청 금액 (금액 있는 승인·대기 %d건) = 원가 줄 표시 + 요청 줄 + 이미 지급" % len(known),
-              sum(rq["amount"] for rq in known), annotated_amount + row_amount + paid_amount + skipped_amount),
+        amount_check(known, part, rows),
         Check("지급요청 금액 미확인", len(active) - len(known), sum(1 for r in request_rows if r["공급가액"] == "")),
     ]
-    want, got = 0, 0
-    for rq in active:
-        invoice = part["invoice"].get(rq["번호"])
-        if invoice is not None and rq["amount"] is not None:
-            want += max(invoice, rq["amount"])
-            for r in rows:
-                if _names(r["근거"], rq["번호"]):
-                    got += (num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0)
-    checks.append(Check("계산서·요청 금액이 다르면 큰 쪽: 지급요청을 가리키는 줄 합계 = max(계산서, 요청)", want, got))
+    checks.append(d50_check(active, match, part["groups"], rows))
     return checks
 
 
 BASIS_LABEL = "지급요청마다 일정 근거 하나: 근거가 있는 지급요청 수 = 근거(원가 줄·요청 줄) 수"
+
+
+D50_LABEL = "계산서·요청 금액이 다르면 큰 쪽: 지급요청을 가리키는 줄 합계 = max(계산서, 요청)"
+
+
+def _linked_total(mine):
+    """자동 연결된 묶음이 하나이고 합계를 알면 그 합계, 아니면 None."""
+    return _group_total(mine[0]) if len(mine) == 1 else None
+
+
+def d50_check(active, match, groups, rows):
+    """D-50: WEHAGO 금액(계산서 대조 합계 또는 자동 연결된 원가 줄 합계)을 아는 요청마다, 그 요청을 가리키는 줄(근거 '지급요청 N')의
+    합 = max(WEHAGO, 요청). 기대값은 요청 대조와 연결 결과에서 바로 구한다 (어느 갈래로 넣었는지와 무관): 이미 지급된 원가 줄 뒤에
+    빠진 차액(CR-02)도 '불일치'로 잡힌다. '이미 지급'(분개장에 같은 금액 지급) 요청은 따지지 않는다.
+    """
+    rows_of = match.get("rows", {})
+    linked = collections.defaultdict(list)
+    for g in groups:
+        if g.get("request"):
+            linked[g["request"]].append(g)
+    want, got = 0, 0
+    for rq in active:
+        no, m = rq["번호"], rows_of.get(rq["번호"], {})
+        if rq["amount"] is None or m.get("status") == "이미 지급":
+            continue
+        wehago_amount = _linked_total(linked.get(no, []))
+        if wehago_amount is None and m.get("status") in ("계산서 있음", "금액 차이"):
+            wehago_amount = m.get("invoice_total")
+        if wehago_amount is None:
+            continue
+        want += max(wehago_amount, rq["amount"])
+        got += sum((num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0) for r in rows if _names(r["근거"], no))
+    return Check(D50_LABEL, want, got)
 
 
 def basis_check(groups, request_rows):

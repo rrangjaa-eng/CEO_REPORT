@@ -161,5 +161,55 @@ class TestCR01AutoLinkedRequest(unittest.TestCase):
         self.assertEqual((found[0].source, found[0].csv), (1, 1))
 
 
+# ───────────── CR-02: 이미 지급된 계산서보다 요청이 크면 차액은 아직 나갈 돈 (D-50) ─────────────
+D25 = dt.date(2026, 10, 25)
+PAID_JOURNAL = [jl(D25, 50, "61101", "행사외주비(도)", 5000000, None, "가상무대", "[26220] 무대"),
+                jl(D25, 50, "13500", "부가세대급금", 500000, None, "가상무대"),
+                jl(D25, 50, "10300", "보통예금", None, 5500000, "가상무대")]
+PAID_LEDGER = [inv(D25, "가상무대", "[26220] 무대", 5000000, 500000)]
+PAID_PAYMENTS = [pay(6101, "[26220] 가상 전시", "가상무대", "2026-10-20 09:00:00", 6000000)]
+
+
+class TestCR02PaidInvoiceDiff(unittest.TestCase):
+    def test_paid_invoice_below_the_request_adds_the_diff_as_an_estimated_unpaid_row(self):
+        r = Run(PAID_JOURNAL, PAID_PAYMENTS, AUTO_PROJECTS, PAID_LEDGER)
+        m = r.match["rows"]["6101"]
+        self.assertEqual((m["status"], m["invoice_total"], m["schedule_amount"]), ("금액 차이", 5500000, 6000000))
+        rows = naming(r.execs, "6101")
+        self.assertEqual(sorted(x["상태"] for x in rows), ["요청미지급", "지급완료"])
+        diff = [x for x in rows if x["상태"] == "요청미지급"][0]
+        self.assertEqual((diff["공급가액"], diff["부가세"], diff["확정여부"]), ("500000", "", "추정"))
+        self.assertIn("차액", diff["근거"])
+        self.assertIn("계산서는 이미 지급", diff["근거"])
+        # 이 요청을 가리키는 줄의 합 = 승인 화면이 일정에 넣는 금액 (D-30b schedule_amount)
+        self.assertEqual(sum(money(x) for x in rows), m["schedule_amount"])
+        self.assertEqual(unpaid_total(r.execs), 500000)
+        self.assertTrue([n for n in r.execs.notes if "6101" in n and "500,000" in n and "확인" in n], r.execs.notes)
+        for label, res in results(r.execs).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_d50_check_catches_the_dropped_diff(self):
+        """고치기 전 모양(지급완료 줄만, 요청 번호도 차액 줄도 없음)을 D-50 대조가 '불일치'로 잡는다."""
+        r = Run(PAID_JOURNAL, PAID_PAYMENTS, AUTO_PROJECTS, PAID_LEDGER)
+        before = [dict(x, 근거="WEHAGO 2026-10-25 전표 50") for x in r.execs.rows if x["상태"] == "지급완료"]
+        active = [rq for rq in r.requests if rq["status"] in ("approved", "pending")]
+        c = convert_projects.d50_check(active, r.match, [], before)
+        self.assertEqual((c.source, c.csv), (6000000, 0))
+        self.assertEqual(convert.check_result(c), "불일치")
+        c = convert_projects.d50_check(active, r.match, [], r.execs.rows)
+        self.assertEqual(convert.check_result(c), "일치")
+
+    def test_amount_check_counts_only_the_invoice_part_of_a_paid_row(self):
+        """이미 지급된 원가 줄은 계산서 몫(5,500,000)만 맡는다: 차액 줄이 없으면 금액 대조가 '불일치' (고치기 전에는 요청 전액을 '맡음'으로 셌다)."""
+        r = Run(PAID_JOURNAL, PAID_PAYMENTS, AUTO_PROJECTS, PAID_LEDGER)
+        c = [c for c in r.execs.checks if c.label.startswith("지급요청 금액 (금액 있는")][0]
+        self.assertEqual((c.source, c.csv), (6000000, 6000000))
+        part = {"covered": {"6101": 5500000}, "paid_nos": []}
+        without_diff = [x for x in r.execs.rows if "차액" not in x["근거"]]
+        c = convert_projects.amount_check(r.requests, part, without_diff)
+        self.assertEqual((c.source, c.csv), (6000000, 5500000))
+        self.assertEqual(convert.check_result(c), "불일치")
+
+
 if __name__ == "__main__":
     unittest.main()

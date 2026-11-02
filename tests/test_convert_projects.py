@@ -657,8 +657,10 @@ class TestBuildExecsRequests(unittest.TestCase):
 
     def test_an_invoice_row_already_paid_means_no_request_row_and_a_note(self):
         t = full_table(exec_inputs(journal_with(OPENING_EXTRA)))
-        self.assertEqual(naming(t, "5104"), [])
-        self.assertIn("지급요청 5104: 계산서의 원가 줄이 이미 지급완료 → 넣지 않음", t.notes)
+        # 02-REVIEW CR-02: 이미 지급된 계산서 줄에 요청 번호를 붙인다 (D-50 합계가 그 줄을 센다). 나갈 돈 줄은 없다 (요청 = 계산서)
+        self.assertEqual([r[3] for r in naming(t, "5104")], ["지급완료"])
+        self.assertTrue(by_slip(t, 5)[8].endswith(" · 지급요청 5104"), by_slip(t, 5))
+        self.assertIn("지급요청 5104: 계산서의 원가 줄이 이미 지급완료 → 요청 줄 넣지 않음 (원가 줄에 번호 표시)", t.notes)
         self.assertEqual(by_slip(t, 5)[3], "지급완료")
         lines = lines_of(t)
         self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 2 + 요청 줄 4 + 이미 지급 1 + 이미 지급된 원가 줄 1: 원본 8 · CSV 8 → 일치",
