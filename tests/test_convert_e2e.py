@@ -8,7 +8,9 @@ import hashlib
 import os
 import re
 import sys
+import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -195,6 +197,228 @@ class TestConvertEndToEnd(unittest.TestCase):
             self.assertEqual(len([ln for ln in out if ln.startswith(name + " ")]), 1, name)
         self.assertIn("대조 불일치 0건", out)
         self.assertEqual(out[-1], "대조 내용: " + os.path.join(self.input_dir, "변환결과.txt"))
+
+
+# ───────────── Task 2: 만들지 못한 파일(D-46), 쓰기 전체 취소(T-02-29), 다시 돌리기, 자금일정 겹침, 입력 확인 목록 ─────────────
+def tree(folder):
+    """폴더 안 모든 파일의 {상대 경로: sha256}."""
+    out = {}
+    for base, _, files in os.walk(folder):
+        for n in files:
+            full = os.path.join(base, n)
+            out[os.path.relpath(full, folder).replace(os.sep, "/")] = sha(full)
+    return out
+
+
+def set_day(path, year, month, day):
+    stamp = time.mktime((year, month, day, 12, 0, 0, 0, 0, -1))
+    os.utime(path, (stamp, stamp))
+
+
+def run_core(input_dir, collect, wehago_dir, stamp="20261102_000000"):
+    from ceo_report import convert
+    return convert.run(input_dir, collect, wehago_dir, ASOF, NOW, stamp)
+
+
+def backups(input_dir):
+    base = os.path.join(input_dir, "이전")
+    return sorted(os.listdir(base)) if os.path.isdir(base) else []
+
+
+class TestConvertDegraded(unittest.TestCase):
+    def test_no_snapshot_writes_pl_and_invoices_and_leaves_the_other_three_files_alone(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self, snapshot=False)
+        before = dict((n, sha(os.path.join(input_dir, n))) for n in ("프로젝트.csv", "프로젝트집행.csv"))
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "위하고대조.csv")))
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        lines = read_result_lines(input_dir)
+        for name in ("손익.csv", "계산서.csv"):
+            self.assertIn("[%s] 만듦" % name, "\n".join(lines))
+        for name in ("프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv"):
+            want = "[%s] 만들지 않음 — 인트라넷 스냅숏 없음 (기존 파일 그대로)" % name
+            self.assertIn(want, lines)
+            self.assertIn(want, out.splitlines())
+        for name, digest in before.items():
+            self.assertEqual(sha(os.path.join(input_dir, name)), digest, name)
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "위하고대조.csv")))
+        kept = os.listdir(os.path.join(input_dir, "이전", backups(input_dir)[0]))
+        self.assertEqual(sorted(kept), ["계산서.csv", "손익.csv"])
+        self.assertEqual(section(lines, "[파일 사이 대조]"), [])
+        self.assertEqual(lines[-1], "대조 불일치 0건")
+
+    def test_no_sales_file_keeps_the_existing_invoice_file_and_says_when_it_was_written(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self, sales=False)
+        path = os.path.join(input_dir, "계산서.csv")
+        set_day(path, 2026, 10, 15)
+        before = sha(path)
+        mtime = os.path.getmtime(path)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        want = "[계산서.csv] 만들지 않음 — 매출 계산서 엑셀 없음 → 기존 계산서.csv 유지 (갱신 안 됨, 작성일 2026-10-15)"
+        self.assertIn(want, read_result_lines(input_dir))
+        self.assertIn(want, out.splitlines())
+        self.assertEqual(sha(path), before)
+        self.assertEqual(os.path.getmtime(path), mtime)
+        for stamp in backups(input_dir):
+            self.assertNotIn("계산서.csv", os.listdir(os.path.join(input_dir, "이전", stamp)))
+        self.assertIn("[손익.csv] 만듦", "\n".join(read_result_lines(input_dir)))
+        self.assertIn("[프로젝트.csv] 만듦", "\n".join(read_result_lines(input_dir)))
+
+    def test_sales_file_with_a_missing_column_names_the_reason_first_and_keeps_the_file(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self, sales=False)
+        write_sales(wehago_dir, SALES_EINVOICE, header=["일자", "거래처"])
+        path = os.path.join(input_dir, "계산서.csv")
+        set_day(path, 2026, 10, 15)
+        before = sha(path)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        line = [ln for ln in read_result_lines(input_dir) if ln.startswith("[계산서.csv] 만들지 않음")][0]
+        self.assertTrue(line.startswith("[계산서.csv] 만들지 않음 — 매출 계산서 엑셀 머리글 다름"), line)
+        self.assertTrue(line.endswith(" → 기존 계산서.csv 유지 (갱신 안 됨, 작성일 2026-10-15)"), line)
+        self.assertIn(line, out.splitlines())
+        self.assertEqual(sha(path), before)
+
+    def test_no_sales_file_and_no_invoice_file_leaves_the_invoice_data_missing_not_zero(self):
+        from ceo_report import calc, data
+        tmp, input_dir, collect, wehago_dir = full_company(self, sales=False)
+        os.remove(os.path.join(input_dir, "계산서.csv"))
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[계산서.csv] 만들지 않음 — 자료 없음 (매출 계산서 엑셀)", read_result_lines(input_dir))
+        self.assertFalse(os.path.exists(os.path.join(input_dir, "계산서.csv")))
+        d = data.load(input_dir)
+        self.assertTrue(d.in_missing)
+        R = calc.compute(d, "weekly", ASOF)
+        self.assertTrue(R["s2"]["in_missing"])
+        self.assertIsNone(R["s5"]["issued"])
+
+    def test_each_locked_target_stops_with_exit_7_and_replaces_nothing(self):
+        from ceo_report import convert
+        tmp, input_dir, collect, wehago_dir = full_company(self)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))   # 다섯 파일이 모두 있게 한 번 만든다
+        self.assertEqual(rc, 0, out)
+        real = convert._check_writable
+        for locked_name in GENERATED_CSV + ("변환결과.txt",):
+            before = tree(input_dir)
+
+            def locked(path, locked_name=locked_name):
+                if os.path.basename(path) == locked_name:
+                    raise PermissionError(13, "Permission denied", path)
+                return real(path)
+
+            with mock.patch.object(convert, "_check_writable", side_effect=locked):
+                rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+            self.assertEqual(rc, 7, (locked_name, out))
+            self.assertIn("입력/%s을(를) 쓸 수 없음" % locked_name, out)
+            self.assertEqual(tree(input_dir), before, locked_name)
+
+
+class TestConvertRerun(unittest.TestCase):
+    def test_second_run_on_its_own_output_gives_identical_files(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self)
+        res = run_core(input_dir, collect, wehago_dir, "20261102_000000")
+        self.assertEqual(res.code, 0, res.lines)
+        first = dict((n, sha(os.path.join(input_dir, n))) for n in GENERATED_CSV)
+        res = run_core(input_dir, collect, wehago_dir, "20261102_000001")
+        self.assertEqual(res.code, 0, res.lines)
+        for name in GENERATED_CSV:
+            self.assertEqual(sha(os.path.join(input_dir, name)), first[name], name)
+        self.assertEqual(backups(input_dir), ["20261102_000000", "20261102_000001"])
+        self.assertEqual(read_result_lines(input_dir)[-1], "대조 불일치 0건")
+
+    def test_carried_columns_survive_a_rerun(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self)
+        run_core(input_dir, collect, wehago_dir, "20261102_000000")
+        run_core(input_dir, collect, wehago_dir, "20261102_000001")
+        projects = [dict(zip(read_csv_rows(os.path.join(input_dir, "프로젝트.csv"))[0], r))
+                    for r in read_csv_rows(os.path.join(input_dir, "프로젝트.csv"))[1:]]
+        by = dict((r["프로젝트번호"], r) for r in projects)
+        self.assertEqual((by["26201"]["상태"], by["26201"]["예산수정일"], by["26201"]["계약금액"]), ("진행", "2026-09-15", "360000000"))
+        self.assertEqual(by["26203"]["상태"], "진행")
+        execs = read_csv_rows(os.path.join(input_dir, "프로젝트집행.csv"))
+        plan = [r for r in execs[1:] if r[3] == "집행계획미요청"]
+        self.assertEqual(len(plan), 4)
+        self.assertIn("P26207", [r[0] for r in plan])
+        pl = read_csv_rows(os.path.join(input_dir, "손익.csv"))
+        self.assertEqual(len([r for r in pl[1:] if r[0] != "WEHAGO"]), 3)
+
+
+def with_schedule_row(input_dir, row):
+    """자금일정.csv 끝에 줄 하나를 더한다 (시험용 입력)."""
+    path = os.path.join(input_dir, "자금일정.csv")
+    with open(path, "a", encoding="utf-8", newline="") as f:
+        csv.writer(f).writerow(row)
+
+
+ADDED_SCHEDULE = ["2026-11-13", "출금", "44,000,000", "확정", "거래처미지급", "26201", "가상음향", "청구서", ""]
+OVERLAP_HEAD = "자금일정.csv와 겹칠 수 있는 줄 %d건 (자금일정.csv는 바꾸지 않음)"
+
+
+class TestConvertListings(unittest.TestCase):
+    def test_plain_sample_has_no_overlap(self):
+        tmp, input_dir, collect, wehago_dir, rc, out = run_full(self)
+        self.assertEqual(rc, 0, out)
+        lines = read_result_lines(input_dir)
+        self.assertIn(OVERLAP_HEAD % 0, lines)
+        self.assertEqual([ln for ln in lines if ln.startswith("  겹침 ")], [])
+
+    def test_added_schedule_row_is_listed_once_and_the_schedule_file_is_not_changed(self):
+        tmp, input_dir, collect, wehago_dir = full_company(self)
+        with_schedule_row(input_dir, ADDED_SCHEDULE)
+        before = sha(os.path.join(input_dir, "자금일정.csv"))
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        lines = read_result_lines(input_dir)
+        self.assertIn(OVERLAP_HEAD % 1, lines)
+        pairs = [ln for ln in lines if ln.startswith("  겹침 ")]
+        self.assertEqual(len(pairs), 1, pairs)
+        self.assertIn("2026-11-13 출금 44,000,000 26201 가상음향", pairs[0])
+        self.assertIn("요청미지급", pairs[0])
+        self.assertEqual(sha(os.path.join(input_dir, "자금일정.csv")), before)
+        self.assertLess(lines.index(OVERLAP_HEAD % 1), lines.index("대조 불일치 0건"))
+        self.assertIn(OVERLAP_HEAD % 1, out.splitlines())
+
+    def test_input_check_listing_has_the_same_count_as_data_load(self):
+        from ceo_report import data
+        tmp, input_dir, collect, wehago_dir, rc, out = run_full(self)
+        self.assertEqual(rc, 0, out)
+        issues = data.load(input_dir).issues.items
+        lines = read_result_lines(input_dir)
+        self.assertGreater(len(issues), 0)
+        self.assertIn("보고서 입력 확인 필요 %d건" % len(issues), lines)
+        listed = [ln for ln in lines if ln.startswith("  확인 ")]
+        self.assertEqual(len(listed), len(issues))
+        self.assertIn("보고서 입력 확인 필요 %d건" % len(issues), out.splitlines())
+        self.assertTrue([ln for ln in listed if "프로젝트 미연결" in ln], listed)
+
+    def test_stdout_summary_lines_and_order(self):
+        tmp, input_dir, collect, wehago_dir, rc, out = run_full(self)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "WEHAGO 장부 기준일 2026-10-31 · 기준일보다 2일 이전")
+        self.assertEqual([ln.split(" ")[0] for ln in lines[1:6]], list(GENERATED_CSV))
+        tail = lines[-4:]
+        self.assertEqual(tail[0], "대조 불일치 0건")
+        self.assertTrue(tail[1].startswith("자금일정.csv와 겹칠 수 있는 줄 "))
+        self.assertTrue(tail[2].startswith("보고서 입력 확인 필요 "))
+        self.assertEqual(tail[3], "대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
+
+    def test_resident_numbers_never_reach_a_written_file_or_stdout(self):
+        from test_approval import FAKE_PAYMENTS
+        row = list(FAKE_PAYMENTS[0])
+        row[0], row[1] = "5190", "[26201] 강사 900101-1234567 사례"
+        tmp, input_dir, collect, wehago_dir = full_company(self, snapshot=False)
+        write_fake_snapshot(collect, extra=[row])
+        with_schedule_row(input_dir, ["2026-11-13", "출금", "1,000", "확정", "기타", "", "강사 900101-1234567", "", ""])
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(RRN_RUN.search(out))
+        for name in os.listdir(input_dir):
+            path = os.path.join(input_dir, name)
+            if os.path.isfile(path) and name in GENERATED_CSV + ("변환결과.txt",):
+                with open(path, encoding="utf-8-sig") as f:
+                    self.assertIsNone(RRN_RUN.search(f.read()), name)
+        self.assertEqual(read_result_lines(input_dir)[-1], "대조 불일치 0건")
 
 
 if __name__ == "__main__":
