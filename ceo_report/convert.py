@@ -7,6 +7,7 @@ import collections
 import csv
 import io
 import os
+import shutil
 
 from . import data, util, wehago
 from .util import won
@@ -101,20 +102,114 @@ def read_config(input_dir):
     return Config(DEFAULT_CONFIG), []
 
 
-def read_prev(input_dir, name):
-    """만들어 둔 CSV 의 이전 줄 (글자 그대로의 dict 목록, _line/_file 키 없음). 없거나 읽을 수 없으면 []."""
+def _read_prev_state(input_dir, name):
+    """(이전 줄 목록, 상태): 상태는 '없음' | 'ok' | '읽지 못함'."""
     cols = data.SCHEMA.get(name)
     path = os.path.join(input_dir, name)
     if cols is None or not os.path.exists(path):
-        return []
+        return [], "없음"
     info = {}
     rows, ok = util.read_csv(path, cols, util.Issues(), info)
     if not ok or info.get("missing"):
-        return []
+        return [], "읽지 못함"
     for r in rows:
         r.pop("_line", None)
         r.pop("_file", None)
-    return rows
+    return rows, "ok"
+
+
+def read_prev(input_dir, name):
+    """만들어 둔 CSV 의 이전 줄 (글자 그대로의 dict 목록, _line/_file 키 없음). 없거나 읽을 수 없으면 []."""
+    return _read_prev_state(input_dir, name)[0]
+
+
+# ───────────── 안전하게 쓰기 (D-43): 잠금 확인 → 임시 파일 → 이전 파일 복사 → 바꿔치기 ─────────────
+class WriteFailed(Exception):
+    """파일을 쓸 수 없음. name 은 입력 폴더 안 파일 이름, replaced 는 이미 바꾼 파일 이름들."""
+
+    def __init__(self, name, error, replaced=()):
+        Exception.__init__(self, "%s: %s" % (name, error))
+        self.name, self.error, self.replaced = name, error, list(replaced)
+
+
+def _check_writable(path):
+    """이미 있는 파일을 쓰기로 열었다 닫는다 (엑셀이 열어 둔 파일은 여기서 OSError)."""
+    with open(path, "r+b"):
+        pass
+
+
+def _write_temp(path, payload):
+    with open(path, "wb") as f:
+        f.write(payload)
+
+
+def _backup_name(input_dir, stamp):
+    base = os.path.join(input_dir, "이전")
+    name, n = stamp, 1
+    while os.path.exists(os.path.join(base, name)):
+        n += 1
+        name = "%s_%d" % (stamp, n)
+    return name
+
+
+def plan_backup(input_dir, names, stamp):
+    """(이전 파일 폴더 이름 또는 None, 이미 있어서 옮길 파일 이름들)."""
+    existing = [n for n in names if os.path.exists(os.path.join(input_dir, n))]
+    return (_backup_name(input_dir, stamp) if existing else None), existing
+
+
+def write_files(input_dir, payloads, stamp, backup=None):
+    """[(이름, 바이트)]를 입력 폴더에 쓴다. 이름은 GENERATED 안에 있어야 한다 (아니면 ValueError, 아무것도 건드리지 않음).
+
+    1) 이미 있는 대상을 모두 쓰기로 열어 본다 2) 새 내용을 '<이름>.변환중' 임시 파일로 쓴다 3) 이미 있던 파일을
+    이전/<backup>/ 에 복사한다 4) 임시 파일을 os.replace 로 대상에 바꾼다. 3) 이전에 실패하면 아무것도 바뀌지 않는다
+    (WriteFailed). backup 을 주면 그 이름의 폴더를 쓴다 (같은 실행의 두 번째 쓰기가 같은 폴더를 쓰도록).
+    """
+    for name, _ in payloads:
+        if name not in GENERATED:
+            raise ValueError("변환이 쓸 수 없는 파일 이름: %s" % name)
+    targets = [(name, os.path.join(input_dir, name)) for name, _ in payloads]
+    for name, path in targets:
+        if os.path.exists(path):
+            try:
+                _check_writable(path)
+            except OSError as e:
+                raise WriteFailed(name, e)
+    temps = []
+    try:
+        for (name, path), (_, payload) in zip(targets, payloads):
+            tmp = path + ".변환중"
+            temps.append(tmp)
+            try:
+                _write_temp(tmp, payload)
+            except OSError as e:
+                raise WriteFailed(name, e)
+        folder = None
+        existing = [(n, p) for n, p in targets if os.path.exists(p)]
+        if existing:
+            folder = os.path.join(input_dir, "이전", backup or _backup_name(input_dir, stamp))
+            fresh = not os.path.exists(folder)
+            try:
+                os.makedirs(folder, exist_ok=True)
+                for name, path in existing:
+                    shutil.copy2(path, os.path.join(folder, name))
+            except OSError as e:
+                if fresh:
+                    shutil.rmtree(folder, ignore_errors=True)
+                raise WriteFailed(name, e)
+        done = []
+        for (name, path), tmp in zip(targets, temps):
+            try:
+                os.replace(tmp, path)
+            except OSError as e:
+                raise WriteFailed(name, e, done)
+            done.append(name)
+    finally:
+        for tmp in temps:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def _text_bytes(lines):
@@ -169,30 +264,61 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept):
     return out
 
 
+def _write_failed_lines(e):
+    out = ["입력/%s을(를) 쓸 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행)" % e.name]
+    if e.replaced:
+        out.append("이미 바뀐 파일: " + ", ".join(e.replaced))
+    return out
+
+
 def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     """변환 한 번. 장부·스냅숏·파일 문제로 예외를 내지 않고 Result.code 로 알린다."""
     from . import convert_pl
     res = Result()
-    os.makedirs(input_dir, exist_ok=True)
+    stamp = stamp or now.strftime("%Y%m%d_%H%M%S")
+    try:
+        os.makedirs(input_dir, exist_ok=True)
+    except OSError:
+        res.code = 7
+        res.lines = ["입력 폴더를 만들 수 없음: %s" % input_dir]
+        return res
     cfg, cfg_notes = read_config(input_dir)
     books = wehago.load_books(wehago_dir, asof, None)  # None: 장부가 오래됐다고 멈추지 않는다
     if books.state != "ok":
         res.code = 3
-        res.lines = ["변환하지 않음 — WEHAGO 장부를 쓸 수 없음: " + books.reason]
-        return res
-    tables = [convert_pl.build_pl(books, cfg, read_prev(input_dir, "손익.csv"))]
+        tables = [Table("손익.csv", data.SCHEMA["손익.csv"], [], written=False, reason="WEHAGO 장부를 쓸 수 없음")]
+    else:
+        prev, prev_state = _read_prev_state(input_dir, "손익.csv")
+        tables = [convert_pl.build_pl(books, cfg, prev)]
     res.tables = tables
-    for t in tables:
-        if t.written:
-            write_table(os.path.join(input_dir, t.name), t)
+    names = [t.name for t in tables if t.written] + ["변환결과.txt"]
+    backup, moved = plan_backup(input_dir, names, stamp)
+    where = "입력/이전/%s/" % backup if backup else ""
+    if books.state == "ok" and prev_state == "읽지 못함":
+        tables[0].notes.append("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (%s 에 원본 보관)" % where)
     kept = [m for m in MANUAL if os.path.exists(os.path.join(input_dir, m))]
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, "이전 파일: 없음", kept)
-    with open(os.path.join(input_dir, "변환결과.txt"), "wb") as f:
-        f.write(_text_bytes(lines))
-    late = (asof - books.book_date).days
-    res.lines = ["WEHAGO 장부 기준일 %s%s" % (books.book_date.isoformat(), " · 기준일보다 %d일 이전" % late if late > 0 else "")]
+    backup_line = "이전 파일: %s (%s)" % (where, ", ".join(moved)) if backup else "이전 파일: 없음"
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept)
+    payloads = [(t.name, table_bytes(t)) for t in tables if t.written] + [("변환결과.txt", _text_bytes(lines))]
+    try:
+        write_files(input_dir, payloads, stamp, backup)
+    except WriteFailed as e:
+        res.code = 7
+        res.lines = _write_failed_lines(e)
+        return res
+    res.backup = os.path.join(input_dir, "이전", backup) if backup else None
+    out = []
+    if books.state != "ok":
+        out.append("변환하지 않음 — WEHAGO 장부를 쓸 수 없음: " + books.reason)
+    else:
+        late = (asof - books.book_date).days
+        out.append("WEHAGO 장부 기준일 %s%s" % (books.book_date.isoformat(),
+                                             " · 기준일보다 %d일 이전" % late if late > 0 else ""))
     for t in tables:
-        res.lines.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "%s 만들지 않음 — %s" % (t.name, t.reason))
-    res.lines.append("대조 불일치 %d건" % _mismatches(tables))
-    res.lines.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
+        out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "%s 만들지 않음 — %s" % (t.name, t.reason))
+    if backup:
+        out.append(backup_line)
+    out.append("대조 불일치 %d건" % _mismatches(tables))
+    out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
+    res.lines = out
     return res
