@@ -143,6 +143,10 @@ def main(argv=None):
         return 7
     data = load(a.입력)
     R = compute(data, kind, asof, start)
+    if kind == "monthly":
+        # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
+        from ceo_report.convert_xchk import load_xchk
+        R["xchk"] = load_xchk(a.입력)
     label = "주간" if kind == "weekly" else "월간"
     browser = find_browser() if a.pdf == "만듦" else None
     made = []

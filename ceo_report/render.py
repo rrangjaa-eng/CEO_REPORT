@@ -5,8 +5,9 @@
 """
 import datetime as dt
 import math
+import re
 
-from .util import won, man, pct, d2s, esc
+from .util import won, man, pct, d2s, esc, date as parse_date
 
 CSS = """
 :root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;--out:#b5523b;
@@ -321,9 +322,11 @@ def render(R, mode):
                  % (len(R["risks"]), hi))
     h.append("</div>")  # page
 
+    toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
+    if R["kind"] == "monthly":
+        toc.append(XCHK_TITLE)  # 월간에만 8번 (주간 보고는 바뀌지 않는다, D-44)
     h.append("<div class='toc'>상세자료: " + " ".join(
-        '<a href="#s%d">%d. %s</a>' % (i, i, t) for i, t in enumerate(
-            ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"], 1))
+        '<a href="#s%d">%d. %s</a>' % (i, i, t) for i, t in enumerate(toc, 1))
              + (' <a href="#risk">위험 분석</a>' if mode == "mgmt" else "") + "</div>")
 
     if mode == "mgmt":
@@ -336,6 +339,8 @@ def render(R, mode):
     h.append(_s5(R))
     h.append(_s6(R))
     h.append(_s7(R))
+    if R["kind"] == "monthly":
+        h.append(_s8(R, mode))
     h.append("</div></body></html>")
     return "".join(h)
 
@@ -872,6 +877,178 @@ def _s7(R):
     h.append("<h3>입력 자료 확인 필요 (%d건)</h3>" % len(s7["issues"]))
     rows = [[esc(f), esc(l), esc(m)] for f, l, m in s7["issues"]]
     h.append(table(["파일", "줄", "내용"], rows))
+    return "".join(h)
+
+
+# ───────────── 월간 8번: WEHAGO 기준 대조 (D-44, D-48, D-49) ─────────────
+XCHK_TITLE = "WEHAGO 기준 대조"
+XCHK_FILE_NAME = "위하고대조.csv"
+
+
+def _xk_why(note):
+    """'판단 불가 — 이유' 비고 -> '판단 불가 (이유)'. 이유가 없으면 '판단 불가'."""
+    rest = re.sub(r"^판단 불가\s*[—-]*\s*", "", note or "").strip()
+    return "판단 불가" + (" (%s)" % rest if rest else "")
+
+
+def _xk_unknown_n(note):
+    """비고의 '금액 미확인 N건/줄/곳' -> '(미확인 N건)' 또는 ''."""
+    m = re.search(r"미확인\s*(\d+)\s*(건|줄|곳)", note or "")
+    return " (미확인 %s%s)" % m.groups() if m else ""
+
+
+def _xk_amount(amount, note=""):
+    """알면 원 단위 숫자, 모르면 '판단 불가 (미확인 N건)'. 모르는 금액은 0으로 보이지 않는다 (B5)."""
+    if amount is not None:
+        return esc(won(amount))
+    return _na("판단 불가" + _xk_unknown_n(note))
+
+
+def _xk_money_note(amount, note=""):
+    return "금액 " + _xk_amount(amount, note) if amount is None else _xk_amount(amount, note)
+
+
+def _xk_meta(R, X):
+    meta = X["meta"]
+    book_text = meta.get("장부 기준일", "")
+    out = "장부 기준일 " + (esc(book_text) if book_text else _na("기록 없음"))
+    if book_text:
+        book = parse_date(book_text)
+        if book is None:
+            out += _na(" (날짜 형식 확인 불가)")
+        else:
+            days = (R["asof"] - book).days
+            if days > 0:
+                out += esc(" (보고 기준일보다 %d일 이전)" % days)
+            elif days < 0:
+                out += esc(" (보고 기준일보다 %d일 이후)" % -days)
+    for key in ("인트라넷 스냅숏", "변환 시각"):
+        out += " · " + esc(key) + " " + (esc(meta[key]) if meta.get(key) else _na("기록 없음"))
+    return out
+
+
+def _xk_status(X):
+    st = X["status"]
+    if not st:
+        return _na("판단 불가 (요청상태 줄 없음)")
+    counts = [v["count"] for v in st.values()]
+    total = _na("건수 판단 불가") if any(c is None for c in counts) else "%d건" % sum(counts)
+    parts = []
+    for name, v in st.items():
+        c = v["count"]
+        text = esc(name) + " " + (_na("건수 판단 불가") if c is None else "%d건" % c)
+        if c != 0:
+            text += " " + _xk_money_note(v["amount"], v["note"])
+        parts.append(text)
+    return total + " (" + " · ".join(parts) + ")"
+
+
+def _xk_projects(X):
+    projects, t = X["projects"], X["totals"]
+    if not projects:
+        return _na("판단 불가 (프로젝트원가 줄 없음)")
+    known = [p["cost"] for p in projects if p["cost"] is not None]
+    missing = len(projects) - len(known)
+    if missing:
+        head = _na("판단 불가 (금액 미확인 %d개 프로젝트)" % missing) + " 확인된 합계 " + esc(won(sum(known)))
+    else:
+        head = esc(won(sum(known)))
+    parts = ["%d개 프로젝트" % len(projects)]
+    if t["budget_known"]:
+        parts.append("실행가 입력 %d건 합계 %s" % (t["budget_known"], won(t["budget_sum"])))
+    else:
+        parts.append("실행가 입력 0건")
+    parts.append("실행가 빈칸 %d건" % t["budget_blank"])
+    if t["budget_dup"]:
+        parts.append("프로젝트번호 겹침 %d건 (실행가 판단 불가)" % t["budget_dup"])
+    parts.append("원가가 실행가보다 큰 프로젝트 %d건" % t["over_budget"])
+    skipped = [p for p in projects if p["budget"] is not None and p["cost"] is None]
+    if skipped:
+        parts[-1] += " (원가 판단 불가 %d개 프로젝트는 제외)" % len(skipped)
+    outside = len([p for p in projects if not p["has_budget"]])
+    if outside:
+        parts.append("프로젝트 목록에 없음 %d개 포함" % outside)
+    return head + " (" + esc(" · ".join(parts)) + ")"
+
+
+def _xk_fact(f, unit):
+    """합계 줄 하나: 'N줄 금액'."""
+    count = _na("%s 수 판단 불가" % unit) if f["count"] is None else "%d%s" % (f["count"], unit)
+    if f["amount"] is None and f["count"] is None:
+        return _na("판단 불가")
+    return count + " " + _xk_money_note(f["amount"], f["note"])
+
+
+def _xk_vendors(X):
+    vs = X["vendor_summary"]
+    if vs["compared"] is None:
+        return _na("판단 불가 (거래처미지급요약 줄 없음)")
+    diff = (_na("판단 불가") if vs["diff_count"] is None else "%d곳 " % vs["diff_count"] + _xk_amount(vs["diff_sum"], vs["diff_note"]))
+    unknown = _na("판단 불가") if vs["unknown_count"] is None else "%d곳" % vs["unknown_count"]
+    text = "비교 %d곳 · 차이 %s · 판단 불가 %s" % (vs["compared"], diff, unknown)
+    return text + (" · " + esc(vs["note"]) if vs["note"] else "")
+
+
+def _xk_revenue(X):
+    rev, un, t = X["revenue"], X["revenue_unlinked"], X["totals"]
+    if rev:
+        linked_known = [c["wehago"] for c in rev if c["wehago"] is not None]
+        linked_missing = len(rev) - len(linked_known)
+        linked_sum = sum(linked_known)
+        linked = esc(won(linked_sum)) if not linked_missing else _na("판단 불가 (금액 미확인 %d개)" % linked_missing) + \
+            " 확인된 합계 " + esc(won(linked_sum))
+        total_known = not linked_missing and un["amount"] is not None
+        total = esc(won(linked_sum + un["amount"])) if total_known else _na("판단 불가")
+        if not total_known and (un["amount"] is not None or linked_known):
+            total += " 확인된 합계 " + esc(won(linked_sum + (un["amount"] or 0)))
+    else:
+        linked, total = _na("판단 불가 (매출계약 줄 없음)"), _na("판단 불가")
+    parts = [total, "프로젝트 연결 " + linked,
+             "미연결 " + (_na("판단 불가") if un["count"] is None and un["amount"] is None else _xk_fact(un, "줄"))]
+    if t["contract_registered"]:
+        contract = "합계 " + esc(won(t["contract_sum"]))
+    elif t["contract_unregistered"]:
+        contract = "등록된 값 없음"
+    else:
+        contract = _na("줄 없음")
+    if t["contract_registered"] or t["contract_unregistered"]:
+        contract += " (미등록 %d건)" % t["contract_unregistered"]
+    parts.append("계약금액 (수동 입력) " + contract)
+    return " · ".join(parts)
+
+
+def _xk_cash(X):
+    c = X["cash"]
+    parts = ["증감 " + (_na(_xk_why(c["change_note"])) if c["change"] is None else esc(won(c["change"])))]
+    parts.append("장부 잔액 " + (esc(won(c["balance"])) if c["balance"] is not None else _na(_xk_why(c["balance_note"]))))
+    parts.append("계좌잔액.csv 합계 " + (esc(won(c["bank_balance"])) if c["bank_balance"] is not None
+                                       else _na(_xk_why(c["bank_note"]))))
+    if c["balance_diff"] is not None:
+        parts.append("차이 " + esc(won(c["balance_diff"])))
+    elif c["balance"] is not None or c["bank_balance"] is not None:
+        parts.append("차이 " + _na("판단 불가"))
+    return " · ".join(parts)
+
+
+def _xk_summary(X):
+    rows = [("지급요청 대조", _xk_status(X)), ("프로젝트 (도)원가", _xk_projects(X)),
+            ("프로젝트 미연결 원가", _xk_fact(X["unlinked"], "줄")), ("거래처 미지급", _xk_vendors(X)),
+            ("매출 (분개장)", _xk_revenue(X)), ("보통예금 (WEHAGO 10300)", _xk_cash(X))]
+    body = "".join('<tr><th>%s</th><td style="white-space:normal">%s</td></tr>' % (esc(k), v) for k, v in rows)
+    return '<div class="tw"><table id="xchk-summary" class="xk" style="width:100%%"><tbody>%s</tbody></table></div>' % body
+
+
+def _s8(R, mode):
+    """월간 8번 WEHAGO 기준 대조. 요약은 두 판 모두 (합계·건수만), 상세 표는 경영관리용에만 (D-44)."""
+    X = R.get("xchk")
+    h = [_h2(8, XCHK_TITLE)]
+    if X is None or X["state"] != "ok":
+        h.append("<div class='note'>%s</div>" % _na("자료 없음" if X is None else X["state"]))
+        return "".join(h)
+    h.append('<div class="meta xchk-meta">%s</div>' % _xk_meta(R, X))
+    h.append(_xk_summary(X))
+    h.append("<div class='note'>금액은 장부 기준일까지 분개장 전체 기간 합계 (월별 매출·손익은 4번). 알 수 없는 값은 ‘판단 불가’로 표시하고 "
+             "0으로 넣지 않음. 계약금액은 사람이 입력한 값.</div>")
     return "".join(h)
 
 

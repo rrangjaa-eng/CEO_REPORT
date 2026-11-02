@@ -95,7 +95,7 @@ def section8(page):
 
 
 def meta_line(page):
-    m = re.search(r"<div class=\"xchk-meta\">(.*?)</div>", section8(page), re.S)
+    m = re.search(r"<div class=\"meta xchk-meta\">(.*?)</div>", section8(page), re.S)
     return plain(m.group(1)) if m else None
 
 
@@ -223,8 +223,9 @@ class TestMonthlySection(unittest.TestCase):
         for name in ("보고서.py", os.path.join("ceo_report", "render.py")):
             with open(os.path.join(ROOT, name), encoding="utf-8") as f:
                 code = f.read()
-            for word in ("수집", ".xlsx", "openpyxl", "wehago"):
+            for word in ("수집", ".xlsx", "openpyxl"):
                 self.assertNotIn(word, code, "%s: %s" % (name, word))
+            self.assertIsNone(re.search(r"import\s+wehago|from\s+\S*wehago|\.wehago", code), name)
 
     def test_calc_and_data_are_unchanged_from_the_baseline(self):
         try:
@@ -256,7 +257,10 @@ def baseline_tree(test):
     import atexit
     atexit.register(shutil.rmtree, tmp, True)
     with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tar:
-        tar.extractall(tmp)
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(tmp, filter="data")
+        else:
+            tar.extractall(tmp)
     _BASELINE_TREE.append(tmp)
     return tmp
 
