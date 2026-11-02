@@ -10,7 +10,7 @@ import os
 import re
 import shutil
 
-from . import data, util, wehago
+from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
@@ -72,6 +72,7 @@ class Result(object):
         self.lines = []
         self.tables = []
         self.backup = None
+        self.links = None   # 연결 입력과 결과 (build_links). 다른 표 만들기가 다시 계산하지 않고 쓴다.
 
 
 def cell_amount(v):
@@ -314,11 +315,37 @@ def _undecided(tables):
     return sum(1 for t in tables if t.written for c in t.checks if check_result(c) == "판단 불가")
 
 
-def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept):
+def read_latest_snapshot(collect_dir):
+    """(스냅숏 또는 None, 변환결과.txt 한 줄). 스냅숏이 없거나 읽을 수 없어도 멈추지 않는다 (장부만 변환을 막는다)."""
+    try:
+        path = snapshot.latest_snapshot(collect_dir)
+        if path is None:
+            return None, "인트라넷 스냅숏: 없음 — 자동 연결 안 함"
+        snap = snapshot.read_snapshot(path)
+    except (snapshot.SnapshotError, OSError) as e:
+        return None, "인트라넷 스냅숏: 읽지 못함 — %s" % e
+    return snap, "인트라넷 스냅숏: %s (수집 %s) · 지급요청 %d건 · 프로젝트 %d건" % (
+        os.path.basename(snap.path), snap.collected_at.strftime(snapshot.TIME_FORMAT), len(snap.payments), len(snap.projects))
+
+
+def build_links(books, cfg, snap, input_dir, asof, now):
+    """D-38 연결 한 번: 요청·프로젝트·수동 지정을 읽고 원가·매출 줄을 잇는다. build_pl 이 받는 links 딕셔너리 (+ 다른 만들기가 쓸 입력)."""
+    requests = linking.requests_of(snap, asof, now)
+    projects = linking.projects_of(snap)
+    overrides, notes = linking.read_links(input_dir)
+    costs = linking.link_costs(books, requests, projects, overrides, cfg["link_days"], cfg["direct_prefixes"],
+                               cfg["direct_mark"], cfg["vat_codes"])
+    revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])
+    return {"costs": costs, "revenue": revenue, "projects": projects, "snapshot": snap is not None,
+            "requests": requests, "overrides": overrides, "notes": notes}
+
+
+def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
+                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함"):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
            _books_line(books, asof),
-           "인트라넷 스냅숏: 없음"]
+           snap_line]
     if cfg_notes:
         out.append("설정: 변환 항목 확인 필요 %d건" % len(cfg_notes))
         out.extend("  알림 " + n for n in cfg_notes)
@@ -364,12 +391,14 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         return res
     cfg, cfg_notes = read_config(input_dir)
     books = wehago.load_books(wehago_dir, asof, None)  # None: 장부가 오래됐다고 멈추지 않는다
+    snap, snap_line = read_latest_snapshot(collect_dir)
     if books.state != "ok":
         res.code = 3
         tables = [Table("손익.csv", data.SCHEMA["손익.csv"], [], written=False, reason="WEHAGO 장부를 쓸 수 없음")]
     else:
         prev, prev_state = _read_prev_state(input_dir, "손익.csv")
-        tables = [convert_pl.build_pl(books, cfg, prev)]
+        res.links = build_links(books, cfg, snap, input_dir, asof, now)
+        tables = [convert_pl.build_pl(books, cfg, prev, res.links)]
     res.tables = tables
     names = [t.name for t in tables if t.written] + ["변환결과.txt"]
     backup, moved = plan_backup(input_dir, names, stamp)
@@ -378,7 +407,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         tables[0].notes.append("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (%s 에 원본 보관)" % where)
     kept = [m for m in MANUAL if os.path.exists(os.path.join(input_dir, m))]
     backup_line = "이전 파일: %s (%s)" % (where, ", ".join(moved)) if backup else "이전 파일: 없음"
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept)
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line)
     payloads = [(t.name, table_bytes(t)) for t in tables if t.written] + [("변환결과.txt", _text_bytes(lines))]
     try:
         write_files(input_dir, payloads, stamp, backup)

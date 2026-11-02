@@ -123,6 +123,11 @@ def read_rows(path):
         return list(csv.reader(f))
 
 
+def company_rows(rows):
+    """읽은 손익.csv 줄 중 WEHAGO 회사 줄만 (02-03부터 같은 파일에 팀·프로젝트 줄도 있다)."""
+    return [r for r in rows[1:] if r[0] == "WEHAGO" and r[2] == "회사"]
+
+
 def mod(name):
     return importlib.import_module("ceo_report." + name)
 
@@ -148,11 +153,13 @@ class TestConvertTracer(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         rows = read_rows(os.path.join(input_dir, "손익.csv"))
         self.assertEqual(rows[0], PL_COLUMNS)
+        # 02-03: 스냅숏이 없어도 [코드]로 이은 프로젝트 줄이 회사 줄 뒤에 붙는다 (회사 줄은 그대로)
+        self.assertEqual(company_rows(rows), ["WEHAGO,2026-09,회사,회사 전체,100000000,10000000,2000000,Y".split(","),
+                                              "WEHAGO,2026-10,회사,회사 전체,94000000,249500000,4500000,Y".split(",")])
         self.assertEqual(rows[1], "WEHAGO,2026-09,회사,회사 전체,100000000,10000000,2000000,Y".split(","))
-        self.assertEqual(rows[2], "WEHAGO,2026-10,회사,회사 전체,94000000,249500000,4500000,Y".split(","))
-        self.assertEqual(rows[3:6], carried)
-        self.assertEqual(len(rows), 6)
-        self.assertEqual(sum(1 for r in rows[1:] if r[0] == "WEHAGO"), 2)
+        self.assertEqual(rows[-3:], carried)
+        self.assertEqual(len(rows), 13)  # 머리글 + 12줄
+        self.assertEqual(sum(1 for r in rows[1:] if r[0] == "WEHAGO"), 9)
 
     def test_result_file_has_source_vs_csv_checks(self):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
@@ -166,12 +173,12 @@ class TestConvertTracer(unittest.TestCase):
         self.assertIn("손익.csv에 넣지 않은 손익 계정: 45100 (도)외주비 1줄 500,000 · 93100 이자비용 1줄 400,000", text)
         self.assertIn("공통비 중 (판) 표시 없음: 81900 임차료 1줄 3,000,000 (공통비에 넣음)", text)
         self.assertTrue(lines[0].startswith("변환 시각 "), lines[0])
-        self.assertIn("[손익.csv] 만듦 5줄", lines)
+        self.assertIn("[손익.csv] 만듦 12줄", lines)
         self.assertTrue(any(ln.startswith("WEHAGO 장부: ") and "장부 기준일 2026-10-31" in ln for ln in lines))
 
     def test_stdout_is_a_short_summary(self):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
-        self.assertIn("손익.csv 만듦 5줄", out)
+        self.assertIn("손익.csv 만듦 12줄", out)
         self.assertIn("대조 불일치 0건", out)
         self.assertIn("변환결과.txt", out)
         self.assertIn("2026-10-31", out)
@@ -418,7 +425,8 @@ class TestConvertSafety(unittest.TestCase):
         carried = [r for r in old[1:] if r[0] == "인트라넷완료보고"]
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
         rows = read_rows(os.path.join(input_dir, "손익.csv"))
-        self.assertEqual(rows[3:], carried)
+        self.assertEqual(rows[-3:], carried)
+        self.assertEqual([r[0] for r in rows[1:-3]], ["WEHAGO"] * (len(rows) - 4))
         self.assertIn("  알림 이전 손익.csv의 WEHAGO 외 출처 줄 3건 그대로 옮김", read_result_lines(input_dir))
 
     def test_unreadable_previous_file_is_reported_not_silently_dropped(self):
@@ -450,7 +458,8 @@ class TestConvertSafety(unittest.TestCase):
         rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
         self.assertEqual(rc, 0, out)
         rows = read_rows(os.path.join(input_dir, "손익.csv"))
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(company_rows(rows)), 2)  # 샘플의 이전 손익.csv 가 없으니 이어 붙일 줄이 없다
+        self.assertEqual(len(rows), 10)  # 회사 2 + 프로젝트 7 (스냅숏이 없어 [코드]로만 잇는다)
         text = "\n".join(read_result_lines(input_dir))
         for name in mod("convert").MANUAL:
             self.assertIn(name, text)
@@ -569,8 +578,8 @@ class TestConvertConfig(unittest.TestCase):
 
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
         self.assertEqual(rc, 0, out)
-        rows = read_rows(os.path.join(input_dir, "손익.csv"))
-        self.assertEqual(rows[2][1:], "2026-10,회사,회사 전체,94000000,249500000,4900000,Y".split(","))
+        rows = company_rows(read_rows(os.path.join(input_dir, "손익.csv")))
+        self.assertEqual(rows[1][1:], "2026-10,회사,회사 전체,94000000,249500000,4900000,Y".split(","))
         lines = read_result_lines(input_dir)
         self.assertIn("  대조 공통비 (8xxxx,9xxxx 차변−대변): 원본 6,900,000 · CSV 6,900,000 → 일치", lines)
         text = "\n".join(lines)
@@ -593,8 +602,8 @@ class TestConvertConfig(unittest.TestCase):
             add_settings(input_dir, ["변환_매출계정", "45100"])
 
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self, setup=setup)
-        rows = read_rows(os.path.join(input_dir, "손익.csv"))
-        self.assertEqual(rows[2][4], "-500000")  # 45100 차변 500,000 → 대변−차변
+        rows = company_rows(read_rows(os.path.join(input_dir, "손익.csv")))
+        self.assertEqual(rows[1][4], "-500000")  # 45100 차변 500,000 → 대변−차변
         self.assertIn("  대조 매출 (45100 대변−차변): 원본 -500,000 · CSV -500,000 → 일치".replace("-", "−"),
                       read_result_lines(input_dir))
 
@@ -606,7 +615,7 @@ class TestConvertProvisional(unittest.TestCase):
     def pl_rows(self, journal, setup=None):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=journal, setup=setup)
         self.assertEqual(rc, 0, out)
-        return [r for r in read_rows(os.path.join(input_dir, "손익.csv"))[1:] if r[0] == "WEHAGO"], input_dir
+        return company_rows(read_rows(os.path.join(input_dir, "손익.csv"))), input_dir
 
     def test_without_closing_lines_every_month_is_provisional(self):
         rows, _ = self.pl_rows(FAKE_PL_JOURNAL)
@@ -640,9 +649,9 @@ class TestConvertProvisional(unittest.TestCase):
         blank = jl_sort(dt.date(2026, 10, 5), 93, "대체", "41200", "수입수수료", None, None, "가상고객X", "금액 없음")
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=FAKE_PL_JOURNAL + [blank])
         self.assertEqual(rc, 0, out)
-        rows = read_rows(os.path.join(input_dir, "손익.csv"))
-        self.assertEqual(rows[1][4:7], ["100000000", "10000000", "2000000"])
-        self.assertEqual(rows[2][4:7], ["", "249500000", "4500000"])  # 매출 칸은 0이 아니라 빈칸
+        rows = company_rows(read_rows(os.path.join(input_dir, "손익.csv")))
+        self.assertEqual(rows[0][4:7], ["100000000", "10000000", "2000000"])
+        self.assertEqual(rows[1][4:7], ["", "249500000", "4500000"])  # 매출 칸은 0이 아니라 빈칸
         lines = read_result_lines(input_dir)
         self.assertIn("  알림 금액 없는 손익 줄 1건 (2026-10 매출) → 그 달 칸 비움", lines)
         self.assertIn("  대조 매출 (41200 대변−차변): 원본 194,000,000 · CSV 미확인 → 판단 불가", lines)

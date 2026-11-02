@@ -117,16 +117,64 @@ def _listing(groups):
     return " · ".join(parts)
 
 
-def build_pl(books, cfg, prev_rows, links=None):
-    """손익.csv Table: WEHAGO 회사 줄(달 순서) 다음에 이전 손익.csv 의 WEHAGO 외 출처 줄을 그대로 (P1-2).
+UNLINKED_PROJECT = "프로젝트 미연결"
+MEASURES = (("revenue", "매출"), ("direct", "직접비"))   # 팀·프로젝트 줄에 싣는 값 (공통비는 배분 규칙이 없어 비움)
 
-    links 는 팀·프로젝트 줄을 만드는 다음 계획(02-03)이 쓰는 자리이고 여기서는 쓰지 않는다.
+
+def _unit_totals(links):
+    """달 → 프로젝트 키(미연결은 None) → {revenue, direct: [합계, 금액 모르는 줄 수]}. 날짜 없는 줄은 어느 달에도 없다."""
+    acc = OrderedDict()
+    for measure, result in (("direct", links["costs"]), ("revenue", links["revenue"])):
+        for ln in result["lines"]:
+            if ln["date"] is None:
+                continue
+            units = acc.setdefault(ln["date"].strftime("%Y-%m"), OrderedDict())
+            cell = units.setdefault(ln["project"], {"revenue": [0, 0], "direct": [0, 0]})[measure]
+            if ln["amount"] is None:
+                cell[1] += 1
+            else:
+                cell[0] += ln["amount"]
+    return acc
+
+
+def _project_order(keys, projects):
+    """프로젝트 줄 순서: 스냅숏 프로젝트 목록 순서, 목록에 없는 열쇠(수동 지정)는 열쇠순, 미연결(None)은 맨 뒤. 스냅숏이 없으면 열쇠순."""
+    real = [k for k in keys if k is not None]
+    listed = [k for k in projects if k in real]
+    rest = sorted((k for k in real if k not in projects), key=str)
+    return listed + rest + ([None] if None in keys else [])
+
+
+def _cell(pair):
+    return None if pair[1] else pair[0]
+
+
+def _project_row(columns, ym, key, cells, projects, snapshot, final):
+    if key is None:
+        target = UNLINKED_PROJECT
+    elif not snapshot:
+        target = key
+    elif key in projects:
+        target = ("%s %s" % (key, projects[key]["name"])).strip()
+    else:
+        target = "%s (프로젝트 목록에 없음)" % key
+    values = ["WEHAGO", ym, "프로젝트", target, cell_amount(_cell(cells["revenue"])), cell_amount(_cell(cells["direct"])),
+              "", "" if final else "Y"]
+    return dict(zip(columns, values))
+
+
+def build_pl(books, cfg, prev_rows, links=None):
+    """손익.csv Table: 달마다 회사 줄, 프로젝트 줄 순서로 WEHAGO 줄을 쓰고, 이전 손익.csv 의 WEHAGO 외 출처 줄을 그대로 잇는다 (P1-2).
+
+    links 가 None 이면 회사 줄만 만든다. 아니면 {"costs", "revenue", "projects", "snapshot"} (linking 결과)이고
+    연결 안 된 금액도 '프로젝트 미연결' 줄에 싣는다 (D-40). 팀·프로젝트 줄의 공통비는 늘 빈칸이다 (배분 규칙 없음).
     """
     columns = data.SCHEMA["손익.csv"]
     per, undated, source, excluded, unmarked, closed = _pl_rows(books, cfg)
     rows, notes = [], []
     csv_sum = dict((k, 0) for k, _, _ in CATEGORIES)
     csv_unknown = dict((k, False) for k, _, _ in CATEGORIES)
+    unit_totals = _unit_totals(links) if links is not None else {}
     for ym, cats in per.items():
         cells = {}
         for key, label, _ in CATEGORIES:
@@ -141,6 +189,11 @@ def build_pl(books, cfg, prev_rows, links=None):
         values = ["WEHAGO", ym, "회사", "회사 전체", cell_amount(cells["revenue"]), cell_amount(cells["direct"]),
                   cell_amount(cells["common"]), "" if int(ym[:4]) in closed else "Y"]
         rows.append(dict(zip(columns, values)))
+        if links is not None:
+            units = unit_totals.get(ym, {})
+            for key in _project_order(list(units), links["projects"]):
+                rows.append(_project_row(columns, ym, key, units[key], links["projects"], links["snapshot"],
+                                         int(ym[:4]) in closed))
     labels = _labels(cfg)
     checks = [Check(labels[k], source[k], None if csv_unknown[k] else csv_sum[k]) for k, _, _ in CATEGORIES]
     for key, label, _ in CATEGORIES:
