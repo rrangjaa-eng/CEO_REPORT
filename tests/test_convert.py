@@ -283,7 +283,7 @@ class TestConvertSafety(unittest.TestCase):
         self.assertEqual(read_bytes(os.path.join(input_dir, "이전", STAMP, "손익.csv")), old)
         self.assertNotEqual(read_bytes(os.path.join(input_dir, "손익.csv")), old)
         self.assertFalse(os.path.exists(os.path.join(input_dir, "이전", STAMP, "변환결과.txt")))  # 처음엔 없었다
-        self.assertIn("이전 파일: 입력/이전/%s/ (손익.csv)" % STAMP, read_result_lines(input_dir))
+        self.assertIn("이전 파일: 입력/이전/%s/ (손익.csv, 계산서.csv)" % STAMP, read_result_lines(input_dir))
 
     def test_a_second_run_in_the_same_second_gets_a_new_folder(self):
         tmp, input_dir, collect, wehago_dir = self.prepared()
@@ -304,7 +304,8 @@ class TestConvertSafety(unittest.TestCase):
 
     def test_no_backup_folder_when_nothing_existed_before(self):
         tmp, input_dir, collect, wehago_dir = self.prepared()
-        os.remove(os.path.join(input_dir, "손익.csv"))
+        for name in ("손익.csv", "계산서.csv"):   # 02-07부터 계산서.csv 도 만든다
+            os.remove(os.path.join(input_dir, name))
         res = convert_run(input_dir, collect, wehago_dir, stamp=STAMP)
         self.assertEqual(res.code, 0, res.lines)
         self.assertEqual(backup_dirs(input_dir), [])
@@ -465,7 +466,7 @@ class TestConvertSafety(unittest.TestCase):
             self.assertIn(name, text)
         self.assertIn("손대지 않은 파일: 없음", text)
         self.assertEqual(backup_dirs(input_dir), [])
-        self.assertEqual(sorted(os.listdir(input_dir)), ["변환결과.txt", "손익.csv"])
+        self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "변환결과.txt", "손익.csv"])
 
     def test_backup_and_log_paths_are_git_ignored(self):
         for rel in ("입력/이전/20261102_000000/손익.csv", "입력/변환결과.txt"):

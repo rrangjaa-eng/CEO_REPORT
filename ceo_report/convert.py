@@ -309,12 +309,26 @@ def _books_line(books, asof):
     return " · ".join(parts)
 
 
-def _mismatches(tables):
-    return sum(1 for t in tables if t.written for c in t.checks if check_result(c) == "불일치")
+_COUNT_LABEL = re.compile(r"^(프로젝트 수|지급요청 건수|지급요청 금액 미확인)|건수|(빈칸|줄 수|원가 줄)$")
 
 
-def _undecided(tables):
-    return sum(1 for t in tables if t.written for c in t.checks if check_result(c) == "판단 불가")
+def check_text(c):
+    """변환결과.txt 의 대조 한 줄 본문. 건수를 세는 대조는 숫자 뒤에 '건'을 붙인다 (금액은 그대로, 모르면 '미확인')."""
+    unit = "건" if _COUNT_LABEL.search(c.label) else ""
+    side = lambda v: won(v) + (unit if v is not None else "")
+    return "%s: 원본 %s · CSV %s → %s" % (c.label, side(c.source), side(c.csv), check_result(c))
+
+
+def _all_checks(tables, cross=()):
+    return [c for t in tables if t.written for c in t.checks] + list(cross)
+
+
+def _mismatches(tables, cross=()):
+    return sum(1 for c in _all_checks(tables, cross) if check_result(c) == "불일치")
+
+
+def _undecided(tables, cross=()):
+    return sum(1 for c in _all_checks(tables, cross) if check_result(c) == "판단 불가")
 
 
 def read_latest_snapshot(collect_dir):
@@ -394,8 +408,91 @@ def link_stdout_line(links):
         _unlinked_total(links["costs"]["summary"]), _unlinked_total(links["revenue"]["summary"]))
 
 
+# ───────────── 파일 사이 대조 (W-4): 한 번의 변환이 만든 파일끼리 합계가 같은지 ─────────────
+def _sum_known(values):
+    """합계. 하나라도 모르면(None) None."""
+    total = 0
+    for v in values:
+        if v is None:
+            return None
+        total += v
+    return total
+
+
+def _first_csv(table, prefix):
+    """표의 대조 중 이름이 prefix 로 시작하는 첫 번째의 CSV 쪽 합계 (없으면 None)."""
+    for c in table.checks:
+        if c.label.startswith(prefix):
+            return c.csv
+    return None
+
+
+def _kind_rows(table, kind, item=None):
+    return [r for r in table.rows if r["구분"] == kind and (item is None or r["항목"] == item)]
+
+
+def cross_checks(tables):
+    """[파일 사이 대조]: 쓴 파일끼리의 합계. 두 파일이 모두 만들어졌을 때만 한다. 원본 쪽 = 손익.csv, CSV 쪽 = 다른 파일."""
+    from . import convert_pl
+    by = dict((t.name, t) for t in tables if t.written)
+    pl, execs, xchk, projects = (by.get(n) for n in ("손익.csv", "프로젝트집행.csv", "위하고대조.csv", "프로젝트.csv"))
+    out = []
+    if pl is None or len(pl.checks) < 3:
+        return out
+    pl_revenue, pl_direct = pl.checks[0].csv, pl.checks[1].csv
+    unlinked = [r for r in pl.rows if r.get("출처") == "WEHAGO" and r.get("단위") == "프로젝트"
+                and r.get("대상") == convert_pl.UNLINKED_PROJECT]
+    pl_unlinked = _sum_known(util.num(r.get("직접비")) for r in unlinked)
+    if execs is not None and projects is not None:
+        out.append(Check("손익 직접비 = 프로젝트집행 원가 줄 합계", pl_direct, _first_csv(execs, "원가 줄 합계")))
+        keys = set((r.get("프로젝트번호") or "").strip() for r in projects.rows)
+        portions = execs.extra.get("cost_portions", [])
+        # WEHAGO 원가 줄 = 근거가 'WEHAGO ' 로 시작하는 줄 (요청 줄은 '지급요청', 옮겨 온 줄은 상태가 집행계획미요청)
+        mine = [p for r, p in zip(execs.rows, portions) if r.get("상태") != "집행계획미요청"
+                and (r.get("근거") or "").startswith("WEHAGO ") and (r.get("프로젝트번호") or "").strip() not in keys]
+        out.append(Check("손익 프로젝트 미연결 직접비 = 프로젝트집행 프로젝트.csv에 없는 번호의 원가 부분", pl_unlinked, _sum_known(mine)))
+    if xchk is not None:
+        cost_cells = _kind_rows(xchk, "프로젝트원가", "WEHAGO 원가")
+        unlinked_cost = _kind_rows(xchk, "미연결원가")[:1]
+        sales_cells = _kind_rows(xchk, "매출계약", "WEHAGO 매출")
+        unlinked_sales = _kind_rows(xchk, "매출미연결")[:1]
+        cell = lambda rows: _sum_known(util.num(r["금액"]) for r in rows) if rows else None
+        out.append(Check("손익 직접비 = 위하고대조 (도) 원가", pl_direct, cell(cost_cells + unlinked_cost) if unlinked_cost else None))
+        out.append(Check("손익 매출 = 위하고대조 매출", pl_revenue, cell(sales_cells + unlinked_sales) if unlinked_sales else None))
+        out.append(Check("손익 프로젝트 미연결 직접비 = 위하고대조 미연결원가", pl_unlinked, cell(unlinked_cost)))
+    return out
+
+
+def read_bank(input_dir):
+    """위하고대조의 보통예금 사실에 쓰는 은행 줄: {"balances": 계좌잔액.csv 줄, "transactions": 입출금내역.csv 줄}. 읽기만 한다 (D-48).
+    파일이 없거나 읽을 수 없으면 None (0줄과 다르다)."""
+    out = {}
+    for key, name in (("balances", "계좌잔액.csv"), ("transactions", "입출금내역.csv")):
+        path = os.path.join(input_dir, name)
+        info = {}
+        rows, ok = util.read_csv(path, data.SCHEMA[name], util.Issues(), info) if os.path.exists(path) else ([], False)
+        out[key] = rows if ok and not info.get("missing") else None
+    return out
+
+
+def xchk_meta(books, snap, now):
+    """위하고대조.csv 맨 위 '기준' 줄들: 어느 장부·스냅숏으로 만들었는지."""
+    meta = collections.OrderedDict()
+    meta["장부 기준일"] = books.book_date.isoformat() if books.book_date else ""
+    for kind in wehago.KINDS:
+        if kind in books.files:
+            meta[kind] = books.files[kind]["name"]
+    if snap is None:
+        meta["인트라넷 스냅숏"] = "없음"
+    else:
+        meta["인트라넷 스냅숏"] = "%s (수집 %s)" % (os.path.basename(snap.path).replace("인트라넷_", "", 1),
+                                              snap.collected_at.strftime(snapshot.TIME_FORMAT))
+    meta["변환 시각"] = now.strftime("%Y-%m-%d %H:%M:%S")
+    return meta
+
+
 def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
-                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None):
+                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None, cross=(), listings=()):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
            _books_line(books, asof),
@@ -411,19 +508,24 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
             continue
         out.append("[%s] 만듦 %d줄" % (t.name, len(t.rows)))
         for c in t.checks:
-            out.append("  대조 %s: 원본 %s · CSV %s → %s" % (c.label, won(c.source), won(c.csv), check_result(c)))
+            out.append("  대조 " + check_text(c))
         for n in t.notes:
-            out.append("  알림 " + n)
+            # 목록 줄('  미배분 수금 …')은 이미 들여쓰기가 있다: 접두어 없이 그대로 쓴다
+            out.append(n if n.startswith("  ") else "  알림 " + n)
     if links is not None:
         out.extend(link_lines(links))
+    if cross:
+        out.append("[파일 사이 대조]")
+        out.extend("  대조 " + check_text(c) for c in cross)
+    out.extend(listings)
     out.append(backup_line)
     out.append("손대지 않은 파일: " + (", ".join(kept) if kept else "없음"))
     missing = [m for m in MANUAL if m not in kept]
     if missing:
         out.append("없는 수동 파일 (사람이 관리, 만들지 않음): " + ", ".join(missing))
-    if _undecided(tables):
-        out.append("대조 판단 불가 %d건" % _undecided(tables))
-    out.append("대조 불일치 %d건" % _mismatches(tables))
+    if _undecided(tables, cross):
+        out.append("대조 판단 불가 %d건" % _undecided(tables, cross))
+    out.append("대조 불일치 %d건" % _mismatches(tables, cross))
     return out
 
 
@@ -434,9 +536,38 @@ def _write_failed_lines(e):
     return out
 
 
+def _unwritten(reason):
+    from . import convert_xchk
+    columns = dict((n, data.SCHEMA[n]) for n in GENERATED[:5] if n in data.SCHEMA)
+    columns["위하고대조.csv"] = convert_xchk.XCHK_COLUMNS
+    return [Table(n, columns[n], [], written=False, reason=reason) for n in GENERATED[:5]]
+
+
+def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
+    """모든 표를 한 번에 만든다: 같은 장부·스냅숏·연결·요청 대조에서. -> (표 목록, 이전 줄 읽기 상태)."""
+    from . import convert_invoices, convert_pl, convert_projects, convert_xchk
+    prev, states = {}, {}
+    for name in GENERATED[:4]:
+        prev[name], states[name] = _read_prev_state(input_dir, name)
+    res.links = links = build_links(books, cfg, snap, input_dir, asof, now)
+    sales = wehago.load_sales(wehago_dir, asof, books)
+    tables = [convert_pl.build_pl(books, cfg, prev["손익.csv"], links),
+              convert_invoices.build_invoices(sales, books, links["revenue"], links["projects"], prev["계산서.csv"], cfg)]
+    if snap is None:
+        tables.extend(_unwritten("인트라넷 스냅숏 없음 (기존 파일 그대로)")[2:])
+    else:
+        match = wehago.match_requests(books, links["requests"])
+        project_table = convert_projects.build_projects(links["projects"], links["revenue"], prev["프로젝트.csv"])
+        execs = convert_projects.build_execs(books, links["costs"], links["requests"], match, prev["프로젝트집행.csv"], cfg,
+                                             links["projects"])
+        xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,
+                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir))
+        tables.extend([project_table, execs, xchk])
+    return tables, states
+
+
 def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     """변환 한 번. 장부·스냅숏·파일 문제로 예외를 내지 않고 Result.code 로 알린다."""
-    from . import convert_pl
     res = Result()
     stamp = stamp or now.strftime("%Y%m%d_%H%M%S")
     try:
@@ -448,22 +579,26 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     cfg, cfg_notes = read_config(input_dir)
     books = wehago.load_books(wehago_dir, asof, None)  # None: 장부가 오래됐다고 멈추지 않는다
     snap, snap_line = read_latest_snapshot(collect_dir)
+    states, cross = {}, []
     if books.state != "ok":
         res.code = 3
-        tables = [Table("손익.csv", data.SCHEMA["손익.csv"], [], written=False, reason="WEHAGO 장부를 쓸 수 없음")]
+        tables = _unwritten("WEHAGO 장부를 쓸 수 없음")
     else:
-        prev, prev_state = _read_prev_state(input_dir, "손익.csv")
-        res.links = build_links(books, cfg, snap, input_dir, asof, now)
-        tables = [convert_pl.build_pl(books, cfg, prev, res.links)]
+        tables, states = _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res)
+        cross = cross_checks(tables)
     res.tables = tables
     names = [t.name for t in tables if t.written] + ["변환결과.txt"]
     backup, moved = plan_backup(input_dir, names, stamp)
     where = "입력/이전/%s/" % backup if backup else ""
-    if books.state == "ok" and prev_state == "읽지 못함":
-        tables[0].notes.append("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (%s 에 원본 보관)" % where)
+    for t in tables:
+        if t.written and states.get(t.name) == "읽지 못함":
+            if t.name == "손익.csv":
+                t.notes.append("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (%s 에 원본 보관)" % where)
+            else:
+                t.notes.append("이전 %s를 읽지 못해 옮길 줄을 옮기지 못함 (%s 에 원본 보관)" % (t.name, where))
     kept = [m for m in MANUAL if os.path.exists(os.path.join(input_dir, m))]
     backup_line = "이전 파일: %s (%s)" % (where, ", ".join(moved)) if backup else "이전 파일: 없음"
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links)
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross)
     payloads = [(t.name, table_bytes(t)) for t in tables if t.written] + [("변환결과.txt", _text_bytes(lines))]
     try:
         write_files(input_dir, payloads, stamp, backup)
@@ -480,14 +615,14 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         out.append("WEHAGO 장부 기준일 %s%s" % (books.book_date.isoformat(),
                                              " · 기준일보다 %d일 이전" % late if late > 0 else ""))
     for t in tables:
-        out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "%s 만들지 않음 — %s" % (t.name, t.reason))
+        out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "[%s] 만들지 않음 — %s" % (t.name, t.reason))
     if res.links is not None:
         out.append(util.mask_rrn(link_stdout_line(res.links)))
     if backup:
         out.append(backup_line)
-    if _undecided(tables):
-        out.append("대조 판단 불가 %d건" % _undecided(tables))
-    out.append("대조 불일치 %d건" % _mismatches(tables))
+    if _undecided(tables, cross):
+        out.append("대조 판단 불가 %d건" % _undecided(tables, cross))
+    out.append("대조 불일치 %d건" % _mismatches(tables, cross))
     out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
     res.lines = out
     return res

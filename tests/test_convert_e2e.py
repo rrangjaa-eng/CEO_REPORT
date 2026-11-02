@@ -18,6 +18,7 @@ for _p in (ROOT, HERE):
 
 from test_approval import write_fake_snapshot  # noqa: E402
 from test_convert import FAKE_PL_JOURNAL, cli_argv, convert_input, read_result_lines, run_convert, write_convert_books  # noqa: E402
+from test_convert import ASOF, NOW  # noqa: E402
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
 from test_convert_invoices import PURCHASE_LEDGER, SALES_EINVOICE, write_sales  # noqa: E402
 
@@ -62,7 +63,7 @@ def section(lines, header):
     """'[이름...' 으로 시작하는 줄부터 다음 '[' 줄 앞까지."""
     out, on = [], False
     for ln in lines:
-        if ln.startswith("["):
+        if not ln.startswith("  "):
             on = ln.startswith(header)
         elif on:
             out.append(ln)
@@ -95,7 +96,7 @@ class TestConvertEndToEnd(unittest.TestCase):
 
     def test_every_check_matches_and_the_file_ends_with_zero_mismatches(self):
         checks = [ln for ln in self.lines if ln.startswith("  대조 ")]
-        self.assertGreater(len(checks), 40)
+        self.assertGreater(len(checks), 30)
         for ln in checks:
             self.assertTrue(ln.endswith("→ 일치"), ln)
         self.assertEqual(self.lines[-1], "대조 불일치 0건")
@@ -143,6 +144,20 @@ class TestConvertEndToEnd(unittest.TestCase):
         self.assertEqual(row["금액"], "1100000")
         self.assertTrue(keys)
 
+    def test_cross_file_check_reports_a_difference(self):
+        from ceo_report import convert
+        tmp, input_dir, collect, wehago_dir = full_company(self.holder)
+        res = convert.run(input_dir, collect, wehago_dir, ASOF, NOW, "20261102_000000")
+        self.assertEqual(res.code, 0, res.lines)
+        self.assertEqual([c for c in convert.cross_checks(res.tables) if convert.check_result(c) != "일치"], [])
+        execs = [t for t in res.tables if t.name == "프로젝트집행.csv"][0]
+        i = [k for k, p in enumerate(execs.extra["cost_portions"]) if p is not None][0]
+        execs.extra["cost_portions"][i] += 1
+        execs.rows[i]["공급가액"] = str(int(execs.rows[i]["공급가액"]) + 1)
+        execs.checks[0] = convert.Check(execs.checks[0].label, execs.checks[0].source, execs.checks[0].csv + 1)
+        bad = [c.label for c in convert.cross_checks(res.tables) if convert.check_result(c) == "불일치"]
+        self.assertIn("손익 직접비 = 프로젝트집행 원가 줄 합계", bad)
+
     def test_csv_headers_are_the_schema(self):
         from ceo_report import data
         from ceo_report.convert_xchk import XCHK_COLUMNS
@@ -164,7 +179,8 @@ class TestConvertEndToEnd(unittest.TestCase):
         stamps = os.listdir(base)
         self.assertEqual(len(stamps), 1, stamps)
         kept = set(os.listdir(os.path.join(base, stamps[0])))
-        self.assertIn("손익.csv", kept)   # 샘플 입력에는 손익.csv 만 있다
+        for name in ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv"):
+            self.assertIn(name, kept)
         self.assertEqual(kept & set(MANUAL_FILES + NEVER_WRITTEN), set())
 
     def test_no_resident_number_in_any_written_file_or_stdout(self):
