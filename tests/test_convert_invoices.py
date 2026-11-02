@@ -128,8 +128,10 @@ def check_lines(table):
             for c in table.checks]
 
 
-RECEIPT_LABEL = "수금 (매출채권 대변 · 같은 전표 현금 차변) = 입금액 합계 + 기초 미수 배분 + 미배분"
-CREDIT_LABEL = "매출채권 대변 합계 = 현금 입금 + 수정(계산서 감액)"
+# 02-REVIEW CR-05: 입금은 같은 전표의 자산 계정(설정 현금 계정 + 10xxx) 차변이다 (예전 이름: '같은 전표 현금 차변', '현금 입금')
+RECEIPT_LABEL = "수금 (매출채권 대변 · 같은 전표 자산 계정(현금 계정·10xxx) 차변) = 입금액 합계 + 기초 미수 배분 + 미배분"
+CREDIT_LABEL = "매출채권 대변 합계 = 입금 + 수정(계산서 감액)"
+BALANCE_LABEL = "매출채권 잔액: 분개장 (차변−대변) = 계산서.csv 미수 (합계−입금액) + 기초 미수 남음"   # CR-05 새 대조
 EXPECTED_ROWS = [
     ("26201", "가상고객A", "2026-09-15", "선수금", "100000000", "10000000", "", "", "2026-10-05", "110000000"),
     ("26203", "가상고객D", "2026-10-27", "발행", "75000000", "7500000", "", "", "", ""),
@@ -142,6 +144,7 @@ EXPECTED_CHECKS = [
     "부가세 합계: 원본 19,400,000 · CSV 19,400,000 → 일치",
     RECEIPT_LABEL + ": 원본 110,000,000 · CSV 110,000,000 → 일치",
     CREDIT_LABEL + ": 원본 111,100,000 · CSV 111,100,000 → 일치",
+    BALANCE_LABEL + ": 원본 103,400,000 · CSV 103,400,000 → 일치",
 ]
 CREDIT_LINE = "  수정(계산서 감액) 2026-10-29 가상고객X 1,100,000 (전표 38 · 같은 금액의 수정 계산서 2026-10-29 있음)"
 
@@ -537,14 +540,16 @@ class TestInvoiceReceipts(unittest.TestCase):
         self.assertIn("참고 매출채권 잔액: 분개장 58,900,000 · 계산서 기준 58,900,000 (차이 0)", t.notes)
         self.assertFalse([n for n in t.notes if n.startswith("매출채권 잔액 차이")])
 
-    def test_without_an_opening_line_there_is_no_fifo_and_the_receipt_is_listed(self):
+    def test_without_an_opening_line_the_receipt_still_pays_the_oldest_invoice_in_part(self):
+        # 02-REVIEW CR-05: 예전에는 기초 줄이 없으면 오래된 것부터 배분을 하지 않아 입금액 '' · 미배분 수금 50,000,000 이었다
         t = build(self, journal=RECEIPT_ONLY)
-        self.assertEqual(row_of(t, "2026-10-27")[8:], ("", ""))
-        self.assertIn("미배분 수금 1건 50,000,000", t.notes)
-        self.assertIn("  미배분 수금 2026-10-31 가상고객D 50,000,000 (전표 71)", t.notes)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("2026-10-31", "50000000"))
+        self.assertIn("미배분 수금 0건 0", t.notes)
+        self.assertIn("  부분 입금 2026-10-27 가상고객D 합계 82,500,000 · 입금 50,000,000 · 남음 32,500,000", t.notes)
         lines = check_lines(t)
         self.assertIn(RECEIPT_LABEL + ": 원본 160,000,000 · CSV 160,000,000 → 일치", lines)
         self.assertIn(CREDIT_LABEL + ": 원본 161,100,000 · CSV 161,100,000 → 일치", lines)
+        self.assertIn(BALANCE_LABEL + ": 원본 53,400,000 · CSV 53,400,000 → 일치", lines)
         self.assertIn("참고 매출채권 잔액: 분개장 53,400,000 · 계산서 기준 53,400,000 (차이 0)", t.notes)
 
     def test_an_exact_receipt_pays_its_invoice_before_the_opening_balance(self):
@@ -581,7 +586,9 @@ class TestInvoiceReceipts(unittest.TestCase):
     def test_missing_invoice_shows_up_as_a_balance_difference_per_vendor(self):
         t = build(self, sales=[SALES_EINVOICE[0], SALES_EINVOICE[1], SALES_EINVOICE[3]])
         util = mod("util")
-        self.assertIn("매출채권 잔액 차이 가상고객X: 분개장 20,900,000 · 계산서 기준 %s" % util.won(-1100000), t.notes)
+        # 02-REVIEW CR-05: 거래처 줄에 차이와 그 까닭(미배분 수금·수정 감액)을 붙인다
+        self.assertIn("매출채권 잔액 차이 가상고객X: 분개장 20,900,000 · 계산서 기준 %s (차이 22,000,000 · 수정(계산서 감액) 1,100,000)"
+                      % util.won(-1100000), t.notes)
         self.assertIn("참고 매출채권 잔액: 분개장 103,400,000 · 계산서 기준 81,400,000 (차이 22,000,000)", t.notes)
         self.assertFalse([n for n in t.notes if n.startswith("매출채권 잔액 차이") and "가상고객A" in n])
 
@@ -593,6 +600,8 @@ class TestInvoiceReceipts(unittest.TestCase):
         t = build(self, sales=SALES_EINVOICE[:3])
         self.assertIn("  수정(계산서 감액) 2026-10-29 가상고객X 1,100,000 (전표 38)", t.notes)
         self.assertIn(CREDIT_LABEL + ": 원본 111,100,000 · CSV 111,100,000 → 일치", check_lines(t))
+        # 02-REVIEW CR-05: 수정 계산서가 없으니 계산서.csv 미수가 분개장보다 1,100,000 크다 → 새 잔액 대조가 잡는다
+        self.assertIn(BALANCE_LABEL + ": 원본 103,400,000 · CSV 104,500,000 → 불일치", check_lines(t))
 
     def test_unknown_receivable_amount_makes_the_receipt_checks_undecidable(self):
         unknown = [_jl(dt.date(2026, 10, 31), 74, "10800", "수입수수료미수금", None, None, "가상고객D", "금액 미확인")]
@@ -600,6 +609,7 @@ class TestInvoiceReceipts(unittest.TestCase):
         lines = check_lines(t)
         self.assertEqual(lines[3], RECEIPT_LABEL + ": 원본 미확인 · CSV 110,000,000 → 판단 불가")
         self.assertEqual(lines[4], CREDIT_LABEL + ": 원본 미확인 · CSV 111,100,000 → 판단 불가")
+        self.assertEqual(lines[5], BALANCE_LABEL + ": 원본 미확인 · CSV 103,400,000 → 판단 불가")
         self.assertIn("참고 매출채권 잔액: 분개장 미확인 · 계산서 기준 103,400,000 (차이 미확인)", t.notes)
 
     def test_a_receipt_without_a_date_stays_unassigned(self):

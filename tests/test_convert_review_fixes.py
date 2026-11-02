@@ -413,5 +413,126 @@ class TestCR04PartialJournal(unittest.TestCase):
         self.assertGreaterEqual(got.csv, 75000000)
 
 
+
+# ───────────── CR-05: 나눠 받거나 수수료를 떼고 받은 입금도 계산서에 붙는다 ─────────────
+D15, D05, D20 = dt.date(2026, 9, 15), dt.date(2026, 10, 5), dt.date(2026, 10, 20)
+SALE_A = [jl(D15, 30, "10800", "수입수수료미수금", 110000000, None, "가상고객A", "[26201] 선금"),
+          jl(D15, 30, "41200", "수입수수료", None, 100000000, "가상고객A", "[26201] 선금"),
+          jl(D15, 30, "25500", "부가세예수금", None, 10000000, "가상고객A")]
+
+
+def receipt(day, no, amount, vendor="가상고객A", code="10300", account="보통예금", memo="입금"):
+    return [jl(day, no, code, account, amount, None, vendor, memo),
+            jl(day, no, "10800", "수입수수료미수금", None, amount, vendor, memo)]
+
+
+def sale(day, vendor, supply, item="[26201] 가상 컨퍼런스"):
+    return {"date": day, "no": "", "vendor": vendor, "vendor_norm": wehago.norm_vendor(vendor), "item": item,
+            "supply": supply, "vat": supply // 10, "total": supply + supply // 10, "code": project_code(item),
+            "type": "일반", "credit_account": ""}
+
+
+def build_inv(journal, sales):
+    from ceo_report import convert_invoices
+    return convert_invoices.build_invoices({"state": "ok", "reason": "", "notes": [], "rows": list(sales)},
+                                           books_of(journal), None, {}, [], convert.Config(convert.DEFAULT_CONFIG))
+
+
+def paid(table):
+    return [(r["거래처"], r["발행일"], r["입금일"], r["입금액"]) for r in table.rows]
+
+
+BALANCE = "매출채권 잔액"
+
+
+def balance_check(table):
+    got = [c for c in table.checks if c.label.startswith(BALANCE)]
+    assert len(got) == 1, [c.label for c in table.checks]
+    return got[0]
+
+
+class TestCR05Receipts(unittest.TestCase):
+    def test_two_installments_without_an_opening_line_pay_the_invoice(self):
+        """repro_e: 55,000,000 + 55,000,000 (전기이월 줄 없음) -> 입금액 110,000,000, 미배분 0."""
+        t = build_inv(SALE_A + receipt(D05, 33, 55000000) + receipt(D20, 34, 55000000), [sale(D15, "가상고객A", 100000000)])
+        self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "2026-10-20", "110000000")])
+        self.assertIn("미배분 수금 0건 0", t.notes)
+        self.assertEqual((balance_check(t).source, balance_check(t).csv), (0, 0))
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_a_bank_fee_is_not_forgiven_the_remainder_stays_outstanding_and_is_listed(self):
+        t = build_inv(SALE_A + receipt(D05, 33, 109998700), [sale(D15, "가상고객A", 100000000)])
+        self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "2026-10-05", "109998700")])
+        self.assertIn("부분 입금 계산서 1건 남은 금액 1,300 (수수료 차감 등도 자동으로 지우지 않음 — 미수로 둠)", t.notes)
+        self.assertIn("  부분 입금 2026-09-15 가상고객A 합계 110,000,000 · 입금 109,998,700 · 남음 1,300", t.notes)
+        self.assertEqual((balance_check(t).source, balance_check(t).csv), (1300, 1300))
+        self.assertIn("참고 매출채권 잔액: 분개장 1,300 · 계산서 기준 1,300 (차이 0)", t.notes)
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_one_payment_covers_two_invoices_oldest_first(self):
+        d2 = dt.date(2026, 9, 30)
+        journal = (SALE_A + [jl(d2, 31, "10800", "수입수수료미수금", 22000000, None, "가상고객A", "[26201] 잔금"),
+                             jl(d2, 31, "41200", "수입수수료", None, 20000000, "가상고객A", "[26201] 잔금"),
+                             jl(d2, 31, "25500", "부가세예수금", None, 2000000, "가상고객A")]
+                   + receipt(D05, 33, 120000000))
+        t = build_inv(journal, [sale(D15, "가상고객A", 100000000), sale(d2, "가상고객A", 20000000)])
+        self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "2026-10-05", "110000000"),
+                                   ("가상고객A", "2026-09-30", "2026-10-05", "10000000")])
+        self.assertIn("  부분 입금 2026-09-30 가상고객A 합계 22,000,000 · 입금 10,000,000 · 남음 12,000,000", t.notes)
+        self.assertEqual(convert.check_result(balance_check(t)), "일치")
+
+    def test_a_receipt_into_any_asset_account_is_a_receipt_not_a_correction(self):
+        for code, account in (("10301", "보통예금(2)"), ("10100", "현금"), ("10350", "정기예금")):
+            t = build_inv(SALE_A + receipt(D05, 33, 110000000, code=code, account=account), [sale(D15, "가상고객A", 100000000)])
+            self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "2026-10-05", "110000000")], code)
+            self.assertFalse([n for n in t.notes if n.startswith("수정(계산서 감액)")], (code, t.notes))
+            for label, res in results(t).items():
+                self.assertEqual(res, "일치", (code, label))
+
+    def test_a_credit_without_any_asset_debit_stays_a_correction(self):
+        cut = [jl(D05, 33, "41200", "수입수수료", 10000000, None, "가상고객A", "감액"),
+               jl(D05, 33, "25500", "부가세예수금", 1000000, None, "가상고객A", "감액"),
+               jl(D05, 33, "10800", "수입수수료미수금", None, 11000000, "가상고객A", "감액")]
+        t = build_inv(SALE_A + cut, [sale(D15, "가상고객A", 100000000)])
+        self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "", "")])
+        self.assertIn("수정(계산서 감액) 1건 11,000,000", t.notes)
+        # 감액 계산서가 계산서 목록에 없으니 계산서.csv 미수가 분개장보다 크다: 대조가 잡는다
+        self.assertEqual((balance_check(t).source, balance_check(t).csv), (99000000, 110000000))
+        self.assertEqual(convert.check_result(balance_check(t)), "불일치")
+
+    def test_a_receipt_before_the_invoice_date_is_not_applied_and_the_check_says_undecidable(self):
+        t = build_inv(SALE_A + receipt(dt.date(2026, 9, 10), 29, 110000000), [sale(D15, "가상고객A", 100000000)])
+        self.assertEqual(paid(t), [("가상고객A", "2026-09-15", "", "")])
+        self.assertIn("  미배분 수금 2026-09-10 가상고객A 110,000,000 (전표 29)", t.notes)
+        self.assertEqual(convert.check_result(balance_check(t)), "판단 불가")
+        self.assertTrue([n for n in t.notes if n.startswith("매출채권 잔액 대조 판단 불가: 분개장에 전기이월·기초잔액 줄이 없고")],
+                        t.notes)
+
+    def test_the_per_customer_note_shows_the_real_difference(self):
+        """고치기 전에는 '계산서 기준'에서 미배분 수금을 빼서 늘 차이 0 이었다. 이제 계산서.csv 미수(+기초 미수 남음)와 비교한다."""
+        opening = [jl(dt.date(2026, 1, 2), 1, "10800", "수입수수료미수금", 5000000, None, "가상고객B", "전기이월")]
+        t = build_inv(SALE_A + opening + receipt(dt.date(2026, 9, 10), 29, 110000000, vendor="가상고객A")
+                      + receipt(D05, 34, 2000000, vendor="가상고객B"),
+                      [sale(D15, "가상고객A", 100000000)])
+        self.assertIn("매출채권 잔액 차이 가상고객A: 분개장 0 · 계산서 기준 110,000,000 (차이 −110,000,000 · 미배분 수금 110,000,000)",
+                      t.notes)
+        self.assertIn("참고 매출채권 잔액: 분개장 3,000,000 · 계산서 기준 113,000,000 (차이 −110,000,000)", t.notes)
+        self.assertEqual((balance_check(t).source, balance_check(t).csv), (3000000, 113000000))
+        self.assertEqual(convert.check_result(balance_check(t)), "불일치")
+
+    def test_the_balance_check_catches_the_pre_fix_rows(self):
+        """고치기 전 결과(입금액 빈칸, 입금은 미배분)를 새 대조에 넣으면 기초 줄이 있을 때 '불일치', 없을 때 '판단 불가'."""
+        from ceo_report import convert_invoices
+        before = [{"공급가액": "100000000", "부가세": "10000000", "입금액": ""}]
+        c = convert_invoices.balance_check(0, before, 0, "")
+        self.assertEqual((c.source, c.csv, convert.check_result(c)), (0, 110000000, "불일치"))
+        c = convert_invoices.balance_check(0, before, 0, "분개장에 전기이월·기초잔액 줄이 없고 미배분 수금 2건")
+        self.assertEqual(convert.check_result(c), "판단 불가")
+        c = convert_invoices.balance_check(0, [{"공급가액": "100000000", "부가세": "", "입금액": ""}], 0, "")
+        self.assertEqual(convert.check_result(c), "판단 불가")
+
+
 if __name__ == "__main__":
     unittest.main()

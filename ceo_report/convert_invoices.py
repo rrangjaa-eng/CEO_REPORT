@@ -2,9 +2,12 @@
 
 순수 함수다: 파일을 읽거나 쓰지 않는다 (원천 읽기는 wehago.load_sales, 파일 쓰기는 02-07 의 convert.run).
 - 프로젝트: 계산서 자기 [코드] -> 같은 거래처·날짜·공급가액의 분개장 매출 줄(수동 연결 포함) -> 클라이언트·견적금액 -> 미연결 (버리지 않음).
-- 입금: 매출채권(cfg receivable_codes) 대변 중 같은 전표에 현금(cfg cash_codes) 차변이 있는 줄만 입금이다. 현금 차변이 없는 대변은
-  '수정(계산서 감액)' 줄로 따로 보이고 계산서에 입금으로 붙이지 않는다 (D-51). 금액이 같은 입금을 먼저 짝짓고,
-  분개장에 전기이월·기초잔액 줄이 있을 때만 남은 입금을 오래된 것부터 채운다 (그 밖의 입금은 '미배분 수금'으로 보인다).
+- 입금: 매출채권(cfg receivable_codes) 대변 중 같은 전표에 자산 계정 차변이 있는 줄이 입금이다. 자산 계정은 cfg cash_codes 와
+  10xxx 계정(매출채권 계정 제외: 다른 보통예금 세목·현금·예금 등)이다 (02-REVIEW CR-05). 자산 차변이 없는 대변은
+  '수정(계산서 감액)' 줄로 따로 보이고 계산서에 입금으로 붙이지 않는다 (D-51). 금액이 같은 입금을 먼저 짝짓고, 남은 입금은
+  거래처마다 (기초 미수가 있으면 그것 먼저) 오래된 계산서부터 채운다. 계산서 발행일 이후 입금만, 나눠 받은 입금도 붙인다
+  (입금액 = 붙인 금액, 나머지는 미수). 수수료 차감 같은 작은 차이도 지우지 않고 '부분 입금'으로 보인다. 붙지 않은 입금은 '미배분 수금'.
+- 대조 '매출채권 잔액': 분개장 매출채권 잔액 = 계산서.csv 미수 (합계 − 입금액) + 기초 미수 남음.
 - 모르는 금액은 '' 이고 0이 아니다 (D-02). 합계를 모르는 계산서에는 입금을 붙이지 않는다.
 계정 번호는 cfg(설정.csv 변환_*) 에서만 읽는다.
 """
@@ -22,6 +25,8 @@ BASES = ("코드", "분개장 매출 줄", "자동", "미연결")
 _NONE_REASON = "자료 없음 (매출 계산서 엑셀)"
 _FIRM = ("Y", "N", "확정", "")
 _FAR = dt.date.max
+BALANCE_LABEL = "매출채권 잔액: 분개장 (차변−대변) = 계산서.csv 미수 (합계−입금액) + 기초 미수 남음"
+_ASSET = re.compile(r"^10\d{3}$")
 
 
 def _squash(text):
@@ -123,6 +128,9 @@ class _Journal(object):
     def __init__(self, books, cfg):
         rec = set(_squash(c) for c in cfg["receivable_codes"])
         cash = set(_squash(c) for c in cfg["cash_codes"])
+
+        def asset(code):   # 받은 돈이 들어가는 계정: 설정 현금 계정 + 10xxx 자산 계정 (매출채권 계정 제외) — CR-05
+            return code in cash or (bool(_ASSET.match(code)) and code not in rec)
         journal = books.journal
         groups = collections.defaultdict(list)
         for i, row in enumerate(journal):
@@ -160,13 +168,13 @@ class _Journal(object):
             cash_debit = False
             for j in groups[(day, no)]:
                 other = journal[j]
-                if _squash(other.get("account_code")) in cash:
+                if asset(_squash(other.get("account_code"))):
                     if other.get("debit") is None and other.get("credit") is None:
                         self.unknown = True
                     elif (other.get("debit") or 0) > 0:
                         cash_debit = True
             item = {"date": day, "no": no, "vn": vn, "vendor": mask_rrn(row.get("vendor")), "amount": net_credit,
-                    "left": net_credit}
+                    "left": net_credit, "fifo": False}
             (self.receipts if cash_debit else self.credits).append(item)
         self.receipts.sort(key=lambda r: (r["date"] or _FAR, _no_key(r["no"]), r["vn"], r["amount"]))
         self.credits.sort(key=lambda r: (r["date"] or _FAR, _no_key(r["no"]), r["vn"], r["amount"]))
@@ -204,18 +212,39 @@ def _allocate(invoices, jr):
             if it["remaining"] == it["inv"]["total"] and it["remaining"] == r["amount"] and it["date"] <= r["date"]:
                 apply(it, r, r["amount"])
                 break
-    if jr.opening_any:   # 2회전: 기초 미수 먼저, 그다음 오래된 계산서부터
-        for r in jr.receipts:
-            if r["left"] <= 0 or r["date"] is None or r["vn"] in skip_fifo:
+    # 2회전 (CR-05: 기초 줄이 없어도 돈다): 거래처마다 기초 미수 먼저, 그다음 오래된 계산서부터. 발행일 이후 입금만, 나눠 붙일 수 있다
+    for r in jr.receipts:
+        if r["left"] <= 0 or r["date"] is None or r["vn"] in skip_fifo:
+            continue
+        queue = ([opening[r["vn"]]] if r["vn"] in opening else []) + items.get(r["vn"], [])
+        for it in queue:
+            if r["left"] <= 0:
+                break
+            if it["remaining"] <= 0 or (it["date"] is not None and it["date"] > r["date"]):
                 continue
-            queue = ([opening[r["vn"]]] if r["vn"] in opening else []) + items.get(r["vn"], [])
-            for it in queue:
-                if r["left"] <= 0:
-                    break
-                if it["remaining"] <= 0 or (it["date"] is not None and it["date"] > r["date"]):
-                    continue
-                apply(it, r, min(r["left"], it["remaining"]))
+            apply(it, r, min(r["left"], it["remaining"]))
+            r["fifo"] = True
     return skip_fifo
+
+
+def balance_check(book_total, rows, opening_left, why):
+    """대조 '매출채권 잔액' (CR-05): 분개장 매출채권 잔액 = 계산서.csv 줄의 (공급가액+부가세−입금액) 합 + 기초 미수 남음.
+
+    rows 는 계산서.csv 줄(dict). 공급가액·부가세를 모르는 줄이 있으면 CSV 쪽을 모른다 (B5). why 가 있으면(분개장이 기간 앞
+    잔액을 몰라 비교할 수 없음) 원본 쪽을 모르는 것으로 두어 '판단 불가'.
+    """
+    owed = []
+    for r in rows:
+        supply, vat = num(r.get("공급가액")), num(r.get("부가세"))
+        text = (r.get("입금액") or "").strip()
+        got = 0 if not text else num(text)
+        owed.append(None if supply is None or vat is None or got is None else supply + vat - got)
+    csv_side = _sum_or_none(owed)
+    if csv_side is not None and opening_left is not None:
+        csv_side += opening_left
+    elif opening_left is None:
+        csv_side = None
+    return Check(BALANCE_LABEL, None if why else book_total, csv_side)
 
 
 # ───────────── 이전 계산서.csv (I-5) ─────────────
@@ -295,9 +324,9 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         Check("계산서 줄 수", len(sales["rows"]), len(rows)),
         Check("공급가액 합계", _sum_or_none(r.get("supply") for r in sales["rows"]), csv_supply),
         Check("부가세 합계", _sum_or_none(r.get("vat") for r in sales["rows"]), csv_vat),
-        Check("수금 (매출채권 대변 · 같은 전표 현금 차변) = 입금액 합계 + 기초 미수 배분 + 미배분", cash,
+        Check("수금 (매출채권 대변 · 같은 전표 자산 계정(현금 계정·10xxx) 차변) = 입금액 합계 + 기초 미수 배분 + 미배분", cash,
               paid_csv + opening_applied + left_sum),
-        Check("매출채권 대변 합계 = 현금 입금 + 수정(계산서 감액)", credit_total,
+        Check("매출채권 대변 합계 = 입금 + 수정(계산서 감액)", credit_total,
               sum(r["amount"] for r in jr.receipts) + credit_sum),
     ]
 
@@ -335,26 +364,61 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     left_by = collections.defaultdict(int)
     for r in leftover:
         left_by[r["vn"]] += r["left"]
+    credit_by = collections.defaultdict(int)
+    for r in jr.credits:
+        credit_by[r["vn"]] += r["amount"]
+    # 계산서 기준 = 계산서.csv 가 말하는 미수 (합계 − 입금액) + 기초 미수 남음. 미배분 수금은 빼지 않는다 (CR-05: 빼면 늘 차이 0)
     book_side, sheet_side, diffs = {}, {}, []
+    opening_left_all = 0
     for vn in names:
         book_side[vn] = jr.balance.get(vn, 0)
+        o = jr.opening.get(vn) if jr.opening_any else None
+        opening_left = (o["net"] - o["applied"]) if o and o["net"] > 0 else 0
+        opening_left_all += opening_left
         if vn in inv_unknown:
             sheet_side[vn] = None
         else:
-            o = jr.opening.get(vn) if jr.opening_any else None
-            opening_left = (o["net"] - o["applied"]) if o else 0
-            sheet_side[vn] = inv_total[vn] - inv_applied[vn] + opening_left - left_by[vn]
+            sheet_side[vn] = inv_total[vn] - inv_applied[vn] + opening_left
     for vn in sorted(names, key=lambda k: (names[k], k)):
         c, d = book_side[vn], sheet_side[vn]
         if c is None or d is None or c != d:
-            diffs.append("매출채권 잔액 차이 %s: 분개장 %s · 계산서 기준 %s" % (names[vn], won(c), won(d)))
+            why = ["차이 %s" % (won(c - d) if c is not None and d is not None else "미확인")]
+            if left_by[vn]:
+                why.append("미배분 수금 %s" % won(left_by[vn]))
+            if credit_by[vn]:
+                why.append("수정(계산서 감액) %s" % won(credit_by[vn]))
+            diffs.append("매출채권 잔액 차이 %s: 분개장 %s · 계산서 기준 %s (%s)" % (names[vn], won(c), won(d), " · ".join(why)))
     c_all, d_all = _sum_or_none(book_side.values()), _sum_or_none(sheet_side.values())
     notes.append("참고 매출채권 잔액: 분개장 %s · 계산서 기준 %s (차이 %s)" % (
         won(c_all), won(d_all), won(c_all - d_all) if c_all is not None and d_all is not None else "미확인"))
     notes.extend(diffs)
+    # 분개장에 기초 줄이 없으면 기간 앞 계산서의 미수를 모른다: 미배분 수금이나 분개장 시작 전 계산서가 있으면 비교할 수 없다
+    starts = [ln["date"] for ln in books.journal if ln.get("date") is not None]
+    early = [inv for inv in invoices if starts and inv["date"] is not None and inv["date"] < min(starts)]
+    blind = ""
+    if not jr.opening_any and (leftover or early):
+        parts = []
+        if leftover:
+            parts.append("미배분 수금 %d건 %s" % (len(leftover), won(left_sum)))
+        if early:
+            parts.append("분개장 시작(%s) 전 계산서 %d건" % (min(starts).isoformat(), len(early)))
+        blind = "분개장에 전기이월·기초잔액 줄이 없고 %s — 기간 앞 미수의 입금인지 선입금인지 알 수 없음" % " · ".join(parts)
+        notes.append("매출채권 잔액 대조 판단 불가: " + blind)
+    checks.append(balance_check(c_all, rows, opening_left_all, blind))
     notes.append("미배분 수금 %d건 %s" % (len(leftover), won(left_sum)))
     for r in leftover:
         notes.append("  미배분 수금 %s %s %s (전표 %s)" % (_day(r["date"]), r["vendor"], won(r["left"]), r["no"]))
+    fifo = [r for r in jr.receipts if r["fifo"]]
+    if fifo:
+        notes.append("오래된 것부터(기초 미수 → 계산서) 배분한 입금 %d건 %s (금액이 계산서 하나와 같지 않은 입금: 분할·합산·수수료 차감 등)"
+                     % (len(fifo), won(sum(r["amount"] for r in fifo))))
+    part = [inv for inv in order if inv["total"] is not None and 0 < inv["applied"] < inv["total"]]
+    if part:
+        notes.append("부분 입금 계산서 %d건 남은 금액 %s (수수료 차감 등도 자동으로 지우지 않음 — 미수로 둠)"
+                     % (len(part), won(sum(inv["total"] - inv["applied"] for inv in part))))
+    for inv in part:
+        notes.append("  부분 입금 %s %s 합계 %s · 입금 %s · 남음 %s" % (
+            _day(inv["date"]), inv["vendor"], won(inv["total"]), won(inv["applied"]), won(inv["total"] - inv["applied"])))
     if jr.credits:
         notes.append("수정(계산서 감액) %d건 %s" % (len(jr.credits), won(credit_sum)))
     for r in jr.credits:
@@ -365,8 +429,8 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     undated = sum(1 for inv in invoices if inv["date"] is None)
     if undated:
         notes.append("발행일 없는 계산서 %d건 (입금과 짝짓지 않음)" % undated)
-    if skip_fifo and jr.opening_any:
-        notes.append("합계를 모르는 계산서가 있는 거래처는 기초 미수 순서 배분을 하지 않음: " + ", ".join(
+    if skip_fifo:
+        notes.append("합계를 모르는 계산서가 있는 거래처는 오래된 것부터 배분하지 않음: " + ", ".join(
             sorted(names.get(vn, vn) for vn in skip_fifo)))
     differ = sum(1 for inv in invoices if inv["total"] is not None and inv["source_total"] is not None
                  and inv["total"] != inv["source_total"])

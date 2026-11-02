@@ -683,8 +683,9 @@ class TestConvertProvisional(unittest.TestCase):
         self.assertIn("대조 불일치 0건", lines)
         # 02-03: 회사 합계 확인 1건 + 프로젝트별 합계 확인(2026-10 매출) 1건
         # + 02-REVIEW CR-04 올해 누계 매출 확인 1건 (모르는 칸이 있으니 판단 불가; 예전 2건)
-        self.assertIn("대조 판단 불가 3건", lines)
-        self.assertIn("대조 판단 불가 3건", out)
+        # + 02-REVIEW CR-05 매출채권 잔액 확인 1건 (매입매출장의 가상고객A 계산서가 10-27 이라 10-05 입금이 붙지 않고, 기초 줄이 없다)
+        self.assertIn("대조 판단 불가 4건", lines)
+        self.assertIn("대조 판단 불가 4건", out)
         d = mod("data").load(input_dir)
         R = mod("calc").compute(d, "monthly", dt.date(2026, 10, 31))
         company = [t for t in R["s4"]["sources"]["WEHAGO"]["table"] if t["unit"] == "회사"][0]
