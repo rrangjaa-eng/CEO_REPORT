@@ -4,6 +4,7 @@
 다른 테스트 파일은 이 파일에서 함수와 클래스(FakeTransport, login_page, payment_page,
 project_page)만 가져다 쓴다. TestCase 클래스는 가져가지 않는다.
 """
+import builtins
 import http.client
 import http.cookiejar
 import io
@@ -18,6 +19,7 @@ import urllib.parse
 import urllib.request
 import urllib.response
 from html import escape
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -550,6 +552,266 @@ class TestTransportSafety(unittest.TestCase):
         redirects = [h for h in self.handlers(proxies={}) if isinstance(h, module.CheckedRedirectHandler)]
         self.assertEqual(len(redirects), 1)
         self.assertLessEqual(redirects[0].max_redirections, 5)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: 전 페이지 수집, 구조가 바뀌면 멈춤, 비밀번호는 로그인 본문에만
+# ---------------------------------------------------------------------------
+
+def paged_routes(extra=None):
+    """지급요청 3쪽(쪽 번호 쿼리) + 프로젝트 2쪽(뒤 숫자 꼴)."""
+    pay_links = [("1", "/payment/index?page=1"), ("2", "/payment/index?page=2"),
+                 ("3", "/payment/index?page=3"), (">", "/payment/index?page=3"),
+                 ("승인구분 3", "/payment/index?confirm=3"), ("정렬", "/payment/index?search=가상"),
+                 ("삭제", "/payment/delete/5101"), ("로그아웃", "/logout")]
+    routes = site_routes(extra={
+        ("GET", "/payment/index"): (200, {}, payment_page(
+            [prow(5101, amount="44,000,000"), prow(5102)], links=pay_links)),
+        ("GET", "/payment/index?page=2"): (200, {}, payment_page(
+            [prow(5102), prow(5103), prow(5104)],
+            links=[("1", "/payment/index?page=1"), ("2", "/payment/index?page=2"),
+                   ("3", "/payment/index?page=3")])),
+        ("GET", "/payment/index?page=3"): (200, {}, payment_page(
+            [prow(5105), prow(5106, amount="")],
+            links=[("1", "/payment/index?page=1"), ("2", "/payment/index?page=2")])),
+        ("GET", "/project/index"): (200, {}, project_page(
+            [jrow(26218, 901), jrow(26219, 902)],
+            links=[("2", "/project/index/20"), (">", "/project/index/20")])),
+        ("GET", "/project/index/20"): (200, {}, project_page(
+            [jrow(26220, 903)], links=[("1", "/project/index")], total=False)),
+    })
+    routes.update(extra or {})
+    return routes
+
+
+class TestCollectAllPages(unittest.TestCase):
+    def run_collect(self, routes=None, **kwargs):
+        sleeps = []
+        opener, fake = make_fake_opener(paged_routes() if routes is None else routes,
+                                        delay=0.3, sleep=sleeps.append)
+        result = intranet().collect(opener, USER, PASSWORD, **kwargs)
+        return result, fake, sleeps, opener
+
+    def test_every_row_once_from_all_pages(self):
+        result, _, _, _ = self.run_collect()
+        self.assertEqual([r["번호"] for r in result.payments],
+                         ["5101", "5102", "5103", "5104", "5105", "5106"])
+        self.assertEqual([r["번호"] for r in result.projects], ["26218", "26219", "26220"])
+        self.assertEqual([r["pro_num"] for r in result.projects], ["901", "902", "903"])
+        self.assertEqual(result.payment_pages, 3)
+        self.assertEqual(result.project_pages, 2)
+        self.assertEqual(result.payments[-1]["금액"], "")  # 빈칸은 빈칸 그대로 (0 아님)
+
+    def test_requested_pages_are_exactly_the_page_links(self):
+        _, fake, _, _ = self.run_collect()
+        self.assertEqual(fake.requested(), [
+            ("GET", "/"), ("POST", "/login/submit"),
+            ("GET", "/payment/index"), ("GET", "/payment/index?page=2"), ("GET", "/payment/index?page=3"),
+            ("GET", "/project/index"), ("GET", "/project/index/20")])
+        self.assertEqual(len(set(fake.requested())), len(fake.requested()), "같은 주소를 두 번 요청함")
+
+    def test_filter_javascript_delete_and_view_links_are_not_followed(self):
+        _, fake, _, _ = self.run_collect()
+        for method, path in fake.requested():
+            for bad in ("confirm", "search", "delete", "logout", "/view/", "estimate", "pro_num"):
+                self.assertNotIn(bad, path)
+
+    def test_waits_between_requests(self):
+        _, fake, sleeps, opener = self.run_collect()
+        self.assertEqual(sleeps, [0.3] * (len(fake.calls) - 1))
+        self.assertEqual(opener.calls_made, len(fake.calls))
+
+    def test_progress_callback_after_each_page(self):
+        seen = []
+        self.run_collect(progress=lambda *a: seen.append(a))
+        self.assertEqual(seen, [("지급요청", 1, 2), ("지급요청", 2, 4), ("지급요청", 3, 6),
+                                ("프로젝트", 1, 2), ("프로젝트", 2, 3)])
+
+    def test_header_alias_and_nbsp_are_accepted(self):
+        header = list(PAYMENT_HEADER)
+        header[2] = "파트너(페이먼트)"
+        header[10] = "사장님 승인"
+        routes = site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page(
+            [prow(5101)], header=header))})
+        result, _, _, _ = self.run_collect(routes)
+        self.assertEqual([r["번호"] for r in result.payments], ["5101"])
+
+    def test_notice_row_and_total_row_are_not_data(self):
+        page = payment_page([prow(5101)]).replace(
+            "</tbody>", "<tr><td colspan='12'>합계</td></tr><tr><td colspan='12'></td></tr></tbody>")
+        result, _, _, _ = self.run_collect(site_routes(extra={("GET", "/payment/index"): (200, {}, page)}))
+        self.assertEqual([r["번호"] for r in result.payments], ["5101"])
+
+
+def collect_raises(test, routes, **kwargs):
+    """routes로 수집을 돌려 예외를 돌려준다(없으면 실패)."""
+    opener, fake = make_fake_opener(routes)
+    with test.assertRaises(Exception) as ctx:
+        intranet().collect(opener, USER, PASSWORD, **kwargs)
+    return ctx.exception, fake
+
+
+class TestStructureStops(unittest.TestCase):
+    def payment_route(self, **kwargs):
+        rows = kwargs.pop("rows", [prow(5101), prow(5102)])
+        return site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page(rows, **kwargs))})
+
+    def test_header_without_amount_names_the_difference(self):
+        module = intranet()
+        header = [h for h in PAYMENT_HEADER if h != "금액"]
+        exc, _ = collect_raises(self, self.payment_route(header=header))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("금액", str(exc))
+        self.assertIn("지급요청 목록 머리글", str(exc))
+
+    def test_extra_header_column_is_named(self):
+        module = intranet()
+        exc, _ = collect_raises(self, self.payment_route(header=PAYMENT_HEADER + ["비고"]))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("비고", str(exc))
+
+    def test_project_header_difference_is_named(self):
+        module = intranet()
+        header = [h for h in PROJECT_HEADER if h != "실행가"]
+        exc, _ = collect_raises(self, site_routes(extra={
+            ("GET", "/project/index"): (200, {}, project_page([jrow(1, 11)], header=header))}))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("프로젝트 목록 머리글", str(exc))
+        self.assertIn("실행가", str(exc))
+
+    def test_list_page_showing_login_form_is_login_failed(self):
+        module = intranet()
+        exc, _ = collect_raises(self, site_routes(extra={("GET", "/payment/index"): (200, {}, login_page())}))
+        self.assertIsInstance(exc, module.LoginFailed)
+
+    def test_zero_rows_stop(self):
+        module = intranet()
+        exc, _ = collect_raises(self, self.payment_route(rows=[]))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("0건", str(exc))
+
+    def test_zero_rows_with_notice_row_stops_too(self):
+        module = intranet()
+        page = payment_page([]).replace(
+            "<tbody></tbody>", "<tbody><tr><td colspan='12'>등록된 자료가 없습니다</td></tr></tbody>")
+        exc, _ = collect_raises(self, site_routes(extra={("GET", "/payment/index"): (200, {}, page)}))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("0건", str(exc))
+
+    def test_cell_count_differs_from_header(self):
+        module = intranet()
+        short = [prow(5101)[:10], prow(5102)[:10]]  # 값 10개 + 삭제 칸 = 11칸, 머리글은 12칸
+        exc, _ = collect_raises(self, self.payment_route(rows=short))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("칸 수", str(exc))
+
+    def test_one_bad_row_among_good_rows_also_stops(self):
+        module = intranet()
+        exc, _ = collect_raises(self, self.payment_route(rows=[prow(5101), prow(5102)[:10]]))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("칸 수", str(exc))
+
+    def test_row_without_number_stops(self):
+        module = intranet()
+        bad = prow(5102)
+        bad[0] = ""
+        exc, _ = collect_raises(self, self.payment_route(rows=[prow(5101), bad]))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("번호", str(exc))
+
+    def test_max_pages_reached_with_pages_left(self):
+        module = intranet()
+        exc, fake = collect_raises(self, paged_routes(), max_pages=2)
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("최대 페이지 수 2", str(exc))
+        self.assertNotIn(("GET", "/payment/index?page=3"), fake.requested())
+
+    def test_unknown_paging_query_name_stops_without_requesting_it(self):
+        module = intranet()
+        links = [("2", "/payment/index?pg2=2"), ("3", "/payment/index?pg2=3")]
+        exc, fake = collect_raises(self, self.payment_route(links=links))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("pg2", str(exc))
+        self.assertEqual([r for r in fake.requested() if "pg2" in r[1]], [])
+
+    def test_page_link_that_also_changes_a_filter_stops(self):
+        module = intranet()
+        links = [("2", "/payment/index?gyear=2026&page=2")]
+        exc, fake = collect_raises(self, self.payment_route(links=links))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("gyear", str(exc))
+        self.assertEqual([r for r in fake.requested() if "gyear" in r[1]], [])
+
+    def test_login_page_without_form1(self):
+        module = intranet()
+        exc, fake = collect_raises(self, site_routes(extra={("GET", "/"): (200, {}, login_page(form_name="loginform"))}))
+        self.assertIsInstance(exc, module.StructureMismatch)
+        self.assertIn("form1", str(exc))
+        self.assertEqual(fake.paths(), [("GET", "/")])
+
+
+class TestCredentialsNeverKept(unittest.TestCase):
+    SECRETS = (USER, PASSWORD, PASSWORD_ENC, urllib.parse.quote(USER), urllib.parse.quote_plus(USER))
+
+    def test_password_is_only_in_the_one_login_post_body(self):
+        opener, fake = make_fake_opener(paged_routes())
+        intranet().collect(opener, USER, PASSWORD)
+        with_password = [c for c in fake.calls if PASSWORD_ENC.encode() in (c[2] or b"")]
+        self.assertEqual(len(with_password), 1)
+        self.assertEqual((with_password[0][0], urllib.parse.urlsplit(with_password[0][1]).path),
+                         ("POST", "/login/submit"))
+        for method, url, body, cookie in fake.calls:
+            for secret in self.SECRETS:
+                self.assertNotIn(secret, url)
+                self.assertNotIn(secret, cookie or "")
+        for method, url, body, cookie in fake.calls:
+            if method != "POST":
+                self.assertIsNone(body)
+
+    def test_collector_touches_no_file(self):
+        opener, fake = make_fake_opener(paged_routes())
+        with mock.patch.object(builtins, "open", side_effect=AssertionError("파일 열기")), \
+                mock.patch.object(os, "makedirs", side_effect=AssertionError("폴더 만들기")):
+            result = intranet().collect(opener, USER, PASSWORD)
+        self.assertEqual(len(result.payments), 6)
+
+    def test_result_rows_and_opener_hold_no_credentials(self):
+        opener, _ = make_fake_opener(paged_routes())
+        result = intranet().collect(opener, USER, PASSWORD)
+        texts = [repr(result), repr(vars(opener)), repr(result.login_info)]
+        for row in result.payments + result.projects:
+            texts.extend(row.values())
+        for text in texts:
+            for secret in self.SECRETS:
+                self.assertNotIn(secret, text)
+
+    def test_exceptions_hold_no_credentials(self):
+        module = intranet()
+        bad_header = [h for h in PAYMENT_HEADER if h != "금액"]
+        scenarios = {
+            "header": site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page(
+                [prow(1)], header=bad_header))}),
+            "login": site_routes(extra={("GET", "/payment/index"): (200, {}, login_page())}),
+            "blocked": site_routes(extra={("GET", "/payment/index"): (302, {"Location": "/confirm/payment/1"}, "")}),
+            "zero": site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page([]))}),
+            "cells": site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page([prow(1)[:10]]))}),
+            "form1": site_routes(extra={("GET", "/"): (200, {}, login_page(form_name="x"))}),
+        }
+        kinds = {"header": module.StructureMismatch, "login": module.LoginFailed,
+                 "blocked": module.BlockedRequest, "zero": module.StructureMismatch,
+                 "cells": module.StructureMismatch, "form1": module.StructureMismatch}
+        for name, routes in scenarios.items():
+            with self.subTest(name):
+                exc, _ = collect_raises(self, routes)
+                self.assertIsInstance(exc, kinds[name])
+        exc, _ = collect_raises(self, paged_routes(), max_pages=2)
+        self.assertIsInstance(exc, module.StructureMismatch)
+        for name, routes in list(scenarios.items()) + [("pages", paged_routes())]:
+            with self.subTest("secret-" + name):
+                exc, _ = collect_raises(self, routes, **({"max_pages": 2} if name == "pages" else {}))
+                for secret in self.SECRETS:
+                    self.assertNotIn(secret, str(exc))
+                    self.assertNotIn(secret, repr(exc))
 
 
 if __name__ == "__main__":
