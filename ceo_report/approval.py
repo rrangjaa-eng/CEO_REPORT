@@ -198,6 +198,37 @@ def _count_text(items):
     return "%d건 (%s)" % (n, inner)
 
 
+def _agg(items):
+    """건수, 확인된 금액 합계(전부 미확인이면 None), 금액 미확인 건수 (D-02: 미확인은 0이 아니다)."""
+    total, unknown = ssum_or_none(i["amount"] for i in items)
+    return {"n": len(items), "sum": total, "unknown": unknown}
+
+
+def _by_io(items):
+    return {"in": _agg([i for i in items if i["io"] == "in"]), "out": _agg([i for i in items if i["io"] == "out"]),
+            "n": len(items)}
+
+
+def _panel(L):
+    """화면의 '확인 필요' 묶음에 쓰는 건수와 확인된 금액. 위에서 나눈 목록만 읽고 새로 계산하지 않는다."""
+    req = L["requests_all"]
+    beyond_events = _by_io(L["beyond"])
+    return {
+        "pending": _agg([r for r in req if r["status"] == "pending"]),
+        "amount_unknown": {"n": len(L["amount_unknown"])},
+        "date_unknown": {"n": len(L["date_unknown"])},
+        "status_unknown": _agg(L["status_unknown"]),
+        "rule_no_date": {"n": sum(1 for r in req if r["rule"].startswith("지급요청일 없음"))},
+        "rule_past": {"n": sum(1 for r in req if r["rule"].startswith("지급요청일 지남"))},
+        "amount_unknown_events": {"n": len(L["amount_unknown_events"])},
+        "undated": _by_io(L["undated"]),
+        "past": _by_io(L["past"]),
+        "beyond": {"in": beyond_events["in"], "out": beyond_events["out"], "requests": {"n": len(L["beyond_requests"])}},
+        "balance_unknown": {"n": L["bal_unknown"], "names": list(L["bal_unknown_names"])},
+        "vat_unknown": {"n": len(L["vat_unknown_sched"])},
+    }
+
+
 def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates):
     lines = []
     if approved_paid:
@@ -279,7 +310,7 @@ def build(d, snap, asof, now):
         kept.append(ev)
 
     # 남은 일정 분류 (A-4: 미확인은 합계에 넣지 않는다)
-    undated, past, beyond, amount_unknown_events, rolled = [], [], [], [], []
+    undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
     for ev in kept:
         if ev["amount"] is None:
             amount_unknown_events.append(ev)
@@ -297,6 +328,8 @@ def build(d, snap, asof, now):
                 (base_in if ev["firm"] else est_in)[i] += ev["amount"]
             else:
                 base_out[i] += ev["amount"]
+                if ev.get("vat_unknown"):
+                    vat_unknown_sched.append(ev)  # 부가세 칸이 비어 공급가액만 반영된 일정 (D-07)
 
     # 요청 분류: 대기 → 체크 가능, 승인 완료 → 잔액 기준일 이후면 고정 지급 (A-3, P-3, P-8)
     data_requests = []
@@ -335,6 +368,11 @@ def build(d, snap, asof, now):
     data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests}
+    lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
+             "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,
+             "past": past, "beyond": beyond, "beyond_requests": beyond_requests,
+             "bal_unknown": R["s1"]["bal_unknown"], "bal_unknown_names": R["s1"]["bal_unknown_names"],
+             "vat_unknown_sched": vat_unknown_sched}
     return {"data": data, "R": R, "asof": asof, "now": now, "start": start, "reserve": reserve, "n_weeks": n_weeks,
             "regular": regular, "balance_date": balance_date, "cutoff": cutoff, "monday": monday, "horizon": horizon,
             "collected_at": snap.collected_at, "snapshot_path": snap.path, "requests_all": req_all,
@@ -342,7 +380,8 @@ def build(d, snap, asof, now):
             "possible_duplicates": possible_duplicates, "rolled": rolled, "past": past, "undated": undated,
             "beyond": beyond, "amount_unknown": amount_unknown, "amount_unknown_events": amount_unknown_events,
             "approved_paid": approved_paid, "approved_future": approved_future, "status_unknown": status_unknown,
-            "date_unknown": date_unknown, "beyond_requests": beyond_requests,
+            "date_unknown": date_unknown, "beyond_requests": beyond_requests, "panel": _panel(lists),
+            "vat_unknown_sched": vat_unknown_sched,
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates),
             "issues": list(issues.items)}

@@ -211,7 +211,7 @@ def _req_row(rq, S):
         box, esc(sr), esc(rq["번호"]))
     date = esc(rq["date"].isoformat()) if rq["date"] else _na("미확인")
     rule = esc(rq["rule"] if rq["toggle"] else " · ".join(x for x in (rq["reason"], rq["rule"]) if x))
-    stage = esc("팀장 %s · 관리팀 %s · 사장님 %s" % rq["stages"])
+    stage = "".join('<td class="%s">%s</td>' % (c, esc(v)) for c, v in zip(("s-team", "s-mgmt", "s-boss"), rq["stages"]))
     if rq["toggle"]:
         t = S["toggle"][rq["id"]]
         toggle = '<td class="n r-toggle"><span class="r-toggle-v">%s</span> <span class="r-mode">빼면</span></td>' % esc(
@@ -219,19 +219,20 @@ def _req_row(rq, S):
     else:
         toggle = '<td class="n r-toggle">-</td>'
     return ('<tr data-id="%s" data-no="%s">%s<td>%s</td><td>%s</td><td class="n r-amt">%s</td><td>%s</td><td>%s</td>'
-            '<td class="r-stage">%s</td>%s</tr>') % (
+            '%s%s</tr>') % (
         esc(rq["id"]), esc(rq["번호"]), first, esc(rq["name"]), esc(rq["vendor"]), amount, date, rule, stage, toggle)
 
 
 def _requests_table(A, S):
     head = ('<thead><tr><th class="c1">체크 · 번호</th><th>행사명</th><th>파트너</th><th class="n">금액(원)</th>'
-            '<th>예상 지급일</th><th>근거 규칙</th><th>승인 단계</th><th class="n">이 건 빼면·넣으면 최저 잔액 (백만원)</th>'
+            '<th>예상 지급일</th><th>근거 규칙</th><th>팀장승인</th><th>관리팀승인</th><th>사장님승인</th>'
+            '<th class="n">이 건 빼면·넣으면 최저 잔액 (백만원)</th>'
             '</tr></thead>')
     rows = sorted(A["requests_all"], key=_sort_key)
     if rows:
         body = "".join(_req_row(rq, S) for rq in rows)
     else:
-        body = '<tr><td colspan="8" class="note">승인 대기 요청 0건 (인트라넷 수집 시각 %s)</td></tr>' % esc(
+        body = '<tr><td colspan="10" class="note">승인 대기 요청 0건 (인트라넷 수집 시각 %s)</td></tr>' % esc(
             A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"))
     return '<div class="tw"><table id="requests">%s<tbody>%s</tbody></table></div>' % (head, body)
 
@@ -250,6 +251,78 @@ def _weeks_table(A, S):
                         i, esc(_wlabel(data, i)), esc(fmt_won(w["in"])), esc(fmt_won(w["out"])),
                         esc(fmt_won(w["est_in"])), mn, end, _level_cls(w["level"]), esc(w["level"])))
     return '<div class="tw"><table id="weeks">%s<tbody>%s</tbody></table></div>' % (head, "".join(body))
+
+
+def _scope_line(A):
+    """대기 요청 건수와 확인된 금액 합계, 금액 미확인 건수. 미확인 금액은 합계에 넣지 않는다 (D-02)."""
+    p = A["panel"]["pending"]
+    if not p["n"]:
+        return '<div id="req-scope" class="scope">대기 요청 0건</div>'
+    total = "확인된 금액 합계 " + ("없음" if p["sum"] is None else fmt_won(p["sum"]))
+    return '<div id="req-scope" class="scope">%s</div>' % esc("대기 요청 %d건 · %s · 금액 미확인 %d건" % (p["n"], total, p["unknown"]))
+
+
+def _approved_table(A):
+    head = ('<thead><tr><th>번호</th><th>예상 지급일</th><th class="n">금액(원)</th><th>행사명</th><th>파트너</th>'
+            '<th>근거 규칙</th></tr></thead>')
+    rows = sorted(A["approved_future"], key=lambda r: (r["date"], r["번호"]))
+    if rows:
+        body = "".join('<tr data-no="%s"><td class="a-no">%s</td><td class="a-date">%s</td><td class="n a-amt">%s</td>'
+                       '<td>%s</td><td>%s</td><td>%s</td></tr>' % (
+                           esc(r["번호"]), esc(r["번호"]), esc(r["date"].isoformat()), esc(fmt_won(r["amount"])),
+                           esc(r["name"]), esc(r["vendor"]), esc(r["rule"])) for r in rows)
+    else:
+        body = '<tr><td colspan="6" class="note">승인 완료·지급 전 0건</td></tr>'
+    return ('<h2 class="sec">승인 완료·지급 전 (고정 지급, 체크 없음)</h2>'
+            '<div class="tw"><table id="approved">%s<tbody>%s</tbody></table></div>' % (head, body))
+
+
+def _amount_piece(label, a):
+    """'입금 2건 38,800,000' 꼴. 금액 미확인이 있으면 합계 뒤에 따로 적고, 전부 미확인이면 합계를 적지 않는다."""
+    text = "%s %d건" % (label, a["n"])
+    if not a["n"]:
+        return text
+    if a["sum"] is None:
+        return text + " (금액 미확인 %d건)" % a["unknown"]
+    text += " " + fmt_won(a["sum"])
+    if a["unknown"]:
+        text += " 외 금액 미확인 %d건" % a["unknown"]
+    return text
+
+
+def _unknown_lines(A):
+    P, cutoff = A["panel"], A["cutoff"].isoformat()
+    st = P["status_unknown"]
+    st_extra = ""
+    if st["n"]:
+        st_extra = ", 확인된 금액 " + ("없음" if st["sum"] is None else fmt_won(st["sum"]))
+        if st["unknown"]:
+            st_extra += ", 금액 미확인 %d건" % st["unknown"]
+    bal = "잔액 미확인 %d계좌" % P["balance_unknown"]["n"]
+    if P["balance_unknown"]["n"]:
+        bal += " (%s)" % ", ".join(P["balance_unknown"]["names"])
+    be = P["beyond"]
+    lines = [
+        "금액 미확인 요청 %d건 (일정 제외)" % P["amount_unknown"]["n"],
+        "날짜 미확인 요청 %d건 (일정 제외)" % P["date_unknown"]["n"],
+        "상태 확인 필요 %d건 (일정 제외%s)" % (st["n"], st_extra),
+        "금액 미확인 일정 %d건 (일정 제외)" % P["amount_unknown_events"]["n"],
+        "지급요청일 없음 %d건 (목요일 14시 승인 → 금요일 지급 규칙으로 계산)" % P["rule_no_date"]["n"],
+        "지급요청일 지남·대기 중 %d건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)" % P["rule_past"]["n"],
+        "날짜 없는 예정 금액: %s · %s" % (_amount_piece("입금", P["undated"]["in"]), _amount_piece("지급", P["undated"]["out"])),
+        "예정일이 잔액 기준일(%s) 이전 또는 당일인 미처리: %s · %s" % (
+            cutoff, _amount_piece("입금", P["past"]["in"]), _amount_piece("지급", P["past"]["out"])),
+        "기간 밖(%d주 이후): 입금 %d건 · 지급 %d건 · 대기 요청 %d건" % (
+            A["n_weeks"], be["in"]["n"], be["out"]["n"], be["requests"]["n"]),
+        bal,
+        "부가세 미확인 일정 %d건 (공급가액만 반영)" % P["vat_unknown"]["n"],
+    ]
+    return lines
+
+
+def _unknowns_block(A):
+    items = "".join('<div class="note">%s</div>' % esc(t) for t in _unknown_lines(A))
+    return '<div id="unknowns"><h2 class="sec">확인 필요 항목 (건수와 확인된 금액)</h2>%s</div>' % items
 
 
 def _notes_block(A):
@@ -276,10 +349,13 @@ def render_approval(A, collected_now):
         _headline(A, S),
         _start_line(A, collected_now),
         '<h2 class="sec">승인 대기 요청 (체크 = 승인 가정)</h2>',
+        _scope_line(A),
         _requests_table(A, S),
         '<h2 class="sec">주별 일정 (월요일 시작, 단위 원)</h2>',
         _weeks_table(A, S),
+        _approved_table(A),
         _notes_block(A),
+        _unknowns_block(A),
         _issues_block(A),
         '<script id="approval-data" type="application/json">%s</script>' % payload,
         '<script id="approval-calc">%s</script>' % CALC_JS,
