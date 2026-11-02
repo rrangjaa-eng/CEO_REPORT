@@ -274,9 +274,24 @@ def _paid_note(cutoff, paid_after):
         head, len(paid_after), won(sum(r["schedule_amount"] for r in paid_after)))
 
 
+def _account_notes(accounts, cutoff, newest, stale_in):
+    """WR-05: 계좌별 잔액 날짜가 다를 때 계좌마다의 날짜와, 두 날짜 사이 입금을 넣지 않은 사실. 같으면 빈 목록."""
+    if not accounts or cutoff == newest:
+        return []
+    each = " · ".join("%s %s" % (name, d0.isoformat()) for name, d0 in accounts)
+    lines = ["계좌별 잔액 기준일이 다름: %s → 가장 이른 %s를 잔액 기준일로 씀 (그 뒤 지급은 일정에 넣음)" % (each, cutoff.isoformat())]
+    head = "잔액 기준일(%s) 이후·가장 늦은 계좌 기준일(%s) 이전 또는 당일 입금" % (cutoff.isoformat(), newest.isoformat())
+    if stale_in:
+        lines.append("%s %d건 %s (잔액에 이미 있을 수 있어 일정에 넣지 않음)" % (
+            head, len(stale_in), won(sum(e["amount"] for e in stale_in))))
+    else:
+        lines.append(head + " 0건")
+    return lines
+
+
 def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates, possible_duplicates,
-           paid_note=None):
-    lines = []
+           paid_note=None, account_lines=()):
+    lines = list(account_lines)
     if approved_paid:
         lines.append("승인 완료·예상 지급일이 잔액 기준일(%s) 이전 또는 당일 %d건 %s (잔액에 반영된 것으로 봄)" % (
             cutoff.isoformat(), len(approved_paid), won(sum(r["amount"] for r in approved_paid))))
@@ -360,9 +375,14 @@ def build(d, snap, asof, now, wehago_dir=None):
     n_weeks, regular = _read_settings(d, issues)
     start = R["s1"]["available"]
     reserve = R["settings_num"]["위험_최소보유현금"]
-    dates = [a["date"] for a in R["s1"]["accounts"]]
-    balance_date = max(dates) if dates else None
+    accounts = [(a["account"], a["date"]) for a in R["s1"]["accounts"] if a["date"] is not None]
+    dates = [d0 for _, d0 in accounts]
+    # 계좌마다 잔액 날짜가 다르면 가장 이른 날짜가 잔액 기준일이다: 그 뒤의 지급은 오래된 계좌 잔액에 없을 수 있으므로
+    # 일정에 넣는다 (WR-05, D-24 보수적 기준). 가장 늦은 계좌 날짜까지의 입금은 이미 잔액에 있을 수 있어 넣지 않는다.
+    balance_date = min(dates) if dates else None
+    newest = max(dates) if dates else None
     cutoff = balance_date or asof  # 이 날짜 이전·당일은 잔액에 이미 반영된 것으로 본다 (P-3)
+    in_cutoff = newest or cutoff  # 입금은 이 날짜 이전·당일이면 잔액에 반영된 것으로 본다 (WR-05)
     monday = asof - dt.timedelta(days=asof.weekday())
     n_days = 7 * n_weeks
     horizon = monday + dt.timedelta(days=n_days - 1)
@@ -428,6 +448,7 @@ def build(d, snap, asof, now, wehago_dir=None):
 
     # 남은 일정 분류 (A-4: 미확인은 합계에 넣지 않는다)
     undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
+    stale_in = []  # 잔액 기준일 이후·가장 늦은 계좌 날짜 이전·당일 입금 (WR-05)
     for ev in kept:
         if ev["amount"] is None:
             amount_unknown_events.append(ev)
@@ -435,6 +456,9 @@ def build(d, snap, asof, now, wehago_dir=None):
             undated.append(ev)
         elif ev["date"] <= cutoff:
             past.append(ev)
+        elif ev["io"] == "in" and ev["date"] <= in_cutoff:
+            past.append(ev)
+            stale_in.append(ev)
         elif ev["date"] > horizon:
             beyond.append(ev)
         else:
@@ -523,5 +547,7 @@ def build(d, snap, asof, now, wehago_dir=None):
             "already_paid": already_paid, "paid_after_balance": paid_after,
             "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
-                            possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None),
+                            possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,
+                            _account_notes(accounts, cutoff, newest, stale_in)),
+            "newest_balance_date": newest, "stale_in": stale_in,
             "issues": list(issues.items)}

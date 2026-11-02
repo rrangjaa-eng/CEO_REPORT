@@ -569,7 +569,7 @@ def _basis_block(A):
     P, cutoff = A["panel"], A["cutoff"]
     regular = ", ".join(A["regular"])
     missing = ", ".join(A["regular_missing"]) or "없음"
-    balance = ("잔액 기준일 %s (계좌 잔액 입력의 가장 늦은 기준일)" % A["balance_date"].isoformat() if A["balance_date"]
+    balance = ("잔액 기준일 %s (계좌 잔액 입력의 가장 이른 기준일)" % A["balance_date"].isoformat() if A["balance_date"]
                else "잔액 기준일 없음 (계좌 잔액 입력 없음, 기준일 %s 사용)" % cutoff.isoformat())
     lines = [
         "가정 1 대기 요청 = 사장님승인이 '승인'이 아닌 요청(팀장·관리팀 단계 포함) · 상태 확인 필요 %d건" % P["status_unknown"]["n"],

@@ -673,6 +673,29 @@ class TestApprovalRequests(unittest.TestCase):
                       "(1주 첫날 11/02에 반영)", n)
         self.assertIn("승인 완료·예상 지급일이 잔액 기준일(2026-10-30) 이전 또는 당일 1건 5,500,000 (잔액에 반영된 것으로 봄)", n)
 
+    def test_accounts_with_different_dates_use_the_earliest_as_the_balance_date(self):
+        """WR-05: 계좌마다 잔액 날짜가 다르면 가장 이른 날짜가 잔액 기준일. 그 뒤 지급은 일정에 넣고, 사이 입금은 두 번 넣지 않는다."""
+        folder = sample_copy(self)
+        edit_csv(folder, "계좌잔액.csv", lambda rows: [r.__setitem__(0, "2026-10-29") for r in rows
+                                                     if r[0] == "2026-11-02" and r[1] == "급여계좌"])
+        edit_csv(folder, "자금일정.csv", lambda rows: rows.extend([
+            ["2026-10-31", "입금", "4,000,000", "확정", "기타입금", "", "", "", ""],
+            ["2026-11-01", "지급", "7,000,000", "확정", "거래처미지급", "", "", "", ""]]))
+        page, A = full_screen(self, folder)
+        self.assertEqual((A["balance_date"], A["cutoff"]), (dt.date(2026, 10, 29), dt.date(2026, 10, 29)))
+        out = [e for e in A["rolled"] if e["io"] == "out"]
+        self.assertIn(7000000, [e["amount"] for e in out])  # 11-01 지급: 급여계좌 잔액에 없을 수 있다 → 일정에 넣음
+        self.assertIn("5104", [x["번호"] for x in out if x.get("번호")])  # 승인 완료 10-30 예상 지급도 일정에 넣음
+        self.assertEqual(A["approved_paid"], [])
+        self.assertNotIn(4000000, [e["amount"] for e in A["rolled"] if e["io"] == "in"])  # 10-31 입금은 두 번 넣지 않음
+        self.assertIn(4000000, [e["amount"] for e in A["past"] if e["io"] == "in"])
+        n = T(page, "schedule-notes")
+        self.assertIn("계좌별 잔액 기준일이 다름: 운영계좌 2026-11-02 · 프로젝트계좌 2026-11-02 · 급여계좌 2026-10-29"
+                      " → 가장 이른 2026-10-29를 잔액 기준일로 씀", n)
+        self.assertIn("잔액 기준일(2026-10-29) 이후·가장 늦은 계좌 기준일(2026-11-02) 이전 또는 당일 입금 1건 4,000,000"
+                      " (잔액에 이미 있을 수 있어 일정에 넣지 않음)", n)
+        self.assertIn("잔액 기준일 2026-10-29 (계좌 잔액 입력의 가장 이른 기준일)", T(page, "basis"))
+
     def test_probe_b_key_match_and_possible_duplicate(self):
         folder = sample_copy(self)
         edit_csv(folder, "프로젝트집행.csv", lambda rows: rows.append(
