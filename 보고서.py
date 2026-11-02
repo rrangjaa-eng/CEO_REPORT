@@ -24,6 +24,7 @@ from ceo_report.data import load  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
+from ceo_report.util import mask_rrn  # noqa: E402
 
 BROWSERS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -31,6 +32,11 @@ BROWSERS = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
+
+
+def _say(text):
+    """표준 출력 한 줄. 주민번호 모양 글자는 가린다 (D-36: 입력 확인·오류 글에 섞여 나올 수 있음)."""
+    print(mask_rrn(text))
 
 
 def find_browser():
@@ -98,16 +104,16 @@ def main(argv=None):
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
     asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
     if asof is None:
-        print("기준일 형식 오류: %s" % a.기준일)
+        _say("기준일 형식 오류: %s" % a.기준일)
         return 2
     start = None
     if a.시작일:
         start = parse_date(a.시작일)
         if start is None or start > asof:
-            print("시작일 형식 오류 또는 기준일보다 늦음: %s (YYYY-MM-DD, 기준일 %s 이전)" % (a.시작일, asof))
+            _say("시작일 형식 오류 또는 기준일보다 늦음: %s (YYYY-MM-DD, 기준일 %s 이전)" % (a.시작일, asof))
             return 2
     if not os.path.isdir(a.입력):
-        print("입력 폴더가 없습니다: %s" % a.입력)
+        _say("입력 폴더가 없습니다: %s" % a.입력)
         return 2
     os.makedirs(a.출력, exist_ok=True)
     data = load(a.입력)
@@ -123,21 +129,21 @@ def main(argv=None):
         if browser:
             err = to_pdf(browser, base + ".html", base + ".pdf")
             if err:
-                print(err)
+                _say(err)
             else:
                 made.append(base + ".pdf")
-    print("보고 기준일 %s · 집계 기간 %s ~ %s" % (asof, R["period"][0], R["period"][1]))
-    print("만든 파일:")
+    _say("보고 기준일 %s · 집계 기간 %s ~ %s" % (asof, R["period"][0], R["period"][1]))
+    _say("만든 파일:")
     for m in made:
-        print("  " + m)
+        _say("  " + m)
     if a.pdf == "만듦" and not browser:
-        print("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
+        _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
     n = len(R["s7"]["issues"])
     if n:
-        print("입력 자료 확인 필요 %d건 — 보고서 7번 '입력 자료 확인 필요' 표에 있습니다." % n)
+        _say("입력 자료 확인 필요 %d건 — 보고서 7번 '입력 자료 확인 필요' 표에 있습니다." % n)
     bad = [c for c in R["s7"]["checks"] if not c[3]]
     if bad:
-        print("대조 불일치 %d건 — 보고서 7번 '보고 대조' 표를 확인하세요." % len(bad))
+        _say("대조 불일치 %d건 — 보고서 7번 '보고 대조' 표를 확인하세요." % len(bad))
     return 0
 
 

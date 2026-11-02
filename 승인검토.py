@@ -42,6 +42,11 @@ from ceo_report.util import date as parse_date  # noqa: E402
 from ceo_report.util import mask_rrn, num  # noqa: E402
 
 
+def _say(text):
+    """표준 출력 한 줄. 주민번호 모양 글자는 가린다 (D-36: 입력 확인·오류 글에 섞여 나올 수 있음)."""
+    print(mask_rrn(text))
+
+
 def _positive_int(text):
     try:
         value = int(text)
@@ -87,10 +92,10 @@ def ask_credentials():
             warnings.simplefilter("error", getpass.GetPassWarning)
             password = getpass.getpass("인트라넷 비밀번호 (입력해도 화면에 보이지 않음): ")
     except getpass.GetPassWarning:
-        print(NO_HIDE_MESSAGE)
+        _say(NO_HIDE_MESSAGE)
         return None, None, 2
     except (KeyboardInterrupt, EOFError):
-        print("입력을 취소했습니다 (%s)" % NO_FILE)
+        _say("입력을 취소했습니다 (%s)" % NO_FILE)
         return None, None, 2
     return user_id, password, None
 
@@ -108,7 +113,7 @@ def _scrub(text, secrets):
 
 
 def _fail(code, text, secrets):
-    print(mask_rrn(_scrub(text, secrets)))
+    _say(_scrub(text, secrets))
     return code
 
 
@@ -135,7 +140,7 @@ def _guarded(func, secrets):
 
 
 def _progress(label, page, total):
-    print("%s 목록 %d쪽 읽음 (누계 %d건)" % (label, page, total))
+    _say("%s 목록 %d쪽 읽음 (누계 %d건)" % (label, page, total))
 
 
 def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_dir=None):
@@ -163,25 +168,25 @@ def main(argv=None):
     if a.기준일:
         asof = parse_date(a.기준일)
         if asof is None:
-            print("기준일 형식 오류: %s (YYYY-MM-DD)" % a.기준일)
+            _say("기준일 형식 오류: %s (YYYY-MM-DD)" % a.기준일)
             return 2
         now = dt.datetime.combine(asof, dt.time(0, 0))
     else:
         now = dt.datetime.now()
         asof = now.date()
     if not os.path.isdir(a.입력):
-        print("입력 폴더가 없습니다: %s" % a.입력)
+        _say("입력 폴더가 없습니다: %s" % a.입력)
         return 2
     if a.수집 == "함":
         return run_collect(a, asof, now)
     snap_path = latest_snapshot(a.수집폴더)
     if snap_path is None:
-        print("인트라넷 수집 스냅숏이 없습니다: %s" % a.수집폴더)
+        _say("인트라넷 수집 스냅숏이 없습니다: %s" % a.수집폴더)
         return 2
     try:
         path, A = make_screen(a.입력, a.출력, snap_path, asof, now, False, wehago_dir=a.위하고폴더 or default_wehago(a))
     except SnapshotError as e:
-        print(mask_rrn("스냅숏을 읽지 못했습니다: %s" % e))
+        _say("스냅숏을 읽지 못했습니다: %s" % e)
         return 2
     report(path, A, "(마지막 스냅숏)")
     if a.열기 == "열기":
@@ -197,14 +202,14 @@ def default_wehago(a):
 def report(path, A, how):
     S = scenario(A, [r["id"] for r in A["data"]["requests"]])
     low = fmt_man(S["low"])
-    print("승인 검토 화면: %s" % path)
-    print("인트라넷 수집 시각 %s %s" % (A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"), how))
-    print("전부 승인 시 최저 잔액 %s%s · %s" % (low, man_unit(low), S["low_day"] or "-"))
+    _say("승인 검토 화면: %s" % path)
+    _say("인트라넷 수집 시각 %s %s" % (A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"), how))
+    _say("전부 승인 시 최저 잔액 %s%s · %s" % (low, man_unit(low), S["low_day"] or "-"))
     # WEHAGO 대조: 건수와 날짜만 찍는다. 요청 값(거래처, 금액)은 찍지 않는다
     for line in xchk_stop_lines(A)[:1]:
-        print(line)
-    print(xchk_count_line(A))
-    print(book_dates_line(A))
+        _say(line)
+    _say(xchk_count_line(A))
+    _say(book_dates_line(A))
 
 
 def run_structure(a):
@@ -213,7 +218,7 @@ def run_structure(a):
     if rc is not None:
         return rc
     if not user_id or not password:
-        print("ID와 비밀번호를 모두 입력해야 합니다")
+        _say("ID와 비밀번호를 모두 입력해야 합니다")
         return 2
     secrets = [user_id, password]
     try:
@@ -231,49 +236,49 @@ def print_structure(rep, max_pages):
     """점검 결과를 출력한다. 머리글 이름과 건수만 나오고 줄의 값은 나오지 않는다."""
     login = rep["login"]
     # 이동 위치에는 ID가 들어 있을 수 있어 있음/없음만 보인다 (IN-09)
-    print("로그인: 성공 (응답 %s, 이동 위치 %s)" % (login["status"], "있음" if login["redirect_path"] else "없음"))
+    _say("로그인: 성공 (응답 %s, 이동 위치 %s)" % (login["status"], "있음" if login["redirect_path"] else "없음"))
     for key, label in (("payment", "지급요청"), ("project", "프로젝트")):
         r = rep[key]
         if not r["table_found"]:
-            print("%s 목록 머리글: 다름 (머리글 표를 찾지 못함)" % label)
+            _say("%s 목록 머리글: 다름 (머리글 표를 찾지 못함)" % label)
         elif r["header_ok"]:
-            print("%s 목록 머리글: 일치" % label)
+            _say("%s 목록 머리글: 일치" % label)
         else:
-            print("%s 목록 머리글: 다름" % label)
-            print("  없음: %s" % (", ".join(r["missing"]) or "(없음)"))
-            print("  새로 생김: %s" % (", ".join(r["extra"]) or "(없음)"))
+            _say("%s 목록 머리글: 다름" % label)
+            _say("  없음: %s" % (", ".join(r["missing"]) or "(없음)"))
+            _say("  새로 생김: %s" % (", ".join(r["extra"]) or "(없음)"))
             if r["first_difference"]:
-                print("  첫 차이: %s" % r["first_difference"])
+                _say("  첫 차이: %s" % r["first_difference"])
         line = "%s 1쪽: %d건" % (label, r["rows"])
         if key == "project":
             line += " · Total 줄 %s · 프로젝트 보기 링크 %d개" % ("있음" if r["total_row"] else "없음", r["pro_num_links"])
         if r["bad_rows"]:
             line += " · 칸 수가 머리글과 다른 줄 %d건" % r["bad_rows"]
-        print(line)
+        _say(line)
         links = r["page_links"]
         if links["query"] or links["path_number"]:
             forms = ["조회 이름 %s %d개" % (name, count) for name, count in sorted(links["query"].items())]
             if links["path_number"]:
                 forms.append("경로 숫자 %d개" % links["path_number"])
-            print("  쪽 링크 형태: %s" % " · ".join(forms))
+            _say("  쪽 링크 형태: %s" % " · ".join(forms))
         else:
-            print("  쪽 링크 형태: 찾지 못함")
+            _say("  쪽 링크 형태: 찾지 못함")
         if links["max_number"] is not None:
-            print("%s 쪽 링크 최대 번호 %d (수집 상한 --최대페이지 %d)" % (label, links["max_number"], max_pages))
+            _say("%s 쪽 링크 최대 번호 %d (수집 상한 --최대페이지 %d)" % (label, links["max_number"], max_pages))
         if r["unfollowed_query_names"]:
-            print("  따라가지 않을 같은 목록 링크의 조회 이름: %s" % ", ".join(r["unfollowed_query_names"]))
+            _say("  따라가지 않을 같은 목록 링크의 조회 이름: %s" % ", ".join(r["unfollowed_query_names"]))
         if r["paging_stop"]:
-            print("  이대로면 수집이 멈춥니다: %s" % r["paging_stop"])
+            _say("  이대로면 수집이 멈춥니다: %s" % r["paging_stop"])
     pay = rep["payment"]
     if pay["header_ok"]:
         rows = pay["rows_data"]
-        print("금액 미확인 %d건" % sum(1 for r in rows if num(r.get("금액")) is None))
-        print("등록일 해석 불가 %d건" % sum(1 for r in rows if parse_registered(r.get("등록일")) is None))
-        print("프로젝트 코드 없음 %d건" % sum(1 for r in rows if project_code(r.get("행사명")) is None))
+        _say("금액 미확인 %d건" % sum(1 for r in rows if num(r.get("금액")) is None))
+        _say("등록일 해석 불가 %d건" % sum(1 for r in rows if parse_registered(r.get("등록일")) is None))
+        _say("프로젝트 코드 없음 %d건" % sum(1 for r in rows if project_code(r.get("행사명")) is None))
     else:
-        print("값 검사(금액·등록일·프로젝트 코드): 지급요청 머리글이 달라 건너뜀")
-    print("구조 점검 결과: %s" % ("예상과 일치" if rep["ok"] else "예상과 다름"))
-    print(NO_FILE)
+        _say("값 검사(금액·등록일·프로젝트 코드): 지급요청 머리글이 달라 건너뜀")
+    _say("구조 점검 결과: %s" % ("예상과 일치" if rep["ok"] else "예상과 다름"))
+    _say(NO_FILE)
     return 0 if rep["ok"] else 3
 
 
@@ -283,7 +288,7 @@ def run_collect(a, asof, now):
     if rc is not None:
         return rc
     if not user_id or not password:
-        print("ID와 비밀번호를 모두 입력해야 합니다")
+        _say("ID와 비밀번호를 모두 입력해야 합니다")
         return 2
     secrets = [user_id, password]
     collected_at = dt.datetime.now().replace(microsecond=0)  # 수집을 시작하는 순간 (P-13)
@@ -297,7 +302,7 @@ def run_collect(a, asof, now):
         del secrets[:]
     if rc is not None:
         return rc
-    print("수집 완료: 지급요청 %d쪽 %d건 · 프로젝트 %d쪽 %d건 · %.1f초" % (
+    _say("수집 완료: 지급요청 %d쪽 %d건 · 프로젝트 %d쪽 %d건 · %.1f초" % (
         result.payment_pages, len(result.payments), result.project_pages, len(result.projects),
         time.monotonic() - started))
     where = a.수집폴더
@@ -307,7 +312,7 @@ def run_collect(a, asof, now):
         where = a.출력
         path, A = make_screen(a.입력, a.출력, snap_path, asof, now, True, wehago_dir=a.위하고폴더 or default_wehago(a))
     except (OSError, SnapshotError) as e:
-        print("저장 실패: 인트라넷 자료는 읽었지만 파일을 쓰지 못했습니다 (%s): %s" % (where, type(e).__name__))
+        _say("저장 실패: 인트라넷 자료는 읽었지만 파일을 쓰지 못했습니다 (%s): %s" % (where, type(e).__name__))
         return 7
     report(path, A, "(이번 실행에서 수집)")
     if a.열기 == "열기":

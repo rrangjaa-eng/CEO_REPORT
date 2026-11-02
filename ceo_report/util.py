@@ -181,7 +181,8 @@ def d2s(d, empty="날짜 없음"):
 
 
 def esc(s):
-    return html.escape("" if s is None else str(s))
+    """HTML 글자 칸. 주민번호 모양은 먼저 가리고(mask_rrn) 나서 escape 한다 (D-36: 두 화면의 모든 글자 칸)."""
+    return html.escape(mask_rrn(s))
 
 
 # 주민번호 모양: 6자리 + (공백) + 선택 구분자(-, 여러 대시, 점, 빗금, 전각 포함) + (공백) + 7자리.
