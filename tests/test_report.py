@@ -1070,5 +1070,92 @@ class TestNoBalanceKnown(unittest.TestCase):
         self.assertEqual(sample_result()["s2"]["min"]["firm"], (19_800_000, dt.date(2027, 4, 25)))
 
 
+def table_cells(row_html):
+    """<tr> 한 줄 HTML에서 칸 내용(HTML)만 순서대로 꺼낸다."""
+    return re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.S)
+
+
+def first_screen_project_row(html, pid):
+    return table_cells(re.findall(r"<tr[^>]*><td>" + pid + r"</td>.*?</tr>", first_screen(html), re.S)[0])
+
+
+def first_screen_total_row(html):
+    return table_cells(re.findall(r'<tr class="tot">.*?</tr>', first_screen(html), re.S)[0])
+
+
+class TestProjectUnknownOnFirstScreen(unittest.TestCase):
+    """CR-02 + 검증 gap: 금액 미확인 프로젝트 집행 줄이 첫 화면에서 0으로 보이면 안 된다. 건수를 함께 보인다 (D-02)."""
+    COL_PAID_RATE, COL_UNPAID, COL_REMAIN = 7, 5, 8
+
+    def test_unknown_request_line_marked_on_first_screen(self):
+        R = sample_result()
+        html = render(R, "ceo")
+        P = next(p for p in R["s3"]["projects"] if p["id"] == "P26206")
+        self.assertEqual(P["unknown_cost"], 1)
+        self.assertEqual(P["line_unknown"]["요청미지급"], 1)
+        self.assertIsNone(P["remain"])
+        cells = first_screen_project_row(html, "P26206")
+        self.assertIn("미확인 1건", cells[self.COL_UNPAID])
+        self.assertNotIn("0.0", cells[self.COL_UNPAID])
+        self.assertIn("판단 불가", cells[self.COL_REMAIN])
+        self.assertIn("미확인 원가 1건", cells[self.COL_REMAIN])
+        self.assertNotIn("2.0", cells[self.COL_REMAIN])
+        self.assertIn("미확인 원가 1건", cells[self.COL_PAID_RATE])
+        # 미확인 줄이 없는 프로젝트는 표시가 바뀌지 않는다
+        other = first_screen_project_row(html, "P26201")
+        self.assertNotIn("미확인", other[self.COL_UNPAID])
+        self.assertNotIn("미확인", other[self.COL_REMAIN])
+
+    def test_total_row_and_card_carry_unknown_count(self):
+        R = sample_result()
+        html = render(R, "ceo")
+        tot = first_screen_total_row(html)
+        self.assertIn("98.5", tot[self.COL_UNPAID])
+        self.assertIn("외 미확인 1건", tot[self.COL_UNPAID])
+        self.assertIn("미확인 원가", tot[self.COL_REMAIN])
+        card = kv_value(first_screen(html), "프로젝트 요청 미지급")
+        self.assertIn("95.0", card)
+        self.assertIn("미확인 1건", card)
+        self.assertEqual(R["s3"]["total"]["line_unknown"]["요청미지급"], 1)
+        check_editions(self, R)
+
+    def test_total_remaining_excludes_unknown_cost_projects(self):
+        R = sample_result()
+        tot = R["s3"]["total"]
+        known = [P["remain"] for P in R["s3"]["projects"] if P["remain"] is not None]
+        self.assertEqual(tot["remain"], sum(known))
+        self.assertEqual(tot["remain_excluded"], 1)
+
+    def test_all_request_lines_unknown_is_not_zero(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[3] == "요청미지급":
+                    r[4] = ""
+        R = compute(load(probe_folder(self, "프로젝트집행.csv", mutate)), "weekly", ASOF)
+        html = render(R, "ceo")
+        card = kv_value(first_screen(html), "프로젝트 요청 미지급")
+        self.assertIn("미확인 4건", card)
+        self.assertNotIn("0.0", card)
+        cells = first_screen_project_row(html, "P26203")
+        self.assertIn("미확인 1건", cells[self.COL_UNPAID])
+        self.assertNotIn("0.0", cells[self.COL_UNPAID])
+        check_editions(self, R)
+
+    def test_unknown_card_unpaid_marked(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "P26208":
+                    r[4] = ""
+        R = compute(load(probe_folder(self, "프로젝트집행.csv", mutate)), "weekly", ASOF)
+        html = render(R, "ceo")
+        P = next(p for p in R["s3"]["projects"] if p["id"] == "P26208")
+        self.assertEqual(P["line_unknown"]["카드사용미결제"], 1)
+        self.assertIsNone(P["remain"])
+        card = kv_value(first_screen(html), "카드 미결제 (프로젝트)")
+        self.assertIn("미확인 1건", card)
+        self.assertEqual(sample_result()["s3"]["total"]["line_unknown"]["카드사용미결제"], 0)
+        check_editions(self, R)
+
+
 if __name__ == "__main__":
     unittest.main()
