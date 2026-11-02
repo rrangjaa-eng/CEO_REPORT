@@ -153,6 +153,9 @@ def _group_cost_lines(costs):
     for g in groups.values():
         amounts = [ln["amount"] for ln in g["lines"]]
         g["supply"] = None if any(a is None for a in amounts) else sum(amounts)
+        # D-38 자동 연결이 이 묶음을 가리키는 요청 번호 (하나일 때만). 그 요청은 이 줄과 같은 빚이다 (CR-01)
+        linked = set(ln["request"] for ln in g["lines"] if ln.get("basis") == "자동" and ln.get("request"))
+        g["request"] = linked.pop() if len(linked) == 1 else None
     return groups
 
 
@@ -363,6 +366,11 @@ def _group_total(g):
     return None if g["supply"] is None or g["vat"] is None else g["supply"] + g["vat"]
 
 
+def _names(text, number):
+    """근거 글자가 '지급요청 <번호>'를 담고 있는가 (뒤에 숫자가 이어지면 다른 번호)."""
+    return re.search(r"지급요청 %s(?!\d)" % re.escape(number), text or "") is not None
+
+
 def _no_key(n):
     return (0, int(n), n) if str(n).isdigit() else (1, 0, str(n))
 
@@ -389,12 +397,21 @@ def _requests_part(groups, requests, match):
             "%s %s %s" % (rq["번호"], rq["vendor"], won(rq["amount"], "금액 미확인")) for rq in sorted(unknown, key=lambda r: _no_key(r["번호"]))))
     rows_of = match.get("rows", {})
     fallback = {"status": "판단 불가", "invoice_total": None}
-    candidates = {}
+    candidates, via_link = {}, {}
     claims = collections.Counter()
+    linked = collections.defaultdict(list)   # 요청 번호 -> D-38 자동 연결로 그 요청을 가리키는 묶음
+    for g in groups:
+        if g.get("request"):
+            linked[g["request"]].append(g)
     for rq in active:
         m = rows_of.get(rq["번호"], fallback)
         found = []
-        if m["status"] in ("계산서 있음", "금액 차이") and rq["amount"] is not None and m.get("invoice_total") is not None:
+        mine = linked.get(rq["번호"], [])
+        if len(mine) == 1 and rq["amount"] is not None and _group_total(mine[0]) is not None:
+            # 자동 연결은 이미 이 줄이 이 요청이라고 정했다: 계산서 대조 상태와 관계없이 같은 빚으로 본다 (CR-01, D-38)
+            found = mine
+            via_link[rq["번호"]] = True
+        elif m["status"] in ("계산서 있음", "금액 차이") and rq["amount"] is not None and m.get("invoice_total") is not None:
             found = [g for g in groups if g["vendor_norm"] == norm_vendor(rq["vendor"]) and g["project"] == (rq["code"] or "")
                      and _group_total(g) == m["invoice_total"]]
         candidates[rq["번호"]] = found
@@ -402,7 +419,8 @@ def _requests_part(groups, requests, match):
             claims[id(g)] += 1
     unpaid_by_vendor = collections.Counter(g["vendor_norm"] for g in groups if g["state"] in ("요청미지급", "카드사용미결제"))
     entries = []
-    state = {"annotated": 0, "added": 0, "paid": 0, "skipped": 0, "naming": {}, "paid_nos": [], "skipped_nos": []}
+    state = {"annotated": 0, "added": 0, "paid": 0, "skipped": 0, "naming": {}, "paid_nos": [], "skipped_nos": [],
+             "invoice": {}}   # invoice: 번호 -> 큰 쪽(D-50)을 따질 WEHAGO 금액 (계산서 합계 또는 자동 연결된 줄의 합계)
     for rq in sorted(active, key=lambda r: _no_key(r["번호"])):
         no = rq["번호"]
         m = rows_of.get(no, fallback)
@@ -417,14 +435,16 @@ def _requests_part(groups, requests, match):
         has_invoice = status in ("계산서 있음", "금액 차이")
         if has_invoice and rq["amount"] is None:
             notes.append("지급요청 %s 금액 미확인 → 차액 판단 불가" % no)
-        if has_invoice and len(found) == 1 and claims[id(found[0])] == 1:
+        if (has_invoice or via_link.get(no)) and len(found) == 1 and claims[id(found[0])] == 1:
             g = found[0]
+            invoice = _group_total(g)   # 계산서 대조로 찾은 묶음은 합계가 계산서 합계와 같다
             if g["state"] == "요청미지급":
                 g["basis"] += " · 지급요청 %s" % no
                 g["paid_day"] = rq["date"]
                 g["firm"] = rq["status"] == "approved"
                 state["annotated"] += 1
                 state["naming"][no] = "annotated"
+                state["invoice"][no] = invoice
                 if rq["amount"] > invoice:
                     entries.append((_no_key(no), 1, _request_row(
                         rq, rq["amount"] - invoice,
@@ -441,6 +461,8 @@ def _requests_part(groups, requests, match):
         # 요청 줄로 넣는다
         state["added"] += 1
         state["naming"][no] = "added"
+        if has_invoice and rq["amount"] is not None and invoice is not None:
+            state["invoice"][no] = invoice
         entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s (인트라넷 금액, 부가세 포함 여부 미확인)" % no)))
         if has_invoice:
             notes.append("지급요청 %s: 계산서 있음이나 원가 줄을 하나로 정하지 못함 → 요청으로 넣음 (중복 가능)" % no)
@@ -448,6 +470,8 @@ def _requests_part(groups, requests, match):
                 entries.append((_no_key(no), 1, _request_row(
                     rq, invoice - rq["amount"],
                     "지급요청 %s 차액 (계산서 %s − 인트라넷 요청 %s)" % (no, won(invoice), won(rq["amount"])))))
+        elif linked.get(no):
+            notes.append("지급요청 %s: 자동 연결된 원가 줄을 하나로 정하지 못하거나 합계를 몰라 요청으로 넣음 (중복 가능)" % no)
         elif unpaid_by_vendor.get(norm_vendor(rq["vendor"])):
             notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[norm_vendor(rq["vendor"])]))
     entries.sort(key=lambda e: (e[0], e[1]))
@@ -458,7 +482,6 @@ def _requests_part(groups, requests, match):
 def _request_checks(part, rows, requests, match):
     """지급요청 건수 · 금액 · 금액 미확인 · 큰 쪽 반영 (B3b). rows 는 만들어진 모든 줄."""
     active = part["active"]
-    rows_of = match.get("rows", {})
     request_rows = [e[2] for e in part["entries"] if e[1] == 0]
     known = [rq for rq in active if rq["amount"] is not None]
     csv_count = part["annotated"] + part["added"] + part["paid"] + part["skipped"]
@@ -479,16 +502,35 @@ def _request_checks(part, rows, requests, match):
     ]
     want, got = 0, 0
     for rq in active:
-        m = rows_of.get(rq["번호"], {})
-        if (m.get("status") in ("계산서 있음", "금액 차이") and rq["amount"] is not None and m.get("invoice_total") is not None
-                and rq["번호"] in part["naming"]):
-            want += max(m["invoice_total"], rq["amount"])
-            pattern = re.compile(r"지급요청 %s(?!\d)" % re.escape(rq["번호"]))
+        invoice = part["invoice"].get(rq["번호"])
+        if invoice is not None and rq["amount"] is not None:
+            want += max(invoice, rq["amount"])
             for r in rows:
-                if pattern.search(r["근거"]):
+                if _names(r["근거"], rq["번호"]):
                     got += (num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0)
     checks.append(Check("계산서·요청 금액이 다르면 큰 쪽: 지급요청을 가리키는 줄 합계 = max(계산서, 요청)", want, got))
     return checks
+
+
+BASIS_LABEL = "지급요청마다 일정 근거 하나: 근거가 있는 지급요청 수 = 근거(원가 줄·요청 줄) 수"
+
+
+def basis_check(groups, request_rows):
+    """한 지급요청은 일정 근거 하나에만 있다 (CR-01): WEHAGO 원가 줄(자동 연결 또는 근거의 '지급요청 N') 또는 요청 줄 하나.
+
+    groups: 원가 묶음 (lines 의 request·basis, 묶음 basis), request_rows: 요청 줄(차액 줄 제외). 차액 줄은 같은 근거의
+    나머지이므로 따로 세지 않는다. 한 번호가 두 근거에 있으면 원본(번호 수)과 CSV(근거 수)가 달라 '불일치'.
+    """
+    bases = collections.Counter()
+    for g in groups:
+        nos = set(ln.get("request") for ln in g["lines"] if ln.get("basis") == "자동" and ln.get("request"))
+        nos |= set(re.findall(r"지급요청 (\d+)", g.get("basis") or ""))
+        for no in nos:
+            bases[no] += 1
+    for r in request_rows:
+        for no in set(re.findall(r"지급요청 (\d+)", r.get("근거") or "")):
+            bases[no] += 1
+    return Check(BASIS_LABEL, len(bases), sum(bases.values()))
 
 
 def _carry_plan_rows(prev_rows, key_pool):
@@ -529,6 +571,7 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     carried, dropped, odd = _carry_plan_rows(prev_rows, key_pool)
     rows = wehago_rows + request_rows + carried
     checks = checks + _request_checks(part, wehago_rows + request_rows, requests, match)
+    checks.append(basis_check(groups, [e[2] for e in part["entries"] if e[1] == 0]))
     notes = notes + part["notes"]
     if carried:
         notes.append("이전 프로젝트집행.csv 집행계획미요청 줄 %d건 옮김" % len(carried))
