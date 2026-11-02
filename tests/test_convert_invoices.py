@@ -7,6 +7,7 @@ import csv
 import datetime as dt
 import importlib
 import os
+import random
 import re
 import shutil
 import sys
@@ -485,6 +486,224 @@ class TestSalesMissing(unittest.TestCase):
         self.assertEqual([r[2] for r in cell_rows(t)], ["2026-09-15", "2026-10-28", "2026-10-29", ""])
         self.assertIn("발행일 없는 계산서 1건 (입금과 짝짓지 않음)", t.notes)
         self.assertEqual(len(t.rows), 4)
+
+
+# ───────────── Task 3: 입금 짝짓기(기초 미수·미배분), 잔액 사실, 수정(계산서 감액), 이전 계산서.csv 옮기기 ─────────────
+RRN = re.compile(r"\d{6}\s*[-.]?\s*\d{7}")
+WITH_OPENING = FAKE_PL_JOURNAL + OPENING_AR + RECEIPT_D
+RECEIPT_ONLY = FAKE_PL_JOURNAL + RECEIPT_D
+
+
+def row_of(table, day):
+    return [r for r in cell_rows(table) if r[2] == day][0]
+
+
+def build_prev(test, prev_rows, **kw):
+    """이전 계산서.csv 줄(dict 목록)을 직접 주고 build_invoices 를 부른다."""
+    sales, books, revenue, projects, cfg = invoice_inputs(test, **kw)
+    return mod("convert_invoices").build_invoices(sales, books, revenue, projects, prev_rows, cfg)
+
+
+def prev_row(vendor="가상고객D", day="2026-10-27", supply="75,000,000", due="2026-11-30", firm="Y", paid_date="", paid=""):
+    return {"프로젝트번호": "P26203", "거래처": vendor, "발행일": day, "구분": "발행", "공급가액": supply, "부가세": "7,500,000",
+            "입금예정일": due, "예정일확정": firm, "입금일": paid_date, "입금액": paid}
+
+
+def sample_events(test, table):
+    """표를 샘플 입력 복사본의 계산서.csv 로 쓰고 data.load -> (입력 문제 목록, 계산서 출처 일정)."""
+    tmp = new_tmp(test)
+    input_dir = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, input_dir)
+    path = os.path.join(input_dir, "프로젝트.csv")
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        text = f.read()
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(re.sub(r"(?m)^P(262\d\d)", r"\1", text))
+    mod("convert").write_table(os.path.join(input_dir, "계산서.csv"), table)
+    d = mod("data").load(input_dir)
+    R = mod("calc").compute(d, "weekly", ASOF)
+    return [it for it in d.issues.items if it[0] == "계산서.csv"], [e for e in R["events"] if e["source"] == "계산서"]
+
+
+class TestInvoiceReceipts(unittest.TestCase):
+    def test_opening_receivable_is_paid_first_then_the_oldest_invoice(self):
+        t = build(self, journal=WITH_OPENING)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("2026-10-31", "44500000"))
+        self.assertEqual(row_of(t, "2026-09-15")[8:], ("2026-10-05", "110000000"))
+        lines = check_lines(t)
+        self.assertIn(RECEIPT_LABEL + ": 원본 160,000,000 · CSV 160,000,000 → 일치", lines)
+        self.assertIn(CREDIT_LABEL + ": 원본 161,100,000 · CSV 161,100,000 → 일치", lines)
+        self.assertIn("미배분 수금 0건 0", t.notes)
+        self.assertIn("참고 매출채권 잔액: 분개장 58,900,000 · 계산서 기준 58,900,000 (차이 0)", t.notes)
+        self.assertFalse([n for n in t.notes if n.startswith("매출채권 잔액 차이")])
+
+    def test_without_an_opening_line_there_is_no_fifo_and_the_receipt_is_listed(self):
+        t = build(self, journal=RECEIPT_ONLY)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("", ""))
+        self.assertIn("미배분 수금 1건 50,000,000", t.notes)
+        self.assertIn("  미배분 수금 2026-10-31 가상고객D 50,000,000 (전표 71)", t.notes)
+        lines = check_lines(t)
+        self.assertIn(RECEIPT_LABEL + ": 원본 160,000,000 · CSV 160,000,000 → 일치", lines)
+        self.assertIn(CREDIT_LABEL + ": 원본 161,100,000 · CSV 161,100,000 → 일치", lines)
+        self.assertIn("참고 매출채권 잔액: 분개장 53,400,000 · 계산서 기준 53,400,000 (차이 0)", t.notes)
+
+    def test_an_exact_receipt_pays_its_invoice_before_the_opening_balance(self):
+        exact = [_jl(dt.date(2026, 10, 30), 72, "10300", "보통예금", 82500000, None, "가상고객D", "입금"),
+                 _jl(dt.date(2026, 10, 30), 72, "10800", "수입수수료미수금", None, 82500000, "가상고객D", "입금")]
+        t = build(self, journal=FAKE_PL_JOURNAL + OPENING_AR + exact)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("2026-10-30", "82500000"))
+        self.assertIn("미배분 수금 0건 0", t.notes)
+        self.assertIn("참고 매출채권 잔액: 분개장 26,400,000 · 계산서 기준 26,400,000 (차이 0)", t.notes)
+        self.assertIn(RECEIPT_LABEL + ": 원본 192,500,000 · CSV 192,500,000 → 일치", check_lines(t))
+
+    def test_two_partial_receipts_settle_the_opening_and_the_invoice_in_date_order(self):
+        parts = [_jl(dt.date(2026, 10, 30), 72, "10300", "보통예금", 20000000, None, "가상고객D", "입금"),
+                 _jl(dt.date(2026, 10, 30), 72, "10800", "수입수수료미수금", None, 20000000, "가상고객D", "입금"),
+                 _jl(dt.date(2026, 10, 31), 71, "10300", "보통예금", 30000000, None, "가상고객D", "입금"),
+                 _jl(dt.date(2026, 10, 31), 71, "10800", "수입수수료미수금", None, 30000000, "가상고객D", "입금")]
+        t = build(self, journal=FAKE_PL_JOURNAL + OPENING_AR + parts)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("2026-10-31", "44500000"))
+        self.assertIn("미배분 수금 0건 0", t.notes)
+
+    def test_a_receipt_dated_before_the_invoice_is_not_applied(self):
+        early = [_jl(dt.date(2026, 10, 26), 72, "10300", "보통예금", 82500000, None, "가상고객D", "입금"),
+                 _jl(dt.date(2026, 10, 26), 72, "10800", "수입수수료미수금", None, 82500000, "가상고객D", "입금")]
+        t = build(self, journal=FAKE_PL_JOURNAL + early)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("", ""))
+        self.assertIn("  미배분 수금 2026-10-26 가상고객D 82,500,000 (전표 72)", t.notes)
+
+    def test_another_vendors_opening_does_not_take_this_vendors_receipt(self):
+        other = [_jl(dt.date(2026, 1, 2), 73, "10800", "수입수수료미수금", 1000000, None, "가상고객Z", "기초잔액")]
+        t = build(self, journal=RECEIPT_ONLY + other)   # 이월 줄이 있으니 2회전은 돌지만 가상고객D 의 이월은 없다
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("2026-10-31", "50000000"))
+        self.assertIn("미배분 수금 0건 0", t.notes)
+
+    def test_missing_invoice_shows_up_as_a_balance_difference_per_vendor(self):
+        t = build(self, sales=[SALES_EINVOICE[0], SALES_EINVOICE[1], SALES_EINVOICE[3]])
+        util = mod("util")
+        self.assertIn("매출채권 잔액 차이 가상고객X: 분개장 20,900,000 · 계산서 기준 %s" % util.won(-1100000), t.notes)
+        self.assertIn("참고 매출채권 잔액: 분개장 103,400,000 · 계산서 기준 81,400,000 (차이 22,000,000)", t.notes)
+        self.assertFalse([n for n in t.notes if n.startswith("매출채권 잔액 차이") and "가상고객A" in n])
+
+    def test_credit_without_cash_is_listed_and_never_applied_as_cash(self):
+        t = build(self)
+        self.assertIn(CREDIT_LINE, t.notes)
+        self.assertIn("수정(계산서 감액) 1건 1,100,000", t.notes)
+        self.assertEqual([r[8:] for r in cell_rows(t)], [("2026-10-05", "110000000"), ("", ""), ("", ""), ("", "")])
+        t = build(self, sales=SALES_EINVOICE[:3])
+        self.assertIn("  수정(계산서 감액) 2026-10-29 가상고객X 1,100,000 (전표 38)", t.notes)
+        self.assertIn(CREDIT_LABEL + ": 원본 111,100,000 · CSV 111,100,000 → 일치", check_lines(t))
+
+    def test_unknown_receivable_amount_makes_the_receipt_checks_undecidable(self):
+        unknown = [_jl(dt.date(2026, 10, 31), 74, "10800", "수입수수료미수금", None, None, "가상고객D", "금액 미확인")]
+        t = build(self, journal=FAKE_PL_JOURNAL + unknown)
+        lines = check_lines(t)
+        self.assertEqual(lines[3], RECEIPT_LABEL + ": 원본 미확인 · CSV 110,000,000 → 판단 불가")
+        self.assertEqual(lines[4], CREDIT_LABEL + ": 원본 미확인 · CSV 111,100,000 → 판단 불가")
+        self.assertIn("참고 매출채권 잔액: 분개장 미확인 · 계산서 기준 103,400,000 (차이 미확인)", t.notes)
+
+    def test_a_receipt_without_a_date_stays_unassigned(self):
+        undated = [_jl(None, 75, "10300", "보통예금", 82500000, None, "가상고객D", "입금"),
+                   _jl(None, 75, "10800", "수입수수료미수금", None, 82500000, "가상고객D", "입금")]
+        t = build(self, journal=FAKE_PL_JOURNAL + undated)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("", ""))
+        self.assertIn("  미배분 수금 날짜 없음 가상고객D 82,500,000 (전표 75)", t.notes)
+
+    def test_a_vendor_with_an_unknown_total_gets_no_fifo(self):
+        rows = [list(r) for r in SALES_EINVOICE]
+        rows[1][6] = None   # 가상고객D 부가세 빈칸 -> 합계 모름
+        t = build(self, journal=WITH_OPENING, sales=rows)
+        self.assertEqual(row_of(t, "2026-10-27")[5:], ("",) * 5)
+        self.assertIn("미배분 수금 1건 50,000,000", t.notes)
+        self.assertTrue([n for n in t.notes if n.startswith("합계를 모르는 계산서가 있는 거래처는")])
+        self.assertIn("참고 매출채권 잔액: 분개장 58,900,000 · 계산서 기준 미확인 (차이 미확인)", t.notes)
+
+
+class TestInvoiceCarry(unittest.TestCase):
+    def test_a_matching_previous_row_carries_due_date_and_firm_flag(self):
+        t = build_prev(self, [prev_row()])
+        s2 = row_of(t, "2026-10-27")
+        self.assertEqual((s2[6], s2[7], s2[8], s2[9]), ("2026-11-30", "Y", "", ""))
+        self.assertEqual(row_of(t, "2026-09-15")[6:8], ("", ""))
+        self.assertFalse([n for n in t.notes if n.startswith("이전 계산서.csv")])
+
+    def test_the_sample_rows_are_not_carried_and_counted(self):
+        sample = mod("convert").read_prev(SAMPLE, "계산서.csv")
+        self.assertEqual(len(sample), 8)
+        t = build_prev(self, sample)
+        self.assertIn("이전 계산서.csv 줄 8건 옮기지 않음 (매출 계산서 엑셀로 다시 만듦)", t.notes)
+        self.assertEqual(EXPECTED_ROWS, cell_rows(t))
+        t = build_prev(self, sample + [prev_row()])
+        self.assertIn("이전 계산서.csv 줄 8건 옮기지 않음 (매출 계산서 엑셀로 다시 만듦)", t.notes)
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-11-30", "Y"))
+
+    def test_a_previous_payment_that_wehago_does_not_show_is_reported_not_carried(self):
+        t = build_prev(self, [prev_row(paid_date="2026-10-30", paid="82,500,000")])
+        self.assertIn("이전 계산서.csv와 입금 기록 다름: 가상고객D 2026-10-27 이전 82,500,000 · WEHAGO 0", t.notes)
+        self.assertEqual(row_of(t, "2026-10-27")[8:], ("", ""))
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-11-30", "Y"))
+
+    def test_the_same_payment_in_both_is_not_reported(self):
+        t = build_prev(self, [prev_row(vendor="가상고객A", day="2026-09-15", supply="100,000,000", due="", firm="",
+                                       paid_date="2026-10-05", paid="110,000,000")])
+        self.assertFalse([n for n in t.notes if "입금 기록 다름" in n])
+
+    def test_two_previous_rows_with_the_same_key_are_not_carried(self):
+        t = build_prev(self, [prev_row(), prev_row(due="2026-12-15", firm="N")])
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("", ""))
+        self.assertTrue([n for n in t.notes if "여러 건" in n and "입금예정일 옮기지 않음" in n])
+        self.assertIn("이전 계산서.csv 줄 2건 옮기지 않음 (매출 계산서 엑셀로 다시 만듦)", t.notes)
+
+    def test_junk_due_date_and_firm_flag_are_blank_not_guessed(self):
+        t = build_prev(self, [prev_row(due="다음 주", firm="아마도")])
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("", ""))
+        t = build_prev(self, [prev_row(due="2026.12.05", firm="확정")])
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-12-05", "확정"))
+
+    def test_events_of_the_cash_schedule_from_the_carried_row(self):
+        t = build_prev(self, [prev_row()])
+        issues, events = sample_events(self, t)
+        self.assertEqual(issues, [])
+        by = dict((e["desc"], e) for e in events)
+        self.assertEqual(sorted(by), ["가상고객D", "가상고객X"])
+        self.assertEqual((by["가상고객D"]["amount"], by["가상고객D"]["date"], by["가상고객D"]["firm"]),
+                         (82500000, dt.date(2026, 11, 30), True))
+        self.assertEqual((by["가상고객X"]["amount"], by["가상고객X"]["date"]), (20900000, None))
+        self.assertEqual(sum(e["amount"] for e in events), 103400000)
+
+    def test_a_social_security_number_in_a_vendor_name_is_masked_everywhere(self):
+        rows = [list(r) for r in SALES_EINVOICE]
+        rows[2][2] = "가상 900101-1234567"
+        t = build(self, sales=rows)
+        self.assertEqual(cell_rows(t)[2][1], "가상 ******-*******")
+        text = "\n".join(t.notes + [c.label for c in t.checks])
+        self.assertIn("******-*******", text)
+        self.assertIsNone(RRN.search(text))
+        blob = mod("convert").table_bytes(t).decode("utf-8")
+        self.assertIsNone(RRN.search(blob))
+        self.assertIn("******-*******", blob)
+
+    def test_rows_checks_and_notes_do_not_depend_on_input_order(self):
+        base = build(self, journal=WITH_OPENING)
+        rng = random.Random(7)
+        for _ in range(3):
+            journal, sales = list(WITH_OPENING), list(SALES_EINVOICE)
+            rng.shuffle(journal)
+            rng.shuffle(sales)
+            t = build(self, journal=journal, sales=sales)
+            self.assertEqual(cell_rows(t), cell_rows(base))
+            self.assertEqual(check_lines(t), check_lines(base))
+            self.assertEqual(t.notes, base.notes)
+
+    def test_the_builder_does_not_change_its_inputs(self):
+        sales, books, revenue, projects, cfg = invoice_inputs(self, journal=WITH_OPENING)
+        import copy
+        before = (copy.deepcopy(sales), copy.deepcopy(books.journal), copy.deepcopy(revenue), copy.deepcopy(projects))
+        prev = [prev_row()]
+        keep = copy.deepcopy(prev)
+        mod("convert_invoices").build_invoices(sales, books, revenue, projects, prev, cfg)
+        self.assertEqual((sales, books.journal, revenue, projects), before)
+        self.assertEqual(prev, keep)
 
 
 if __name__ == "__main__":
