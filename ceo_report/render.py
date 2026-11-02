@@ -556,7 +556,7 @@ def _s3(R, per):
         rows.append([esc(P["id"]), esc(P["name"]), esc(P["team"]), esc(P["state"]), W(P["estimate"], "-"),
                      W(P["budget"], "예산 미지정"), _na(P["budget_reason"]) if P["budget_reason"] else "",
                      esc(d2s(P["budget_date"], "-")), W(P["paid_period"]), W(P["paid_total"]),
-                     W(P["paid_cash"], "부가세 미확인"), W(P["requested"]), W(P["card_unpaid"]), W(P["planned"]),
+                     W(P["paid_cash"], P["paid_cash_reason"] or "미확인"), W(P["requested"]), W(P["card_unpaid"]), W(P["planned"]),
                      W(P["expected"]), esc(pct(P["paid_total"], P["budget"])), W(P["remain"], "판단 불가"),
                      esc("%d건" % P["unknown_cost"]) if P["unknown_cost"] else ""])
     h.append(table(["번호", "프로젝트", "팀", "상태", "사전견적", "원가 예산", "예산 사유", "예산 수정일", per + " 지급", "누적 지급",
@@ -564,7 +564,7 @@ def _s3(R, per):
                     "금액 미확인"], rows, num_cols=(4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16),
                    total=["전체", "%d건" % len(s3["projects"]), "", "", W(tot["estimate"]), W(tot["budget"], "판단 불가"),
                           esc(note_nb), "", W(tot["paid_period"]),
-                          W(tot["paid_total"]), _amt_unk(tot["paid_cash"], tot["paid_cash_unknown"], "부가세 미확인"), W(tot["requested"]), W(tot["card_unpaid"]),
+                          W(tot["paid_total"]), _amt_unk(tot["paid_cash"], tot["paid_cash_unknown"], tot["paid_cash_reason"]), W(tot["requested"]), W(tot["card_unpaid"]),
                           W(tot["planned"]), W(tot["expected"]), esc(pct(tot["paid_budgeted"], tot["budget"])),
                           W(tot["remain"], "판단 불가") + _na(_remain_excluded_text(tot)), "%d건" % tot["unknown_cost"]]))
     h.append("<div class='note'>원가 예산 = 사전견적(예상 매출) × 원가율 (설정.csv 예산_원가율, 기본 0.70). "

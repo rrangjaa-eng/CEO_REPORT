@@ -362,5 +362,57 @@ class TestInputFolderSafety(unittest.TestCase):
             self.assertEqual(len(notes), 1, name)
 
 
+# ───────────── 5. 공급가액 미확인 때문에 실출금을 모르면 '금액 미확인' ─────────────
+def _cells(tr_html):
+    return [re.sub(r"<[^>]+>", "", c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr_html, re.S)]
+
+
+def _s3_rows(html):
+    import test_report as tr
+    s3 = tr.section(html, 3)
+    table = s3[:s3.index("</table>")]
+    return {(_cells(t) or [""])[0]: _cells(t) for t in re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S)}
+
+
+COL_PAID_CASH = 10  # 3번 묶음 표: 지급 실출금(VAT포함)
+
+
+def _blank_exec(item, col):
+    def edit(S):
+        for r in S["프로젝트집행.csv"]:
+            if r[1] == item:
+                r[col] = ""
+    return edit
+
+
+class TestPaidCashReason(unittest.TestCase):
+    def rows(self, *edits):
+        def edit(S):
+            for e in edits:
+                e(S)
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        return R, _s3_rows(render(R, "ceo"))
+
+    def test_unknown_supply_says_amount_unknown(self):
+        R, rows = self.rows(_blank_exec("영상", 4))        # P26203 지급완료 공급가액 빈칸
+        self.assertEqual(rows["P26203"][COL_PAID_CASH], "금액 미확인")
+        self.assertEqual(rows["전체"][COL_PAID_CASH].split(" 외 ")[1], "금액 미확인 1건")
+        self.assertEqual(R["s3"]["total"]["paid_cash_reason"], "금액 미확인")
+
+    def test_unknown_vat_still_says_vat_unknown(self):
+        R, rows = self.rows(_blank_exec("영상", 5))        # P26203 지급완료 부가세 빈칸
+        self.assertEqual(rows["P26203"][COL_PAID_CASH], "부가세 미확인")
+        self.assertEqual(rows["전체"][COL_PAID_CASH].split(" 외 ")[1], "부가세 미확인 1건")
+
+    def test_amount_wins_over_vat_in_one_project(self):
+        R, rows = self.rows(_blank_exec("영상", 4), _blank_exec("부스 제작", 5))   # 같은 P26203
+        self.assertEqual(rows["P26203"][COL_PAID_CASH], "금액 미확인")
+
+    def test_mixed_total_label(self):
+        R, rows = self.rows(_blank_exec("영상", 4), _blank_exec("숙박", 5))        # P26203 금액, P26206 부가세
+        self.assertEqual(rows["P26206"][COL_PAID_CASH], "부가세 미확인")
+        self.assertEqual(rows["전체"][COL_PAID_CASH].split(" 외 ")[1], "금액·부가세 미확인 2건")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -179,6 +179,7 @@ def compute(d, kind, asof, start=None):
             P["line_unknown"][e["state"]] += 1
             if e["state"] == "지급완료":
                 P["paid_cash"] = None  # 공급가액을 모르면 실제 출금액도 알 수 없다
+                P["paid_cash_reason"] = "금액 미확인"  # 부가세 빈칸보다 먼저 보인다
             continue
         st = e["state"]
         if st == "지급완료":
@@ -186,6 +187,7 @@ def compute(d, kind, asof, start=None):
             P["paid_cash"] = _add(P["paid_cash"], amt + (e["vat"] or 0)) if e["vat"] is not None else None
             if e["vat"] is None:
                 P["vat_unknown"] += 1
+                P["paid_cash_reason"] = P["paid_cash_reason"] or "부가세 미확인"
             if e["date"] and p0 <= e["date"] <= p1:
                 P["paid_period"] += amt
         elif st == "카드결제완료":
@@ -223,6 +225,10 @@ def compute(d, kind, asof, start=None):
     # 지급완료 줄이 있는 프로젝트만 대상: 부가세·공급가액을 모르는 프로젝트가 전부면 0이 아니라 미확인 (D-02)
     tot["paid_cash"], tot["paid_cash_unknown"] = ssum_or_none(
         P["paid_cash"] for P in plist if P["line_n"]["지급완료"] > 0)
+    # 실출금 미확인 이유: 공급가액 빈칸('금액 미확인')과 부가세 빈칸('부가세 미확인')을 섞어 쓰지 않는다
+    reasons = set(P["paid_cash_reason"] for P in plist if P["paid_cash"] is None and P["line_n"]["지급완료"] > 0)
+    tot["paid_cash_reason"] = ("금액·부가세 미확인" if len(reasons) > 1 else
+                               (reasons.pop() if reasons else "부가세 미확인"))
     tot["unknown_cost"] = sum(P["unknown_cost"] for P in plist)
     budgeted = [P for P in plist if P["budget"] is not None]
     tot["expected_budgeted"] = sum(P["expected"] for P in budgeted)
@@ -593,7 +599,7 @@ def _net_credits(invs):
 def _blank_proj(p, rate):
     """프로젝트 한 건의 빈 집계 틀. 원가 예산 = 사전견적 x 원가율. 만들 수 없으면 예산은 None, 이유를 남긴다 (D-16)."""
     P = dict(p)
-    P.update({"lines": [], "paid": 0, "paid_cash": 0, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
+    P.update({"lines": [], "paid": 0, "paid_cash": 0, "paid_cash_reason": None, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
               "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
               # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다
               "line_n": dict.fromkeys(EXEC_STATES, 0), "line_unknown": dict.fromkeys(EXEC_STATES, 0)})
