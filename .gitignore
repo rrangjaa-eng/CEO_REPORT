@@ -4,3 +4,5 @@ __pycache__/
 .planning/milestone.lock
 .gsd/
 수집/
+# WEHAGO 엑셀 등 회사 자료 (D-36)
+*.xlsx

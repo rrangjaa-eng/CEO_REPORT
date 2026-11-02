@@ -9,6 +9,7 @@ import json
 from .approval import fmt_man, fmt_won, man_unit, scenario
 from .render import CSS
 from .util import esc
+from .wehago import _NOT_OK_LABEL, mask_rrn
 
 # ───────────── WEHAGO 대조 글 (화면과 CLI 가 같은 글을 쓴다) ─────────────
 _BOOK_LAST = {"분개장": "마지막 전표", "매입매출장": "마지막 전표", "전자세금계산서(매입)": "마지막 일자"}
@@ -42,7 +43,7 @@ def xchk_stop_lines(A):
     x = A["xchk"]
     if not xchk_stopped(A):
         return []
-    return ["WEHAGO 대조 멈춤: " + x["reason"], "대조 상태는 모두 판단 불가(%s) · 일정은 인트라넷 기준" % x["state"]]
+    return [mask_rrn("WEHAGO 대조 멈춤: " + x["reason"]), "대조 상태는 모두 판단 불가(%s) · 일정은 인트라넷 기준" % x["state"]]
 
 
 def xchk_not_ok_text(A):
@@ -55,7 +56,7 @@ def xchk_not_ok_text(A):
         inner = "WEHAGO 자료 경과: " + reason
     else:
         inner = x["state"]
-    return "WEHAGO 대조: 판단 불가(%s) · 일정은 인트라넷 기준" % inner
+    return mask_rrn("WEHAGO 대조: 판단 불가(%s) · 일정은 인트라넷 기준" % inner)
 
 
 def xchk_summary_text(A):
@@ -104,7 +105,7 @@ def book_dates_line(A):
                                              _BOOK_LAST[kind], e["last_date"].isoformat() if e["last_date"] else "없음"))
     if not pieces:
         return "장부 기준일: 알 수 없음 (읽은 WEHAGO 파일 없음)"
-    return "장부 기준일: " + " · ".join(pieces)
+    return mask_rrn("장부 기준일: " + " · ".join(pieces))
 
 
 def book_detail_lines(A):
@@ -124,7 +125,7 @@ def book_detail_lines(A):
             lines.append("%s 장부 기준일 이후 전표 %d건 (이미 지급 판정에는 쓰지 않음)" % (kind, e["after_ref"]))
         if e.get("skipped") or e.get("undated"):
             lines.append("%s 합계·빈 줄 %d건 읽지 않음 · 날짜 없는 줄 %d건" % (kind, e.get("skipped", 0), e.get("undated", 0)))
-    return lines
+    return [mask_rrn(line) for line in lines]
 
 
 APPROVAL_CSS = """
@@ -539,6 +540,19 @@ def _unrequested_block(A):
             '<div class="tw"><table id="unrequested">%s<tbody>%s</tbody></table></div>' % (esc(summary), head, body))
 
 
+WEHAGO_RULES = [
+    "WEHAGO 규칙 1 거래처 이름 맞추기: ㈜·(주)·주식회사와 공백을 뺀 이름이 같으면 같은 거래처 · 프로젝트 코드는 품명·적요 맨 앞 [ ] 안의 숫자",
+    "WEHAGO 규칙 2 상태 순서와 이미 지급 조건: 금액 미확인 → 거래처 후보 없음 → 이미 지급 → 프로젝트 코드 없음 → 계산서 확인 순"
+    " · 이미 지급은 분개장 미지급금·미지급비용 차변이 같은 금액·같은 거래처이고 전표일자가 등록일 이후 장부 기준일 이전 또는 당일이며"
+    " 후보가 한 건으로 다른 요청과 겹치지 않을 때만 · 그 밖에는 연결 불가이고 일정에 그대로 둠",
+    "WEHAGO 규칙 3 금액 차이: 계산서 한 건의 합계가 요청 금액과 다르면 일정에는 계산서 합계를 넣고 인트라넷 요청 금액과 차액을 옆에 보임",
+    "WEHAGO 규칙 4 거래처 미지급금 = 분개장 미지급금·미지급비용의 대변 − 차변 누계(기초잔액·전기이월 줄 포함)"
+    " · 분개장에 기초잔액 줄이 없으면 기초잔액 미반영 · 인트라넷 요청은 대기+승인 중 이미 지급을 뺀 합계",
+    "WEHAGO 규칙 5 프로젝트 원가 = 계정과목에 (도)가 있고 계정 Code가 6으로 시작하는 5자리인 줄의 차변 − 대변"
+    " · 적요의 [프로젝트 코드]로 연결하고 연결되지 않으면 프로젝트 미연결 원가",
+]
+
+
 def _basis_block(A):
     P, cutoff = A["panel"], A["cutoff"]
     regular = ", ".join(A["regular"])
@@ -562,6 +576,7 @@ def _basis_block(A):
                                           len(A["possible_duplicates"])),
         "잔액 기준일 이후·1주 시작(%s) 전 일정 %d건은 1주 첫날에 반영" % (A["monday"].strftime("%m/%d"), len(A["rolled"])),
     ]
+    lines += WEHAGO_RULES
     return '<div id="basis"><h2 class="sec">계산 기준</h2>%s</div>' % "".join(
         '<div class="note">%s</div>' % esc(t) for t in lines)
 
@@ -650,6 +665,111 @@ def _xchk_table(A):
             '<div class="tw"><table id="xchk">%s<tbody>%s</tbody></table></div>' % (head, "".join(body)))
 
 
+SHOW_XCHK = 20  # 거래처·프로젝트·미연결 원가 표에 보이는 줄 수 (D-12: 표시 건수 / 전체 건수)
+PROJECT_NOTE = "원가는 공급가액 기준, 요청 금액은 인트라넷 표시 금액(부가세 기준 미확인)"
+
+
+def _w(text):
+    """WEHAGO 글자: 주민번호 모양은 가리고(mask_rrn) 나서 escape 한다 (D-36)."""
+    return esc(mask_rrn(text))
+
+
+def _na_label(A):
+    return _NOT_OK_LABEL.get(A["xchk"]["state"], "판단 불가")
+
+
+def _signed_won(v):
+    return "판단 불가" if v is None else ("+" if v > 0 else "") + fmt_won(v)
+
+
+def _vendors_panel(A):
+    x = A["xchk"]
+    title = '<h2 class="sec">거래처별 미지급금 대조 (WEHAGO 분개장 대 인트라넷 요청)</h2>'
+    if x["state"] != "ok":
+        return title + '<div class="tw"><table id="xchk-vendors"><caption id="xchk-vendors-sum">%s</caption></table></div>' % esc(
+            _na_label(A))
+    v = x["vendors"]
+    rows = v["rows"][:SHOW_XCHK]
+    shown = sum(1 for r in rows if r["diff"] is not None)
+    summary = "차이 있는 거래처 표시 %d곳 / 전체 %d곳 · 차이 합계 %s · 판단 불가 %d곳 · 비교 거래처 %d곳" % (
+        shown, v["diff_count"], _signed_won(v["diff_sum"]), v["unknown_count"], v["compared"])
+    if v["note"]:
+        summary += " · " + v["note"]
+    head = ('<thead><tr><th>거래처</th><th class="n">WEHAGO 미지급금(원)</th><th class="n">인트라넷 요청(대기+승인, 이미 지급 제외)(원)</th>'
+            '<th class="n">차이(원)</th></tr></thead>')
+    body = []
+    for r in rows:
+        if r["requested"] is None:
+            asked = _na("미확인")
+        else:
+            asked = esc(fmt_won(r["requested"]) + (" 외 금액 미확인 %d건" % r["requested_unknown"] if r["requested_unknown"] else ""))
+        body.append('<tr><td>%s</td><td class="n">%s</td><td class="n">%s</td><td class="n">%s</td></tr>' % (
+            _w(r["vendor"]), esc(fmt_won(r["payable"])), asked, esc(_signed_won(r["diff"]))))
+    if not body:
+        body = ['<tr><td colspan="4" class="note">차이 있는 거래처 0곳</td></tr>']
+    return title + '<div class="tw"><table id="xchk-vendors"><caption id="xchk-vendors-sum">%s</caption>%s<tbody>%s</tbody></table></div>' % (
+        esc(summary), head, "".join(body))
+
+
+def _cost_cell(r):
+    if r["cost"] is None:
+        return _na("미확인")
+    return esc(fmt_won(r["cost"]) + (" 외 금액 미확인 %d줄" % r["cost_unknown"] if r["cost_unknown"] else ""))
+
+
+def _projects_panel(A):
+    x = A["xchk"]
+    title = '<h2 class="sec">프로젝트 (도) 원가 대조 (WEHAGO 분개장 대 인트라넷 실행가·요청 누계)</h2>'
+    if x["state"] != "ok":
+        return title + '<div class="tw"><table id="xchk-projects"><caption id="xchk-projects-sum">%s</caption></table></div>' % esc(
+            _na_label(A))
+    rows = x["projects"][:SHOW_XCHK]
+    summary = "표시 %d개 / 전체 %d개 ((도) 원가 줄이 있는 프로젝트) · 원가 줄이 없는 프로젝트 %d개는 표에 없음" % (
+        len(rows), len(x["projects"]), x["projects_without_cost"])
+    head = ('<thead><tr><th>코드</th><th>행사명</th><th class="n">실행가(원)</th><th class="n">요청 누계(원)</th>'
+            '<th class="n">WEHAGO (도) 원가(원)</th><th class="n">실행가 − 원가(원)</th><th class="n">요청 누계 − 원가(원)</th>'
+            '</tr></thead>')
+    body = []
+    for r in rows:
+        diffs = ["판단 불가" if r[k] is None else fmt_won(r[k]) for k in ("budget_minus_cost", "requested_minus_cost")]
+        body.append('<tr data-code="%s"><td>%s</td><td>%s</td><td class="n">%s</td><td class="n">%s</td><td class="n">%s</td>'
+                    '<td class="n">%s</td><td class="n">%s</td></tr>' % (
+                        esc(r["code"]), esc(r["code"]), esc(r["name"]),
+                        _na("미확인") if r["budget"] is None else esc(fmt_won(r["budget"])),
+                        _na("판단 불가") if r["requested"] is None else esc(fmt_won(r["requested"])),
+                        _cost_cell(r), esc(diffs[0]), esc(diffs[1])))
+    if not body:
+        body = ['<tr><td colspan="7" class="note">(도) 원가 줄이 있는 프로젝트 0개</td></tr>']
+    return title + ('<div class="tw"><table id="xchk-projects"><caption id="xchk-projects-sum">%s <span class="note" '
+                    'id="xchk-projects-note">%s</span></caption>%s<tbody>%s</tbody></table></div>') % (
+        esc(summary), esc(PROJECT_NOTE), head, "".join(body))
+
+
+def _unlinked_panel(A):
+    x = A["xchk"]
+    title = '<h2 class="sec">프로젝트 미연결 원가 (프로젝트 코드로 연결되지 않은 (도) 원가)</h2>'
+    if x["state"] != "ok":
+        return title + '<div id="xchk-unlinked" class="scope">%s</div>' % esc(_na_label(A))
+    u = x["unlinked"]
+    if not u["count"]:
+        return title + '<div id="xchk-unlinked"><div class="scope">프로젝트 미연결 원가 0건</div></div>'
+    if u["sum"] is None:
+        line = "프로젝트 미연결 원가 %d건 (금액 미확인 %d건)" % (u["count"], u["unknown"])
+    else:
+        line = "프로젝트 미연결 원가 %d건 %s" % (u["count"], fmt_won(u["sum"]))
+        if u["unknown"]:
+            line += " 외 금액 미확인 %d건" % u["unknown"]
+    lines = u["lines"][:SHOW_XCHK]
+    if u["count"] > len(lines):
+        line += " · 표시 %d건 / 전체 %d건" % (len(lines), u["count"])
+    head = '<thead><tr><th>전표일자</th><th>거래처</th><th>적요</th><th class="n">금액(원)</th></tr></thead>'
+    body = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td class="n">%s</td></tr>' % (
+        esc(i["date"].isoformat()) if i["date"] else _na("날짜 없음"), _w(i["vendor"]), _w(i["memo"]),
+        _na("미확인") if i["amount"] is None else esc(fmt_won(i["amount"]))) for i in lines)
+    return title + '<div id="xchk-unlinked"><div class="scope">%s</div><div class="tw"><table>%s<tbody>%s</tbody></table></div></div>' % (
+        esc(line), head, body)
+
+
 def render_approval(A, collected_now):
     """승인 검토 화면 HTML 한 장. collected_now: 이번 실행에서 수집했으면 True, 마지막 스냅숏을 쓰면 False."""
     data = A["data"]
@@ -680,6 +800,9 @@ def render_approval(A, collected_now):
         _unrequested_block(A),
         _book_dates(A),
         _xchk_table(A),
+        _vendors_panel(A),
+        _projects_panel(A),
+        _unlinked_panel(A),
         _basis_block(A),
         _issues_block(A),
         '<script id="approval-data" type="application/json">%s</script>' % payload,

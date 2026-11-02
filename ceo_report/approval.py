@@ -301,11 +301,43 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
     return lines
 
 
+def _project_cost_rows(pc, projects):
+    """A['projects']와 WEHAGO (도) 원가를 코드로 잇는다 (D-34). 한쪽이라도 모르면 차이는 None (D-02), 0이 아니다."""
+    count = {}
+    for p in projects:
+        count[p["code"]] = count.get(p["code"], 0) + 1
+    rows = []
+    for p in projects:
+        c = pc["by_code"].get(p["code"])
+        if c is None:
+            continue
+        cost, partial = c["cost"], c["unknown"]
+        exact = cost is not None and not partial and count[p["code"]] == 1
+        rows.append({"code": p["code"], "name": p["name"], "budget": p["budget"], "requested": p["requested"],
+                     "requested_unknown": p["requested_unknown"], "cost": cost, "cost_unknown": partial,
+                     "budget_minus_cost": p["budget"] - cost if exact and p["budget"] is not None else None,
+                     "requested_minus_cost": p["requested"] - cost if exact and p["requested"] is not None else None})
+    return rows
+
+
 def _xchk(books, match):
     """화면이 읽는 WEHAGO 대조 묶음. 장부가 ok 가 아니면 행은 모두 '판단 불가'이고 금액은 하나도 없다."""
     return {"state": books.state, "reason": books.reason, "book_date": books.book_date, "files": books.files,
             "unused": list(books.unused), "header": books.header, "after_ref": books.after_ref,
-            "rows": match["rows"], "summary": match["summary"], "vendors": None, "projects": None, "unlinked": None}
+            "rows": match["rows"], "summary": match["summary"], "vendors": None, "projects": None, "unlinked": None,
+            "projects_without_cost": 0}
+
+
+def _xchk_full(books, match, req_all, projects, wehago):
+    """_xchk + 거래처 미지급금(D-33), 프로젝트 (도) 원가(D-34), 프로젝트 미연결 원가. 장부가 ok 가 아니면 채우지 않는다."""
+    x = _xchk(books, match)
+    if books.state == "ok":
+        x["vendors"] = wehago.vendor_payables(books, req_all, match)
+        pc = wehago.project_costs(books, [p["code"] for p in projects])
+        x["projects"] = _project_cost_rows(pc, projects)
+        x["projects_without_cost"] = len(projects) - len(x["projects"])
+        x["unlinked"] = pc["unlinked"]
+    return x
 
 
 def build(d, snap, asof, now, wehago_dir=None):
@@ -479,7 +511,8 @@ def build(d, snap, asof, now, wehago_dir=None):
             "date_unknown": date_unknown, "beyond_requests": beyond_requests, "panel": _panel(lists),
             "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
             "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
-            "already_paid": already_paid, "paid_after_balance": paid_after, "xchk": _xchk(books, match),
+            "already_paid": already_paid, "paid_after_balance": paid_after,
+            "xchk": _xchk_full(books, match, req_all, projects, wehago),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None),
             "issues": list(issues.items)}
