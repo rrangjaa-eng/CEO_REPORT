@@ -1445,5 +1445,43 @@ class TestPdfLaunch(unittest.TestCase):
         self.assertFalse(os.path.exists(pdf_path), "빈 PDF를 남기지 않음")
 
 
+class TestPaidDateWithoutAmount(unittest.TestCase):
+    """WR-03: 입금일은 있는데 입금액이 빈칸이면 미수를 전액으로 단정하지 않고 미확인으로 센다 (D-02)."""
+
+    def compute_with(self, paid_date, paid_amount):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[0] == "P26202":
+                    r[8], r[9] = paid_date, paid_amount
+        R = compute(load(probe_folder(self, "계산서.csv", mutate)), "weekly", ASOF)
+        return R, render(R, "ceo")
+
+    def test_paid_date_without_amount_is_unknown_outstanding(self):
+        R, html = self.compute_with("2026-10-20", "")
+        inv = [x for x in R["s5"]["by_project"] if x["P"]["id"] == "P26202"][0]
+        self.assertIsNone(inv["ar"])
+        self.assertEqual(inv["ar_unknown"], 1)
+        self.assertEqual(R["s5"]["ar_unknown_n"], 1)
+        self.assertFalse(any(x["project"] == "P26202" for x in R["s5"]["ar_rows"]))
+        self.assertEqual(R["s5"]["overdue"], [])
+        self.assertEqual(R["s5"]["overdue_total"], 0)
+        self.assertFalse(any(e["project"] == "P26202" and e["io"] == "in" for e in R["events"]))
+        self.assertEqual(R["s2"]["past_in_n"], 0)
+        self.assertIn("미확인 1건", kv_value(first_screen(html), "발행 후 미수"))
+        row = re.findall(r"<tr[^>]*><td>P26202</td>.*?</tr>", section(html, 5), re.S)[0]
+        self.assertIn("미확인 1건", row)
+        check_editions(self, R)
+
+    def test_blank_paid_date_and_amount_is_still_fully_outstanding(self):
+        R, _ = self.compute_with("", "")
+        self.assertEqual([x["outstanding"] for x in R["s5"]["ar_rows"] if x["project"] == "P26202"], [110_000_000])
+        self.assertEqual(R["s5"]["overdue_total"], 110_000_000)
+        self.assertEqual(R["s5"]["ar_unknown_n"], 0)
+
+    def test_paid_amount_without_date_still_reduces_outstanding(self):
+        R, _ = self.compute_with("", "50,000,000")
+        self.assertEqual([x["outstanding"] for x in R["s5"]["ar_rows"] if x["project"] == "P26202"], [60_000_000])
+
+
 if __name__ == "__main__":
     unittest.main()
