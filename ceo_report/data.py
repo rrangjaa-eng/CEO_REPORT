@@ -28,6 +28,13 @@ OUTFLOW_KEYS = {
     "프로젝트집행.csv": ["상태", "공급가액", "일자"],  # 부가세 열이 없으면 기존처럼 부가세 미확인(공급가액만)으로 알린다
 }
 
+# 수금(발행 후 미수·발행금액·입금예정)의 출처 파일과, 없으면 그 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
+# 발행 후 미수·발행금액·미발행금액·입금예정을 0이 아니라 '자료 없음'으로 두고 계산서 입금을 일정에 넣지 않는다.
+# 입금액이 없으면 전부 미수로 보여 입금예정이 부풀려지고, 프로젝트번호가 없으면 프로젝트별 발행금액이 모두 0이 된다.
+INFLOW_KEYS = {
+    "계산서.csv": ["프로젝트번호", "공급가액", "부가세", "입금예정일", "입금액"],
+}
+
 # 허용 값
 EXEC_STATES = ["지급완료", "요청미지급", "카드사용미결제", "카드결제완료", "집행계획미요청"]
 INVOICE_KINDS = ["발행", "선수금", "수정", "취소", "환불"]
@@ -65,26 +72,35 @@ def _outflow(iss, row, col, value):
     return value
 
 
+def _unusable(folder, fname, ok, lost):
+    """핵심 자료 파일을 쓸 수 없는 이유 ('자금일정.csv (파일 없음)' 꼴). 쓸 수 있으면 None."""
+    if not os.path.exists(os.path.join(folder, fname)):
+        return "%s (파일 없음)" % fname
+    if not ok:
+        return "%s (읽지 못함)" % fname
+    if lost:
+        return "%s (필수 열 없음: %s)" % (fname, ", ".join(lost))
+    return None
+
+
 def load(folder):
     iss = Issues()
     d = Data()
     d.issues = iss
     d.present = {}
     d.out_missing = []  # 지급 일정을 다 알 수 없게 만드는 파일: '자금일정.csv (파일 없음)' 꼴
+    d.in_missing = []  # 수금(계산서) 금액·입금예정을 알 수 없게 만드는 파일: '계산서.csv (파일 없음)' 꼴
     raw = {}
     for fname, cols in SCHEMA.items():
         info = {}
         rows, ok = read_csv(os.path.join(folder, fname), cols, iss, info)
         raw[fname] = rows
         d.present[fname] = ok
-        if fname in OUTFLOW_KEYS:
-            lost = [c for c in OUTFLOW_KEYS[fname] if c in info["missing"]]
-            if not os.path.exists(os.path.join(folder, fname)):
-                d.out_missing.append("%s (파일 없음)" % fname)
-            elif not ok:
-                d.out_missing.append("%s (읽지 못함)" % fname)
-            elif lost:
-                d.out_missing.append("%s (필수 열 없음: %s)" % (fname, ", ".join(lost)))
+        for keys, missing in ((OUTFLOW_KEYS, d.out_missing), (INFLOW_KEYS, d.in_missing)):
+            if fname in keys:
+                why = _unusable(folder, fname, ok, [c for c in keys[fname] if c in info["missing"]])
+                if why:
+                    missing.append(why)
 
     # 설정
     d.settings = dict(DEFAULT_SETTINGS)

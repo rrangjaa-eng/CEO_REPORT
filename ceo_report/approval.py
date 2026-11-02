@@ -542,6 +542,10 @@ def build(d, snap, asof, now, wehago_dir=None):
     # 지급 자료 파일이 빠졌으면 주별 잔액·최저 잔액을 만들지 않는다 (지급 0원으로 보지 않음). 시작 잔액 줄은 그대로 보인다.
     out_missing = R["s2"]["out_missing"]
     no_calc = ("지급 자료 없음(%s): 주별 잔액을 계산하지 않음" % ", ".join(out_missing)) if out_missing else None
+    # 계산서 자료가 없으면 계산서 입금예정이 빠진 채 주별 잔액을 만든다 (입금이 빠지면 잔액은 낮아지는 쪽). 그 사실을 화면에 적는다.
+    in_missing = R["s2"]["in_missing"]
+    no_in = (("계산서 자료 없음: %s — 계산서 입금예정(수금)이 빠진 채 주별 잔액을 계산함 (실제보다 낮을 수 있음)"
+              % ", ".join(in_missing)) if in_missing else None)
     data = {"asof": asof.isoformat(), "start": None if out_missing else start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
             "est_in": est_in, "requests": data_requests, "no_calc": no_calc}
@@ -561,7 +565,7 @@ def build(d, snap, asof, now, wehago_dir=None):
             "date_unknown": date_unknown, "beyond_requests": beyond_requests, "panel": _panel(lists),
             "vat_unknown_sched": vat_unknown_sched, "regular_missing": _regular_missing(R["events"], regular, cutoff, horizon),
             "projects": projects, "unrequested": unrequested, "unlinked": unlinked, "over_requested": over_requested,
-            "already_paid": already_paid, "paid_after_balance": paid_after,
+            "already_paid": already_paid, "paid_after_balance": paid_after, "in_missing": in_missing, "no_in": no_in,
             "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,

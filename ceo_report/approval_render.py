@@ -346,7 +346,14 @@ def _headline(A, S):
     est = ('<div id="h-est">추정 입금 포함 시 최저 잔액 <span id="h-est-low">%s</span><span id="h-est-unit">%s</span>'
            '<span id="h-est-sep">%s</span><span id="h-est-day">%s</span></div>') % (
         esc(est_t), esc(man_unit(est_t)), "" if S["est_low"] is None else " · ", esc(S["est_low_day"] or ""))
-    return head + est
+    return head + est + _in_missing(A)
+
+
+def _in_missing(A):
+    """계산서 자료가 없으면 헤드라인 바로 아래에 계산서 입금예정이 빠졌음을 적는다. 아니면 빈 글."""
+    if not A.get("no_in"):
+        return ""
+    return '<div id="in-missing" class="scope warn">%s</div>' % esc(A["no_in"])
 
 
 def _start_line(A, collected_now):
@@ -540,6 +547,8 @@ def _unknown_lines(A):
         _unrequested_line(A),
         _regular_line(A),
     ]
+    if A.get("no_in"):
+        lines.insert(0, A["no_in"])
     return lines
 
 
@@ -622,6 +631,8 @@ def _attention(A):
             items.append(label % n)
     if A["regular_missing"]:
         items.append("%s 일정 미등록" % ", ".join(A["regular_missing"]))
+    if A.get("in_missing"):
+        items.append("계산서 자료 없음 (%s)" % ", ".join(m.split(" (")[0] for m in A["in_missing"]))
     if A["issues"]:
         items.append("입력 자료 확인 필요 %d건" % len(A["issues"]))
     if not items:

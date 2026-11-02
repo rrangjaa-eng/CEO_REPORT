@@ -5,13 +5,13 @@
 - Method: gstack /qa, Standard tier (critical, high and medium findings get fixed). Every fix has a failing test written first and its own `fix(qa): ...` commit.
 - Environment: Linux container on Python 3.13. The code is also checked to parse as Python 3.8 (`ast.parse(..., feature_version=(3, 8))`). Headless Chromium 1243 makes the PDFs, and Playwright (node) drives the approval screen.
 - Data: synthetic only. Inputs come from `tools/make_sample.py` (입력양식/샘플), snapshots from `tests/test_approval.py write_fake_snapshot`, and WEHAGO books from `tests/test_wehago.py write_fake_books / write_xlsx`. No real 입력/, 수집/ or realbooks data was opened. `--수집 함` was not run against a network.
-- Tests: 502 before, 519 after (17 new in `tests/test_qa.py`). The full suite passes.
+- Tests: 502 before, 519 after the first round (17 new in `tests/test_qa.py`), 529 after the L2 fix (10 more in `tests/test_qa.py`). The full suite passes.
 
 ## Health score
 
 | Category (weight) | Before | After | Notes |
 |---|---|---|---|
-| Functional (20%) | 27 | 83 | Before: B1 critical, B2 high, B3/B5 medium. Left: L2 medium; L3, L4, L6 low |
+| Functional (20%) | 27 | 91 | Before: B1 critical, B2 high, B3/B5/B7 medium. Left: L3, L4, L6 low |
 | UX (15%) | 92 | 100 | B4 |
 | Console (15%) | 100 | 100 | No JS errors in any Playwright run |
 | Accessibility (15%) | 100 | 100 | Keyboard-only flow works and focus has a 2px outline |
@@ -19,9 +19,9 @@
 | Performance (10%) | 100 | 100 | Each toggle recalculates instantly (existing test: under 1 s) |
 | Content (5%) | 94 | 97 | B6 fixed; L1 left |
 | Links | not scored | not scored | Single-file pages, no navigation |
-| **Score** | **82** | **96** | Weighted over the tested categories (0.90) |
+| **Score** | **82** | **98** | Weighted over the tested categories (0.90). 96 before the L2 fix (B7), 97.5 after |
 
-Summary: QA found 12 issues and fixed 6 (all of them verified). Health went from 82 to 96.
+Summary: QA found 12 issues and fixed 7 (all of them verified). Health went from 82 to 98. L2 was first deferred and then fixed as B7.
 
 ## Flows tested
 
@@ -61,13 +61,14 @@ Summary: QA found 12 issues and fixed 6 (all of them verified). Health went from
 | B3 | Medium | a16075d | The approval screen name `승인검토_YYYYMMDD_HHMM.html` came from the clock, so a second run in the same minute silently overwrote the first. | Later runs now get `_2`, `_3` and so on. The new names are still git-ignored under 출력/. |
 | B4 | Medium | c53e8c2 | If `--출력` was an existing file or an unwritable folder, both tools stopped with a traceback. | Both now print a Korean message naming the folder and exit with rc 7. The exit code is documented in both docstrings. |
 | B5 | Medium | d6eae92 | A CSV that could not be opened (on Windows, a CSV that is open in Excel raises PermissionError) crashed both tools. | It now appears in 입력 자료 확인 필요 as "파일을 열 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행)", and the file is treated as unreadable. For a payment file, B1 then applies. |
+| B7 (was L2) | Medium | `fix(qa): missing or unusable invoice CSV shows 자료 없음, not 0` (see git log) | If 계산서.csv was missing, unreadable or lacked a key column, the first screen showed 발행 후 미수 0.0, 발행금액 0.0, 미발행금액 = the whole contract, 완료 후 미발행 3건 and 향후 4주 입금예정 0.0, and 경영관리 got 미발행 risks built on a 0 issued amount. The missing-file message promised '자료 없음' but nothing used it. | `data.py` records `d.in_missing` (`INFLOW_KEYS`: 프로젝트번호, 공급가액, 부가세, 입금예정일, 입금액), the same way B1 records `out_missing`. `calc.py` then leaves the invoices out: 발행금액, 미발행금액, 발행 후 미수 and 입금예정일 경과 are None (totals and per project), no 계산서 inflows go into the schedule, and no 수금 risks are built. `render.py` shows '자료 없음 (계산서.csv)' in those cells (first screen and section 5, both editions). The 4-week inflow KPI reads 자료 없음 and names the file, keeping the 자금일정 part in the sub line. The undated and past inflow cells say the 계산서 part is missing. The lowest balance is still computed (missing inflows only make it lower) and its KPI says 계산서 입금예정 미반영. 경영관리 gets a 중간 자료 risk. The approval screen shows the reason under the headline and in 확인 필요, and both CLIs print it. Sample output is byte-identical. |
 | B6 | Low | 57b4745 | A PDF failure printed a message without the file name or a next step. A timeout printed Python's English text with the temporary profile path in it. | Each failure now names its PDF, a timeout reads "브라우저가 120초 안에 끝나지 않음", and the run ends with the HTML → 인쇄 → 'PDF로 저장' fallback. |
 
 ## Left open (deferred)
 
 | # | Severity | What | Why it is left |
 |---|---|---|---|
-| L2 | Medium | If 계산서.csv is missing or unusable, the first screen shows 발행 후 미수 0.0, 발행금액 0.0 and 입금예정 0.0 instead of 자료 없음. The message for a missing file promises "이 묶음은 '자료 없음'으로 표시", but `R["present"]` is never used by render. | The error goes in the conservative direction for cash (inflows are understated, so the lowest balance is lower). Fixing it changes several 5번 numbers and the reconciliation checks, so the owner should decide how each block should read. |
+| L2 | Medium | Fixed: see B7. | - |
 | L1 | Low | argparse errors (unknown 유형, bad choice) are printed in English ("invalid choice"). | Cosmetic. The exit code is right and the usage line shows the Korean options. |
 | L3 | Low | Excel "유니코드 텍스트" (UTF-16, tab-separated) is not read. | After B1/B5 it is flagged and handled safely: an unreadable payment file gives 판단 불가, never a number. The 보고서.py usage text already says to save as 'CSV UTF-8' or 'CSV', and the B1 risk item repeats it. |
 | L4 | Low | WEHAGO books dated after the 기준일 (a past-기준일 what-if) are used without a note. | This only matters for back-dated what-if runs. Normal use has 기준일 = today. |

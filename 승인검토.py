@@ -222,6 +222,8 @@ def report(path, A, how):
     _say("전부 승인 시 최저 잔액 %s%s · %s" % (low, man_unit(low), S["low_day"] or "-"))
     if A["data"].get("no_calc"):
         _say(A["data"]["no_calc"])
+    if A.get("no_in"):
+        _say(A["no_in"])
     # WEHAGO 대조: 건수와 날짜만 찍는다. 요청 값(거래처, 금액)은 찍지 않는다
     for line in xchk_stop_lines(A)[:1]:
         _say(line)

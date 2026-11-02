@@ -173,6 +173,158 @@ class TestOutflowFileUnusable(unittest.TestCase):
         self.assertIn("542.4", T(page, "start-line"))
 
 
+def kv_value(html, label):
+    """첫 화면·상세의 '이름 / 값' 줄에서 첫 번째로 나오는 값 글자."""
+    m = re.search(r'<div class="kv"><span>' + re.escape(label) + r"</span><span>(.*?)</span></div>", html, re.S)
+    return text(m.group(1)) if m else None
+
+
+def section(html, i):
+    """상세 i번 묶음 (다음 묶음 머리글 앞까지)."""
+    start = html.index("<h2 id='s%d'>" % i)
+    end = html.find("<h2 id='s%d'>" % (i + 1), start)
+    return html[start:end if end > 0 else len(html)]
+
+
+class TestInvoiceFileUnusable(unittest.TestCase):
+    """계산서.csv가 없거나 읽을 수 없거나 금액·날짜 열이 없으면 발행 후 미수·발행금액·입금예정을 0으로 보이지 않는다 (QA L2).
+
+    전에는 첫 화면이 발행 후 미수 0.0, 발행금액 0.0, 향후 4주 입금예정 0.0으로 나왔다. 최저 계산 잔액은 계산서 입금 없이
+    계산한다 (입금이 빠지면 잔액이 낮아지는 쪽이므로 보수적). 대신 그 사실과 파일 이름을 함께 적는다.
+    """
+
+    LABEL = "자료 없음 (계산서.csv)"
+
+    def report(self, folder):
+        R = compute(load(folder), "weekly", ASOF)
+        return R, render(R, "ceo"), render(R, "mgmt")
+
+    def assert_unknown(self, folder, why):
+        R, ceo, mgmt = self.report(folder)
+        base = compute(load(SAMPLE), "weekly", ASOF)
+        s5 = R["s5"]
+        self.assertEqual(R["s2"]["in_missing"], ["계산서.csv (%s)" % why])
+        for key in ("issued", "ar", "unissued", "overdue_total"):
+            self.assertIsNone(s5[key], key)
+        for x in s5["by_project"]:
+            self.assertIsNone(x["issued"])
+            self.assertIsNone(x["ar"])
+            self.assertIsNone(x["unissued"])
+        self.assertEqual(s5["unissued_aged"], [])
+        self.assertFalse([ev for ev in R["events"] if ev["source"] == "계산서"])
+        # 최저 잔액은 계산한다: 계산서 입금이 빠졌으므로 샘플보다 높을 수 없다
+        low, _ = R["s2"]["min"]["firm"]
+        self.assertIsNotNone(low)
+        self.assertLessEqual(low, base["s2"]["min"]["firm"][0])
+        self.assertTrue(any(r["area"] == "자료" and "계산서.csv" in r["fact"] for r in R["risks"]), R["risks"])
+        # 발행금액 0으로 만든 미발행·미수 위험을 만들지 않는다
+        self.assertFalse([r for r in R["risks"] if r["area"] == "수금"])
+        for html in (ceo, mgmt):
+            v, s = kpi(html, "향후 4주 입금예정")
+            self.assertIn("자료 없음", text(v))
+            self.assertIn("계산서.csv", text(s))
+            v, s = kpi(html, "최저 계산 잔액 (확정 일정만)")
+            self.assertNotIn("판단 불가", text(v))
+            self.assertIn("계산서.csv", text(s))
+            for label in ("발행 후 미수", "그중 입금예정일 경과", "발행금액", "미발행금액", "완료 후 미발행 프로젝트",
+                          "입금예정일 경과 미수 (일정 미포함)"):
+                self.assertIn(self.LABEL, kv_value(html, label), label)
+            for label in ("날짜 없는 입금예정 / 지급예정", "예정일 지난 미처리 입금 / 지급 (일정 미포함)"):
+                inflow_side = kv_value(html, label).split(" / ")[0]
+                self.assertIn("계산서 자료 없음", inflow_side, label)  # 입금 쪽 '0건 0.0'만 보이지 않는다
+            s5_html = section(html, 5)
+            first = R["s3"]["projects"][0]["id"]
+            row = re.search(r"<tr class=\"\"><td>%s</td>.*?</tr>" % re.escape(first), s5_html, re.S).group(0)
+            self.assertEqual(text(row).count(self.LABEL), 3, text(row))
+            total = re.search(r'<tr class="tot">.*?</tr>', s5_html, re.S).group(0)
+            self.assertEqual(text(total).count(self.LABEL), 3, text(total))
+            self.assertIn("계산서.csv (%s)" % why, text(s5_html))
+        # 대표용과 경영관리용은 같은 사실을 보인다
+        for label in ("발행 후 미수", "발행금액", "미발행금액", "입금예정일 경과 미수 (일정 미포함)"):
+            self.assertEqual(kv_value(ceo, label), kv_value(mgmt, label))
+        self.assertEqual(kpi(ceo, "향후 4주 입금예정"), kpi(mgmt, "향후 4주 입금예정"))
+        self.assertEqual(section(ceo, 5), section(mgmt, 5))
+        return R
+
+    def test_missing_file(self):
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "계산서.csv"))
+        self.assert_unknown(folder, "파일 없음")
+
+    def test_unreadable_encoding(self):
+        folder = sample_copy(self)
+        with open(os.path.join(folder, "계산서.csv"), "wb") as f:
+            f.write(b"\xff\xfe\x00\xd8garbage\x81\x82\x83")
+        self.assert_unknown(folder, "읽지 못함")
+
+    def test_amount_column_missing(self):
+        folder = sample_copy(self)
+        rewrite(folder, "계산서.csv", drop_column("공급가액"))
+        self.assert_unknown(folder, "필수 열 없음: 공급가액")
+
+    def test_paid_column_missing(self):
+        folder = sample_copy(self)
+        rewrite(folder, "계산서.csv", drop_column("입금액"))  # 입금액을 모르면 전부 미수로 보여 입금예정이 부풀려진다
+        self.assert_unknown(folder, "필수 열 없음: 입금액")
+
+    def test_date_column_missing(self):
+        folder = sample_copy(self)
+        rewrite(folder, "계산서.csv", drop_column("입금예정일"))
+        self.assert_unknown(folder, "필수 열 없음: 입금예정일")
+
+    def test_optional_column_missing_still_computes(self):
+        folder = sample_copy(self)
+        rewrite(folder, "계산서.csv", drop_column("예정일확정"))
+        R, _, _ = self.report(folder)
+        base = compute(load(SAMPLE), "weekly", ASOF)
+        self.assertEqual(R["s2"]["in_missing"], [])
+        self.assertEqual(R["s5"]["issued"], base["s5"]["issued"])
+        self.assertEqual(R["s5"]["ar"], base["s5"]["ar"])
+
+    def test_sample_unchanged(self):
+        R, ceo, _ = self.report(SAMPLE)
+        self.assertEqual(R["s2"]["in_missing"], [])
+        self.assertIsNotNone(R["s5"]["issued"])
+        self.assertIsNotNone(R["s5"]["ar"])
+        self.assertNotIn("계산서.csv", ceo)
+
+    def test_report_cli_says_why(self):
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "계산서.csv"))
+        rc, out = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", folder, "--pdf", "안함"])
+        self.assertEqual(rc, 0)
+        self.assertIn("계산서 자료 없음: 계산서.csv (파일 없음)", out)
+
+    def test_approval_screen_says_inflows_missing(self):
+        import contextlib
+        import io
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "계산서.csv"))
+        tmp = new_tmp(self)
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        cli = load_approval_cli()
+        path, A = cli.make_screen(folder, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            page = f.read()
+        self.assertEqual(A["in_missing"], ["계산서.csv (파일 없음)"])
+        self.assertNotEqual(T(page, "h-low"), "미확인")  # 최저 잔액은 계산한다 (계산서 입금 없이)
+        self.assertIn("계산서.csv", T(page, "in-missing"))
+        self.assertIn("계산서.csv", T(page, "attention"))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.report(path, A, "(마지막 스냅숏)")
+        self.assertIn("계산서 자료 없음: 계산서.csv (파일 없음)", buf.getvalue())
+
+    def test_approval_sample_has_no_note(self):
+        tmp = new_tmp(self)
+        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+        path, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
+        with open(path, encoding="utf-8") as f:
+            page = f.read()
+        self.assertEqual(A["in_missing"], [])
+        self.assertNotIn('id="in-missing"', page)
+
+
 if __name__ == "__main__":
     unittest.main()
 

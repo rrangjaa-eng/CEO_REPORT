@@ -48,7 +48,10 @@ def compute(d, kind, asof, start=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
     issues.items = list(d.issues.items)
-    invs = [dict(v) for v in d.invoices]
+    # 계산서 자료를 쓸 수 없으면(파일 없음·읽지 못함·금액/날짜 열 없음) 발행·미수·입금예정은 0이 아니라 '자료 없음'이고,
+    # 계산서 입금은 일정에 넣지 않는다 (입금이 빠지면 계산 잔액은 낮아지는 쪽이므로 최저 잔액은 그대로 계산한다).
+    in_missing = list(getattr(d, "in_missing", []))
+    invs = [] if in_missing else [dict(v) for v in d.invoices]
     R = {"kind": kind, "asof": asof}
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
@@ -288,6 +291,8 @@ def compute(d, kind, asof, start=None):
             out = None
         # 발행금액 일부가 미확인이면 미발행금액을 부풀리지 않고 판단 불가로 둔다
         unissued = None if (P["contract"] is None or issued_unknown > 0) else P["contract"] - issued
+        if in_missing:
+            issued = out = unissued = None  # 계산서 자료 없음: 미확인 건수가 아니라 자료 자체가 없다
         days = None
         if unissued and unissued > 0 and P["done_date"]:
             days = (asof - P["done_date"]).days
@@ -302,7 +307,11 @@ def compute(d, kind, asof, start=None):
     ar_tot = sum(v["outstanding"] for v in ar_rows)
     if not ar_rows and ar_unknown_n:
         ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
+    overdue_tot = sum(v["outstanding"] for v in overdue)
+    if in_missing:
+        issued_tot = unissued_tot = ar_tot = overdue_tot = None  # 계산서 자료 없음 (0 아님)
     R["s5"] = {
+        "in_missing": in_missing,
         "by_project": inv_proj, "ar_rows": ar_rows, "overdue": sorted(overdue, key=lambda v: -v["overdue_days"]),
         "specials": specials, "no_project": no_proj_inv,
         "contract": c_tot, "contract_missing": c_missing,
@@ -312,7 +321,7 @@ def compute(d, kind, asof, start=None):
         "ar_unknown_n": ar_unknown_n,
         "unissued": unissued_tot,
         "ar": ar_tot,
-        "overdue_total": sum(v["outstanding"] for v in overdue),
+        "overdue_total": overdue_tot,
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
     }
 
@@ -426,7 +435,7 @@ def compute(d, kind, asof, start=None):
     # 날짜는 기간 안인데 금액을 모르는 지급예정: 합계·최저 잔액에 넣지 못하므로 건수를 함께 보인다 (D-02)
     out_unk = [ev for ev in amount_unknown if ev["io"] == "out" and ev["date"] is not None and asof < ev["date"] <= horizon]
     R["s2"] = {
-        "start": R["s1"]["available"], "out_missing": out_missing, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
+        "start": R["s1"]["available"], "out_missing": out_missing, "in_missing": in_missing, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
@@ -664,6 +673,10 @@ def risks(R):
         add("높음", "자료", "지급 자료를 읽지 못해 지급예정이 빠졌으므로 기간별 계산 잔액과 최저 잔액을 계산하지 않음: %s."
             % ", ".join(s2["out_missing"]),
             "입력 폴더에 해당 CSV를 양식(입력양식 폴더)의 머리글 그대로 'CSV UTF-8' 또는 'CSV'로 저장.")
+    if s2["in_missing"]:
+        add("중간", "자료", "계산서 자료를 읽지 못해 발행 후 미수·발행금액·미발행금액과 계산서 입금예정을 알 수 없음: %s. "
+            "기간별 계산 잔액과 최저 잔액은 계산서 입금 없이 계산함 (실제보다 낮을 수 있음)." % ", ".join(s2["in_missing"]),
+            "입력 폴더에 계산서.csv를 양식(입력양식 폴더)의 머리글 그대로 'CSV UTF-8' 또는 'CSV'로 저장.")
     if R["s1"]["total"] is None:
         add("중간", "자료", "현재 계좌 잔액을 확인할 수 없어 기간별 계산 잔액과 최저 잔액을 계산하지 않음.",
             "계좌잔액.csv에 보고 기준일 잔액을 입력.")
