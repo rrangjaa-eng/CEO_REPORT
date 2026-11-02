@@ -1,0 +1,324 @@
+"""승인 화면의 WEHAGO 대조 시험 (계획 01.1-06).
+
+시험 자료는 전부 가상이다 (D-28, D-36): 가상 스냅숏과 가상 엑셀(tests/test_wehago.py)만 쓴다.
+다른 시험 파일에서는 함수와 상수만 가져온다 (TestCase 클래스를 가져오면 시험이 두 번 돈다).
+"""
+import copy
+import datetime as dt
+import importlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+for _p in (ROOT, HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from test_approval import (SAMPLE, element_html, edit_csv, load_approval_cli, row_html, run_cli,  # noqa: E402
+                           run_node, sample_copy, script_text, span_text, text_of, week_cell, write_fake_snapshot)
+from test_wehago import (FAKE_JOURNAL, FAKE_LEDGER, requests_all, serial, write_fake_books)  # noqa: E402
+
+ASOF = dt.date(2026, 11, 2)
+NOW = dt.datetime(2026, 11, 2, 0, 0)
+
+HEAD_ALL = "전부 승인 시 최저 잔액 143.2 백만원 · 2026-12-25"
+HEAD_INTRANET = "전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25"
+SUMMARY_OK = ("WEHAGO 대조 (장부 기준일 2026-10-31): 계산서 있음 3건 51,700,000 · 금액 차이 1건 165,000,000 "
+              "(인트라넷 요청 160,500,000 · 차액 +4,500,000, 일정은 계산서 금액) · 계산서 없음 1건 264,000 · "
+              "이미 지급 1건 49,500,000 (일정에서 뺌) · 연결 불가 3건 4,400,000 외 금액 미확인 1건")
+BOOK_DATES = ("장부 기준일: 분개장 2026-10-31 (마지막 전표 2026-10-30) · 매입매출장 2026-10-31 (마지막 전표 2026-10-27)"
+              " · 전자세금계산서(매입) 2026-10-31 (마지막 일자 2026-10-28)")
+NO_BOOKS = ("WEHAGO 대조: 판단 불가(WEHAGO 자료 없음: 분개장, 매입매출장, 전자세금계산서(매입)) · 일정은 인트라넷 기준")
+
+
+def mod(name):
+    return importlib.import_module("ceo_report." + name)
+
+
+def setUpModule():
+    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py")], check=True,
+                   stdout=subprocess.DEVNULL)
+
+
+def T(page, id_):
+    frag = element_html(page, id_)
+    return None if frag is None else text_of(frag)
+
+
+def new_tmp(test):
+    tmp = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, tmp, True)
+    return tmp
+
+
+def read_only_html(out):
+    names = [n for n in os.listdir(out) if n.endswith(".html")]
+    assert len(names) == 1, names
+    with open(os.path.join(out, names[0]), encoding="utf-8") as f:
+        return f.read()
+
+
+def cli_screen(test, books=True, prep=None, extra=(), input_dir=None, **book_kw):
+    """수집 폴더에 가상 스냅숏(+가상 장부)을 만들고 CLI 로 화면을 만든다. (rc, stdout, page, root, out)."""
+    tmp = new_tmp(test)
+    root, out = os.path.join(tmp, "수집"), os.path.join(tmp, "출력")
+    write_fake_snapshot(root)
+    if books:
+        write_fake_books(os.path.join(root, "위하고"), **book_kw)
+    if prep:
+        prep(root)
+    argv = ["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"]
+    if input_dir:
+        argv += ["--입력", input_dir]
+    rc, text = run_cli(argv + list(extra))
+    page = read_only_html(out) if os.path.isdir(out) and os.listdir(out) else None
+    return rc, text, page, root, out
+
+
+def make_screen(test, wehago_dir, input_dir=SAMPLE):
+    """CLI 대신 make_screen 으로 (page, A). wehago_dir 가 None 이면 스냅숏 옆 위하고 폴더."""
+    tmp = new_tmp(test)
+    snap = write_fake_snapshot(os.path.join(tmp, "수집"))
+    kw = {} if wehago_dir == "default" else {"wehago_dir": wehago_dir}
+    path, A = load_approval_cli().make_screen(input_dir, os.path.join(tmp, "출력"), snap, ASOF, NOW, False, **kw)
+    with open(path, encoding="utf-8") as f:
+        return f.read(), A
+
+
+def req_row(page, no):
+    frag = element_html(page, "requests")
+    m = re.search(r'<tr[^>]*data-no="%s"[^>]*>(.*?)</tr>' % re.escape(no), frag, re.S)
+    return m.group(1) if m else None
+
+
+def table_row(page, table_id, no):
+    frag = element_html(page, table_id)
+    m = re.search(r'<tr[^>]*data-no="%s"[^>]*>(.*?)</tr>' % re.escape(no), frag or "", re.S)
+    return m.group(1) if m else None
+
+
+def td(row, cls):
+    m = re.search(r'<td[^>]*class="[^"]*\b%s\b[^"]*"[^>]*>(.*?)</td>' % re.escape(cls), row, re.S)
+    return None if m is None else text_of(m.group(1))
+
+
+def after_h1(page):
+    """h1 바로 뒤 첫 요소의 시작 글자."""
+    tail = page[page.index("</h1>") + 5:]
+    return tail.lstrip()[:60]
+
+
+def journal_paid_on(date):
+    """분개장 전표 20(5109 지급)의 날짜를 바꾼 가상 분개장."""
+    rows = copy.deepcopy(FAKE_JOURNAL)
+    for r in rows:
+        if r[1] == 20:
+            r[0] = serial(date)
+    return rows
+
+
+def redate_balance(old, new):
+    def go(folder):
+        def mutate(rows):
+            for r in rows:
+                if r and r[0] == old:
+                    r[0] = new
+        edit_csv(folder, "계좌잔액.csv", mutate)
+    return go
+
+
+class TestXchkScreen(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, True)
+        root, out = os.path.join(cls.tmp, "수집"), os.path.join(cls.tmp, "출력")
+        write_fake_snapshot(root)
+        write_fake_books(os.path.join(root, "위하고"))
+        cls.rc, cls.stdout = run_cli(["--기준일", "2026-11-02", "--수집폴더", root, "--출력", out, "--열기", "안함"])
+        cls.page = read_only_html(out)
+        snap = mod("snapshot").latest_snapshot(root)
+        _, cls.A = load_approval_cli().make_screen(SAMPLE, os.path.join(cls.tmp, "o2"), snap, ASOF, NOW, False)
+        cls.books = mod("wehago").load_books(os.path.join(root, "위하고"), ASOF, 7)
+        cls.match = mod("wehago").match_requests(cls.books, requests_all())
+
+    def test_cli_default_folder_is_next_to_snapshots(self):
+        self.assertEqual(self.rc, 0)
+        self.assertTrue(T(self.page, "headline").startswith(HEAD_ALL), T(self.page, "headline"))
+        self.assertIn("부족·최소보유현금 미만 주 없음", T(self.page, "headline"))
+        self.assertEqual(T(self.page, "h-est"), "추정 입금 포함 시 최저 잔액 165.2 백만원 · 2026-12-25")
+
+    def test_week_totals_and_toggle_cells(self):
+        self.assertEqual(week_cell(self.page, 0, "w-out"), "3,664,000")
+        self.assertEqual(week_cell(self.page, 2, "w-out"), "165,800,000")
+        for no, want in (("1201", "187.2"), ("5102", "143.5"), ("5103", "308.2"), ("5108", "145.4")):
+            row = req_row(self.page, no)
+            self.assertEqual(span_text(row, "r-toggle-v"), want, no)
+
+    def test_already_paid_leaves_the_schedule(self):
+        self.assertIsNone(table_row(self.page, "approved", "5109"))
+        row = table_row(self.page, "already-paid", "5109")
+        self.assertIsNotNone(row)
+        self.assertNotIn("<input", row)
+        self.assertIn("2026-10-30", text_of(row))
+        self.assertIn("일정에서 뺌", text_of(row))
+        self.assertEqual([r["번호"] for r in self.A["already_paid"]], ["5109"])
+        self.assertEqual(self.A["paid_after_balance"], [])
+        self.assertNotIn("5109", [r["번호"] for r in self.A["approved_future"]])
+        self.assertIn("5105", [r["번호"] for r in self.A["approved_future"]])
+        # 요청 표에는 체크 없이 남고 근거만 보인다
+        mine = req_row(self.page, "5109")
+        self.assertIn("disabled", mine)
+        self.assertNotIn(" checked", mine)
+
+    def test_amount_difference_uses_the_invoice_total(self):
+        row = req_row(self.page, "5103")
+        amount = td(row, "r-amt")
+        self.assertIn("165,000,000", amount)
+        self.assertIn("인트라넷 요청 160,500,000 · 차액 +4,500,000", amount)
+        rid = re.search(r'data-id="([^"]+)"', row).group(1)
+        sched = [r for r in self.A["data"]["requests"] if r["id"] == rid][0]
+        self.assertEqual(sched["amount"], 165000000)
+        entry = [r for r in self.A["requests_all"] if r["번호"] == "5103"][0]
+        self.assertEqual((entry["amount"], entry["schedule_amount"], entry["amount_source"]),
+                         (160500000, 165000000, "WEHAGO 계산서"))
+        other = [r for r in self.A["requests_all"] if r["번호"] == "1201"][0]
+        self.assertEqual((other["schedule_amount"], other["amount_source"]), (44000000, "인트라넷 요청"))
+
+    def test_summary_line_and_book_dates(self):
+        self.assertEqual(T(self.page, "xchk-summary"), SUMMARY_OK)
+        self.assertTrue(T(self.page, "book-dates").startswith(BOOK_DATES), T(self.page, "book-dates"))
+        for name in ("분개장_20261031.xlsx", "매입매출장_20261031.xlsx", "전자세금계산서(매입)_20261031.xlsx"):
+            self.assertIn(name, T(self.page, "book-dates"))
+        self.assertRegex(self.page, r'id="h-est".*?</div>\s*<div id="xchk-summary"')
+
+    def test_status_column_everywhere(self):
+        rows = self.match["rows"]
+        self.assertEqual(len(rows), 9)
+        for no, m in rows.items():
+            self.assertEqual(td(table_row(self.page, "xchk", no), "x-status"), m["label"], no)
+            self.assertEqual(td(req_row(self.page, no), "r-xchk"), m["label"], no)
+        self.assertEqual(len(re.findall(r'<tr[^>]*data-no=', element_html(self.page, "xchk"))), 9)
+
+    def test_status_chip_classes(self):
+        self.assertIn('class="xs xs-diff"', req_row(self.page, "5103"))
+        self.assertIn('class="xs xs-ok"', req_row(self.page, "1201"))
+        self.assertIn('class="xs xs-none"', req_row(self.page, "5102"))
+        self.assertIn('class="xs xs-na"', req_row(self.page, "5106"))
+        self.assertIn('title="', td_html(req_row(self.page, "5103"), "r-xchk"))
+
+    def test_schedule_notes_line(self):
+        self.assertIn("이미 지급 중 지급일이 잔액 기준일(2026-11-02) 이후 0건", T(self.page, "schedule-notes"))
+
+    def test_block_order(self):
+        p = self.page
+        marks = ['id="h-est"', 'id="xchk-summary"', 'id="attention"', '<table id="requests"', '<table id="weeks"',
+                 '<table id="approved"', '<table id="already-paid"', 'id="book-dates"', '<table id="xchk"']
+        at = [p.index(m) for m in marks]
+        self.assertEqual(at, sorted(at), list(zip(marks, at)))
+
+    def test_stdout_has_counts_only(self):
+        self.assertIn("WEHAGO 대조: 계산서 있음 3건 · 금액 차이 1건 · 계산서 없음 1건 · 이미 지급 1건 · 연결 불가 3건", self.stdout)
+        self.assertIn(BOOK_DATES, self.stdout)
+        self.assertIn("전부 승인 시 최저 잔액 143.2", self.stdout)
+        for text in ("가상음향", "44,000,000", "165,000,000", "49,500,000"):
+            self.assertNotIn(text, self.stdout)
+
+    def test_embedded_json_has_no_wehago_text(self):
+        data = script_text(self.page, "approval-data")
+        for text in ("분개장", "가상제작", "미지급금", "49,500,000"):
+            self.assertNotIn(text, data)
+
+    def test_js_parity_on_adjusted_data(self):
+        A = self.A
+        ids = [r["id"] for r in A["data"]["requests"]]
+        js = run_node(script_text(self.page, "approval-calc"), A["data"], ids)
+        py = mod("approval").scenario(A, ids)
+        self.assertEqual(js["low"], py["low"])
+        self.assertEqual(js["low_day"], py["low_day"])
+        self.assertEqual(js["est_low"], py["est_low"])
+        self.assertEqual(js["weeks"], py["weeks"])
+        self.assertEqual(js["toggle"], {k: list(v) for k, v in py["toggle"].items()})
+
+    def test_option_wins_over_the_default_folder(self):
+        tmp = new_tmp(self)
+        empty = os.path.join(tmp, "비어있음")
+        os.makedirs(empty)
+        rc, text, page, _, _ = cli_screen(self, extra=["--위하고폴더", empty])
+        self.assertEqual(rc, 0)
+        self.assertTrue(T(page, "headline").startswith(HEAD_INTRANET), T(page, "headline"))
+        self.assertEqual(T(page, "xchk-summary").split(" · 일정")[0],
+                         "WEHAGO 대조: 판단 불가(WEHAGO 자료 없음: 분개장, 매입매출장, 전자세금계산서(매입))")
+        self.assertIn("판단 불가", text)
+
+
+def td_html(row, cls):
+    m = re.search(r'<td[^>]*class="[^"]*\b%s\b[^"]*"[^>]*>.*?</td>' % re.escape(cls), row, re.S)
+    return None if m is None else m.group(0)
+
+
+class TestXchkPaidAfterBalance(unittest.TestCase):
+    """D-35b: 지급일이 잔액 기준일 이후인 '이미 지급'은 지급일에 확정 지급으로 일정에 남는다."""
+
+    def run_probe(self, balance_date, paid_date):
+        folder = sample_copy(self)
+        redate_balance("2026-11-02", balance_date)(folder)
+        tmp = new_tmp(self)
+        write_fake_books(os.path.join(tmp, "위하고"), journal=journal_paid_on(paid_date))
+        page, A = make_screen(self, os.path.join(tmp, "위하고"), input_dir=folder)
+        return page, A
+
+    def test_payment_after_the_balance_date_stays_as_a_fixed_outflow(self):
+        page, A = self.run_probe("2026-10-29", dt.date(2026, 10, 30))
+        self.assertEqual([r["번호"] for r in A["already_paid"]], ["5109"])
+        self.assertEqual([r["번호"] for r in A["paid_after_balance"]], ["5109"])
+        notes = T(page, "schedule-notes")
+        self.assertIn("이미 지급 중 지급일이 잔액 기준일(2026-10-29) 이후 1건 49,500,000 "
+                      "(잔액에 아직 없음 → 지급일에 확정 지급으로 일정에 넣음)", notes)
+        self.assertNotIn("(일정에서 뺌", notes)
+        self.assertIsNotNone(table_row(page, "already-paid", "5109"))
+        self.assertNotIn(" checked", req_row(page, "5109"))
+        self.assertIsNone(table_row(page, "approved", "5109"))
+        self.assertIn("확정 지급으로 일정에 둠", T(page, "already-paid"))
+        # 같은 달력에서 지급일을 잔액 기준일 이전으로 옮기면 빠진다: 차이는 5109 금액 하나
+        _, removed = self.run_probe("2026-10-29", dt.date(2026, 10, 29))
+        self.assertEqual([r["번호"] for r in removed["already_paid"]], ["5109"])
+        self.assertEqual(removed["paid_after_balance"], [])
+        self.assertEqual(sum(A["data"]["base_out"]) - sum(removed["data"]["base_out"]), 49500000)
+        self.assertEqual(A["data"]["base_out"][0] - removed["data"]["base_out"][0], 49500000)  # 1주 첫날에 반영(P-8)
+        self.assertEqual([r["id"] for r in A["data"]["requests"]], [r["id"] for r in removed["data"]["requests"]])
+
+    def test_headline_drops_by_the_amount_vs_the_removed_case(self):
+        _, stay = self.run_probe("2026-10-30", dt.date(2026, 10, 31))
+        _, gone = self.run_probe("2026-10-30", dt.date(2026, 10, 30))
+        approval = mod("approval")
+        ids_s = [r["id"] for r in stay["data"]["requests"]]
+        ids_g = [r["id"] for r in gone["data"]["requests"]]
+        self.assertEqual(ids_s, ids_g)
+        s_low = approval.scenario(stay, ids_s)["low"]
+        g_low = approval.scenario(gone, ids_g)["low"]
+        self.assertEqual(g_low - s_low, 49500000)
+        # 지급일 10-31 은 1주(11-02 월요일 시작) 앞이라 1주 첫날에 반영, 주 합계 지급에 들어간다
+        w0 = approval.scenario(stay, ids_s)["weeks"][0]["out"] - approval.scenario(gone, ids_g)["weeks"][0]["out"]
+        self.assertEqual(w0, 49500000)
+
+    def test_payment_on_the_balance_date_is_removed(self):
+        page, A = self.run_probe("2026-10-30", dt.date(2026, 10, 30))
+        self.assertEqual(A["paid_after_balance"], [])
+        self.assertIn("이미 지급 중 지급일이 잔액 기준일(2026-10-30) 이후 0건", T(page, "schedule-notes"))
+        self.assertIn("이미 지급 1건 49,500,000 (일정에서 뺌)", T(page, "xchk-summary"))
+        self.assertNotIn("확정 지급으로 일정에 둠", T(page, "already-paid"))
+
+    def test_summary_line_names_the_kept_payment(self):
+        page, _ = self.run_probe("2026-10-29", dt.date(2026, 10, 30))
+        self.assertIn("이미 지급 1건 49,500,000 (일정에 둠: 지급일이 잔액 기준일 이후)", T(page, "xchk-summary"))
+
+
+if __name__ == "__main__":
+    unittest.main()
