@@ -27,8 +27,8 @@ from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
-from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, FAKE_PL_JOURNAL, shared_inputs,  # noqa: E402
-                               write_xchk, xchk_inputs, xchk_table)
+from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table, shared_inputs,  # noqa: E402
+                               write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, section  # noqa: E402
 
 BASELINE = "cbc5497"
@@ -55,14 +55,24 @@ def plain(markup):
     return htmllib.unescape(re.sub(r"<[^>]+>", "", markup))
 
 
-def sample_folder(test, xchk=None):
+def write_raw(folder, table):
+    """표를 가리지 않고 그대로 쓴다 (사람이 엑셀에서 고친 파일 흉내: 변환기가 가린 글자가 아닌 날 글자가 들어온 경우)."""
+    import csv
+    with open(os.path.join(folder, "위하고대조.csv"), "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(table.columns)
+        for row in table.rows:
+            w.writerow([row.get(c, "") for c in table.columns])
+
+
+def sample_folder(test, xchk=None, raw=False):
     """샘플 입력을 임시 폴더에 복사하고, 표(xchk)가 있으면 위하고대조.csv 로 쓴다. 폴더 경로를 돌려준다."""
     tmp = tempfile.mkdtemp()
     test.addCleanup(shutil.rmtree, tmp, True)
     folder = os.path.join(tmp, "입력")
     shutil.copytree(SAMPLE, folder)
     if xchk is not None:
-        write_xchk(folder, xchk)
+        (write_raw if raw else write_xchk)(folder, xchk)
     return folder
 
 
@@ -104,6 +114,41 @@ def editions_ok(test, ceo, mgmt):
     for word in FORBIDDEN:
         test.assertNotIn(word, ceo, word)
     test.assertEqual(numbers_of(ceo), numbers_of(mgmt))
+
+
+def pages_for(test, table, asof=BASE_ASOF, raw=False):
+    """표(위하고대조.csv가 될 것)로 월간 보고를 한 번 만든다 -> {'ceo': html, 'mgmt': html}."""
+    rc, out, pages, _ = run_cli(test, sample_folder(test, table, raw), "월간", asof)
+    test.assertEqual(rc, 0)
+    return pages
+
+
+def table_cells(page, tid):
+    """id 가 tid 인 표 -> [{머리글: 보통 글자}, ...] (본문 줄만, 합계 줄 포함)."""
+    start = page.index('<table id="%s"' % tid)
+    body = page[start:page.index("</table>", start)]
+    head = [plain(c) for c in re.findall(r"<th[^>]*>(.*?)</th>", body.split("</thead>")[0], re.S)]
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body.split("</thead>")[1], re.S)
+    return [dict(zip(head, [plain(c) for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S)])) for r in rows]
+
+
+def detail_block(page):
+    start = page.index("<div id='xchk-detail'>")
+    return page[start:page.index("<!-- /xchk-detail -->", start)]
+
+
+def with_rows(table, edit):
+    """표의 줄 목록을 edit(rows)로 고친다 (표를 그대로 돌려줌)."""
+    edit(table.rows)
+    return table
+
+
+def fact_row(kind, target="", name="", item="", amount="", count="", note=""):
+    return {"구분": kind, "대상": target, "이름": name, "항목": item, "금액": amount, "건수": count, "비고": note}
+
+
+DETAIL_IDS = ("xchk-status", "xchk-projects", "xchk-outside", "xchk-unlinked", "xchk-vendors-m", "xchk-revenue",
+              "xchk-revenue-unlinked", "xchk-cash")
 
 
 # ───────────── Task 1 (tracer): 위하고대조.csv -> 보고서.py 월간 -> 8번 요약 (두 판 모두) ─────────────
@@ -236,6 +281,345 @@ class TestMonthlySection(unittest.TestCase):
         if rc not in (0, 1):
             self.skipTest("git 기준 커밋 %s 없음" % BASELINE)
         self.assertEqual(rc, 0)
+
+
+# ───────────── Task 2: 경영관리용 상세 표, 모름·미등록 표시, 보통예금 줄 ─────────────
+class TestMonthlyDetail(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dirs = []
+        tmp = tempfile.mkdtemp()
+        cls.dirs.append(tmp)
+        folder = os.path.join(tmp, "입력")
+        shutil.copytree(SAMPLE, folder)
+        write_xchk(folder, xchk_table(shared_inputs()))
+        out_dir = tempfile.mkdtemp()
+        cls.dirs.append(out_dir)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert load_cli().main(["월간", "--기준일", BASE_ASOF, "--입력", folder, "--출력", out_dir, "--pdf", "안함"]) == 0
+        cls.pages = {}
+        for mode, pattern in MONTHLY_FILES.items():
+            with open(os.path.join(out_dir, pattern % BASE_ASOF), encoding="utf-8") as f:
+                cls.pages[mode] = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        for d in cls.dirs:
+            shutil.rmtree(d, True)
+
+    def test_management_edition_has_the_detail_block_with_all_tables_inside_it(self):
+        page = self.pages["mgmt"]
+        block = detail_block(page)
+        self.assertEqual(page.count("<div id='xchk-detail'>"), 1)
+        self.assertEqual(page.count("<!-- /xchk-detail -->"), 1)
+        self.assertTrue(block.startswith("<div id='xchk-detail'>"))
+        for tid in DETAIL_IDS:
+            with self.subTest(tid):
+                self.assertEqual(page.count('<table id="%s"' % tid), 1)
+                self.assertIn('<table id="%s"' % tid, block)
+
+    def test_the_block_is_closed_by_a_div_right_before_the_marker(self):
+        page = self.pages["mgmt"]
+        self.assertIn("</div><!-- /xchk-detail -->", page)
+        start = page.index("<div id='xchk-detail'>")
+        end = page.index("<!-- /xchk-detail -->")
+        self.assertEqual(page[start:end].count("<div"), page[start:end].count("</div>"))
+
+    def test_ceo_edition_has_no_detail_block_and_none_of_its_tables(self):
+        ceo = self.pages["ceo"]
+        self.assertNotIn("xchk-detail", ceo)
+        for tid in DETAIL_IDS + ("xchk-cash-months",):
+            self.assertNotIn(tid, ceo)
+        self.assertIn('<table id="xchk-summary"', ceo)
+
+    def test_the_summary_sits_outside_the_detail_block(self):
+        page = self.pages["mgmt"]
+        self.assertLess(page.index('<table id="xchk-summary"'), page.index("<div id='xchk-detail'>"))
+        self.assertNotIn('<table id="xchk-summary"', detail_block(page))
+
+    def test_numbers_of_ignores_the_detail_block(self):
+        self.assertEqual(numbers_of(self.pages["ceo"]), numbers_of(self.pages["mgmt"]))
+        self.assertNotEqual(re.findall(r"−?\d[\d,.]*", self.pages["ceo"]), re.findall(r"−?\d[\d,.]*", self.pages["mgmt"]))
+
+    def test_status_table(self):
+        rows = table_cells(self.pages["mgmt"], "xchk-status")
+        self.assertEqual([r["요청 상태"] for r in rows], ["계산서 있음", "금액 차이", "계산서 없음", "이미 지급", "연결 불가", "판단 불가"])
+        diff = rows[1]
+        self.assertEqual((diff["인트라넷 요청 건수"], diff["인트라넷 요청 금액"], diff["WEHAGO 계산서 건수"], diff["WEHAGO 계산서 금액"]),
+                         ("1건", "160,500,000", "1건", "165,000,000"))
+        self.assertEqual(rows[0]["WEHAGO 계산서 금액"], "51,700,000")
+        self.assertEqual((rows[2]["WEHAGO 계산서 건수"], rows[2]["WEHAGO 계산서 금액"]), ("-", "-"))
+        self.assertEqual((rows[5]["인트라넷 요청 건수"], rows[5]["인트라넷 요청 금액"]), ("0건", "-"))
+
+    def test_project_table(self):
+        rows = dict((r["번호"], r) for r in table_cells(self.pages["mgmt"], "xchk-projects"))
+        self.assertEqual(list(rows), ["26201", "26220", "26221", "26203"])
+        a = rows["26201"]
+        self.assertEqual((a["프로젝트"], a["WEHAGO 원가"], a["원가 줄"], a["실행가"], a["원가−실행가"]),
+                         ("가상 컨퍼런스", "50,000,000", "2줄", "300,000,000", "−250,000,000"))
+        self.assertEqual((a["요청 누계"], a["요청 건수"], a["요청 누계−원가"]), ("44,264,000", "2건", "−5,736,000"))
+        b = rows["26220"]
+        self.assertEqual((b["WEHAGO 원가"], b["실행가"], b["원가−실행가"], b["요청 누계"]),
+                         ("158,000,000", "250,000,000", "−92,000,000", "166,000,000"))
+
+    def test_outside_requests_table(self):
+        rows = table_cells(self.pages["mgmt"], "xchk-outside")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["건수"], rows[0]["금액"]), ("1건", "2,200,000"))
+
+    def test_unlinked_cost_lines_table_with_masked_memo(self):
+        rows = table_cells(self.pages["mgmt"], "xchk-unlinked")
+        lines = [r for r in rows if r["전표"] != "합계"]
+        self.assertEqual([r["전표"] for r in lines], ["2026-10-29 22-1", "2026-10-29 23-1"])
+        self.assertEqual((lines[0]["거래처"], lines[0]["금액"]), ("가상강사", "800,000"))
+        self.assertIn("******-*******", lines[0]["적요"])
+        self.assertEqual([r["금액"] for r in rows if r["전표"] == "합계"], ["1,100,000"])
+        self.assertIn("전체 2줄 모두 표시", detail_block(self.pages["mgmt"]))
+
+    def test_vendor_table(self):
+        rows = dict((r["거래처"], r) for r in table_cells(self.pages["mgmt"], "xchk-vendors-m"))
+        self.assertEqual(len(rows), 7 + 2)
+        v = rows["㈜가상제작"]
+        self.assertEqual((v["WEHAGO 미지급"], v["인트라넷 요청 건수"], v["인트라넷 요청 금액"], v["차이 (WEHAGO−요청)"]),
+                         ("165,000,000", "1건", "160,500,000", "4,500,000"))
+        self.assertEqual(rows["가상임대"]["차이 (WEHAGO−요청)"], "3,000,000")
+
+    def test_revenue_table_with_manual_contract_amounts(self):
+        rows = table_cells(self.pages["mgmt"], "xchk-revenue")
+        by = dict((r["번호"], r) for r in rows)
+        a = by["26201"]
+        self.assertEqual((a["WEHAGO 매출"], a["매출 줄"], a["계약금액 (수동 입력)"], a["견적금액"]),
+                         ("100,000,000", "1줄", "360,000,000", "420,000,000"))
+        total = [r for r in rows if r["번호"] == "합계"][0]
+        self.assertEqual((total["WEHAGO 매출"], total["계약금액 (수동 입력)"]), ("175,000,000", "530,000,000"))
+        self.assertIn("미등록 2건", total["비고"])
+
+    def test_unlinked_revenue_lines_table(self):
+        rows = table_cells(self.pages["mgmt"], "xchk-revenue-unlinked")
+        lines = [r for r in rows if r["전표"] != "합계"]
+        self.assertEqual([(r["전표"], r["금액"]) for r in lines], [("2026-10-28 32-2", "20,000,000"), ("2026-10-29 38-1", "−1,000,000")])
+        self.assertEqual([r["금액"] for r in rows if r["전표"] == "합계"], ["19,000,000"])
+
+    def test_cash_tables(self):
+        cash = dict((r["항목"], r) for r in table_cells(self.pages["mgmt"], "xchk-cash"))
+        self.assertEqual(cash["WEHAGO 증감 (전체 기간)"]["금액"], "45,000,000")
+        self.assertEqual(cash["WEHAGO 증감 (전체 기간)"]["건수"], "9줄")
+        self.assertEqual(cash["WEHAGO 잔액 (장부 기준일)"]["금액"], "판단 불가")
+        months = dict((r["월"], r) for r in table_cells(self.pages["mgmt"], "xchk-cash-months"))
+        self.assertEqual(months["2026-10"]["WEHAGO 증감"], "57,000,000")
+        self.assertEqual(months["2026-09"]["WEHAGO 증감"], "−12,000,000")
+
+
+class TestMonthlyDetailLists(unittest.TestCase):
+    def long_lines(self, n, kind):
+        return [fact_row(kind, "2026-10-%02d 9-%d" % (i % 28 + 1, i), "가상거래처%02d" % i, "미연결 (코드 없음)", "%d" % (1000 * (i + 1)), "1",
+                         "적요 %02d" % i) for i in range(n)]
+
+    def test_21_unlinked_cost_lines_show_20_rows_and_the_count(self):
+        table = xchk_table(shared_inputs())
+        table.rows[:] = [r for r in table.rows if r["구분"] != "미연결원가줄"] + self.long_lines(21, "미연결원가줄")
+        page = pages_for(self, table)["mgmt"]
+        rows = [r for r in table_cells(page, "xchk-unlinked") if r["전표"] != "합계"]
+        self.assertEqual(len(rows), 20)
+        self.assertEqual(rows[0]["거래처"], "가상거래처00")
+        self.assertEqual(rows[-1]["거래처"], "가상거래처19")
+        self.assertIn("전체 21줄 중 20줄 표시", detail_block(page))
+
+    def test_21_unlinked_revenue_lines_show_20_rows_and_the_count(self):
+        table = xchk_table(shared_inputs())
+        table.rows[:] = [r for r in table.rows if r["구분"] != "매출미연결줄"] + self.long_lines(21, "매출미연결줄")
+        page = pages_for(self, table)["mgmt"]
+        rows = [r for r in table_cells(page, "xchk-revenue-unlinked") if r["전표"] != "합계"]
+        self.assertEqual(len(rows), 20)
+        self.assertIn("전체 21줄 중 20줄 표시", detail_block(page))
+
+    def test_exactly_20_lines_are_all_shown_without_the_cut_text(self):
+        table = xchk_table(shared_inputs())
+        table.rows[:] = [r for r in table.rows if r["구분"] != "미연결원가줄"] + self.long_lines(20, "미연결원가줄")
+        page = pages_for(self, table)["mgmt"]
+        self.assertEqual(len([r for r in table_cells(page, "xchk-unlinked") if r["전표"] != "합계"]), 20)
+        self.assertIn("전체 20줄 모두 표시", detail_block(page))
+        self.assertNotIn("20줄 표시", detail_block(page))
+
+
+def hostile_table():
+    table = xchk_table(shared_inputs())
+
+    def edit(rows):
+        for r in rows:
+            if r["구분"] == "프로젝트원가" and r["대상"] == "26201":
+                r["이름"] = "<b>가상</b> 900101-1234567"
+            if r["구분"] == "미연결원가줄" and r["대상"].endswith("22-1"):
+                r["이름"], r["비고"] = "<script>alert(1)</script>", "메모 900101-1234567 & <i>x</i>"
+            if r["구분"] == "거래처미지급" and r["이름"] == "가상임대":
+                r["이름"], r["비고"] = "가상임대 900101 1234567", "<img src=x>"
+            if r["구분"] == "기준" and r["항목"] == "인트라넷 스냅숏":
+                r["비고"] = "스냅숏 900101-1234567 <u>"
+    return with_rows(table, edit)
+
+
+class TestMonthlyTextCells(unittest.TestCase):
+    """모든 글자 칸은 esc(mask_rrn(...)) 를 지난다 (T-02-37, T-02-38)."""
+
+    def test_detail_cells_and_meta_are_masked_and_escaped(self):
+        for mode, page in pages_for(self, hostile_table(), raw=True).items():
+            with self.subTest(mode):
+                self.assertNotIn("900101", page)
+                self.assertNotIn("1234567", page)
+                self.assertNotIn("<script>alert(1)", page)
+                self.assertNotIn("<img src=x>", page)
+                self.assertNotIn("<b>가상</b>", page)
+                self.assertNotIn("스냅숏 900101", page)
+        mgmt = pages_for(self, hostile_table(), raw=True)["mgmt"]
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", mgmt)
+        self.assertIn("******-*******", mgmt)
+
+
+# ───────────── 모름은 0이 아니다, 계약금액은 수동 입력, 보통예금 ─────────────
+def cash_pages(test, journal=None, bank=None, edit=None):
+    x, table = cash_table(journal=journal, bank=bank)
+    if edit:
+        edit(table.rows)
+    return pages_for(test, table)
+
+
+class TestMonthlyUnknowns(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dirs = []
+        tmp = tempfile.mkdtemp()
+        cls.dirs.append(tmp)
+        folder = os.path.join(tmp, "입력")
+        shutil.copytree(SAMPLE, folder)
+        write_xchk(folder, xchk_table(shared_inputs()))
+        out_dir = tempfile.mkdtemp()
+        cls.dirs.append(out_dir)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert load_cli().main(["월간", "--기준일", BASE_ASOF, "--입력", folder, "--출력", out_dir, "--pdf", "안함"]) == 0
+        cls.pages = {}
+        for mode, pattern in MONTHLY_FILES.items():
+            with open(os.path.join(out_dir, pattern % BASE_ASOF), encoding="utf-8") as f:
+                cls.pages[mode] = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        for d in cls.dirs:
+            shutil.rmtree(d, True)
+
+    def test_unlinked_request_amount_is_unknown_with_the_unconfirmed_count(self):
+        rows = dict((r["요청 상태"], r) for r in table_cells(self.pages["mgmt"], "xchk-status"))
+        self.assertEqual(rows["연결 불가"]["인트라넷 요청 금액"], "판단 불가 (미확인 1건)")
+        self.assertEqual(rows["연결 불가"]["인트라넷 요청 건수"], "3건")
+
+    def test_request_total_of_a_project_with_an_unreadable_amount_is_unknown(self):
+        rows = dict((r["번호"], r) for r in table_cells(self.pages["mgmt"], "xchk-projects"))
+        p = rows["26221"]
+        self.assertEqual(p["요청 누계"], "판단 불가 (미확인 1건)")
+        self.assertEqual(p["요청 건수"], "2건")
+        self.assertEqual(p["요청 누계−원가"], "판단 불가")
+        self.assertEqual(p["실행가"], "판단 불가")
+        self.assertEqual(p["원가−실행가"], "판단 불가")
+        self.assertIn("실행가 빈칸", p["비고"])
+        for key in ("요청 누계", "실행가", "원가−실행가", "요청 누계−원가"):
+            self.assertNotEqual(p[key], "0")
+
+    def test_blank_contract_amount_reads_unregistered_and_the_label_says_manual_input(self):
+        page = self.pages["mgmt"]
+        rows = dict((r["번호"], r) for r in table_cells(page, "xchk-revenue"))
+        self.assertEqual(rows["26220"]["계약금액 (수동 입력)"], "미등록")
+        self.assertEqual(rows["26221"]["계약금액 (수동 입력)"], "미등록")
+        self.assertEqual(rows["26220"]["WEHAGO 매출"], "0")
+        self.assertIn("계약금액 (수동 입력)", summary_rows(page)["매출 (분개장)"])
+        self.assertNotIn("<th>계약금액</th>", page)
+        self.assertNotIn("계약금액 합계", page)
+
+    def test_vendor_without_a_payable_line_is_unknown_not_zero(self):
+        rows = dict((r["거래처"], r) for r in table_cells(self.pages["mgmt"], "xchk-vendors-m"))
+        v = rows["가상꽃"]
+        self.assertEqual((v["WEHAGO 미지급"], v["차이 (WEHAGO−요청)"]), ("판단 불가", "판단 불가"))
+        self.assertIn("분개장 미지급금 줄 없음", v["비고"])
+        w = rows["가상숙박"]
+        self.assertEqual((w["인트라넷 요청 금액"], w["차이 (WEHAGO−요청)"]), ("판단 불가 (미확인 1건)", "판단 불가"))
+
+    def test_cash_detail_without_opening_line_and_bank_files(self):
+        cash = dict((r["항목"], r) for r in table_cells(self.pages["mgmt"], "xchk-cash"))
+        self.assertEqual(cash["기초 잔액"]["금액"], "판단 불가")
+        self.assertIn("기초 잔액 줄 없음", cash["기초 잔액"]["비고"])
+        self.assertEqual(cash["계좌잔액.csv 잔액 합계"]["금액"], "판단 불가")
+        self.assertIn("계좌잔액.csv 없음", cash["계좌잔액.csv 잔액 합계"]["비고"])
+        self.assertEqual(cash["차이 (장부 잔액 − 계좌잔액.csv)"]["금액"], "판단 불가")
+        for r in table_cells(self.pages["mgmt"], "xchk-cash-months"):
+            self.assertEqual(r["입출금내역 증감 (입금−출금)"], "판단 불가")
+            self.assertEqual(r["차이 (WEHAGO−입출금내역)"], "판단 불가")
+            self.assertIn("입출금내역.csv 없음", r["비고"])
+
+    def test_cash_summary_with_opening_balance_and_bank_balances(self):
+        bank = {"balances": BANK_BALANCES, "transactions": BANK_TX}
+        for mode, page in cash_pages(self, journal=OPENING_CASH, bank=bank).items():
+            with self.subTest(mode):
+                self.assertEqual(summary_rows(page)["보통예금 (WEHAGO 10300)"],
+                                 "증감 45,000,000 · 장부 잔액 345,000,000 · 계좌잔액.csv 합계 345,000,000 · 차이 0")
+        mgmt = cash_pages(self, journal=OPENING_CASH, bank=bank)["mgmt"]
+        months = dict((r["월"], r) for r in table_cells(mgmt, "xchk-cash-months"))
+        self.assertEqual((months["2026-10"]["WEHAGO 증감"], months["2026-10"]["입출금내역 증감 (입금−출금)"],
+                          months["2026-10"]["차이 (WEHAGO−입출금내역)"]), ("57,000,000", "57,000,000", "0"))
+        self.assertEqual(months["2026-09"]["입출금내역 증감 (입금−출금)"], "판단 불가")
+        self.assertEqual(months["2026-09"]["차이 (WEHAGO−입출금내역)"], "판단 불가")
+        cash = dict((r["항목"], r) for r in table_cells(mgmt, "xchk-cash"))
+        self.assertEqual(cash["기초 잔액"]["금액"], "300,000,000")
+        self.assertEqual(cash["차이 (장부 잔액 − 계좌잔액.csv)"]["금액"], "0")
+
+    def test_cash_summary_shows_a_real_difference_with_its_sign(self):
+        bank = {"balances": [dict(BANK_BALANCES[0]), dict(BANK_BALANCES[1], 잔액="100,000,000")], "transactions": None}
+        pages = cash_pages(self, journal=OPENING_CASH, bank=bank)
+        self.assertEqual(summary_rows(pages["ceo"])["보통예금 (WEHAGO 10300)"],
+                         "증감 45,000,000 · 장부 잔액 345,000,000 · 계좌잔액.csv 합계 300,000,000 · 차이 45,000,000")
+
+    def test_cash_summary_with_bank_balance_but_no_opening_line_has_no_difference(self):
+        bank = {"balances": BANK_BALANCES, "transactions": None}
+        value = summary_rows(cash_pages(self, bank=bank)["ceo"])["보통예금 (WEHAGO 10300)"]
+        self.assertEqual(value, "증감 45,000,000 · 장부 잔액 판단 불가 (기초 잔액 줄 없음) · 계좌잔액.csv 합계 345,000,000 · 차이 판단 불가")
+
+    def test_no_registered_contract_amount_is_not_a_zero_total(self):
+        def edit(rows):
+            for r in rows:
+                if r["구분"] == "매출계약" and r["항목"] == "계약금액 (수동 입력)":
+                    r["금액"], r["비고"] = "", "미등록"
+        table = with_rows(xchk_table(shared_inputs()), edit)
+        value = summary_rows(pages_for(self, table)["ceo"])["매출 (분개장)"]
+        self.assertIn("계약금액 (수동 입력) 등록된 값 없음 (미등록 4건)", value)
+        self.assertNotIn("합계 0", value)
+
+    def test_a_project_without_a_known_cost_makes_the_cost_total_unknown(self):
+        def edit(rows):
+            for r in rows:
+                if r["구분"] == "프로젝트원가" and r["대상"] == "26203" and r["항목"] == "WEHAGO 원가":
+                    r["금액"], r["비고"] = "", "금액 미확인 1줄"
+        table = with_rows(xchk_table(shared_inputs()), edit)
+        pages = pages_for(self, table)
+        value = summary_rows(pages["ceo"])["프로젝트 (도)원가"]
+        self.assertTrue(value.startswith("판단 불가 (금액 미확인 1개 프로젝트) 확인된 합계 213,400,000"), value)
+        self.assertIn("원가 판단 불가 1개 프로젝트는 제외", value)
+        rows = dict((r["번호"], r) for r in table_cells(pages["mgmt"], "xchk-projects"))
+        self.assertEqual(rows["26203"]["WEHAGO 원가"], "판단 불가 (미확인 1줄)")
+        self.assertEqual(rows["26203"]["원가−실행가"], "판단 불가")
+        self.assertEqual(summary_rows(pages["ceo"]), summary_rows(pages["mgmt"]))
+
+    def test_unlinked_total_with_an_unknown_line_is_unknown_with_the_count(self):
+        def edit(rows):
+            for r in rows:
+                if r["구분"] == "미연결원가" and r["항목"] == "WEHAGO 원가":
+                    r["금액"], r["비고"] = "", "금액 미확인 1줄"
+        pages = pages_for(self, with_rows(xchk_table(shared_inputs()), edit))
+        self.assertEqual(summary_rows(pages["ceo"])["프로젝트 미연결 원가"], "2줄 금액 판단 불가 (미확인 1줄)")
+
+    def test_both_editions_stay_equal_for_every_variant(self):
+        bank = {"balances": BANK_BALANCES, "transactions": BANK_TX}
+        for name, pages in (("fixture", pages_for(self, xchk_table(shared_inputs()))),
+                            ("cash", cash_pages(self, journal=OPENING_CASH, bank=bank)),
+                            ("hostile", pages_for(self, hostile_table(), raw=True))):
+            with self.subTest(name):
+                editions_ok(self, pages["ceo"], pages["mgmt"])
 
 
 # ───────────── 주간 보고는 바뀌지 않는다 (cbc5497 코드와 같은 HTML) ─────────────
