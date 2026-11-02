@@ -203,11 +203,16 @@ def read_prev(input_dir, name):
 
 # ───────────── 안전하게 쓰기 (D-43): 잠금 확인 → 임시 파일 → 이전 파일 복사 → 바꿔치기 ─────────────
 class WriteFailed(Exception):
-    """파일을 쓸 수 없음. name 은 입력 폴더 안 파일 이름, replaced 는 이미 바꾼 파일 이름들."""
+    """파일을 쓸 수 없음. name 은 입력 폴더 안 파일 이름, replaced 는 실패 전에 이미 바꾼 파일 이름들.
 
-    def __init__(self, name, error, replaced=()):
+    바꿔치기 중에 실패하면 (02-REVIEW WR-01) replaced 를 이전/<backup>/ 의 복사본으로 되돌린다: restored 는 되돌린 파일,
+    lost 는 되돌리지 못해 새 내용이 남은 파일, backup 은 이전 파일 폴더 이름, stage 는 실패한 단계('replace' 면 바꾸는 중).
+    """
+
+    def __init__(self, name, error, replaced=(), restored=(), lost=(), backup=None, stage=""):
         Exception.__init__(self, "%s: %s" % (name, error))
         self.name, self.error, self.replaced = name, error, list(replaced)
+        self.restored, self.lost, self.backup, self.stage = list(restored), list(lost), backup, stage
 
 
 def _check_writable(path):
@@ -236,12 +241,31 @@ def plan_backup(input_dir, names, stamp):
     return (_backup_name(input_dir, stamp) if existing else None), existing
 
 
+def roll_back(input_dir, names, existed, backup):
+    """이미 바꾼 파일을 되돌린다 (WR-01): 전에 있던 파일은 이전/<backup>/ 복사본으로, 없던 파일은 지운다 -> (되돌림, 못 함)."""
+    restored, lost = [], []
+    for name in names:
+        path = os.path.join(input_dir, name)
+        try:
+            if name in existed:
+                if not backup:
+                    raise OSError("이전 파일 폴더 없음")
+                shutil.copy2(os.path.join(input_dir, "이전", backup, name), path)
+            elif os.path.exists(path):
+                os.remove(path)
+            restored.append(name)
+        except OSError:
+            lost.append(name)
+    return restored, lost
+
+
 def write_files(input_dir, payloads, stamp, backup=None):
     """[(이름, 바이트)]를 입력 폴더에 쓴다. 이름은 GENERATED 안에 있어야 한다 (아니면 ValueError, 아무것도 건드리지 않음).
 
     1) 이미 있는 대상을 모두 쓰기로 열어 본다 2) 새 내용을 '<이름>.변환중' 임시 파일로 쓴다 3) 이미 있던 파일을
     이전/<backup>/ 에 복사한다 4) 임시 파일을 os.replace 로 대상에 바꾼다. 3) 이전에 실패하면 아무것도 바뀌지 않는다
     (WriteFailed). backup 을 주면 그 이름의 폴더를 쓴다 (같은 실행의 두 번째 쓰기가 같은 폴더를 쓰도록).
+    4) 중간에 실패하면 이미 바꾼 파일을 3) 의 복사본으로 되돌린 뒤 WriteFailed (stage 'replace', 02-REVIEW WR-01).
     """
     for name, _ in payloads:
         if name not in GENERATED:
@@ -262,10 +286,11 @@ def write_files(input_dir, payloads, stamp, backup=None):
                 _write_temp(tmp, payload)
             except OSError as e:
                 raise WriteFailed(name, e)
-        folder = None
+        folder, used = None, None
         existing = [(n, p) for n, p in targets if os.path.exists(p)]
         if existing:
-            folder = os.path.join(input_dir, "이전", backup or _backup_name(input_dir, stamp))
+            used = backup or _backup_name(input_dir, stamp)
+            folder = os.path.join(input_dir, "이전", used)
             fresh = not os.path.exists(folder)
             try:
                 os.makedirs(folder, exist_ok=True)
@@ -280,7 +305,8 @@ def write_files(input_dir, payloads, stamp, backup=None):
             try:
                 os.replace(tmp, path)
             except OSError as e:
-                raise WriteFailed(name, e, done)
+                restored, lost = roll_back(input_dir, done, set(n for n, _ in existing), used)
+                raise WriteFailed(name, e, done, restored, lost, used, "replace")
             done.append(name)
     finally:
         for tmp in temps:
@@ -544,9 +570,31 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
 
 def _write_failed_lines(e):
     out = ["입력/%s을(를) 쓸 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행)" % e.name]
-    if e.replaced:
-        out.append("이미 바뀐 파일: " + ", ".join(e.replaced))
+    where = "입력/이전/%s/" % e.backup if e.backup else "입력/이전/"
+    if e.restored:
+        out.append("이미 바꾼 파일을 이전 내용으로 되돌림: %s (%s 에서)" % (", ".join(e.restored), where))
+    if e.lost:
+        out.append("되돌리지 못한 파일 (새 내용 그대로): %s — %s 의 같은 이름 파일로 직접 바꾸세요" % (", ".join(e.lost), where))
+    unsaid = [n for n in e.replaced if n not in e.restored and n not in e.lost]
+    if unsaid:
+        out.append("이미 바뀐 파일: " + ", ".join(unsaid))
     return out
+
+
+FAILED_HEAD = "변환 실패 — 파일을 바꾸는 중 멈춤 (종료 코드 7): 입력의 CSV는 이전 변환 그대로입니다"
+
+
+def _failure_result(input_dir, now, asof, e, stamp, backup):
+    """바꾸는 중 실패 (WR-01): 변환결과.txt 를 실패 내용으로 다시 쓴다 -> 화면 줄. 쓸 수 없으면 그것도 알린다."""
+    head = FAILED_HEAD if not e.lost else "변환 실패 — 파일을 바꾸는 중 멈춤 (종료 코드 7): 되돌리지 못한 파일이 있습니다"
+    body = [head] + _write_failed_lines(e)
+    text = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat())] + body
+    text.append("엑셀 등에서 연 파일을 닫고 다시 변환하세요. 이 변환의 대조 결과는 없습니다.")
+    try:
+        write_files(input_dir, [("변환결과.txt", _text_bytes(text))], stamp, e.backup or backup)
+    except WriteFailed:
+        body.append("변환결과.txt도 쓰지 못함 (이전 변환의 결과가 남아 있음)")
+    return body
 
 
 def _kept_invoice_reason(input_dir, sales):
@@ -719,7 +767,8 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
             write_files(input_dir, csv_payloads, stamp, backup)
     except WriteFailed as e:
         res.code = 7
-        res.lines = _write_failed_lines(e)
+        # 바꾸는 중 실패: 이미 바꾼 CSV 는 되돌렸다. 변환결과.txt 를 실패로 다시 써서 이전 결과가 새 실행을 말하지 않게 한다 (WR-01)
+        res.lines = _failure_result(input_dir, now, asof, e, stamp, backup) if e.stage == "replace" else _write_failed_lines(e)
         return res
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
     listings, summary = [], []
@@ -732,7 +781,10 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)
     except WriteFailed as e:
         res.code = 7
-        res.lines = _write_failed_lines(e) + ["새 CSV 는 이미 바뀌었음: " + ", ".join(n for n, _ in csv_payloads)]
+        # 새 CSV 와 맞는 변환결과.txt 를 쓰지 못했다: CSV 도 되돌려 폴더가 한 실행의 결과만 담게 한다 (WR-01)
+        restored, lost = roll_back(input_dir, [n for n, _ in csv_payloads], set(moved), backup)
+        e.replaced, e.restored, e.lost, e.backup = [n for n, _ in csv_payloads], restored, lost, backup
+        res.lines = _write_failed_lines(e)
         return res
     res.backup = os.path.join(input_dir, "이전", backup) if backup else None
     out = []

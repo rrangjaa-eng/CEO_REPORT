@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -532,6 +533,120 @@ class TestCR05Receipts(unittest.TestCase):
         self.assertEqual(convert.check_result(c), "판단 불가")
         c = convert_invoices.balance_check(0, [{"공급가액": "100000000", "부가세": "", "입금액": ""}], 0, "")
         self.assertEqual(convert.check_result(c), "판단 불가")
+
+
+
+# ───────────── WR-01: 바꿔치기가 중간에 실패하면 이미 바꾼 파일을 되돌린다 ─────────────
+class FlakyReplace(object):
+    """os.replace 대신: '.변환중' 임시 파일을 대상에 놓는 n번째 호출만 실패한다 (윈도 공유 위반·백신 검사 흉내)."""
+
+    def __init__(self, fail_at):
+        self.real, self.fail_at, self.calls = os.replace, fail_at, []
+
+    def __call__(self, src, dst):
+        if str(src).endswith(".변환중"):
+            self.calls.append(os.path.basename(dst))
+            if len(self.calls) == self.fail_at:
+                raise PermissionError(13, "sharing violation", dst)
+        return self.real(src, dst)
+
+
+def read_text(path):
+    with open(path, encoding="utf-8-sig") as f:
+        return f.read()
+
+
+class TestWR01Rollback(unittest.TestCase):
+    def write(self, folder, names):
+        for n in names:
+            with open(os.path.join(folder, n), "w", encoding="utf-8") as f:
+                f.write("OLD " + n)
+
+    def test_repro_f_the_replaced_file_is_restored_from_the_backup(self):
+        d = new_tmp(self)
+        self.write(d, ("손익.csv", "계산서.csv"))
+        flaky = FlakyReplace(2)
+        with unittest.mock.patch.object(convert.os, "replace", flaky):
+            with self.assertRaises(convert.WriteFailed) as cm:
+                convert.write_files(d, [("손익.csv", b"NEW"), ("계산서.csv", b"NEW")], "20261102_090000")
+        e = cm.exception
+        self.assertEqual((e.name, e.replaced, e.restored, e.lost), ("계산서.csv", ["손익.csv"], ["손익.csv"], []))
+        for n in ("손익.csv", "계산서.csv"):
+            self.assertEqual(read_text(os.path.join(d, n)), "OLD " + n)
+        self.assertEqual(sorted(os.listdir(d)), ["계산서.csv", "손익.csv", "이전"])   # 임시 파일 없음
+        lines = convert._write_failed_lines(e)
+        self.assertIn("이미 바꾼 파일을 이전 내용으로 되돌림: 손익.csv (입력/이전/20261102_090000/ 에서)", lines)
+
+    def test_a_file_that_did_not_exist_before_is_removed_again(self):
+        d = new_tmp(self)
+        self.write(d, ("계산서.csv",))
+        with unittest.mock.patch.object(convert.os, "replace", FlakyReplace(2)):
+            with self.assertRaises(convert.WriteFailed) as cm:
+                convert.write_files(d, [("손익.csv", b"NEW"), ("계산서.csv", b"NEW")], "20261102_090000")
+        self.assertEqual(cm.exception.restored, ["손익.csv"])
+        self.assertFalse(os.path.exists(os.path.join(d, "손익.csv")))
+        self.assertEqual(read_text(os.path.join(d, "계산서.csv")), "OLD 계산서.csv")
+
+    def test_a_rollback_that_fails_is_named(self):
+        d = new_tmp(self)
+        self.write(d, ("손익.csv", "계산서.csv"))
+        real_copy = convert.shutil.copy2
+
+        def copy2(src, dst, *a, **k):
+            if os.sep + "이전" + os.sep in str(src):
+                raise PermissionError(13, "denied", dst)
+            return real_copy(src, dst, *a, **k)
+
+        with unittest.mock.patch.object(convert.os, "replace", FlakyReplace(2)):
+            with unittest.mock.patch.object(convert.shutil, "copy2", copy2):
+                with self.assertRaises(convert.WriteFailed) as cm:
+                    convert.write_files(d, [("손익.csv", b"NEW"), ("계산서.csv", b"NEW")], "20261102_090000")
+        e = cm.exception
+        self.assertEqual((e.restored, e.lost), ([], ["손익.csv"]))
+        self.assertTrue([ln for ln in convert._write_failed_lines(e) if ln.startswith("되돌리지 못한 파일 (새 내용 그대로): 손익.csv")])
+
+    def test_run_restores_every_csv_writes_the_failure_result_and_exits_7(self):
+        from test_convert import convert_input, write_convert_books
+        from test_approval import write_fake_snapshot
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir)
+        write_fake_snapshot(collect)
+        names = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv")
+        before = dict((n, read_text(os.path.join(input_dir, n))) for n in names if os.path.exists(os.path.join(input_dir, n)))
+        flaky = FlakyReplace(3)
+        with unittest.mock.patch.object(convert.os, "replace", flaky):
+            res = convert.run(input_dir, collect, wehago_dir, dt.date(2026, 11, 2), dt.datetime(2026, 11, 2, 0, 0))
+        self.assertEqual(res.code, 7, res.lines)
+        for n in names:
+            path = os.path.join(input_dir, n)
+            if n in before:
+                self.assertEqual(read_text(path), before[n], n)
+            else:
+                self.assertFalse(os.path.exists(path), n)
+        text = read_text(os.path.join(input_dir, "변환결과.txt")).splitlines()
+        failed = flaky.calls[2]
+        self.assertIn("변환 실패 — 파일을 바꾸는 중 멈춤 (종료 코드 7): 입력의 CSV는 이전 변환 그대로입니다", text)
+        self.assertIn("입력/%s을(를) 쓸 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행)" % failed, text)
+        self.assertTrue([ln for ln in text if ln.startswith("이미 바꾼 파일을 이전 내용으로 되돌림: %s, %s" % tuple(flaky.calls[:2]))], text)
+        self.assertIn("변환 실패 — 파일을 바꾸는 중 멈춤 (종료 코드 7): 입력의 CSV는 이전 변환 그대로입니다", res.lines)
+
+    def test_when_the_result_file_cannot_be_written_the_csvs_are_restored_too(self):
+        from test_convert import convert_input, write_convert_books
+        from test_approval import write_fake_snapshot
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir)
+        write_fake_snapshot(collect)
+        names = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "변환결과.txt")
+        before = dict((n, read_text(os.path.join(input_dir, n))) for n in names if os.path.exists(os.path.join(input_dir, n)))
+        flaky = FlakyReplace(6)   # CSV 다섯 개는 바뀌고 변환결과.txt 에서 실패
+        with unittest.mock.patch.object(convert.os, "replace", flaky):
+            res = convert.run(input_dir, collect, wehago_dir, dt.date(2026, 11, 2), dt.datetime(2026, 11, 2, 0, 0))
+        self.assertEqual(res.code, 7, res.lines)
+        self.assertEqual(flaky.calls[-1], "변환결과.txt")
+        for n in names:
+            path = os.path.join(input_dir, n)
+            self.assertEqual(read_text(path) if os.path.exists(path) else None, before.get(n), n)
+        self.assertTrue([ln for ln in res.lines if ln.startswith("이미 바꾼 파일을 이전 내용으로 되돌림: 손익.csv")], res.lines)
 
 
 if __name__ == "__main__":
