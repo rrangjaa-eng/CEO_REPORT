@@ -368,13 +368,15 @@ class TestWehagoHeaders(unittest.TestCase):
                                         "extra": ["메모"]})
         self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
 
-    def test_an_extra_column_alone_also_stops_everything(self):
+    def test_an_extra_column_alone_no_longer_stops(self):
+        # D-35c 가 D-35a 의 '추가 열만으로도 멈춤'을 바꾼다: 필수 열이 다 있으면 읽고, 추가 열은 무시하되 알린다.
         folder = folder_with(self)
         write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER + ["비고"]] + [r + ["x"] for r in FAKE_LEDGER])
         books = load(folder)
-        self.assertEqual(books.state, "머리글 다름")
-        self.assertEqual(books.reason, "매입매출장_20261031.xlsx 머리글이 예상과 다름 — 추가: 비고")
-        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+        self.assertEqual((books.state, books.reason), ("ok", ""))
+        self.assertEqual(len(books.ledger), 8)
+        self.assertEqual(books.files["매입매출장"]["extra_columns"], ["비고"])
+        self.assertEqual(books.files["매입매출장"]["extra_note"], "추가 열 무시: 비고")
 
     def test_header_mismatch_wins_over_a_missing_file(self):
         folder = folder_with(self, drop=("전자세금계산서(매입)",))
@@ -901,3 +903,177 @@ class TestWehagoProjectCost(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ───────────── D-35c: 실제 파일 점검 후속 (추가 열 · 요약 줄 · 장부 기준일 이후 전표) ─────────────
+REAL_EXTRA = ["Code", "계정과목", "Code", "부서명", "Code", "프로젝트명", "Code", "카드사명"]
+
+
+class TestWehagoExtraColumns(unittest.TestCase):
+    def test_real_ledger_header_with_eight_more_columns_loads(self):
+        folder = folder_with(self)
+        base, _ = read_kind(folder, "매입매출장")
+        rows = [LEDGER_HEADER + REAL_EXTRA] + [r + ["1", "미지급금", "2", "영업", "3", "", "4", ""] for r in FAKE_LEDGER]
+        write_xlsx(kind_path(folder, "매입매출장"), rows)
+        got, info = read_kind(folder, "매입매출장")
+        self.assertEqual(got, base)
+        self.assertEqual(info["extra_columns"], REAL_EXTRA)
+        books = load(folder)
+        self.assertEqual((books.state, books.reason), ("ok", ""))
+        entry = books.files["매입매출장"]
+        self.assertEqual(entry["extra_columns"], REAL_EXTRA)
+        self.assertEqual(entry["extra_note"], "추가 열 무시: " + ", ".join(REAL_EXTRA))
+        self.assertEqual(books.files["분개장"]["extra_columns"], [])
+        self.assertEqual(books.files["분개장"]["extra_note"], "")
+        self.assertEqual(len(books.ledger), 8)
+
+    def test_extra_columns_between_required_ones_are_ignored(self):
+        folder = folder_with(self)
+        base, _ = read_kind(folder, "매입매출장")
+        rows = [r[:3] + ["끼움A"] + r[3:8] + ["끼움B"] + r[8:] for r in [LEDGER_HEADER] + FAKE_LEDGER]
+        rows[0][3], rows[0][9] = "끼움A", "끼움B"
+        write_xlsx(kind_path(folder, "매입매출장"), rows)
+        got, info = read_kind(folder, "매입매출장")
+        self.assertEqual(got, base)
+        self.assertEqual(info["extra_columns"], ["끼움A", "끼움B"])
+
+    def test_the_two_leading_code_columns_of_the_journal_still_map_by_order(self):
+        folder = folder_with(self)
+        base, _ = read_kind(folder, "분개장")
+        rows = [r + ["Z"] for r in [JOURNAL_HEADER] + FAKE_JOURNAL]
+        rows[0][-1] = "Code"  # 세 번째 Code 는 추가 열
+        write_xlsx(kind_path(folder, "분개장"), rows)
+        got, info = read_kind(folder, "분개장")
+        self.assertEqual(got, base)
+        self.assertEqual(got[0]["account_code"], "61101")
+        self.assertEqual(info["extra_columns"], ["Code"])
+
+    def test_a_missing_required_column_still_stops_even_with_extra_columns(self):
+        folder = folder_with(self)
+        drop = LEDGER_HEADER.index("합계")
+        rows = [[c for i, c in enumerate(r) if i != drop] + ["비고"] for r in [LEDGER_HEADER] + FAKE_LEDGER]
+        write_xlsx(kind_path(folder, "매입매출장"), rows)
+        books = load(folder)
+        self.assertEqual(books.state, "머리글 다름")
+        self.assertIn("없음: 합계", books.reason)
+        self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
+
+
+class TestWehagoSummaryRows(unittest.TestCase):
+    TOTAL = "합계 (건수 : 4,292 )"
+    BY_VENDOR = "거래처별 소계: 9건"
+    GROUP = "합계(거래처:166) : 753건"
+
+    def test_journal_total_in_the_date_column_is_skipped_not_undated(self):
+        folder = folder_with(self)
+        total = [self.TOTAL] + [""] * 9
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + [total])
+        books = load(folder)
+        entry = books.files["분개장"]
+        self.assertEqual((entry["skipped"], entry["undated"], entry["rows"]), (1, 0, 34))
+        self.assertEqual(len(books.journal), 34)
+        self.assertEqual(entry["last_date"], dt.date(2026, 10, 30))
+
+    def test_einvoice_vendor_subtotal_and_ledger_group_total(self):
+        folder = folder_with(self)
+        sub = [self.BY_VENDOR] + [""] * 11
+        write_xlsx(kind_path(folder, "전자세금계산서(매입)"), [EINVOICE_HEADER] + FAKE_EINVOICE + [sub])
+        grp = [""] * 14
+        grp[3] = "  " + self.GROUP + " "
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER] + FAKE_LEDGER + [grp])
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        for kind, n in (("전자세금계산서(매입)", 2), ("매입매출장", 9)):
+            entry = books.files[kind]
+            self.assertEqual((entry["skipped"], entry["undated"], entry["rows"]), (1, 0, n), kind)
+        self.assertEqual(books.files["전자세금계산서(매입)"]["last_date"], dt.date(2026, 10, 28))
+        self.assertEqual(len(books.einvoice), 2)
+        self.assertEqual(len(books.ledger), 8)
+
+    def test_each_summary_word_at_the_start_of_any_cell_and_the_vendor_subtotal_anywhere(self):
+        folder = folder_with(self)
+        extra = []
+        for i, text in enumerate(("합계", "소계 1건", "일계", "월계(10월)", "누계: 3", "총 거래처별 소계 9건")):
+            row = [""] * 10
+            row[9 - i % 3] = text  # 마지막 칸들 어디든
+            extra.append(row)
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + extra)
+        entry = load(folder).files["분개장"]
+        self.assertEqual((entry["skipped"], entry["undated"], entry["rows"]), (6, 0, 34))
+
+    def test_a_dated_row_with_a_summary_cell_is_skipped_and_does_not_move_last_date(self):
+        folder = folder_with(self)
+        row = list(FAKE_JOURNAL[0])
+        row[0], row[9] = serial(dt.date(2027, 1, 5)), "소계"
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + [row])
+        entry = load(folder).files["분개장"]
+        self.assertEqual((entry["skipped"], entry["rows"]), (1, 34))
+        self.assertEqual(entry["last_date"], dt.date(2026, 10, 30))
+
+    def test_a_word_in_the_middle_of_a_normal_cell_is_not_a_summary(self):
+        folder = folder_with(self)
+        row = list(FAKE_JOURNAL[0])
+        row[9] = "[26201] 정산 합계 확인"
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + [row])
+        entry = load(folder).files["분개장"]
+        self.assertEqual((entry["skipped"], entry["rows"]), (0, 35))
+
+
+class TestWehagoAfterRef(unittest.TestCase):
+    LATE = (dt.date(2026, 11, 5), dt.date(2026, 12, 31))
+
+    def _late_rows(self):
+        return [_jl(d, 90 + i, "81900", "임차료", 1000, None, "가상임대", "미래 전표") for i, d in enumerate(self.LATE)]
+
+    def test_rows_after_the_file_date_are_kept_and_counted(self):
+        folder = folder_with(self, journal=FAKE_JOURNAL + self._late_rows())
+        books = load(folder)
+        entry = books.files["분개장"]
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(entry["after_ref"], 2)
+        self.assertEqual(entry["rows"], 36)
+        self.assertEqual(len(books.journal), 36)
+        self.assertEqual(entry["last_date"], dt.date(2026, 12, 31))
+        self.assertEqual(entry["ref_date"], dt.date(2026, 10, 31))
+        self.assertEqual(books.book_date, dt.date(2026, 10, 31))  # last_date 가 장부 기준일을 옮기지 않는다
+        self.assertEqual(books.files["매입매출장"]["after_ref"], 0)
+        self.assertEqual(books.after_ref, 2)
+
+    def test_read_book_reports_after_ref_and_a_row_on_the_ref_date_is_not_after(self):
+        folder = folder_with(self, journal=FAKE_JOURNAL + self._late_rows())
+        _, info = read_kind(folder, "분개장", file_date=dt.date(2026, 10, 31))
+        self.assertEqual(info["after_ref"], 2)
+        _, info = read_kind(folder, "분개장", file_date=dt.date(2026, 11, 5))
+        self.assertEqual(info["after_ref"], 1)  # 11-05 당일은 이후가 아니다
+        _, info = read_kind(folder, "분개장")
+        self.assertEqual(info["after_ref"], 0)  # 파일 날짜가 없으면 마지막 전표일이 기준일이라 이후는 없다
+
+    def test_no_file_date_means_no_after_ref_rows(self):
+        folder = folder_with(self, journal=FAKE_JOURNAL + self._late_rows())
+        os.rename(kind_path(folder, "분개장"), os.path.join(folder, "분개장.xlsx"))
+        books = load(folder, asof=dt.date(2026, 12, 31), stale=100)
+        self.assertEqual(books.files["분개장"]["after_ref"], 0)
+
+    def test_payment_after_the_book_date_is_not_an_already_paid_line(self):
+        w = mod("wehago")
+        books = with_journal(self, stamp="20261029")  # 지급 전표(5109)는 10-30: 장부 기준일 이후
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["분개장"]["after_ref"], 2)
+        m = w.match_requests(books, requests_all())
+        self.assertNotEqual(m["rows"]["5109"]["status"], "이미 지급")
+        self.assertEqual(label(m, "5109"), "계산서 있음")
+        self.assertEqual(m["summary"]["이미 지급"]["count"], 0)
+
+    def test_payment_on_the_book_date_still_counts(self):
+        w = mod("wehago")
+        books = with_journal(self, stamp="20261030")
+        m = w.match_requests(books, requests_all())
+        self.assertEqual(label(m, "5109"), "이미 지급 (분개장 2026-10-30 전표 20)")
+
+    def test_a_late_second_payment_line_does_not_make_the_payment_doubtful(self):
+        w = mod("wehago")
+        late = pay_line(no=26, date=dt.date(2026, 11, 20))
+        books = with_journal(self, extra=[late])
+        self.assertEqual(books.files["분개장"]["after_ref"], 1)
+        m = w.match_requests(books, requests_all())
+        self.assertEqual(label(m, "5109"), "이미 지급 (분개장 2026-10-30 전표 20)")
