@@ -56,21 +56,34 @@ def compute(d, kind, asof, start=None):
     by_cat = defaultdict(lambda: [0, 0])
     for t in ext:
         by_cat[t["cat"]][0 if t["io"] == "입금" else 1] += t["amount"]
-    # 기간 시작 잔액: 은행 잔액이 있으면 그것, 없으면 기말 잔액에서 거꾸로 계산
+    acct_flow = defaultdict(lambda: [0, 0])
+    for t in in_p:
+        acct_flow[t["account"]][0 if t["io"] == "입금" else 1] += t["amount"]
+    # 잔액이 빈칸인 계좌: 합계에서 빼고(0으로 두지 않음), 그 사실을 보고서 곳곳에 보인다. 사용제한금액은 그대로 차감.
+    unknown_bal = [a for a in accounts if a["balance"] is None]
+    unknown_names = [a["account"] for a in unknown_bal]
+    bal_unknown_restricted, _ = ssum(a["restricted"] for a in unknown_bal)
+    for a in unknown_bal:
+        d.issues.add(a["row"]["_file"], a["row"]["_line"],
+                     "잔액 미확인 (" + a["account"] + ") → 현재 현금·사용 가능액 합계에서 제외")
+    # 기간 시작 잔액: 은행 잔액이 있으면 그것, 없으면 기말 잔액에서 거꾸로 계산 (잔액 확인된 계좌만)
     start_snap = OrderedDict()
     for b in sorted(d.balances, key=lambda x: x["date"]):
         if b["date"] == p0 - DAY:
             start_snap[b["account"]] = b
     start_calc = total_bal - tin + tout - tr_in + tr_out
+    for a in unknown_bal:
+        fin, fout = acct_flow.get(a["account"], [0, 0])
+        start_calc += fin - fout
     start_bank = None
     if start_snap and set(start_snap) == set(latest):
-        start_bank, _ = ssum(b["balance"] for b in start_snap.values())
-    acct_flow = defaultdict(lambda: [0, 0])
-    for t in in_p:
-        acct_flow[t["account"]][0 if t["io"] == "입금" else 1] += t["amount"]
+        start_bank, start_bank_unknown = ssum(b["balance"] for n, b in start_snap.items() if n not in unknown_names)
+        if start_bank_unknown:
+            start_bank = None
     R["s1"] = {
         "accounts": accounts, "total": total_bal, "bal_unknown": bal_unknown, "restricted": restricted,
         "restr_unknown": restr_unknown, "available": total_bal - restricted, "stale": stale_accounts,
+        "bal_unknown_names": unknown_names, "bal_unknown_restricted": bal_unknown_restricted,
         "in": tin, "out": tout, "start_calc": start_calc, "start_bank": start_bank,
         "end": total_bal, "by_cat": dict(by_cat), "transfer_in": tr_in, "transfer_out": tr_out,
         "acct_flow": dict(acct_flow), "txns": sorted(in_p, key=lambda t: t["date"]),
@@ -81,7 +94,10 @@ def compute(d, kind, asof, start=None):
     checks.append(("분류별 출금 합 = 출금 합계", sum(v[1] for v in by_cat.values()), tout,
                    sum(v[1] for v in by_cat.values()) == tout))
     if start_bank is not None:
-        checks.append(("기간 시작 잔액 (은행 잔액 = 거래로 계산한 값)", start_bank, start_calc, start_bank == start_calc))
+        label = "기간 시작 잔액 (은행 잔액 = 거래로 계산한 값)"
+        if bal_unknown:
+            label += " · 잔액 미확인 %d계좌 제외" % bal_unknown
+        checks.append((label, start_bank, start_calc, start_bank == start_calc))
 
     # ───────────── 3. 프로젝트별 예산·지급 ─────────────
     proj = OrderedDict()
@@ -270,7 +286,7 @@ def compute(d, kind, asof, start=None):
         mins[mode] = (low, low_d)
     four = buckets[:4]
     R["s2"] = {
-        "start": start_cash, "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
+        "start": start_cash, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),

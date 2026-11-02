@@ -189,9 +189,9 @@ def render(R, mode):
     if s1["restr_unknown"]:
         restr_note += " · 제한금액 미확인 %d계좌" % s1["restr_unknown"]
     h.append("<div class='kpis'>")
-    h.append(_kpi("현재 현금 (계좌 합계)", M(s1["total"]), "%d개 계좌 · 은행 기준일 %s" % (
-        len(s1["accounts"]), _bank_dates(s1))))
-    h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note)))
+    h.append(_kpi("현재 현금 (계좌 합계)", M(s1["total"]), esc("%d개 계좌 · 은행 기준일 %s" % (
+        len(s1["accounts"]), _bank_dates(s1)) + _bal_note(s1))))
+    h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note + _bal_note(s1))))
     h.append(_kpi("향후 4주 입금예정", M(s2["in4_firm"] + s2["in4_est"]),
                   "확정 %s · 추정 %s" % (man(s2["in4_firm"]), man(s2["in4_est"]))))
     h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]),
@@ -221,7 +221,7 @@ def render(R, mode):
     h.append("<div class='note'>① 예산이 지정된 프로젝트만 계산. 예상 잔여예산 = 예산 − (누적 지급 + 요청 미지급 + 카드 미결제 + 미요청 계획). "
              "남은 예산은 지급예정으로 바꾸지 않음.</div>")
     h.append("</div><div>")
-    h.append("<h3 style='margin-top:0'>기간별 자금 (시작: 사용 가능액 %s)</h3>" % man(s2["start"]))
+    h.append("<h3 style='margin-top:0'>%s</h3>" % esc("기간별 자금 (시작: 사용 가능액 %s%s)" % (man(s2["start"]), _bal_note(s1))))
     h.append(chart(s2))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
@@ -275,6 +275,12 @@ def render(R, mode):
 def _kpi(label, value, sub):
     return "<div class='kpi'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
         esc(label), value, sub)
+
+
+def _bal_note(s1):
+    """잔액 빈칸 계좌가 합계에서 빠졌음을 알리는 보조 문구 (없으면 빈 문자열)."""
+    n = s1["bal_unknown"]
+    return " · 잔액 미확인 %d계좌 (합계 제외)" % n if n else ""
 
 
 def _bank_dates(s1):
@@ -332,6 +338,11 @@ def _s1(R, per):
     h.append(table(["계좌", "은행", "잔액 기준일", "잔액", "사용제한", "제한 사유", "사용 가능액", per + " 입금", per + " 출금"],
                    rows, num_cols=(3, 4, 6, 7, 8),
                    total=["합계", "", "", W(s1["total"]), W(s1["restricted"]), "", W(s1["available"]), "", ""]))
+    if s1["bal_unknown"]:
+        txt = "잔액 미확인 %d계좌 (합계 제외): %s" % (s1["bal_unknown"], ", ".join(s1["bal_unknown_names"]))
+        if s1["bal_unknown_restricted"]:
+            txt += " · 이 계좌의 사용제한 %s원은 사용 가능액에서 차감" % won(s1["bal_unknown_restricted"])
+        h.append("<div class='note'>%s</div>" % esc(txt))
     h.append("<div class='note'>계좌별 입금·출금에는 회사 계좌 간 이체가 포함됨. 아래 회사 전체 입출금에서는 제외.</div>")
     h.append("<h3>회사 전체 입출금 (계좌 간 이체 제외)</h3>")
     pairs = [("기간 시작 잔액 (거래로 역산)", W(s1["start_calc"]))]
@@ -353,8 +364,9 @@ def _s1(R, per):
 def _s2(R):
     s2 = R["s2"]
     h = [_h2(2, "앞으로의 입금·지급 일정과 계산 잔액")]
-    h.append("<div class='note'>시작값은 보고 기준일 사용 가능액 %s원. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠."
-             "</div>" % won(s2["start"]))
+    h.append("<div class='note'>%s</div>" % esc(
+        "시작값은 보고 기준일 사용 가능액 %s원%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠."
+        % (won(s2["start"]), _bal_note({"bal_unknown": s2["start_unknown"]}))))
     rows = []
     for b in s2["buckets"]:
         rows.append([esc(b["label"]), esc("%s ~ %s" % (d2s(b["from"]), d2s(b["to"]))), W(b["in_firm"]), W(b["in_est"]),
