@@ -180,6 +180,7 @@ border-radius:6px;background:var(--soft);color:var(--ink);font:inherit;cursor:po
 #requests th.c1{background:var(--soft)}
 #xchk-stop{margin-top:10px;padding:8px 10px;border:1px solid var(--warn);color:var(--warn);font-weight:700}
 #xchk-summary{margin:6px 0;color:var(--ink)}
+caption{text-align:left;color:var(--sub);font-size:12px;padding:0 0 6px}
 @media screen and (max-width:820px){
 .tw{max-width:100%}
 #requests{min-width:1040px}
