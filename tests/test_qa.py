@@ -282,3 +282,22 @@ class TestOutputFolderUnwritable(unittest.TestCase):
                                            "--출력", out, "--열기", "안함"])
         self.assertEqual(rc, 7)
         self.assertIn("출력 폴더에 파일을 쓰지 못했습니다", buf.getvalue())
+
+
+class TestCsvOpenElsewhere(unittest.TestCase):
+    """엑셀이 CSV를 열어 두면 Windows에서 읽기가 PermissionError 로 막힌다. 트레이스백 대신 입력 확인 목록에 남긴다.
+
+    리눅스 시험에서는 같은 이름의 폴더로 open() 실패(OSError)를 만든다.
+    """
+
+    def test_report_runs_and_names_the_file(self):
+        folder = sample_copy(self)
+        os.remove(os.path.join(folder, "자금일정.csv"))
+        os.mkdir(os.path.join(folder, "자금일정.csv"))
+        rc, out = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", folder, "--pdf", "안함"])
+        self.assertEqual(rc, 0)
+        self.assertIn("자금일정.csv (읽지 못함)", out)
+        R = compute(load(folder), "weekly", ASOF)
+        self.assertTrue(any(f == "자금일정.csv" and "열 수 없음" in m and "엑셀" in m for f, _, m in R["s7"]["issues"]),
+                        R["s7"]["issues"])
+        self.assertEqual(R["s2"]["min"]["firm"], (None, None))

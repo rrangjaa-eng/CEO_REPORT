@@ -35,8 +35,12 @@ def read_csv(path, required, issues, info=None):
     if not os.path.exists(path):
         issues.add(name, "-", "파일 없음 (이 묶음은 '자료 없음'으로 표시)")
         return [], False
-    with open(path, "rb") as f:
-        raw = f.read()
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:  # Windows에서 엑셀이 파일을 열어 두면 PermissionError
+        issues.add(name, "-", "파일을 열 수 없음 (엑셀에서 열려 있으면 닫고 다시 실행): %s" % (e.strerror or type(e).__name__))
+        return [], False
     text = None
     for enc in ("utf-8-sig", "cp949"):
         try:
