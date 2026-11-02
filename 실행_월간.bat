@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0"
+pushd "%~dp0"
 set "PY="
 set "FOUND="
 python --version >nul 2>&1
@@ -28,6 +28,7 @@ echo 설치된 Python 버전이 3.8보다 낮습니다. 3.8 이상이 필요합�
 echo https://www.python.org/downloads/ 에서 새 버전을 설치하고, 설치 첫 화면에서 'Add python.exe to PATH'를 선택하세요.
 :FAIL
 pause
+popd
 exit /b 1
 :RUN
 echo 입력 CSV는 이 폴더 안의 '입력' 폴더에서 읽습니다 (빈 양식: 입력양식 폴더, 예시 자료: 입력양식\샘플 폴더).
@@ -41,4 +42,5 @@ goto END
 echo 결과 파일은 출력 폴더에 있습니다.
 :END
 pause
+popd
 exit /b %RC%

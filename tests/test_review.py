@@ -510,5 +510,41 @@ class TestDatedUnknownPayments(unittest.TestCase):
         self.assertNotIn("금액 미확인", _kv(fs, FIRM_MIN))
 
 
+# ───────────── 8. 실행 파일은 UNC 경로(\\서버\공유)에서도 프로그램 폴더로 옮겨 간다 ─────────────
+class TestLaunchersPushd(unittest.TestCase):
+    NAMES = ("실행_주간.bat", "실행_월간.bat", "실행_승인검토.bat")
+
+    def lines(self, name):
+        with open(os.path.join(ROOT, name), "rb") as f:
+            raw = f.read()
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
+        text = raw.decode("utf-8")
+        first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
+        self.assertLess(text.index("chcp 65001"), first_non_ascii)
+        return text.split("\r\n")
+
+    def test_pushd_not_cd(self):
+        for name in self.NAMES:
+            with self.subTest(name):
+                lines = self.lines(name)
+                self.assertFalse(any(ln.strip().lower().startswith("cd ") for ln in lines), name)
+                push = [i for i, ln in enumerate(lines) if ln.strip() == 'pushd "%~dp0"']
+                self.assertEqual(len(push), 1)
+                chcp = next(i for i, ln in enumerate(lines) if ln.startswith("chcp 65001"))
+                run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% "))
+                self.assertLess(chcp, push[0])
+                self.assertLess(push[0], run)
+
+    def test_every_exit_pops_the_directory(self):
+        for name in self.NAMES:
+            with self.subTest(name):
+                lines = self.lines(name)
+                exits = [i for i, ln in enumerate(lines) if ln.strip().lower().startswith("exit /b")]
+                self.assertEqual(len(exits), 2)
+                for i in exits:
+                    self.assertEqual(lines[i - 1].strip().lower(), "popd", (name, i))
+
+
 if __name__ == "__main__":
     unittest.main()
