@@ -127,6 +127,20 @@ EXPECTED_PROJECTS = [
 ]
 
 
+# 02-REVIEW WR-03: 샘플 이전 프로젝트.csv 에만 있는 프로젝트는 스냅숏 줄 뒤에 번호 순으로 그대로 옮긴다 (예전: 버림)
+CARRIED_PROJECTS = [
+    ("P26202", "B사 고객 세미나", "기획2팀", "B사", "완료", "80000000", "2026-08-20", "100000000", "100000000", "2026-09-18",
+     "2026-09-19", ""),
+    ("P26204", "D사 신제품 런칭", "기획1팀", "D사", "진행", "", "", "50000000", "0", "2026-12-03", "", ""),
+    ("P26205", "E사 파트너 포럼", "기획1팀", "E사", "완료", "45000000", "2026-08-01", "60000000", "60000000", "2026-09-19",
+     "2026-09-20", ""),
+    ("P26206", "F사 임직원 워크숍", "기획2팀", "F사", "완료", "40000000", "2026-09-01", "50000000", "50000000", "2026-10-15",
+     "2026-10-16", ""),
+    ("P26207", "G사 VIP 초청행사", "기획2팀", "G사", "진행", "30000000", "2026-10-10", "38000000", "0", "2026-11-28", "", ""),
+    ("P26208", "H사 사내 행사", "기획1팀", "H사", "준비", "20000000", "2026-10-20", "", "0", "2027-01-20", "", ""),
+]
+
+
 def snapshot_projects(**changes):
     """FAKE_PROJECTS 사본. changes: {번호: {열 위치: 값}} (열 위치: 10 사전견적, 12 실행가, 4 행사일)."""
     rows = [list(r) for r in FAKE_PROJECTS]
@@ -145,7 +159,8 @@ class TestBuildProjects(unittest.TestCase):
         self.assertTrue(t.written)
 
     def test_four_rows_in_snapshot_order_with_carried_columns(self):
-        self.assertEqual(cell_rows(project_table()), EXPECTED_PROJECTS)
+        # 02-REVIEW WR-03: 스냅숏 4줄 뒤에 이전 파일에만 있는 6줄 (예전: 4줄만)
+        self.assertEqual(cell_rows(project_table()), EXPECTED_PROJECTS + CARRIED_PROJECTS)
 
     def test_checks_read_match_for_counts_and_snapshot_money_totals(self):
         lines = check_lines(project_table())
@@ -154,14 +169,16 @@ class TestBuildProjects(unittest.TestCase):
                      "사전견적 빈칸: 원본 0 · CSV 0 → 일치",
                      "실행가 합계 (빈칸 제외): 원본 610,000,000 · CSV 610,000,000 → 일치",
                      "실행가 빈칸: 원본 1 · CSV 1 → 일치",
-                     "매출 줄 합계 = 매출반영누계 합계 + 미연결 매출: 원본 194,000,000 · CSV 194,000,000 → 일치"):
+                     "매출 줄 합계 = 매출반영누계 합계 + 미연결 매출: 원본 194,000,000 · CSV 194,000,000 → 일치",
+                     "이전 프로젝트.csv에만 있는 프로젝트 → 옮긴 줄: 원본 6 · CSV 6 → 일치"):   # WR-03 새 대조
             self.assertIn(want, lines)
-        self.assertEqual(len(lines), 6)
+        self.assertEqual(len(lines), 7)
 
     def test_note_lists_projects_only_in_the_previous_file(self):
         t = project_table()
-        self.assertIn("이전 프로젝트.csv에만 있는 프로젝트 6건 (옮기지 않음): P26202, P26204, P26205, P26206, P26207, P26208",
-                      t.notes)
+        # 02-REVIEW WR-03: 옮긴다 (예전 알림: '... 6건 (옮기지 않음): ...')
+        self.assertIn("이전 프로젝트.csv에만 있는 프로젝트 6건 → 옮김 (스냅숏에 없음, 이전 줄 그대로): "
+                      "P26202, P26204, P26205, P26206, P26207, P26208", t.notes)
 
     def test_written_file_loads_and_the_report_budget_is_estimate_times_rate(self):
         tmp = new_tmp(self)
@@ -204,7 +221,7 @@ class TestBuildProjects(unittest.TestCase):
                  "3,000", "", "승인", "승인", "승인", "승인", "999"]
         inp = make_inputs(projects=snapshot_projects() + [extra])
         t = project_table(inp)
-        self.assertEqual(len(t.rows), 4)
+        self.assertEqual(len(t.rows), 4 + len(CARRIED_PROJECTS))   # WR-03: 스냅숏 4줄 + 이전 파일에만 있는 6줄
         self.assertEqual(cell_rows(t)[0][1], "가상 컨퍼런스")
         self.assertIn("프로젝트번호 26201 겹침 → 첫 줄만", t.notes)
         self.assertIn("프로젝트 수 (스냅숏 → CSV): 원본 4 · CSV 4 → 일치", check_lines(t))
@@ -742,9 +759,10 @@ class TestBuildExecsRequests(unittest.TestCase):
         tmp = new_tmp(self)
         input_dir, d = write_and_load(tmp, [project_table(), full_table()])
         issues = [it for it in d.issues.items if it[0] == "프로젝트집행.csv"]
-        self.assertEqual(len(issues), 4, issues)
+        # 02-REVIEW WR-03: P26207 은 이전 프로젝트.csv 에서 옮겨져 이제 프로젝트.csv 에 있다 (예전 4건)
+        self.assertEqual(len(issues), 3, issues)
         got = sorted(re.match(r"프로젝트번호 '(.*)'가 프로젝트.csv에 없음 \(프로젝트 미연결로 집계\)$", it[2]).group(1) for it in issues)
-        self.assertEqual(got, ["", "26299", "26999", "P26207"])
+        self.assertEqual(got, ["", "26299", "26999"])
         self.assertEqual([it for it in d.issues.items if it[0] == "프로젝트.csv"], [])
 
 

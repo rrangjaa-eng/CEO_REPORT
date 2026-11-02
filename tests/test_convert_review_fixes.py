@@ -757,5 +757,60 @@ class TestWR02DaySettings(unittest.TestCase):
         self.assertNotIn("Traceback", out)
 
 
+
+# ───────────── WR-03: 이전 프로젝트.csv 에만 있는 프로젝트는 수동 칸과 함께 옮긴다 ─────────────
+PREV_PROJECTS = [
+    {"프로젝트번호": "26220", "프로젝트명": "가상 전시", "팀": "가상팀", "클라이언트": "가상고객", "상태": "진행", "사전견적예산": "",
+     "예산수정일": "", "계약금액": "300,000,000", "매출반영누계": "0", "행사일": "2026-11-20", "완료일": "", "실행가": ""},
+    {"프로젝트번호": "P26299", "프로젝트명": "가상 지난 행사", "팀": "가상팀", "클라이언트": "가상고객Q", "상태": "진행",
+     "사전견적예산": "80,000,000", "예산수정일": "2026.08.01", "계약금액": "50,000,000", "매출반영누계": "20,000,000",
+     "행사일": "2026-08-20", "완료일": "", "실행가": ""},
+]
+
+
+class TestWR03PreviousOnlyProjects(unittest.TestCase):
+    def build(self, prev):
+        r = Run([], [], AUTO_PROJECTS)
+        return convert_projects.build_projects(r.projects, r.revenue, prev)
+
+    def test_a_project_only_in_the_previous_file_is_carried_with_its_manual_fields(self):
+        t = self.build(PREV_PROJECTS)
+        rows = dict((r["프로젝트번호"], r) for r in t.rows)
+        self.assertEqual(list(rows), ["26220", "P26299"])
+        old = rows["P26299"]
+        self.assertEqual((old["프로젝트명"], old["상태"], old["계약금액"], old["예산수정일"], old["사전견적예산"], old["매출반영누계"]),
+                         ("가상 지난 행사", "진행", "50000000", "2026-08-01", "80000000", "20000000"))
+        self.assertIn("이전 프로젝트.csv에만 있는 프로젝트 1건 → 옮김 (스냅숏에 없음, 이전 줄 그대로): P26299", t.notes)
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+        got = dict((c.label, (c.source, c.csv)) for c in t.checks)
+        self.assertEqual(got["프로젝트 수 (스냅숏 → CSV)"], (1, 1))
+        self.assertEqual(got[convert_projects.CARRY_LABEL], (1, 1))
+
+    def test_the_carry_check_catches_the_pre_fix_rows(self):
+        t = self.build(PREV_PROJECTS)
+        before = [r for r in t.rows if r["프로젝트번호"] != "P26299"]
+        c = convert_projects.carry_check(PREV_PROJECTS, ["26220"], before)
+        self.assertEqual((c.source, c.csv, convert.check_result(c)), (1, 0, "불일치"))
+
+    def test_the_written_file_keeps_the_contract_for_the_report(self):
+        from ceo_report import data
+        t = self.build(PREV_PROJECTS)
+        tmp = new_tmp(self)
+        from sample_input import SAMPLE
+        input_dir = os.path.join(tmp, "입력")
+        shutil.copytree(SAMPLE, input_dir)
+        convert.write_table(os.path.join(input_dir, "프로젝트.csv"), t)
+        d = data.load(input_dir)
+        self.assertEqual(d.projects["P26299"]["contract"], 50000000)
+        self.assertEqual([it for it in d.issues.items if it[0] == "프로젝트.csv"], [])
+
+    def test_a_repeated_previous_only_key_is_carried_once_with_a_note(self):
+        t = self.build(PREV_PROJECTS + [dict(PREV_PROJECTS[1], 계약금액="1")])
+        self.assertEqual([r["프로젝트번호"] for r in t.rows], ["26220", "P26299"])
+        self.assertEqual(t.rows[1]["계약금액"], "50000000")
+        self.assertTrue([n for n in t.notes if "P26299" in n and "여러 줄" in n], t.notes)
+
+
 if __name__ == "__main__":
     unittest.main()

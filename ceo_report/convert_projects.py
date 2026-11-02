@@ -53,11 +53,53 @@ def _carry_cell(column, raw, key, notes):
     return cell_date(day)
 
 
+CARRY_LABEL = "이전 프로젝트.csv에만 있는 프로젝트 → 옮긴 줄"
+_AMOUNT_COLUMNS = ("사전견적예산", "계약금액", "매출반영누계", "실행가")
+
+
+def _prev_only(prev_rows, keys):
+    """이전 프로젝트.csv 줄 중 스냅숏 프로젝트와 번호의 숫자가 같지 않은 줄 -> {번호: [줄들]} (이전 파일 순서)."""
+    key_digits = set(_digits(k) for k in keys)
+    out = collections.OrderedDict()
+    for r in prev_rows:
+        key = (r.get("프로젝트번호") or "").strip()
+        if key and _digits(key) not in key_digits:
+            out.setdefault(key, []).append(r)
+    return out
+
+
+def carry_check(prev_rows, keys, rows):
+    """대조 (WR-03): 이전 프로젝트.csv 에만 있는 프로젝트 번호 수 = 새 프로젝트.csv 에 그 번호로 있는 줄 수."""
+    only = _prev_only(prev_rows, keys)
+    written = sum(1 for r in rows if (r.get("프로젝트번호") or "").strip() in only)
+    return Check(CARRY_LABEL, len(only), written)
+
+
+def _carried_project(columns, old, key, notes):
+    """스냅숏에 없는 이전 줄을 그대로 옮긴다: 금액·날짜 칸은 이 파일 모양으로, 읽을 수 없는 칸은 _carry_cell 처럼 빈칸 + 알림."""
+    row = {}
+    for column in columns:
+        raw = (old.get(column) or "").strip()
+        if column in CARRIED:
+            row[column] = _carry_cell(column, raw, key, notes)
+        elif column in _AMOUNT_COLUMNS:
+            value = num(raw)
+            if raw and value is None:
+                notes.append("%s %s 이전 값 '%s' 숫자 아님 → 빈칸" % (key, column, raw))
+            row[column] = cell_amount(value) if raw else ""
+        else:
+            row[column] = raw
+    row["프로젝트번호"] = key
+    return row
+
+
 def build_projects(projects, revenue, prev_rows):
-    """프로젝트.csv: 스냅숏 프로젝트 한 건당 한 줄 (스냅숏 순서).
+    """프로젝트.csv: 스냅숏 프로젝트 한 건당 한 줄 (스냅숏 순서), 그다음 이전 파일에만 있는 프로젝트 줄 (이전 파일 순서).
 
     projects: linking.projects_of 결과, revenue: linking.link_revenue 결과, prev_rows: convert.read_prev(..., "프로젝트.csv").
     상태·예산수정일·계약금액·완료일은 이전 파일에서 프로젝트번호의 숫자가 같은 줄이 정확히 하나일 때만 옮긴다 (D-49).
+    스냅숏에 없는 이전 줄(끝난 행사·손으로 넣은 프로젝트)은 수동 칸과 함께 그대로 옮긴다 (02-REVIEW WR-03: 버리면 계약금액이
+    합계에서 빠지고 그 번호를 가리키는 집행·계산서 줄이 갈 곳을 잃는다).
     """
     notes = []
     by_digits = {}
@@ -65,7 +107,6 @@ def build_projects(projects, revenue, prev_rows):
         by_digits.setdefault(_digits(r.get("프로젝트번호")), []).append(r)
     by_digits.pop("", None)
     keys = list(projects)
-    key_digits = set(_digits(k) for k in keys)
     amounts = {}      # 프로젝트번호 -> [매출 줄 금액들]
     linked_elsewhere, unlinked = [], []
     for ln in revenue["lines"]:
@@ -96,22 +137,32 @@ def build_projects(projects, revenue, prev_rows):
         for column in CARRIED:
             row[column] = _carry_cell(column, old.get(column), key, notes)
         rows.append(row)
-    only_prev = [r.get("프로젝트번호", "") for r in prev_rows
-                 if (r.get("프로젝트번호") or "").strip() and _digits(r.get("프로젝트번호")) not in key_digits]
+    snap_rows = list(rows)
+    columns = data.SCHEMA["프로젝트.csv"] + PROJECT_EXTRA
+    only_prev = _prev_only(prev_rows, keys)
+    order = sorted(only_prev, key=lambda k: (_digits(k) == "", int(_digits(k) or 0), k))   # 이전 파일 줄 순서와 무관하게
+    for key in order:
+        olds = only_prev[key]
+        if len(olds) > 1:
+            notes.append("이전 프로젝트.csv에 %s 줄이 여러 줄 → 첫 줄만 옮김" % key)
+        rows.append(_carried_project(columns, olds[0], key, notes))
     if only_prev:
-        notes.append("이전 프로젝트.csv에만 있는 프로젝트 %d건 (옮기지 않음): %s" % (len(only_prev), ", ".join(only_prev)))
+        notes.append("이전 프로젝트.csv에만 있는 프로젝트 %d건 → 옮김 (스냅숏에 없음, 이전 줄 그대로): %s"
+                     % (len(only_prev), ", ".join(order)))
 
-    checks = [Check("프로젝트 수 (스냅숏 → CSV)", len(keys), len(rows))]
+    checks = [Check("프로젝트 수 (스냅숏 → CSV)", len(keys), len(snap_rows))]
     for column, field, label in (("사전견적예산", "estimate", "사전견적"), ("실행가", "budget", "실행가")):
         source = [projects[k][field] for k in keys]
-        cells = [num(r[column]) for r in rows]
+        cells = [num(r[column]) for r in snap_rows]
         checks.append(Check("%s 합계 (빈칸 제외)" % label, sum(v for v in source if v is not None),
                             sum(v for v in cells if v is not None)))
-        checks.append(Check("%s 빈칸" % label, sum(1 for v in source if v is None), sum(1 for c in rows if c[column] == "")))
-    csv_total = _sum_or_none([num(r["매출반영누계"]) for r in rows] + linked_elsewhere + unlinked)
+        checks.append(Check("%s 빈칸" % label, sum(1 for v in source if v is None),
+                            sum(1 for c in snap_rows if c[column] == "")))
+    csv_total = _sum_or_none([num(r["매출반영누계"]) for r in snap_rows] + linked_elsewhere + unlinked)
     source_total = _sum_or_none([ln["amount"] for ln in revenue["lines"]])
     checks.append(Check("매출 줄 합계 = 매출반영누계 합계 + 미연결 매출", source_total, csv_total))
-    return Table("프로젝트.csv", data.SCHEMA["프로젝트.csv"] + PROJECT_EXTRA, rows, checks, notes)
+    checks.append(carry_check(prev_rows, keys, rows))
+    return Table("프로젝트.csv", columns, rows, checks, notes)
 
 
 # ───────────── 프로젝트집행.csv: WEHAGO 원가 줄 ─────────────
