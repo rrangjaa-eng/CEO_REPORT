@@ -24,7 +24,8 @@ from test_approval import (ASOF, COLLECTED, FAKE_PAYMENTS, FAKE_PROJECTS, NOW, a
                            write_fake_snapshot)
 from test_convert import FAKE_PL_JOURNAL, write_convert_books  # noqa: E402
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
-from test_wehago import _jl  # noqa: E402
+from test_wehago import FAKE_LEDGER, _L, _jl, post  # noqa: E402
+from test_convert import PL_EXTRA  # noqa: E402
 
 
 def mod(name):
@@ -518,6 +519,268 @@ class TestBuildExecsBooks(unittest.TestCase):
         before = repr((inp.books.journal, inp.costs["lines"]))
         exec_table(inp)
         self.assertEqual(repr((inp.books.journal, inp.costs["lines"])), before)
+
+
+# ───────────── Task 3: 아직 장부에 없는 지급요청, 큰 쪽 반영, 옮겨 온 집행계획 줄, 두 번 세지 않음 ─────────────
+def full_table(inp=None, prev=None, **kw):
+    inp = inp or exec_inputs(FAKE_PL_JOURNAL)
+    return exec_table(inp, requests=True, prev=prev_execs() if prev is None else prev, **kw)
+
+
+def lines_of(table):
+    return check_lines(table)
+
+
+def naming(table, number):
+    """근거에 '지급요청 <번호>'가 들어 있는 줄들."""
+    pattern = re.compile(r"지급요청 %s(?!\d)" % number)
+    return [r for r in cell_rows(table) if pattern.search(r[8])]
+
+
+def total_of(rows):
+    return sum(int(r[4] or 0) + int(r[5] or 0) for r in rows)
+
+
+REQUEST_ROWS = [   # 번호 순: 5102, 5105, 5106, 5108
+    ("26201", "[26201] 가상 컨퍼런스", "가상조명", "요청미지급", "264000", "", "2026-11-06", "추정",
+     "지급요청 5102 (인트라넷 금액, 부가세 포함 여부 미확인)"),
+    ("26221", "[26221] 가상 워크숍", "가상버스", "요청미지급", "3300000", "", "2026-11-10", "확정",
+     "지급요청 5105 (인트라넷 금액, 부가세 포함 여부 미확인)"),
+    ("26221", "[26221] 가상 워크숍", "가상숙박", "요청미지급", "", "", "2026-11-17", "추정",
+     "지급요청 5106 (인트라넷 금액, 부가세 포함 여부 미확인)"),
+    ("26299", "[26299] 목록에 없는 행사", "가상꽃", "요청미지급", "2200000", "", "2026-11-06", "추정",
+     "지급요청 5108 (인트라넷 금액, 부가세 포함 여부 미확인)"),
+]
+
+
+class TestBuildExecsRequests(unittest.TestCase):
+    def test_requests_with_an_invoice_are_noted_on_the_wehago_row(self):
+        t = full_table()
+        one, two, five = by_slip(t, 1), by_slip(t, 2), by_slip(t, 5)
+        self.assertEqual(one, ("26201", "[26201] 가상 컨퍼런스 음향", "(주)가상음향", "요청미지급", "40000000", "4000000", "2026-11-13",
+                               "추정", "WEHAGO 2026-10-20 전표 1 · 지급요청 1201"))
+        self.assertEqual((two[3], two[4], two[5], two[6], two[7], two[8]),
+                         ("요청미지급", "150000000", "15000000", "2026-11-20", "추정", "WEHAGO 2026-10-21 전표 2 · 지급요청 5103"))
+        self.assertEqual((five[3], five[4], five[5], five[6], five[7], five[8]),
+                         ("요청미지급", "5000000", "500000", "2026-10-30", "확정", "WEHAGO 2026-10-23 전표 5 · 지급요청 5104"))
+        for no in (4, 6, 7, 8):
+            self.assertEqual((by_slip(t, no)[3], by_slip(t, no)[6], by_slip(t, no)[7]), ("요청미지급", "", "추정"))
+        self.assertEqual(by_slip(t, 3)[3:], BASE_ROWS[4][3:])
+        for no, want in ((22, BASE_ROWS[9]), (23, BASE_ROWS[10]), (37, BASE_ROWS[0])):
+            self.assertEqual(by_slip(t, no)[3:], want[3:])
+
+    def test_four_request_rows_follow_the_wehago_rows_in_number_order(self):
+        t = full_table()
+        rows = cell_rows(t)
+        self.assertEqual(rows[11:15], REQUEST_ROWS)
+        self.assertEqual(t.extra["cost_portions"][11:15], [None] * 4)
+
+    def test_no_payment_is_counted_twice(self):
+        t = full_table()
+        for number in ("5107", "5109"):
+            self.assertEqual(naming(t, number), [], number)
+        self.assertEqual(by_slip(t, 3)[3], "지급완료")
+        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5108"):
+            self.assertEqual(len(naming(t, number)), 1, number)
+
+    def test_request_count_and_money_checks_read_match(self):
+        t = full_table()
+        lines = lines_of(t)
+        for want in ("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 3 + 요청 줄 4 + 이미 지급 1: 원본 8 · CSV 8 → 일치",
+                     "지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
+                     "지급요청 금액 미확인: 원본 1 · CSV 1 → 일치",
+                     "계산서·요청 금액이 다르면 큰 쪽: 지급요청을 가리키는 줄 합계 = max(계산서, 요청): 원본 216,700,000 · CSV 216,700,000 → 일치"):
+            self.assertIn(want, lines)
+        for c in t.checks:
+            self.assertEqual(mod("convert").check_result(c), "일치", c.label)
+
+    def test_5103_is_carried_at_the_larger_invoice_amount_without_a_diff_row(self):
+        t = full_table()
+        self.assertEqual(total_of(naming(t, "5103")), 165000000)
+        self.assertEqual(len(naming(t, "5103")), 1)
+
+    def test_status_unknown_request_is_skipped_with_a_note(self):
+        t = full_table()
+        self.assertIn("상태 확인 필요 1건 → 프로젝트집행에 넣지 않음", t.notes)
+        self.assertTrue([n for n in t.notes if "5107" in n and "1,100,000" in n], t.notes)
+
+    def test_duplicate_possible_notes_name_the_requests_added_next_to_unpaid_rows(self):
+        t = full_table()
+        self.assertIn("중복 가능: 지급요청 5102 — 같은 거래처의 미지급 원가 줄 1건", t.notes)
+        self.assertIn("중복 가능: 지급요청 5105 — 같은 거래처의 미지급 원가 줄 2건", t.notes)
+        self.assertIn("지급요청 5108: 계산서 있음이나 원가 줄을 하나로 정하지 못함 → 요청으로 넣음 (중복 가능)", t.notes)
+        self.assertEqual([n for n in t.notes if n.startswith("중복 가능")].__len__(), 2)
+
+    def test_unknown_request_amount_is_blank_never_zero(self):
+        t = full_table()
+        row = naming(t, "5106")[0]
+        self.assertEqual((row[4], row[5]), ("", ""))
+        self.assertFalse([r for r in cell_rows(t) if r[3] == "요청미지급" and r[4] == "0"])
+
+    def test_invoice_below_the_request_adds_a_diff_row_so_the_rows_equal_the_request(self):
+        ledger = [list(r) for r in FAKE_LEDGER]
+        ledger[0] = _L("매입", "2026-10-20", 1, "(주)가상음향", "000-00-00001", "[26201] 가상 컨퍼런스 음향", 36000000, 4000000)
+        journal = post(ledger) + PL_EXTRA
+        inp = exec_inputs(journal, ledger=ledger)
+        self.assertEqual(inp.match["rows"]["1201"]["status"], "금액 차이")
+        t = full_table(inp)
+        self.assertEqual(by_slip(t, 1)[4:6], ("36000000", "4000000"))
+        diff = [r for r in naming(t, "1201") if "차액" in r[8]]
+        self.assertEqual(len(diff), 1)
+        self.assertEqual((diff[0][3], diff[0][4], diff[0][5], diff[0][6]), ("요청미지급", "4000000", "", "2026-11-13"))
+        self.assertEqual(diff[0][8], "지급요청 1201 차액 (인트라넷 요청 44,000,000 − 계산서 40,000,000)")
+        self.assertEqual(total_of(naming(t, "1201")), 44000000)
+        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 3 + 요청 줄 4 + 이미 지급 1: 원본 8 · CSV 8 → 일치", lines_of(t))
+
+    def test_invoice_above_the_request_with_an_ambiguous_group_adds_the_request_and_a_diff_row(self):
+        second = [_jl(dt.date(2026, 10, 27), 70, "61101", "행사외주비(도)", 150000000, None, "가상제작", "[26220] 가상 전시 제작 2차"),
+                  _jl(dt.date(2026, 10, 27), 70, "13500", "부가세대급금", 15000000, None, "가상제작", "[26220] 가상 전시 제작 2차"),
+                  _jl(dt.date(2026, 10, 27), 70, "25300", "미지급금", None, 165000000, "가상제작", "[26220] 가상 전시 제작 2차")]
+        t = full_table(exec_inputs(journal_with(second)))
+        rows = naming(t, "5103")
+        self.assertEqual(len(rows), 2)
+        request = [r for r in rows if "차액" not in r[8]][0]
+        diff = [r for r in rows if "차액" in r[8]][0]
+        self.assertEqual((request[4], request[5], request[6], request[7]), ("160500000", "", "2026-11-20", "추정"))
+        self.assertEqual((diff[3], diff[4], diff[5]), ("요청미지급", "4500000", ""))
+        self.assertEqual(diff[8], "지급요청 5103 차액 (계산서 165,000,000 − 인트라넷 요청 160,500,000)")
+        self.assertEqual(total_of(rows), 165000000)
+        self.assertTrue([n for n in t.notes if "5103" in n and "중복 가능" in n], t.notes)
+        self.assertEqual(by_slip(t, 2)[8], "WEHAGO 2026-10-21 전표 2")
+        lines = lines_of(t)
+        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 2 + 요청 줄 5 + 이미 지급 1: 원본 8 · CSV 8 → 일치", lines)
+        self.assertIn("지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
+                      lines)
+        for c in t.checks:
+            self.assertEqual(mod("convert").check_result(c), "일치", c.label)
+
+    def test_an_invoice_row_already_paid_means_no_request_row_and_a_note(self):
+        t = full_table(exec_inputs(journal_with(OPENING_EXTRA)))
+        self.assertEqual(naming(t, "5104"), [])
+        self.assertIn("지급요청 5104: 계산서의 원가 줄이 이미 지급완료 → 넣지 않음", t.notes)
+        self.assertEqual(by_slip(t, 5)[3], "지급완료")
+        lines = lines_of(t)
+        self.assertIn("지급요청 건수: 승인·대기 8 = 원가 줄에 표시 2 + 요청 줄 4 + 이미 지급 1 + 이미 지급된 원가 줄 1: 원본 8 · CSV 8 → 일치",
+                      lines)
+        self.assertIn("지급요청 금액 (금액 있는 승인·대기 7건) = 원가 줄 표시 + 요청 줄 + 이미 지급: 원본 265,264,000 · CSV 265,264,000 → 일치",
+                      lines)
+
+    def test_unknown_request_amount_with_an_invoice_gives_a_note_and_no_diff_row(self):
+        inp = exec_inputs(FAKE_PL_JOURNAL)
+        for rq in inp.requests:
+            if rq["번호"] == "1201":
+                rq["amount"] = None
+        t = full_table(inp)
+        self.assertIn("지급요청 1201 금액 미확인 → 차액 판단 불가", t.notes)
+        rows = naming(t, "1201")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][4], "")
+        self.assertFalse([r for r in cell_rows(t) if "차액" in r[8]])
+
+    def test_a_group_wanted_by_two_requests_is_given_to_neither(self):
+        inp = exec_inputs(FAKE_PL_JOURNAL)
+        twin = dict([rq for rq in inp.requests if rq["번호"] == "1201"][0], 번호="1299", id="r99")
+        inp.requests.append(twin)
+        row = dict(inp.match["rows"]["1201"])
+        inp.match["rows"]["1299"] = row
+        t = full_table(inp)
+        self.assertEqual(by_slip(t, 1)[8], "WEHAGO 2026-10-20 전표 1")
+        self.assertEqual(len(naming(t, "1201")), 1)
+        self.assertEqual(len(naming(t, "1299")), 1)
+        self.assertTrue([n for n in t.notes if "1299" in n and "중복 가능" in n], t.notes)
+
+    def test_result_does_not_depend_on_the_order_of_requests_or_journal(self):
+        base = cell_rows(full_table())
+        inp = exec_inputs(FAKE_PL_JOURNAL)
+        inp.requests.reverse()
+        self.assertEqual(cell_rows(full_table(inp)), base)
+
+    def test_previous_plan_rows_are_carried_with_the_new_project_number(self):
+        t = full_table()
+        carried = cell_rows(t)[15:]
+        self.assertEqual([(r[0], r[1], r[3]) for r in carried],
+                         [("26201", "케이터링", "집행계획미요청"), ("26201", "영상·중계", "집행계획미요청"),
+                          ("26203", "현장 인력", "집행계획미요청"), ("P26207", "공연", "집행계획미요청")])
+        self.assertEqual(carried[0][4:], ("55,000,000", "5,500,000", "2026-11-25", "추정", "계약서"))
+        self.assertEqual(t.extra["cost_portions"][15:], [None] * 4)
+        self.assertIn("이전 프로젝트집행.csv 줄 20건 옮기지 않음 (WEHAGO·인트라넷으로 다시 만듦)", t.notes)
+        self.assertTrue([n for n in t.notes if "P26207" in n and "번호 그대로" in n], t.notes)
+        unpaid = [n for n in t.notes if "아직 나가지 않은 돈" in n]
+        self.assertEqual(len(unpaid), 1)
+        self.assertIn("6건", unpaid[0])
+        self.assertIn("금액 미확인 1건 제외", unpaid[0])
+
+    def test_without_the_project_list_the_linked_keys_and_request_codes_are_used(self):
+        inp = exec_inputs(FAKE_PL_JOURNAL)
+        t = mod("convert_projects").build_execs(inp.books, inp.costs, inp.requests, inp.match, prev_execs(), inp.cfg)
+        self.assertEqual([r[0] for r in cell_rows(t)[15:]], ["26201", "26201", "26203", "P26207"])
+
+    def test_nothing_is_carried_when_there_is_no_previous_file_and_no_note_is_made_up(self):
+        t = full_table(prev=[])
+        self.assertEqual(len(t.rows), 15)
+        self.assertFalse([n for n in t.notes if "이전 프로젝트집행.csv" in n])
+
+    def test_second_run_on_its_own_output_gives_the_same_rows(self):
+        first = full_table()
+        tmp = new_tmp(self)
+        input_dir, d = write_and_load(tmp, [first])
+        again = full_table(prev=mod("convert").read_prev(input_dir, "프로젝트집행.csv"))
+        self.assertEqual([r[:2] + r[3:] for r in cell_rows(again)], [r[:2] + r[3:] for r in cell_rows(first)])
+        self.assertEqual([r[0] for r in cell_rows(again)], [r[0] for r in cell_rows(first)])
+
+    def test_written_file_loads_with_only_the_unlinked_project_issues(self):
+        tmp = new_tmp(self)
+        input_dir, d = write_and_load(tmp, [project_table(), full_table()])
+        issues = [it for it in d.issues.items if it[0] == "프로젝트집행.csv"]
+        self.assertEqual(len(issues), 4, issues)
+        got = sorted(re.match(r"프로젝트번호 '(.*)'가 프로젝트.csv에 없음 \(프로젝트 미연결로 집계\)$", it[2]).group(1) for it in issues)
+        self.assertEqual(got, ["", "26299", "26999", "P26207"])
+        self.assertEqual([it for it in d.issues.items if it[0] == "프로젝트.csv"], [])
+
+
+class TestBuildExecsNoDouble(unittest.TestCase):
+    def _written(self, table_rows=None):
+        tmp = new_tmp(self)
+        tables = [project_table(), full_table()]
+        input_dir, d = write_and_load(tmp, tables)
+        return tmp, input_dir, d
+
+    def test_calc_events_name_each_request_at_most_once_and_5103_is_165_million(self):
+        tmp, input_dir, d = self._written()
+        R = mod("calc").compute(d, "weekly", dt.date(2026, 11, 2))
+        events = [e for e in R["events"] if e["source"] == "프로젝트집행"]
+        for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5108"):
+            named = [e for e in events if re.search(r"지급요청 %s(?!\d)" % number, e["basis"] or "")]
+            self.assertEqual(len(named), 1, number)
+        five = [e for e in events if "지급요청 5103" in (e["basis"] or "")]
+        self.assertEqual(sum(e["amount"] for e in five), 165000000)
+        for number in ("5107", "5109"):
+            self.assertFalse([e for e in events if "지급요청 %s" % number in (e["basis"] or "")])
+
+    def test_approval_screen_replaces_the_rows_that_name_a_scheduled_request_and_schedules_none_twice(self):
+        approval, snapshot = mod("approval"), mod("snapshot")
+        tmp, input_dir, d = self._written()
+        snap = snapshot.read_snapshot(write_fake_snapshot(os.path.join(tmp, "스냅숏")))
+        A = approval.build(d, snap, ASOF, NOW)
+        scheduled = sorted(rq["번호"] for rq in A["requests_all"] if rq["scheduled"])
+        self.assertEqual(scheduled, ["1201", "5102", "5103", "5105", "5108", "5109"])
+        replaced = sorted(re.search(r"지급요청 (\d+)", e["basis"]).group(1) for e in A["replaced"])
+        self.assertEqual(replaced, ["1201", "5102", "5103", "5105", "5108"])
+        for e in A["unmatched_exec"] + A["duplicates"] + A["possible_duplicates"]:
+            m = re.search(r"지급요청 (\d+)", e["basis"] or "")
+            self.assertFalse(m and m.group(1) in scheduled, e)
+        # 같은 화면을 요청 이름이 붙은 줄 없이 만들어도 일정 합계가 같다 (요청이 대신 들어가므로)
+        reduced = os.path.join(tmp, "줄임")
+        shutil.copytree(input_dir, reduced)
+        convert = mod("convert")
+        rest = [r for r in convert.read_prev(input_dir, "프로젝트집행.csv")
+                if not any(re.search(r"지급요청 %s(?!\d)" % n, r["근거"]) for n in scheduled)]
+        table = mod("convert").Table("프로젝트집행.csv", mod("data").SCHEMA["프로젝트집행.csv"], rest)
+        convert.write_table(os.path.join(reduced, "프로젝트집행.csv"), table)
+        B = approval.build(mod("data").load(reduced), snap, ASOF, NOW)
+        total = lambda X: sum(x["amount"] for x in X["data"]["requests"]) + sum(X["data"]["base_out"])
+        self.assertEqual(total(A), total(B))
+        self.assertGreater(total(A), 0)
 
 
 if __name__ == "__main__":
