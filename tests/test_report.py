@@ -1392,6 +1392,7 @@ class TestPdfLaunch(unittest.TestCase):
         self.assertFalse(os.path.exists(pdir), "임시 프로필 폴더가 남음")
         self.assertIsInstance(cmd, list)
         self.assertFalse(kwargs.get("shell"))
+        self.assertIn("--disable-field-trial-config", cmd)  # 새 프로필에서 PDF 출력이 멈추지 않게
 
     def test_each_call_uses_its_own_profile_dir(self):
         html_path, pdf_path = self.make_html()

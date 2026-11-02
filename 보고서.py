@@ -11,9 +11,11 @@
 import argparse
 import datetime as dt
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -46,6 +48,10 @@ def find_browser():
     return None
 
 
+def _is_windows():
+    return os.name == "nt"
+
+
 def to_pdf(browser, html_path, pdf_path):
     # 이전 실행의 PDF가 남아 있으면 새로 만든 것으로 착각하므로 먼저 지운다.
     # Windows에서 PDF 뷰어가 열려 있으면 지울 수 없다.
@@ -54,14 +60,30 @@ def to_pdf(browser, html_path, pdf_path):
             os.remove(pdf_path)
         except OSError as e:
             return "PDF 실패: 이전 PDF를 지우지 못함 (PDF 파일을 닫고 다시 실행): %s" % e
-    url = "file:///" + os.path.abspath(html_path).replace("\\", "/").lstrip("/")
-    cmd = [browser, "--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer",
+    # 이미 열려 있는 Edge/Chrome이 있으면 새 창 요청을 그쪽에 넘기고 끝나 PDF가 안 만들어진다.
+    # 이번 실행 전용 프로필 폴더를 따로 주어 독립된 브라우저로 실행하고, 끝나면 지운다.
+    url = pathlib.Path(html_path).resolve().as_uri()  # 공백·#·%·UNC 경로도 올바른 file 주소로
+    profile = tempfile.mkdtemp(prefix="ceo_report_pdf_")
+    # 새 프로필은 첫 실행 상태라 실험 설정(field trial) 때문에 PDF 출력이 멈추는 환경이 있다 → 끄고 첫 실행 화면도 건너뛴다.
+    cmd = [browser, "--headless", "--disable-gpu", "--user-data-dir=" + profile, "--no-first-run",
+           "--disable-field-trial-config", "--no-pdf-header-footer",
            "--print-to-pdf=" + os.path.abspath(pdf_path), url]
+    if not _is_windows():
+        cmd.insert(3, "--no-sandbox")  # Windows에서는 필요 없고, 리눅스(루트 실행·시험 환경)에서만 쓴다
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
     except Exception as e:  # noqa: BLE001
         return "PDF 실패: %s" % e
-    return None if os.path.exists(pdf_path) else "PDF 실패 (브라우저가 파일을 만들지 않음)"
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+        return None
+    if os.path.exists(pdf_path):  # 0바이트 파일은 성공이 아니다
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+    return "PDF 실패 (브라우저가 파일을 만들지 않음)"
 
 
 def main(argv=None):
