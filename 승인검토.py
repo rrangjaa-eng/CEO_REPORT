@@ -34,11 +34,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from ceo_report import intranet  # noqa: E402
-from ceo_report.approval import build, fmt_man, man_unit, scenario  # noqa: E402
+from ceo_report.approval import build, fmt_man, man_unit, parse_registered, project_code, scenario  # noqa: E402
 from ceo_report.approval_render import render_approval  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.snapshot import SnapshotError, latest_snapshot, read_snapshot, write_snapshot  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
+from ceo_report.util import num  # noqa: E402
 
 
 def _positive_int(text):
@@ -60,6 +61,8 @@ def build_parser():
     ap.add_argument("--열기", default="열기", choices=["열기", "안함"])
     ap.add_argument("--수집", default="안함", choices=["함", "안함"],
                     help="함: 인트라넷에서 새로 읽기 (ID·비밀번호를 화면에서 물음). 기본: 안함")
+    ap.add_argument("--구조점검", action="store_true",
+                    help="로그인 후 각 목록의 첫 쪽만 읽어 화면 구조를 점검 (파일을 만들지 않음)")
     ap.add_argument("--최대페이지", type=_positive_int, default=300, help="목록마다 읽을 최대 쪽 수 (기본 300)")
     return ap
 
@@ -69,6 +72,7 @@ def make_collector_opener(delay=0.3):
     return intranet.make_opener(delay=delay)
 
 
+NO_FILE = "파일을 만들지 않았습니다"
 NO_HIDE_MESSAGE = "비밀번호를 가리고 입력할 수 없는 창입니다 — 실행_승인검토.bat을 더블클릭하거나 명령 프롬프트에서 실행하세요"
 
 
@@ -84,7 +88,7 @@ def ask_credentials():
         print(NO_HIDE_MESSAGE)
         return None, None, 2
     except (KeyboardInterrupt, EOFError):
-        print("입력을 취소했습니다 (파일을 만들지 않았습니다)")
+        print("입력을 취소했습니다 (%s)" % NO_FILE)
         return None, None, 2
     return user_id, password, None
 
@@ -123,7 +127,7 @@ def _guarded(func, secrets):
         reason = e.reason if isinstance(e, urllib.error.URLError) and e.reason else "%s: %s" % (type(e).__name__, e)
         return None, _fail(5, "인트라넷 연결 실패: %s" % reason, secrets)
     except KeyboardInterrupt:
-        return None, _fail(6, "중단했습니다 (파일을 만들지 않았습니다)", secrets)
+        return None, _fail(6, "중단했습니다 (%s)" % NO_FILE, secrets)
     except Exception as e:
         return None, _fail(6, "수집 중 예상하지 못한 오류: %s: %s" % (type(e).__name__, e), secrets)
 
@@ -147,6 +151,8 @@ def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if a.구조점검:
+        return run_structure(a)
     if a.기준일:
         asof = parse_date(a.기준일)
         if asof is None:
@@ -182,6 +188,75 @@ def report(path, A, how):
     print("승인 검토 화면: %s" % path)
     print("인트라넷 수집 시각 %s %s" % (A["collected_at"].strftime("%Y-%m-%d %H:%M:%S"), how))
     print("전부 승인 시 최저 잔액 %s%s · %s" % (low, man_unit(low), S["low_day"] or "-"))
+
+
+def run_structure(a):
+    """구조 점검: 로그인 → 목록마다 첫 쪽만 → 머리글·줄 수·쪽 링크·해석 불가 건수만 출력. 파일은 만들지 않는다."""
+    user_id, password, rc = ask_credentials()
+    if rc is not None:
+        return rc
+    if not user_id or not password:
+        print("ID와 비밀번호를 모두 입력해야 합니다")
+        return 2
+    secrets = [user_id, password]
+    try:
+        rep, rc = _guarded(
+            lambda: intranet.structure_report(make_collector_opener(), user_id, password), secrets)
+    finally:
+        user_id = password = None
+        del secrets[:]
+    if rc is not None:
+        return rc
+    return print_structure(rep, a.최대페이지)
+
+
+def print_structure(rep, max_pages):
+    """점검 결과를 출력한다. 머리글 이름과 건수만 나오고 줄의 값은 나오지 않는다."""
+    login = rep["login"]
+    print("로그인: 성공 (응답 %s, 이동 위치 %s)" % (login["status"], login["redirect_path"] or "없음"))
+    for key, label in (("payment", "지급요청"), ("project", "프로젝트")):
+        r = rep[key]
+        if not r["table_found"]:
+            print("%s 목록 머리글: 다름 (머리글 표를 찾지 못함)" % label)
+        elif r["header_ok"]:
+            print("%s 목록 머리글: 일치" % label)
+        else:
+            print("%s 목록 머리글: 다름" % label)
+            print("  없음: %s" % (", ".join(r["missing"]) or "(없음)"))
+            print("  새로 생김: %s" % (", ".join(r["extra"]) or "(없음)"))
+            if r["first_difference"]:
+                print("  첫 차이: %s" % r["first_difference"])
+        line = "%s 1쪽: %d건" % (label, r["rows"])
+        if key == "project":
+            line += " · Total 줄 %s · 프로젝트 보기 링크 %d개" % ("있음" if r["total_row"] else "없음", r["pro_num_links"])
+        if r["bad_rows"]:
+            line += " · 칸 수가 머리글과 다른 줄 %d건" % r["bad_rows"]
+        print(line)
+        links = r["page_links"]
+        if links["query"] or links["path_number"]:
+            forms = ["조회 이름 %s %d개" % (name, count) for name, count in sorted(links["query"].items())]
+            if links["path_number"]:
+                forms.append("경로 숫자 %d개" % links["path_number"])
+            print("  쪽 링크 형태: %s" % " · ".join(forms))
+        else:
+            print("  쪽 링크 형태: 찾지 못함")
+        if links["max_number"] is not None:
+            print("%s 쪽 링크 최대 번호 %d (수집 상한 --최대페이지 %d)" % (label, links["max_number"], max_pages))
+        if r["unfollowed_query_names"]:
+            print("  따라가지 않을 같은 목록 링크의 조회 이름: %s" % ", ".join(r["unfollowed_query_names"]))
+        if r["paging_stop"]:
+            print("  이대로면 수집이 멈춥니다: %s" % r["paging_stop"])
+    pay = rep["payment"]
+    if pay["header_ok"]:
+        rows = pay["rows_data"]
+        print("금액 미확인 %d건" % sum(1 for r in rows if num(r.get("금액")) is None))
+        print("등록일 해석 불가 %d건" % sum(1 for r in rows if parse_registered(r.get("등록일")) is None))
+        print("프로젝트 코드 없음 %d건" % sum(1 for r in rows if project_code(r.get("행사명")) is None))
+    else:
+        print("값 검사(금액·등록일·프로젝트 코드): 지급요청 머리글이 달라 건너뜀")
+    print("구조 점검 결과: %s" % ("예상과 일치" if rep["ok"] else "예상과 다름"))
+    print(NO_FILE)
+    return 0 if rep["ok"] else 3
 
 
 def run_collect(a, asof, now):

@@ -537,9 +537,8 @@ _LISTS = {
 }
 
 
-def _find_table(page, spec):
-    """머리글이 맞는 표를 찾는다. 없으면 가장 비슷한 표의 차이를 알리며 멈춘다."""
-    label = spec["label"]
+def _match_table(page, spec):
+    """머리글이 가장 맞는 표를 찾는다: (표 또는 None, 일치 여부, 없는 이름, 새로 생긴 이름, 첫 차이)."""
     best = None
     best_score = 0
     wanted = set(_key(x) for x in spec["header"] if x)
@@ -548,20 +547,30 @@ def _find_table(page, spec):
             continue
         ok, miss, extra, first = _compare_header(table.headers, spec["header"], spec["aliases"])
         if ok:
-            return table
+            return table, True, [], [], ""
         score = len(wanted & set(_key(x) for x in table.headers))
         if score > best_score:
-            best, best_score = (miss, extra, first), score
+            best, best_score = (table, miss, extra, first), score
     if best is None or best_score < 2:
+        return None, False, [], [], ""
+    return best[0], False, best[1], best[2], best[3]
+
+
+def _find_table(page, spec):
+    """머리글이 맞는 표를 찾는다. 없으면 가장 비슷한 표의 차이를 알리며 멈춘다."""
+    label = spec["label"]
+    table, ok, miss, extra, first = _match_table(page, spec)
+    if ok:
+        return table
+    if table is None:
         raise StructureMismatch("%s 목록 머리글 표를 찾지 못함 (화면 구조가 달라졌을 수 있음)" % label)
-    miss, extra, first = best
     raise StructureMismatch("%s 목록 머리글이 예상과 다름 — 없음: %s / 새로 생김: %s / 첫 차이 %s" % (
         label, ", ".join(miss) or "(없음)", ", ".join(extra) or "(없음)", first or "(칸 수 차이)"))
 
 
-def _read_rows(table, spec):
-    """표의 데이터 줄을 키가 붙은 dict로. Total 줄·빈 줄·안내 한 칸 줄은 데이터가 아니다."""
-    label = spec["label"]
+def _split_rows(table, spec):
+    """표의 데이터 줄을 키가 붙은 dict로, 칸 수가 다른 줄 수와 함께: (줄 목록, 칸 수가 다른 줄 수).
+    Total 줄·빈 줄·안내 한 칸 줄은 데이터가 아니다."""
     width = len(spec["header"])
     rows = []
     bad = 0
@@ -573,8 +582,14 @@ def _read_rows(table, spec):
             bad += 1
             continue
         rows.append(spec["mapper"](row))
+    return rows, bad
+
+
+def _read_rows(table, spec):
+    rows, bad = _split_rows(table, spec)
     if bad:
-        raise StructureMismatch("%s 목록 표 줄의 칸 수가 머리글과 다름 (%d건, 머리글 %d칸)" % (label, bad, width))
+        raise StructureMismatch("%s 목록 표 줄의 칸 수가 머리글과 다름 (%d건, 머리글 %d칸)" % (
+            spec["label"], bad, len(spec["header"])))
     return rows
 
 
@@ -614,7 +629,12 @@ def _canonical(url):
 
 
 def _classify_links(page, current_url, kind, list_path):
-    """쪽 이동 링크를 가려낸다. (따라갈 주소들, 알아본 쪽 링크 수, 알 수 없는 쪽 이름, 다른 조회값을 섞은 이름)"""
+    """쪽 이동 링크를 가려낸다.
+
+    (따라갈 주소들, 알아본 쪽 링크 수, 알 수 없는 쪽 이름, 다른 조회값을 섞은 이름, 링크 모양 정보)
+    링크 모양 정보: {'query': {쪽 이름: 개수}, 'path_number': 경로 숫자 링크 수, 'max_number': 가장 큰 번호 또는 None,
+    'unfollowed': 따라가지 않을 같은 목록 링크의 조회 이름}
+    """
     cur = urllib.parse.urlsplit(current_url)
     cur_set = _significant(_pairs(cur.query))
     known = FILTER_NAMES[kind] | PAGE_NAMES
@@ -622,6 +642,7 @@ def _classify_links(page, current_url, kind, list_path):
     recognised = 0
     unknown = set()
     mixed = set()
+    shape = {"query": {}, "path_number": 0, "max_number": None, "unfollowed": set()}
     for href, _text in page.links:
         h = href.strip()
         if not h or h.startswith("#") or h.lower().startswith(("javascript:", "mailto:", "tel:")):
@@ -644,16 +665,28 @@ def _classify_links(page, current_url, kind, list_path):
         names = set(n for n, _ in diff)
         if names <= PAGE_NAMES and all(_DIGITS.match(v) for _, v in diff):
             recognised += 1
+            numbers = [int(v) for _, v in diff if v]
+            if diff:
+                for n in names:
+                    shape["query"][n] = shape["query"].get(n, 0) + 1
+            else:
+                shape["path_number"] += 1
+                tail = re.search(r"/([0-9]+)$", parts.path)
+                if tail:
+                    numbers.append(int(tail.group(1)))
+            if numbers and (shape["max_number"] is None or max(numbers) > shape["max_number"]):
+                shape["max_number"] = max(numbers)
             try:
                 follow.append(check_url("GET", full))
             except BlockedRequest:
                 pass
             continue
         added = set((n, v) for n, v in link_set - cur_set)
+        shape["unfollowed"].update(n for n, v in added if n not in PAGE_NAMES)
         unknown.update(n for n, v in added if n not in known and v.isdigit())
         if any(n in PAGE_NAMES and v.isdigit() for n, v in added):
             mixed.update(n for n, v in added if n not in PAGE_NAMES)
-    return follow, recognised, unknown, mixed
+    return follow, recognised, unknown, mixed, shape
 
 
 def _collect_list(opener, kind, max_pages, progress):
@@ -690,7 +723,7 @@ def _collect_list(opener, kind, max_pages, progress):
             raise StructureMismatch("%s 목록: 번호 칸이 빈 줄이 %d건 있어 멈춤" % (label, empty_number))
         if progress is not None:
             progress(label, pages, len(rows))
-        follow, recognised, unknown, mixed = _classify_links(page, url, kind, list_path)
+        follow, recognised, unknown, mixed, _ = _classify_links(page, url, kind, list_path)
         if pages == 1 and not recognised:
             if unknown:
                 raise StructureMismatch(
@@ -721,3 +754,62 @@ def collect(opener, user_id, password, max_pages=300, progress=None):
     payments, payment_pages = _collect_list(opener, "payment", max_pages, progress)
     projects, project_pages = _collect_list(opener, "project", max_pages, progress)
     return CollectResult(payments, projects, payment_pages, project_pages, info)
+
+
+def _paging_stop(label, recognised, unknown, mixed):
+    """collect가 첫 쪽에서 쪽 이동을 알아보지 못해 멈출 때의 이유(아니면 빈 글)."""
+    if recognised:
+        return ""
+    if unknown:
+        return "%s 목록: 쪽 이동으로 보이는 링크의 조회 이름(%s)을 알 수 없음" % (label, ", ".join(sorted(unknown)))
+    if mixed:
+        return "%s 목록: 쪽 링크가 다른 조회 값(%s)도 함께 바꿈" % (label, ", ".join(sorted(mixed)))
+    return ""
+
+
+def _survey_list(opener, kind):
+    """목록의 첫 쪽만 읽어 구조를 요약한다. 멈추지 않고 차이를 알린다(로그인 양식·막힌 요청은 예외)."""
+    spec = _LISTS[kind]
+    label = spec["label"]
+    url = BASE + spec["path"]
+    _, _, text = opener.get(url)
+    page = _parse(text)
+    if _has_login_form(page):
+        raise LoginFailed("로그인 실패: ID 또는 비밀번호를 확인하세요")
+    table, ok, miss, extra, first = _match_table(page, spec)
+    rows, bad, total_row = [], 0, False
+    if table is not None:
+        rows, bad = _split_rows(table, spec)
+        total_row = any(_is_total(r.cells) for r in table.rows)
+    _, recognised, unknown, mixed, shape = _classify_links(page, url, kind, spec["path"])
+    stop = _paging_stop(label, recognised, unknown, mixed)
+    return {
+        "table_found": table is not None,
+        "header_ok": ok,
+        "missing": miss,
+        "extra": extra,
+        "first_difference": first,
+        "rows": len(rows),
+        "bad_rows": bad,
+        "total_row": total_row,
+        "pro_num_links": sum(1 for r in rows if r.get("pro_num")),
+        "page_links": {"query": shape["query"], "path_number": shape["path_number"],
+                       "max_number": shape["max_number"]},
+        "unfollowed_query_names": sorted(shape["unfollowed"]),
+        "paging_stop": stop,
+        "rows_data": rows,
+    }
+
+
+def structure_report(opener, user_id, password):
+    """구조 점검: 로그인 → 두 목록의 첫 쪽만 읽어 머리글·줄 수·쪽 링크 모양을 요약한다. 쪽 이동은 따라가지 않는다.
+
+    LoginFailed·BlockedRequest는 그대로 낸다. 보고서에는 ID·비밀번호가 들어가지 않는다.
+    """
+    info = login(opener, user_id, password)
+    report = {"login": info}
+    for kind in ("payment", "project"):
+        report[kind] = _survey_list(opener, kind)
+    report["ok"] = all(report[k]["header_ok"] and report[k]["rows"] > 0 and report[k]["bad_rows"] == 0
+                       and not report[k]["paging_stop"] for k in ("payment", "project"))
+    return report
