@@ -20,6 +20,9 @@ class Issues:
         self.items.append((file, line, msg))
 
 
+TITLE_ROWS = 5  # 머리글 위 제목 줄을 이만큼까지 건너뛴다
+
+
 def read_csv(path, required, issues, info=None):
     """엑셀에서 저장한 CSV를 읽는다. UTF-8(BOM 포함)과 CP949를 모두 받는다.
 
@@ -47,16 +50,22 @@ def read_csv(path, required, issues, info=None):
     # 디코딩한 글자를 줄바꿈 그대로(newline="") csv 모듈에 넘긴다. splitlines()는 \x0b \x1c \x85 \u2028 같은 문자에서도
     # 줄을 갈라 칸 안의 글자를 망가뜨리고 줄 번호도 어긋나게 한다.
     reader = csv.reader(io.StringIO(text, newline=""))
-    header, records, prev_end = None, [], 0
+    records, prev_end = [], 0
     for cells in reader:
         start, prev_end = prev_end + 1, reader.line_num  # 이 기록이 시작한 실제 파일 줄 (칸 안 줄바꿈·빈 줄 포함)
         if not cells:
             continue
-        if header is None:
-            header = [h.strip() for h in cells]
-        else:
-            records.append((start, cells))
-    header = header or []
+        records.append((start, cells))
+    # 머리글: 첫 줄. 엑셀에서 표 위에 제목 줄을 두고 저장했으면 필수 열이 모두 있는 줄(앞 TITLE_ROWS 줄 안)을 머리글로 쓴다.
+    at = 0
+    if records and not all(c in [h.strip() for h in records[0][1]] for c in required):
+        for i, (_, cells) in enumerate(records[1:TITLE_ROWS + 1], 1):
+            if all(c in [h.strip() for h in cells] for c in required):
+                at = i
+                issues.add(name, records[i][0], "머리글 위 제목 줄 %d줄을 건너뛰고 %d번째 줄을 머리글로 읽음" % (at, records[i][0]))
+                break
+    header = [h.strip() for h in records[at][1]] if records else []
+    records = records[at + 1:]
     missing = [c for c in required if c not in header]
     if info is not None:
         info["missing"] = missing

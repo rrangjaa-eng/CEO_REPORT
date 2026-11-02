@@ -175,3 +175,51 @@ class TestOutflowFileUnusable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTitleRowAboveHeader(unittest.TestCase):
+    """엑셀에서 표 위에 제목 줄('2026년 11월 자금일정')을 두고 저장한 CSV도 머리글을 찾아 읽는다.
+
+    전에는 제목 줄을 머리글로 읽어 모든 줄을 버렸다 (지급예정 0원).
+    """
+
+    def add_title(self, folder, name, lines=1):
+        def mutate(rows):
+            width = len(rows[0])
+            for i in range(lines):
+                rows.insert(0, ["2026년 11월 자료 %d" % i] + [""] * (width - 1))
+        rewrite(folder, name, mutate)
+
+    def test_schedule_with_title_row_reads_like_sample(self):
+        folder = sample_copy(self)
+        self.add_title(folder, "자금일정.csv")
+        self.add_title(folder, "프로젝트집행.csv", lines=2)
+        R = compute(load(folder), "weekly", ASOF)
+        base = compute(load(SAMPLE), "weekly", ASOF)
+        self.assertEqual(R["s2"]["out_missing"], [])
+        self.assertEqual(R["s2"]["min"], base["s2"]["min"])
+        self.assertEqual(R["s2"]["out4_firm"], base["s2"]["out4_firm"])
+        notes = [(f, line, m) for f, line, m in R["s7"]["issues"] if f == "프로젝트집행.csv"]
+        self.assertTrue(any("제목 줄" in m and line == 3 for f, line, m in notes), notes)
+
+    def test_issue_line_numbers_still_file_lines(self):
+        from ceo_report.util import Issues, read_csv
+        tmp = new_tmp(self)
+        path = os.path.join(tmp, "x.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("제목,\r\n\r\na,b\r\n1,x\r\n2,y\r\n")
+        rows, ok = read_csv(path, ["a", "b"], Issues())
+        self.assertTrue(ok)
+        self.assertEqual([(r["a"], r["_line"]) for r in rows], [("1", 4), ("2", 5)])
+
+    def test_no_header_anywhere_keeps_first_row(self):
+        from ceo_report.util import Issues, read_csv
+        tmp = new_tmp(self)
+        path = os.path.join(tmp, "x.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("p,q\r\n1,2\r\n")
+        iss = Issues()
+        info = {}
+        rows, ok = read_csv(path, ["a", "b"], iss, info)
+        self.assertEqual(info["missing"], ["a", "b"])
+        self.assertTrue(any("필수 열 없음" in m for _, _, m in iss.items))
