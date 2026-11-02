@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, element_html, load_approval_cli,  # noqa: E402
                            text_of, write_fake_snapshot)
 from test_intranet import (PASSWORD, USER, FakeTransport, PAYMENT_HEADER, login_page,  # noqa: E402
-                           payment_page, project_page, site_routes)
+                           make_fake_opener, payment_page, project_page, site_routes)
 
 HEADLINE = "전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25"
 
@@ -354,6 +354,141 @@ class TestApprovalCollectStops(_TmpMixin, unittest.TestCase):
         self.assertNotIn("인트라넷 연결 실패", out)
         mocks["browser"].assert_not_called()
         sweep(self, self.tmp, [out, err], fake)
+
+
+# ---------------------------------------------------------------------------
+# Task 2: 구조 점검
+# ---------------------------------------------------------------------------
+
+PAGED_LINKS = [("/payment/index?page=2", "2"), ("/payment/index?page=3", "3"),
+               ("/payment/index?confirm=3", "승인 대기")]
+
+
+class TestStructureCheck(_TmpMixin, unittest.TestCase):
+    def setUp(self):
+        self.make_tmp()
+
+    def report(self, extra=None):
+        opener, fake = make_fake_opener(fake_site(extra))
+        rep = intranet().structure_report(opener, USER, PASSWORD)
+        return rep, fake
+
+    def check_argv(self):
+        return ["--구조점검", "--수집폴더", self.root, "--출력", self.out]
+
+    def check(self, extra=None, **kw):
+        cli = load_approval_cli()
+        patches = [mock.patch.object(cli, "write_snapshot"), mock.patch.object(cli, "make_screen")]
+        rc, out, err, fake, mocks = run_cli(self, self.check_argv(), site=fake_site(extra), patches=patches, **kw)
+        self.assertEqual(entries(self.tmp), [], "구조 점검이 파일이나 폴더를 만듦")
+        self.assertFalse(os.path.exists(self.root))
+        self.assertFalse(os.path.exists(self.out))
+        mocks["browser"].assert_not_called()
+        self.assertNotIn("Traceback", out + err)
+        sweep(self, self.tmp, [out, err], fake)
+        return rc, out, err, fake
+
+    def test_report_on_the_fake_site(self):
+        rep, fake = self.report()
+        self.assertTrue(rep["ok"])
+        self.assertEqual(rep["login"], {"status": 302, "redirect_path": "/main"})
+        pay = rep["payment"]
+        self.assertTrue(pay["header_ok"])
+        self.assertEqual((pay["missing"], pay["extra"], pay["rows"], pay["bad_rows"]), ([], [], 9, 0))
+        self.assertEqual(pay["page_links"], {"query": {}, "path_number": 0, "max_number": None})
+        self.assertEqual(pay["unfollowed_query_names"], [])
+        self.assertEqual(len(pay["rows_data"]), 9)
+        proj = rep["project"]
+        self.assertTrue(proj["header_ok"])
+        self.assertEqual((proj["rows"], proj["total_row"], proj["pro_num_links"]), (4, True, 4))
+        self.assertEqual(fake.paths(), [("GET", "/"), ("POST", "/login/submit"),
+                                        ("GET", "/payment/index"), ("GET", "/project/index")])
+        self.assertNotIn(PASSWORD, repr(rep))
+        self.assertNotIn(USER, repr(rep))
+
+    def test_page_links_are_counted_not_followed(self):
+        rep, fake = self.report({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, links=PAGED_LINKS))})
+        pay = rep["payment"]
+        self.assertEqual(pay["page_links"]["query"], {"page": 2})
+        self.assertEqual(pay["page_links"]["max_number"], 3)
+        self.assertEqual(pay["unfollowed_query_names"], ["confirm"])
+        self.assertEqual(len(fake.calls), 4)
+        self.assertTrue(rep["ok"])
+
+    def test_path_number_links_are_counted(self):
+        links = [("/payment/index/2", "2"), ("/payment/index/7", "7")]
+        rep, fake = self.report({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, links=links))})
+        self.assertEqual(rep["payment"]["page_links"], {"query": {}, "path_number": 2, "max_number": 7})
+        self.assertEqual(len(fake.calls), 4)
+
+    def test_header_without_amount_is_reported_not_raised(self):
+        header = [h for h in PAYMENT_HEADER if h != "금액"]
+        rep, _ = self.report({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, header=header))})
+        self.assertFalse(rep["ok"])
+        self.assertFalse(rep["payment"]["header_ok"])
+        self.assertEqual(rep["payment"]["missing"], ["금액"])
+        self.assertTrue(rep["project"]["header_ok"])
+
+    def test_login_form_on_list_page_raises(self):
+        with self.assertRaises(intranet().LoginFailed):
+            self.report({("GET", "/payment/index"): (200, {}, login_page())})
+
+    def test_blocked_redirect_still_raises(self):
+        with self.assertRaises(intranet().BlockedRequest):
+            self.report({("GET", "/project/index"): (302, {"Location": "/confirm/project/1"}, "")})
+
+    def test_unknown_paging_is_not_ok(self):
+        links = [("/payment/index?gyear=2026&page=2", "2")]
+        rep, _ = self.report({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, links=links))})
+        self.assertFalse(rep["ok"])
+        self.assertIn("gyear", rep["payment"]["paging_stop"])
+
+    def test_cli_prints_counts_and_writes_nothing(self):
+        rc, out, err, fake = self.check()
+        self.assertEqual(rc, 0, out + err)
+        for line in ("로그인: 성공", "지급요청 목록 머리글: 일치", "지급요청 1쪽: 9건", "프로젝트 목록 머리글: 일치",
+                     "프로젝트 1쪽: 4건", "Total 줄 있음", "금액 미확인 1건", "등록일 해석 불가 0건",
+                     "프로젝트 코드 없음 0건", "구조 점검 결과: 예상과 일치", "파일을 만들지 않았습니다"):
+            self.assertIn(line, out)
+        self.assertEqual(len(fake.calls), 4)
+
+    def test_cli_prints_no_row_values(self):
+        rc, out, err, fake = self.check()
+        for value in ("가상음향", "가상 컨퍼런스", "44,000,000", "가상고객A", "홍길동"):
+            self.assertNotIn(value, out + err)
+
+    def test_cli_shows_link_forms_and_page_cap(self):
+        rc, out, err, fake = self.check({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, links=PAGED_LINKS))})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("지급요청 쪽 링크 최대 번호 3 (수집 상한 --최대페이지 300)", out)
+        self.assertIn("confirm", out)
+        self.assertEqual(len(fake.calls), 4)
+
+    def test_cli_reports_header_difference_with_3(self):
+        header = [h for h in PAYMENT_HEADER if h != "금액"]
+        rc, out, err, fake = self.check({("GET", "/payment/index"): (200, {}, payment_page(FAKE_PAYMENTS, header=header))})
+        self.assertEqual(rc, 3, out)
+        self.assertIn("지급요청 목록 머리글: 다름", out)
+        self.assertIn("없음: 금액", out)
+        self.assertIn("구조 점검 결과: 예상과 다름", out)
+
+    def test_cli_stops_map_to_exit_codes(self):
+        cases = [
+            (3, "로그인 실패", {("GET", "/payment/index"): (200, {}, login_page())}),
+            (4, "허용 목록 밖 요청을 막고 멈췄습니다", {("GET", "/payment/index"): (302, {"Location": "/confirm/payment/1"}, "")}),
+            (5, "인트라넷 연결 실패", {("GET", "/"): urllib.error.URLError("가상 연결 거부")}),
+            (6, "수집 중 예상하지 못한 오류: ValueError", {("GET", "/project/index"): ValueError("가상 %s" % PASSWORD)}),
+        ]
+        for rc_want, text, extra in cases:
+            with self.subTest(text):
+                rc, out, err, fake = self.check(extra)
+                self.assertEqual(rc, rc_want, out + err)
+                self.assertIn(text, out)
+
+    def test_cli_empty_password_stops_before_any_request(self):
+        rc, out, err, fake = self.check(password="")
+        self.assertEqual(rc, 2)
+        self.assertEqual(fake.calls, [])
 
 
 if __name__ == "__main__":
