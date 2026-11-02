@@ -186,5 +186,28 @@ class TestApprovalHeadlineFeedback(unittest.TestCase):
         self.assertIn("prefers-reduced-motion", self.page)
 
 
+PHONE_ROWS = """
+(function(){
+  var b=document.body,hmax=0,who='';
+  [].forEach.call(document.querySelectorAll('table:not(.risk) tbody tr'),function(r){
+    var h=r.getBoundingClientRect().height;if(h>hmax){hmax=h;who=r.textContent.slice(0,40);}});
+  b.setAttribute('data-rowmax',String(hmax));b.setAttribute('data-who',who);
+  b.setAttribute('data-sw',String(document.documentElement.scrollWidth));
+})();
+"""
+
+
+class TestReportPhoneTables(unittest.TestCase):
+    """폰 폭에서 표는 옆으로 밀어 보고, 날짜·금액이 글자 단위로 쌓이지 않는다 (위험 표는 글이 길어 줄바꿈 그대로)."""
+
+    def test_detail_rows_stay_short_on_a_phone(self):
+        R = compute(load(SAMPLE), "monthly", ASOF)
+        for mode in ("ceo", "mgmt"):
+            with self.subTest(mode=mode):
+                dom = browser_dom(self, render(R, mode), PHONE_ROWS, size=(390, 844))
+                self.assertLessEqual(float(body_attr(dom, "data-sw")), 390)
+                self.assertLess(float(body_attr(dom, "data-rowmax")), 80, body_attr(dom, "data-who"))
+
+
 if __name__ == "__main__":
     unittest.main()

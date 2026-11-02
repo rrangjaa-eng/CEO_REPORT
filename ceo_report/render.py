@@ -60,7 +60,9 @@ tr.sub td{color:var(--sub)}
 .toc{margin-top:14px}
 .toc a{color:var(--accent);margin-right:10px}
 @media screen and (max-width:820px){.kpis,.low{grid-template-columns:1fr 1fr}.mid{grid-template-columns:1fr}
-.kpi.lowbal{grid-column:1/-1;order:-1}}
+.kpi.lowbal{grid-column:1/-1;order:-1}
+.tw table:not(.risk):not(#requests){width:max-content;min-width:100%}
+.tw table:not(.risk):not(#requests) td{white-space:nowrap}}
 @media print{@page{size:A4 landscape;margin:10mm}.wrap{max-width:none;padding:0}h2{break-after:avoid}
 tr{break-inside:avoid}.toc{display:none}body{font-size:10.5px}table{font-size:10.5px}.kpi .v{font-size:18px}h2{margin-top:16px}.kpis{margin:8px 0}.kpi{padding:6px 10px}.mid svg{max-height:185px}.low{margin-top:8px}.kv{padding:1px 0}.wrap>.meta{margin-bottom:0}
 .kpi,.card{break-inside:avoid}.mid svg{max-height:165px}.note{font-size:9.5px;margin:2px 0}.scope{margin:2px 0 4px}
