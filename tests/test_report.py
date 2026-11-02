@@ -1530,5 +1530,50 @@ class TestReadCsvLines(unittest.TestCase):
         self.assertEqual(iss.items[0][:2], ("a.csv", 5))
 
 
+class TestLauncherFlow(unittest.TestCase):
+    """WR-05: 실행 파일은 python이 성공(0)으로 끝났을 때만 성공 문구를 보이고, Python 3.8 이상인지 확인한다.
+
+    cmd.exe는 여기서 실행할 수 없어 파일 내용(줄 순서·조건)으로만 확인한다. Windows 실행은 사람이 확인한다."""
+    SUCCESS = "결과 파일은 출력 폴더에 있습니다"
+
+    def lines(self, name):
+        with open(os.path.join(ROOT, name), "rb") as f:
+            raw = f.read()
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
+        return raw.decode("utf-8").split("\r\n")
+
+    def test_success_line_only_after_zero_exit_check(self):
+        for name in ("실행_주간.bat", "실행_월간.bat"):
+            with self.subTest(name):
+                lines = self.lines(name)
+                ok = [i for i, ln in enumerate(lines) if self.SUCCESS in ln]
+                self.assertEqual(len(ok), 1)
+                run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% 보고서.py"))
+                guard = [i for i, ln in enumerate(lines) if i > run and re.match(r'if (not )?"%RC%"==["]?0', ln, re.I)]
+                self.assertTrue(guard, "RC 검사가 없음")
+                self.assertLess(guard[0], ok[0])
+                # 성공 줄 바로 위는 성공일 때만 닿는 이름표(:OK)여야 한다
+                self.assertEqual(lines[ok[0] - 1].strip().upper(), ":OK")
+                fail = [i for i, ln in enumerate(lines) if "오류가 발생했습니다" in ln]
+                self.assertEqual(len(fail), 1)
+                self.assertLess(guard[0], fail[0])
+                self.assertTrue(any(ln.strip() == "exit /b %RC%" for ln in lines))
+
+    def test_python_version_checked_for_every_candidate(self):
+        for name in ("실행_주간.bat", "실행_월간.bat"):
+            with self.subTest(name):
+                lines = self.lines(name)
+                run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% 보고서.py"))
+                checks = [i for i, ln in enumerate(lines) if "version_info" in ln and "(3, 8)" in ln]
+                self.assertEqual(len(checks), 2, "python 과 py -3 둘 다 버전 확인")
+                self.assertTrue(all(i < run for i in checks))
+                self.assertTrue(any(ln.lstrip().startswith("python -c") for ln in lines))
+                self.assertTrue(any(ln.lstrip().startswith("py -3 -c") for ln in lines))
+                text = "\n".join(lines)
+                self.assertIn("3.8보다 낮", text)
+                self.assertIn("python.org", text)
+
+
 if __name__ == "__main__":
     unittest.main()
