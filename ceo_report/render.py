@@ -12,7 +12,8 @@ CSS = """
 :root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;--out:#b5523b;
 --est:#9aa3b2;--warn:#8a5a00;--bg:#fff}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+word-break:keep-all;overflow-wrap:break-word}
 .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
 h1{font-size:22px;margin:0}
 h2{font-size:16px;margin:28px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--ink)}
@@ -38,6 +39,7 @@ table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 th{background:var(--soft);font-weight:600;white-space:nowrap}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mid th{white-space:normal}.mid td.n{white-space:normal}
 tr.tot td{font-weight:700;border-top:2px solid var(--ink);background:var(--soft)}
 tr.sub td{color:var(--sub)}
 .na{color:var(--warn)}
