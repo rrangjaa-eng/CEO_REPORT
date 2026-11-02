@@ -63,5 +63,56 @@ class TestReportFirstScreenLayout(unittest.TestCase):
         self.assertLess(float(body_attr(dom, "data-rowmax")), 80)
 
 
+LOW_LABEL = "최저 계산 잔액 (확정 일정만)"
+
+
+def kpi_parts(html, label):
+    """첫 화면 KPI 칸 (값 HTML, 아래 줄 HTML, 칸 class). 없으면 None."""
+    m = re.search(r"<div class='(kpi[^']*)'><div class='l'>" + re.escape(label) +
+                  r"</div><div class='v'>(.*?)</div><div class='s'>(.*?)</div></div>", html, re.S)
+    return (m.group(2), m.group(3), m.group(1)) if m else None
+
+
+def first_screen(html):
+    return html.split("<div class='toc'>")[0]
+
+
+class TestLowestBalanceCard(unittest.TestCase):
+    """첫 화면의 질문 '앞으로 잔액이 가장 낮을 때 얼마인가'를 첫 줄 카드가 답한다 (값은 기존 계산 그대로)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.R = compute(load(SAMPLE), "weekly", ASOF)
+
+    def test_card_shows_lowest_firm_balance_date_and_reserve(self):
+        for mode in ("ceo", "mgmt"):
+            with self.subTest(mode=mode):
+                v, s, cls_ = kpi_parts(first_screen(render(self.R, mode)), LOW_LABEL)
+                self.assertIn("19.8", v)
+                self.assertIn("백만원", v)
+                self.assertIn("2027-04-25", s)
+                self.assertIn("최소 보유현금 100.0 미만", s)
+                self.assertIn("금액 미확인 1건 (미반영)", s)
+                self.assertIn("lv-reserve", cls_)
+
+    def test_card_is_in_the_kpi_row(self):
+        fs = first_screen(render(self.R, "ceo"))
+        kpis = fs.split("<div class='kpis'>")[1].split("<div class='mid'>")[0]
+        self.assertIn(LOW_LABEL, kpis)
+
+    def test_unknown_balance_says_so(self):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        folder = os.path.join(tmp, "입력")
+        shutil.copytree(SAMPLE, folder)
+        os.remove(os.path.join(folder, "계좌잔액.csv"))
+        v, s, cls_ = kpi_parts(first_screen(render(compute(load(folder), "weekly", ASOF), "ceo")), LOW_LABEL)
+        self.assertIn("잔액 미확인", v)
+        self.assertNotIn("백만원", v)
+        self.assertNotIn("lv-", cls_)
+
+
 if __name__ == "__main__":
     unittest.main()

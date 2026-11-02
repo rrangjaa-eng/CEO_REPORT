@@ -21,12 +21,16 @@ h3{font-size:13.5px;margin:16px 0 6px;color:var(--accent)}
 .meta{color:var(--sub);margin-top:4px}
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;background:var(--accent);color:#fff;font-size:12px;margin-left:8px;vertical-align:middle}
 .badge.m{background:#6b3fa0}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0}
 .kpi{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 .kpi .l{color:var(--sub);font-size:12px}
 .kpi .v{font-size:22px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
 .kpi .v .u{font-size:12px;font-weight:400;color:var(--sub);margin-left:2px}
 .kpi .s{color:var(--sub);font-size:11.5px;margin-top:2px}
+.kpi.lowbal{border:2px solid var(--accent)}.kpi.lowbal.lv-reserve{border-color:var(--warn)}.kpi.lowbal.lv-short{border-color:var(--out)}
+.kpi.lv-reserve .v{color:var(--warn)}.kpi.lv-short .v{color:var(--out)}
+.st{display:inline-block;padding:0 6px;border-radius:9px;font-size:11.5px;font-weight:700}
+.st.lv-reserve{border:1px solid var(--warn);color:var(--warn)}.st.lv-short{background:var(--out);color:#fff}
 .mid{display:grid;grid-template-columns:1.45fr 1fr;gap:14px}
 .mid>div,.low>div,.kpis>div{min-width:0}
 .low{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
@@ -54,7 +58,8 @@ tr.sub td{color:var(--sub)}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .toc{margin-top:14px}
 .toc a{color:var(--accent);margin-right:10px}
-@media screen and (max-width:820px){.kpis,.low{grid-template-columns:1fr 1fr}.mid{grid-template-columns:1fr}}
+@media screen and (max-width:820px){.kpis,.low{grid-template-columns:1fr 1fr}.mid{grid-template-columns:1fr}
+.kpi.lowbal{grid-column:1/-1;order:-1}}
 @media print{@page{size:A4 landscape;margin:10mm}.wrap{max-width:none;padding:0}h2{break-after:avoid}
 tr{break-inside:avoid}.toc{display:none}body{font-size:10.5px}table{font-size:10.5px}.kpi .v{font-size:18px}h2{margin-top:16px}.kpis{margin:8px 0}.kpi{padding:6px 10px}.mid svg{max-height:185px}.low{margin-top:8px}.kv{padding:1px 0}.wrap>.meta{margin-bottom:0}}
 """
@@ -214,6 +219,7 @@ def render(R, mode):
     if s2["out_unknown_n4"]:
         out4_sub += " · 금액 미확인 %d건 (합계 제외)" % s2["out_unknown_n4"]
     h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]), esc(out4_sub)))
+    h.append(_low_kpi(R))
     h.append("</div>")
     # 중앙: 프로젝트 요약 + 자금 그래프
     h.append("<div class='mid'><div>")
@@ -317,11 +323,35 @@ def render(R, mode):
     return "".join(h)
 
 
-def _kpi(label, value, sub, unit=True):
+def _kpi(label, value, sub, unit=True, cls=""):
     if unit:
         value += " <span class='u'>백만원</span>"
-    return "<div class='kpi'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
-        esc(label), value, sub)
+    return "<div class='kpi%s'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
+        cls, esc(label), value, sub)
+
+
+def _low_kpi(R):
+    """첫 줄 다섯째 칸: 확정 일정만의 최저 계산 잔액과 그 날짜, 최소 보유현금과의 비교 (값은 s2['min'] 그대로).
+
+    비교는 글자로 적는다 (색은 같은 말을 되풀이할 뿐). 시작 잔액을 모르면 '잔액 미확인'만 보인다."""
+    s2 = R["s2"]
+    low, day = s2["min"]["firm"]
+    if low is None:
+        return _kpi("최저 계산 잔액 (확정 일정만)", _na("잔액 미확인"), esc("시작 잔액을 몰라 계산하지 않음"), unit=False,
+                    cls=" lowbal")
+    reserve = R["settings_num"]["위험_최소보유현금"]
+    level = ""
+    if low < 0:
+        level, text = "lv-short", "부족 (0 미만)"
+    elif reserve is not None and low < reserve:
+        level, text = "lv-reserve", "최소 보유현금 %s 미만" % man(reserve)
+    else:
+        text = "최소 보유현금 %s 이상" % man(reserve) if reserve is not None else ""
+    sub = esc(d2s(day))
+    if text:
+        sub += " · " + ("<span class='st %s'>%s</span>" % (level, esc(text)) if level else esc(text))
+    sub += _vat_note(s2["vat_unknown_firm_n"]) + _unknown_out_note(s2["out_unknown_firm_n"])
+    return _kpi("최저 계산 잔액 (확정 일정만)", M(low), sub, cls=" lowbal" + (" " + level if level else ""))
 
 
 def _min_cell(low, day, vat_n, unk_n=0):

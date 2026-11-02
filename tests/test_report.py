@@ -544,7 +544,7 @@ class TestSettingsAndKpi(Base):
 
     def test_kpi_values_show_unit(self):
         vals = re.findall(r"<div class='v'>(.*?)</div>", first_screen(render(self.R, "ceo")))
-        self.assertEqual(len(vals), 4)
+        self.assertEqual(len(vals), 5)  # 4개 + 최저 계산 잔액 (tests/test_design.py)
         for v in vals:
             self.assertIn("백만원", v)
 
