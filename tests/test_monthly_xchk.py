@@ -29,7 +29,7 @@ from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table, shared_inputs,  # noqa: E402
                                write_xchk, xchk_table)
-from test_report import FORBIDDEN, load_cli, numbers_of, section  # noqa: E402
+from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
 BASELINE = "cbc5497"
 BASE_ASOF = "2026-10-31"
@@ -620,6 +620,164 @@ class TestMonthlyUnknowns(unittest.TestCase):
                             ("hostile", pages_for(self, hostile_table(), raw=True))):
             with self.subTest(name):
                 editions_ok(self, pages["ceo"], pages["mgmt"])
+
+
+# ───────────── Task 3: 파일 없음·읽을 수 없음, 오래된 장부 기준일, 콘솔 한 줄, 모든 탐침 입력 ─────────────
+NO_FILE_TEXT = "자료 없음 (위하고대조.csv — 실행_변환.bat으로 만듦)"
+NO_FILE_LINE = "위하고 대조 자료 없음 — 실행_변환.bat을 먼저 실행하면 월간 보고 8번에 들어갑니다."
+
+
+def section8_text(page):
+    return plain(section8(page))
+
+
+def write_text(folder, text):
+    with open(os.path.join(folder, "위하고대조.csv"), "w", encoding="utf-8-sig", newline="") as f:
+        f.write(text)
+
+
+class TestMonthlyMissing(unittest.TestCase):
+    def test_missing_file_reads_no_data_in_both_editions_and_the_cli_says_so(self):
+        folder = sample_folder(self)
+        rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
+        self.assertEqual(rc, 0)
+        for mode, page in pages.items():
+            with self.subTest(mode):
+                self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
+                self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
+                self.assertIn(NO_FILE_TEXT, section8_text(page))
+                self.assertNotIn("xchk-summary", page)
+                self.assertNotIn("xchk-detail", page)
+        self.assertIn(NO_FILE_LINE, out.splitlines())
+        self.assertEqual(out.count("위하고 대조"), 1)
+        editions_ok(self, pages["ceo"], pages["mgmt"])
+
+    def test_header_only_file_with_other_columns_is_unreadable_and_does_not_stop_the_report(self):
+        folder = sample_folder(self)
+        write_text(folder, "구분,대상,이름\n기준,,x\n")
+        rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
+        self.assertEqual(rc, 0)
+        for mode, page in pages.items():
+            with self.subTest(mode):
+                self.assertIn("읽을 수 없음 (위하고대조.csv 머리글 다름)", section8_text(page))
+                self.assertNotIn("xchk-summary", page)
+        lines = [ln for ln in out.splitlines() if "위하고 대조" in ln]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("읽을 수 없음", lines[0])
+        self.assertIn("위하고대조.csv 머리글 다름", lines[0])
+        self.assertNotIn(NO_FILE_LINE, out)
+        editions_ok(self, pages["ceo"], pages["mgmt"])
+
+    def test_a_non_numeric_amount_names_the_line_and_stops_nothing(self):
+        table = xchk_table(shared_inputs())
+        for r in table.rows:
+            if r["구분"] == "프로젝트원가" and r["항목"] == "WEHAGO 원가" and r["대상"] == "26201":
+                r["금액"] = "abc <b>900101-1234567</b>"
+        folder = sample_folder(self, table, raw=True)
+        rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
+        self.assertEqual(rc, 0)
+        for page in pages.values():
+            text = section8_text(page)
+            self.assertIn("읽을 수 없음 (위하고대조.csv ", text)
+            self.assertIn("금액 값이 숫자가 아님", text)
+            self.assertNotIn("900101", page)
+            self.assertNotIn("<b>900101", page)
+        self.assertNotIn("900101", out)
+
+    def test_an_empty_facts_file_shows_unknowns_never_zero(self):
+        folder = sample_folder(self)
+        write_text(folder, "구분,대상,이름,항목,금액,건수,비고\n")
+        rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
+        self.assertEqual(rc, 0)
+        for mode, page in pages.items():
+            with self.subTest(mode):
+                rows = summary_rows(page)
+                self.assertEqual(len(rows), 6)
+                for label, value in rows.items():
+                    self.assertIn("판단 불가", value, label)
+                self.assertNotIn("0건", value)
+                self.assertEqual(meta_line(page), "장부 기준일 기록 없음 · 인트라넷 스냅숏 기록 없음 · 변환 시각 기록 없음")
+        editions_ok(self, pages["ceo"], pages["mgmt"])
+        self.assertNotIn("위하고 대조", out)
+
+    def test_render_without_attached_facts_reads_no_data(self):
+        R = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
+        for mode in ("ceo", "mgmt"):
+            self.assertIn(NO_FILE_TEXT, plain(section8(render(R, mode))))
+
+    def test_stale_book_date_is_stated_in_days_in_both_editions(self):
+        folder = sample_folder(self, xchk_table(shared_inputs()))
+        rc, out, pages, _ = run_cli(self, folder, "월간", "2026-11-30")
+        self.assertEqual(rc, 0)
+        for mode, page in pages.items():
+            with self.subTest(mode):
+                self.assertTrue(meta_line(page).startswith("장부 기준일 2026-10-31 (보고 기준일보다 30일 이전) · 인트라넷 스냅숏"),
+                                meta_line(page))
+        editions_ok(self, pages["ceo"], pages["mgmt"])
+
+    def test_book_date_after_the_report_date_and_unreadable_book_date(self):
+        folder = sample_folder(self, xchk_table(shared_inputs()))
+        rc, out, pages, _ = run_cli(self, folder, "월간", "2026-10-30")
+        self.assertTrue(meta_line(pages["ceo"]).startswith("장부 기준일 2026-10-31 (보고 기준일보다 1일 이후)"))
+
+        def edit(rows):
+            for r in rows:
+                if r["구분"] == "기준" and r["항목"] == "장부 기준일":
+                    r["비고"] = "어제쯤"
+        pages = pages_for(self, with_rows(xchk_table(shared_inputs()), edit))
+        self.assertTrue(meta_line(pages["mgmt"]).startswith("장부 기준일 어제쯤 (날짜 형식 확인 불가)"))
+
+    def test_weekly_with_a_missing_or_broken_file_prints_nothing_new(self):
+        for text in (None, "구분,대상\n"):
+            folder = sample_folder(self)
+            if text:
+                write_text(folder, text)
+            rc, out, pages, _ = run_cli(self, folder, "주간", WEEKLY_ASOF)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("위하고", out)
+            self.assertNotIn("WEHAGO 기준 대조", pages["ceo"])
+
+
+class TestReportProbesMonthlyXchk(unittest.TestCase):
+    """REP-02 탐침 입력마다 월간 + 위하고대조.csv(있음 / 없음 / 머리글 다름)로도 대표용 규칙을 확인한다."""
+
+    def variants(self):
+        ok = xchk_table(shared_inputs())
+        return (("ok", lambda f: write_xchk(f, ok)),
+                ("missing", lambda f: None),
+                ("bad header", lambda f: write_text(f, "구분,대상\n기준,x\n")),
+                ("hostile", lambda f: write_raw(f, hostile_table())))
+
+    def test_every_probe_input_keeps_the_ceo_rules_with_the_monthly_section(self):
+        from ceo_report.convert_xchk import load_xchk
+        from test_report import check_editions
+        probes = rep02_probes(self)
+        for name, make in probes:
+            folder, _, _ = make()
+            for vname, put in self.variants():
+                with self.subTest("%s / %s" % (name, vname)):
+                    tmp = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, tmp, True)
+                    copy = os.path.join(tmp, "입력")
+                    shutil.copytree(folder, copy)
+                    put(copy)
+                    R = compute(load(copy), "monthly", dt.date(2026, 10, 31))
+                    R["xchk"] = load_xchk(copy)
+                    check_editions(self, R)
+                    ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+                    self.assertIn("<h2 id='s8'>", ceo)
+                    self.assertNotIn("xchk-detail", ceo)
+                    self.assertEqual(("xchk-detail" in mgmt), vname in ("ok", "hostile"))
+
+    def test_the_same_inputs_through_the_cli_agree_with_the_computed_run(self):
+        folder = sample_folder(self, xchk_table(shared_inputs()))
+        rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
+        self.assertEqual(rc, 0)
+        from ceo_report.convert_xchk import load_xchk
+        R = compute(load(folder), "monthly", dt.date(2026, 10, 31))
+        R["xchk"] = load_xchk(folder)
+        for mode in ("ceo", "mgmt"):
+            self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
 
 # ───────────── 주간 보고는 바뀌지 않는다 (cbc5497 코드와 같은 HTML) ─────────────

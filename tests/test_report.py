@@ -550,44 +550,48 @@ class TestSettingsAndKpi(Base):
             self.assertIn("백만원", v)
 
 
-class TestCeoRulesEverywhere(unittest.TestCase):
-    """대표용 규칙(금지어 없음·숫자 동일·대조 일치)을 샘플과 이 계획의 모든 탐침 입력에서 확인한다 (REP-02)."""
-
-    def blank_balance(self, account):
+def rep02_probes(test):
+    """REP-02 탐침 입력 목록: (이름, 만드는 함수 -> (입력 폴더, 종류, 기준일)). 월간 8번 시험도 같은 목록을 쓴다."""
+    def blank_balance(account):
         def mutate(rows):
             for r in rows[1:]:
                 if r[0] == "2026-11-02" and r[1] == account:
                     r[3] = ""
-        return probe_folder(self, "계좌잔액.csv", mutate)
+        return probe_folder(test, "계좌잔액.csv", mutate)
 
-    def setting(self, edit):
+    def setting(edit):
         def mutate(rows):
             for r in rows[1:]:
                 if r[0] in edit:
                     r[1] = edit[r[0]]
-        return probe_folder(self, "설정.csv", mutate)
+        return probe_folder(test, "설정.csv", mutate)
+
+    def blank_vat(rows):
+        for r in rows[1:]:
+            if r[2] == "사운드랩":
+                r[5] = ""
+    extra = [["2026-11-20", "지급", "", "추정", "거래처미지급", "", "디자인스튜디오", "청구서", "추가 청구 금액 미정"],
+             ["2026-10-30", "지급", "5,000,000", "확정", "거래처미지급", "", "인쇄소", "청구서", "기한 경과"],
+             ["2026-10-31", "지급", "", "확정", "거래처미지급", "", "현수막", "청구서", "금액 미정"]]
+    return (
+        ("sample weekly", lambda: (SAMPLE, "weekly", ASOF)),
+        ("sample monthly", lambda: (SAMPLE, "monthly", dt.date(2026, 10, 31))),
+        ("blank 운영계좌", lambda: (blank_balance("운영계좌"), "weekly", ASOF)),
+        ("blank 프로젝트계좌", lambda: (blank_balance("프로젝트계좌"), "weekly", ASOF)),
+        ("unknown and past-due rows", lambda: (
+            probe_folder(test, "자금일정.csv", lambda rows: rows.extend(extra)), "weekly", ASOF)),
+        ("blank 사운드랩 부가세", lambda: (probe_folder(test, "프로젝트집행.csv", blank_vat), "weekly", ASOF)),
+        ("settings commas and abc", lambda: (
+            setting({"위험_최소보유현금": "50,000,000", "위험_예산초과율": "abc"}), "weekly", ASOF)),
+        ("blank threshold", lambda: (setting({"위험_최소보유현금": ""}), "weekly", ASOF)),
+    )
+
+
+class TestCeoRulesEverywhere(unittest.TestCase):
+    """대표용 규칙(금지어 없음·숫자 동일·대조 일치)을 샘플과 이 계획의 모든 탐침 입력에서 확인한다 (REP-02)."""
 
     def test_no_interpretation_and_same_numbers_across_inputs(self):
-        def blank_vat(rows):
-            for r in rows[1:]:
-                if r[2] == "사운드랩":
-                    r[5] = ""
-        extra = [["2026-11-20", "지급", "", "추정", "거래처미지급", "", "디자인스튜디오", "청구서", "추가 청구 금액 미정"],
-                 ["2026-10-30", "지급", "5,000,000", "확정", "거래처미지급", "", "인쇄소", "청구서", "기한 경과"],
-                 ["2026-10-31", "지급", "", "확정", "거래처미지급", "", "현수막", "청구서", "금액 미정"]]
-        inputs = (
-            ("sample weekly", lambda: (SAMPLE, "weekly", ASOF)),
-            ("sample monthly", lambda: (SAMPLE, "monthly", dt.date(2026, 10, 31))),
-            ("blank 운영계좌", lambda: (self.blank_balance("운영계좌"), "weekly", ASOF)),
-            ("blank 프로젝트계좌", lambda: (self.blank_balance("프로젝트계좌"), "weekly", ASOF)),
-            ("unknown and past-due rows", lambda: (
-                probe_folder(self, "자금일정.csv", lambda rows: rows.extend(extra)), "weekly", ASOF)),
-            ("blank 사운드랩 부가세", lambda: (probe_folder(self, "프로젝트집행.csv", blank_vat), "weekly", ASOF)),
-            ("settings commas and abc", lambda: (
-                self.setting({"위험_최소보유현금": "50,000,000", "위험_예산초과율": "abc"}), "weekly", ASOF)),
-            ("blank threshold", lambda: (self.setting({"위험_최소보유현금": ""}), "weekly", ASOF)),
-        )
-        for name, make in inputs:
+        for name, make in rep02_probes(self):
             with self.subTest(name):
                 folder, kind, asof = make()
                 check_editions(self, compute(load(folder), kind, asof))
