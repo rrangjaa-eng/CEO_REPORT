@@ -1262,5 +1262,58 @@ class TestAllUnknownTotals(unittest.TestCase):
         self.assertIn("금액 미확인", val)
 
 
+class TestFirstScreenCountsD04(unittest.TestCase):
+    """D-04: 날짜 없는 예정금액과 입금예정일이 지난 미수는 첫 화면에도 건수와 금액이 함께 보인다."""
+    UNDATED = "날짜 없는 입금예정 / 지급예정"
+    OVERDUE = "입금예정일 경과 미수 (일정 미포함)"
+
+    def test_undated_line_has_counts_and_amounts(self):
+        fs = first_screen(render(sample_result(), "ceo"))
+        self.assertEqual(kv_value(fs, self.UNDATED), "2건 38.8 / 4건 105.0")
+
+    def test_overdue_receivable_line_has_count(self):
+        fs = first_screen(render(sample_result(), "ceo"))
+        self.assertEqual(kv_value(fs, self.OVERDUE), "1건 110.0")
+
+    def add_rows(self, *new_rows):
+        return probe_folder(self, "자금일정.csv", lambda rows: rows.extend([list(r) for r in new_rows]))
+
+    def test_undated_unknown_amount_counted_not_zero(self):
+        blank_out = ["", "지급", "", "추정", "미정산비용", "", "간식업체", "청구서", "금액 미정"]
+        blank_in = ["", "입금", "", "추정", "수금(미발행분)", "P26205", "H사", "계약서", "금액 미정"]
+        with self.subTest("A: known + blank"):
+            R = compute(load(self.add_rows(blank_out)), "weekly", ASOF)
+            s2 = R["s2"]
+            self.assertEqual((s2["undated_out"], s2["undated_out_n"], s2["undated_out_unknown"]), (105_000_000, 5, 1))
+            self.assertEqual((s2["undated_in"], s2["undated_in_n"], s2["undated_in_unknown"]), (38_800_000, 2, 0))
+            html = render(R, "ceo")
+            val = kv_value(first_screen(html), self.UNDATED)
+            self.assertTrue(val.startswith("2건 38.8 / 5건 105.0"), val)
+            self.assertIn("금액 미확인 1건", val)
+            self.assertEqual(R["s7"]["undated_out_n"], 5)
+            check_editions(self, R)
+        with self.subTest("B: only blank on one side"):
+            sample_folder = sample_copy(self)
+
+            def drop_undated_in(rows):
+                rows[:] = [r for r in rows if not (r[0] == "" and r[1] == "입금")]
+            path = os.path.join(sample_folder, "자금일정.csv")
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.reader(f))
+            drop_undated_in(rows)
+            rows.append(blank_in)
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                csv.writer(f).writerows(rows)
+            R = compute(load(sample_folder), "weekly", ASOF)
+            s2 = R["s2"]
+            self.assertIsNone(s2["undated_in"])
+            self.assertEqual((s2["undated_in_n"], s2["undated_in_unknown"]), (1, 1))
+            val = kv_value(first_screen(render(R, "ceo")), self.UNDATED)
+            self.assertTrue(val.startswith('1건 <span class="na">미확인</span>'), val)
+            self.assertNotIn("1건 0.0", val)
+            self.assertIn("4건 105.0", val)
+            check_editions(self, R)
+
+
 if __name__ == "__main__":
     unittest.main()
