@@ -30,8 +30,9 @@ FORBIDDEN = ("위험", "해결방안", "권고", "우려", "추천")
 
 
 def numbers_of(html):
-    """HTML 속 숫자 나열. 위험 분석 묶음과 작성 시각은 뺀다."""
+    """HTML 속 숫자 나열. 위험 분석 묶음, 월간 8번 상세 묶음(경영관리용에만 있음)과 작성 시각은 뺀다."""
     html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
+    html = re.sub(r"<div id='xchk-detail'>.*?<!-- /xchk-detail -->", "", html, flags=re.S)
     html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
     html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
     return re.findall(r"−?\d[\d,.]*", html)
