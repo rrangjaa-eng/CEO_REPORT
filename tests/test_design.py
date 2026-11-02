@@ -155,5 +155,36 @@ class TestApprovalTableWithBooks(unittest.TestCase):
         self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
 
 
+UNCHECK_BIGGEST = """
+(function(){
+  var box=document.querySelector('tr[data-no="5103"] input.req');
+  box.checked=false;box.dispatchEvent(new Event('change',{bubbles:true}));
+  document.body.setAttribute('data-hl',document.getElementById('headline').className);
+  document.body.setAttribute('data-low-cls',document.getElementById('h-low').className);
+})();
+"""
+
+
+class TestApprovalHeadlineFeedback(unittest.TestCase):
+    """머리 줄: '부족·최소보유현금 미만 주 없음'도 상태로 보이고(글자 그대로), 다시 계산하면 바뀐 값이 잠깐 강조된다."""
+
+    @classmethod
+    def setUpClass(cls):
+        TestApprovalTableWithBooks.setUpClass.__func__(cls)
+
+    def test_no_short_week_is_marked_ok_in_the_file(self):
+        open_tag = re.search(r'<div[^>]*id="headline"[^>]*>', self.page).group(0)
+        self.assertIn("lv-ok", open_tag)
+
+    def test_recompute_marks_the_changed_value(self):
+        dom = browser_dom(self, self.page, UNCHECK_BIGGEST)
+        self.assertIn("lv-ok", body_attr(dom, "data-hl"))
+        self.assertIn("chg", body_attr(dom, "data-low-cls"))
+
+    def test_focus_ring_and_reduced_motion_rules_exist(self):
+        self.assertIn(":focus-visible{outline:2px solid", self.page)
+        self.assertIn("prefers-reduced-motion", self.page)
+
+
 if __name__ == "__main__":
     unittest.main()

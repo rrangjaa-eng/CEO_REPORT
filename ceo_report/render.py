@@ -12,6 +12,7 @@ CSS = """
 :root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;--out:#b5523b;
 --est:#9aa3b2;--warn:#8a5a00;--bg:#fff}
 *{box-sizing:border-box}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
 word-break:keep-all;overflow-wrap:break-word}
 .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}

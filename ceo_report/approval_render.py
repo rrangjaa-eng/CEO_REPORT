@@ -143,6 +143,11 @@ margin-top:10px;font-size:15px}
 #h-low{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
 #headline.lv-short #h-low{color:var(--out)}
 #headline.lv-reserve #h-low{color:var(--warn)}
+#headline.lv-ok #h-short{color:var(--in);font-weight:700}
+#h-low{border-radius:4px;padding:0 2px}
+#h-low.chg{animation:chg .7s ease-out}
+@keyframes chg{from{background:#ffe9a8}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){#h-low.chg{animation:none}}
 .lv{display:inline-block;padding:2px 8px;border-radius:10px;margin-left:6px;font-size:12px;font-weight:700}
 .lv.lv-short{background:var(--out);color:#fff}
 .lv.lv-reserve{border:1px solid var(--warn);color:var(--warn)}
@@ -268,12 +273,14 @@ UI_JS = r"""(function(){
       if(c.level==='부족')hasShort=true;else if(c.level)hasReserve=true;
     }
     var hl=$('headline');
-    hl.className=hasShort?'lv-short':(hasReserve?'lv-reserve':'');
+    hl.className=hasShort?'lv-short':(hasReserve?'lv-reserve':(data.start===null?'':'lv-ok'));
     if(data.requests.length){
       setText('h-label',ids.length===data.requests.length?'전부 승인 시':'체크한 '+ids.length+'건 승인 시');
       setText('h-sum',' (체크 합계 '+fmtWon(r.checked_sum)+'원)');
     }
     var lowT=fmtMan(r.low);
+    var lowEl=$('h-low');
+    if(lowEl&&lowEl.textContent!==lowT){lowEl.classList.remove('chg');void lowEl.offsetWidth;lowEl.classList.add('chg');}
     setText('h-low',lowT);setText('h-unit',manUnit(lowT));
     setText('h-sep',r.low===null?'':' · ');setText('h-day',r.low_day||'');
     var estT=fmtMan(r.est_low);
@@ -320,6 +327,8 @@ def _headline(A, S):
     low_t = fmt_man(S["low"])
     levels = [w["level"] for w in S["weeks"]]
     cls = "lv-short" if "부족" in levels else ("lv-reserve" if "최소보유현금 미만" in levels else "")
+    if not cls and data["start"] is not None:
+        cls = "lv-ok"  # 글자('부족·최소보유현금 미만 주 없음')가 먼저이고 색은 되풀이할 뿐
     badges = "".join('<span class="lv%s">%s %s</span>' % (_level_cls(w["level"]), esc(w["level"]), esc(_wlabel(data, i)))
                      for i, w in enumerate(S["weeks"]) if w["level"])
     if data["start"] is None:
