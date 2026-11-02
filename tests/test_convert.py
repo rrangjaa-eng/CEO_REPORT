@@ -163,12 +163,12 @@ class TestConvertTracer(unittest.TestCase):
         self.assertIn("손익.csv에 넣지 않은 손익 계정: 45100 (도)외주비 1줄 500,000 · 93100 이자비용 1줄 400,000", text)
         self.assertIn("공통비 중 (판) 표시 없음: 81900 임차료 1줄 3,000,000 (공통비에 넣음)", text)
         self.assertTrue(lines[0].startswith("변환 시각 "), lines[0])
-        self.assertIn("[손익.csv] 만듦 2줄", lines)
+        self.assertIn("[손익.csv] 만듦 5줄", lines)
         self.assertTrue(any(ln.startswith("WEHAGO 장부: ") and "장부 기준일 2026-10-31" in ln for ln in lines))
 
     def test_stdout_is_a_short_summary(self):
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self)
-        self.assertIn("손익.csv 만듦 2줄", out)
+        self.assertIn("손익.csv 만듦 5줄", out)
         self.assertIn("대조 불일치 0건", out)
         self.assertIn("변환결과.txt", out)
         self.assertIn("2026-10-31", out)

@@ -314,7 +314,8 @@ def read_book(path, kind, file_date=None, asof=None):
         if kind == "분개장":
             item = {"date": date, "no": txt(row, "전표번호"), "account_code": txt(row, "Code", 0),
                     "account": txt(row, "계정과목"), "debit": _amount(row[cols["차변"][0]]),
-                    "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요")}
+                    "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요"),
+                    "sort": txt(row, "구분")}
             item["code"] = project_code(item["memo"])
         elif kind == "매입매출장":
             sort = row[cols["구분"][0]].strip()
@@ -367,7 +368,10 @@ def _mtime(path):
 
 
 def load_books(folder, asof, stale_days):
-    """폴더의 세 종류 파일을 골라 읽는다. 없음·오래됨·머리글 다름·읽기 실패는 state 로 알리고 예외를 내지 않는다 (W-1~W-4)."""
+    """폴더의 세 종류 파일을 골라 읽는다. 없음·오래됨·머리글 다름·읽기 실패는 state 로 알리고 예외를 내지 않는다 (W-1~W-4).
+
+    stale_days 가 None 이면 오래됨(경과) 판정만 건너뛴다. 장부 기준일을 알 수 없는 장부는 그래도 '경과'다.
+    """
     books = Books()
     try:
         names = sorted(os.listdir(folder))
@@ -449,7 +453,7 @@ def load_books(folder, asof, stale_days):
             books.reason = "장부 기준일을 알 수 없음 (파일 이름에 날짜가 없고 전표일자도 없음)"
         else:
             late = (asof - books.book_date).days
-            if late > stale_days:
+            if stale_days is not None and late > stale_days:  # None: 나이로는 멈추지 않는다 (변환, 02-01)
                 oldest = [k for k in KINDS if books.files[k]["ref_date"] == books.book_date][0]
                 books.state = "경과"
                 books.reason = "장부 기준일 %s, 기준일보다 %d일 이전 (%s)" % (books.book_date.isoformat(), late, oldest)
