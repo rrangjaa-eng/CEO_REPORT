@@ -11,17 +11,20 @@ conventions, so plans that run in parallel agree without reading each other's co
 | `ceo_report/convert_pl.py` | 02-01 | 02-03 | `build_pl()` → 손익.csv |
 | `변환.py` | 02-01 | 02-03, 02-07 | CLI (exit codes 0 / 2 / 3 / 7) |
 | `실행_변환.bat` | 02-01 | — | Windows launcher (same shape as 실행_월간.bat) |
-| `ceo_report/wehago.py` | (01.1) | 02-01 (journal `sort`, `stale_days=None`), 02-05 (sales kinds, `load_sales`) | xlsx reader |
+| `ceo_report/wehago.py` | (01.1) | 02-01 (journal `sort`, `stale_days=None`), 02-05 (sales kinds, `load_sales`), 02-08 (`project_costs(..., links=None)`) | xlsx reader |
 | `ceo_report/linking.py` | 02-02 | — | D-38 engine: `requests_of`, `projects_of`, `line_keys`, `read_links`, `link_costs`, `link_revenue` |
 | `입력양식/프로젝트연결.csv` | 02-02 | — | empty manual template (header only) |
 | `ceo_report/convert_projects.py` | 02-04 | — | `build_projects()` → 프로젝트.csv, `build_execs()` → 프로젝트집행.csv |
 | `ceo_report/convert_invoices.py` | 02-05 | — | `build_invoices()` → 계산서.csv |
 | `ceo_report/convert_xchk.py` | 02-06 | — | `build_xchk()` → 위하고대조.csv, `load_xchk()` for the monthly report |
 | `ceo_report/render.py`, `보고서.py` | (1) | 02-06 | monthly section 8 'WEHAGO 기준 대조' |
+| `ceo_report/approval.py`, `ceo_report/approval_render.py`, `승인검토.py` | (01.1) | 02-08 (D-47) | approval screen project costs through linking.py (same rule and settings as the monthly report) |
 
 Files that NO Phase 2 plan changes (proof: `git diff --quiet cbc5497 -- <files>`): `ceo_report/calc.py`,
-`ceo_report/data.py`, `ceo_report/approval.py`, `ceo_report/approval_render.py`, `ceo_report/intranet.py`,
-`ceo_report/snapshot.py`, `승인검토.py`, `실행_주간.bat`, `실행_월간.bat`, `실행_승인검토.bat`.
+`ceo_report/data.py`, `ceo_report/intranet.py`, `ceo_report/snapshot.py`, `실행_주간.bat`, `실행_월간.bat`,
+`실행_승인검토.bat`. `ceo_report/approval.py`, `ceo_report/approval_render.py` and `승인검토.py` stay unchanged through
+waves 1-2 (plans 02-01..02-06 check them against cbc5497 when they run); only plan 02-08 (wave 3, D-47) changes them, so
+plan 02-07 (same wave) leaves them out of its check.
 `cbc5497` is the code baseline for the whole phase (HEAD before the Phase 2 plans; docs-only commits after it).
 
 ## 2. Output files (D-40..D-43)
@@ -29,10 +32,10 @@ Files that NO Phase 2 plan changes (proof: `git diff --quiet cbc5497 -- <files>`
 | File in 입력/ | Kind | Written when | Columns |
 |---|---|---|---|
 | 손익.csv | generated | books 'ok' | `data.SCHEMA["손익.csv"]` |
-| 계산서.csv | generated | books 'ok' and a sales source exists (D-41) | `data.SCHEMA["계산서.csv"]` |
-| 프로젝트.csv | generated | books 'ok' and a snapshot exists | `data.SCHEMA["프로젝트.csv"]` + extra column `실행가` (D-42; the report ignores it) |
-| 프로젝트집행.csv | generated | books 'ok' and a snapshot exists | `data.SCHEMA["프로젝트집행.csv"]` |
-| 위하고대조.csv | generated | books 'ok' and a snapshot exists | `convert_xchk.XCHK_COLUMNS` (D-44) |
+| 계산서.csv | generated | books 'ok' and a usable sales source exists (D-41); otherwise an existing file is kept untouched and reported with its 작성일 (D-46) | `data.SCHEMA["계산서.csv"]` |
+| 프로젝트.csv | generated | books 'ok' and a snapshot exists (otherwise an existing file is kept untouched) | `data.SCHEMA["프로젝트.csv"]` + extra column `실행가` (D-42; the report ignores it) |
+| 프로젝트집행.csv | generated | books 'ok' and a snapshot exists (otherwise kept untouched) | `data.SCHEMA["프로젝트집행.csv"]` |
+| 위하고대조.csv | generated | books 'ok' and a snapshot exists (otherwise kept untouched) | `convert_xchk.XCHK_COLUMNS` (D-44) |
 | 변환결과.txt | generated log | every run that gets past argument checks | free text, format in §6 |
 | 계좌잔액.csv, 설정.csv, 지급계획.csv, 변경내역.csv, 자료기준일.csv, 프로젝트연결.csv | manual (D-43) | never created, never written, never moved | — |
 | 입출금내역.csv, 자금일정.csv, 자료차이.csv | not touched by Phase 2 | never written (see report: undecided by CONTEXT) | — |
