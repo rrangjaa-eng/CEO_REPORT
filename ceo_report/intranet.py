@@ -217,6 +217,8 @@ class SafeOpener(object):
         req = urllib.request.Request(
             url, data=body, method="POST",
             headers={"User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"})
+        if not follow:
+            req.gsd_no_follow = True  # CheckedRedirectHandler가 보고 따라가지 않는다
         try:
             return self._fetch(req)
         except urllib.error.HTTPError as exc:
@@ -226,6 +228,32 @@ class SafeOpener(object):
             exc.close()
             path = urllib.parse.urlsplit(location).path if location else None
             return exc.code, path or None, ""
+
+
+class CheckedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """리디렉션 대상도 check_url을 통과해야 따라간다. 로그인 POST는 아예 따라가지 않는다."""
+
+    max_redirections = 5
+    max_repeats = 2
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if getattr(req, "gsd_no_follow", False):
+            return None
+        check_url("GET", newurl)  # 막힌 대상이면 BlockedRequest — 요청은 나가지 않는다
+        return urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+
+
+class AllowlistGuard(urllib.request.BaseHandler):
+    """opener를 직접 부르는 경우까지 막는 마지막 문지기: 모든 요청을 보내기 전에 검사한다."""
+
+    handler_order = 100
+
+    def https_request(self, req):
+        check_url(req.get_method(), req.full_url)
+        return req
+
+    http_request = https_request  # http는 check_url이 항상 막는다(닫힌 쪽으로 실패)
 
 
 def make_opener(transport=None, proxies=None, delay=0.3, sleep=time.sleep, timeout=30):
@@ -240,9 +268,11 @@ def make_opener(transport=None, proxies=None, delay=0.3, sleep=time.sleep, timeo
     if transport is None:
         transport = urllib.request.HTTPSHandler(context=ssl.create_default_context())
     handlers = [
+        AllowlistGuard(),
         urllib.request.ProxyHandler(proxies),
         transport,
         urllib.request.HTTPCookieProcessor(jar),
+        CheckedRedirectHandler(),
         urllib.request.HTTPErrorProcessor(),
         urllib.request.HTTPDefaultErrorHandler(),
         urllib.request.UnknownHandler(),
