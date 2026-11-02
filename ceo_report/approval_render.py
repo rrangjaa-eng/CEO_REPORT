@@ -183,6 +183,7 @@ border-radius:6px;background:var(--soft);color:var(--ink);font:inherit;cursor:po
 #h-low{font-size:24px}
 #start-line{overflow-wrap:anywhere}
 }
+@media print{#headline{position:static}#req-controls{display:none}#requests{min-width:0}#requests td.c1,#requests th.c1{position:static}.chk{min-height:0}}
 """
 
 CALC_JS = r"""function fmtWon(v){
