@@ -186,6 +186,11 @@ def main(argv=None):
     bad = [c for c in R["s7"]["checks"] if not c[3]]
     if bad:
         _say("대조 불일치 %d건 — 보고서 7번 '보고 대조' 표를 확인하세요." % len(bad))
+    if kind == "monthly" and R["xchk"]["state"] != "ok":
+        if R["xchk"]["state"] == "자료 없음":
+            _say("위하고 대조 자료 없음 — 실행_변환.bat을 먼저 실행하면 월간 보고 8번에 들어갑니다.")
+        else:
+            _say("위하고 대조 읽을 수 없음 — %s. 월간 보고 8번에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
     return 0
 
 

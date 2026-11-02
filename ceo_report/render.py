@@ -1192,8 +1192,11 @@ def _s8(R, mode):
     """월간 8번 WEHAGO 기준 대조. 요약은 두 판 모두 (합계·건수만), 상세 표는 경영관리용에만 (D-44)."""
     X = R.get("xchk")
     h = [_h2(8, XCHK_TITLE)]
-    if X is None or X["state"] != "ok":
-        h.append("<div class='note'>%s</div>" % _na("자료 없음" if X is None else X["state"]))
+    if X is None or X["state"] == "자료 없음":
+        h.append("<div class='note'>%s</div>" % _na("자료 없음 (%s — 실행_변환.bat으로 만듦)" % XCHK_FILE_NAME))
+        return "".join(h)
+    if X["state"] != "ok":
+        h.append("<div class='note'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
         return "".join(h)
     h.append('<div class="meta xchk-meta">%s</div>' % _xk_meta(R, X))
     h.append(_xk_summary(X))
