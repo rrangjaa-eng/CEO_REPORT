@@ -4,7 +4,7 @@ import datetime as dt
 from collections import OrderedDict, defaultdict
 
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
-from .util import is_blank, setting_num, ssum, ssum_or_none, won, d2s
+from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
 
 DAY = dt.timedelta(days=1)
 
@@ -45,10 +45,14 @@ def _add(a, b):
 
 
 def compute(d, kind, asof, start=None):
+    # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
+    issues = Issues()
+    issues.items = list(d.issues.items)
+    invs = [dict(v) for v in d.invoices]
     R = {"kind": kind, "asof": asof}
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
-    R["settings"] = d.settings
+    R["settings"] = dict(d.settings)
     # 설정 숫자는 여기서 한 번만 읽는다. 비었거나 틀리면 기본값을 쓰고 입력 확인 목록에 남긴다.
     R["settings_num"], R["settings_default"] = {}, {}
     for key in NUM_SETTINGS:
@@ -66,7 +70,7 @@ def compute(d, kind, asof, start=None):
                 value = value / 100.0
             if reason is not None or not (0 < value <= 1):
                 R["settings_num"][key] = None
-                d.issues.add("설정.csv", d.settings_line.get(key, "-"),
+                issues.add("설정.csv", d.settings_line.get(key, "-"),
                              "예산_원가율 값 오류: '%s' (0 초과 1 이하 숫자, 예: 0.70) → 모든 프로젝트 원가 예산 계산 안 함" % raw)
                 continue
             R["settings_num"][key] = value
@@ -83,7 +87,7 @@ def compute(d, kind, asof, start=None):
             else:
                 msg = "%s 값은 0 이상 정수여야 함: '%s' %s" % (label, raw, tail)
             R["settings_default"][key] = reason
-            d.issues.add("설정.csv", d.settings_line.get(key, "-"), msg)
+            issues.add("설정.csv", d.settings_line.get(key, "-"), msg)
         R["settings_num"][key] = value
     R["present"] = d.present
     checks = []  # 대조표: (항목, 값A, 값B, 일치여부)
@@ -119,7 +123,7 @@ def compute(d, kind, asof, start=None):
     unknown_names = [a["account"] for a in unknown_bal]
     bal_unknown_restricted, _ = ssum(a["restricted"] for a in unknown_bal)
     for a in unknown_bal:
-        d.issues.add(a["row"]["_file"], a["row"]["_line"],
+        issues.add(a["row"]["_file"], a["row"]["_line"],
                      "잔액 미확인 (" + a["account"] + ") → 현재 현금·사용 가능액 합계에서 제외")
     # 기간 시작 잔액: 은행 잔액이 있으면 그것, 없으면 기말 잔액에서 거꾸로 계산 (잔액 확인된 계좌만)
     start_snap = OrderedDict()
@@ -245,10 +249,10 @@ def compute(d, kind, asof, start=None):
 
     # ───────────── 5. 계산서·수금 ─────────────
     inv_by = defaultdict(list)
-    for v in d.invoices:
+    for v in invs:
         inv_by[v["project"]].append(v)
     ar_rows, overdue, specials = [], [], []
-    for v in d.invoices:
+    for v in invs:
         total = None if v["supply"] is None or v["vat"] is None else v["supply"] + v["vat"]
         v["total"] = total
         if total is None or (v["paid"] is None and v["paid_date"]):
@@ -282,11 +286,11 @@ def compute(d, kind, asof, start=None):
         inv_proj.append({"P": P, "issued": issued, "issued_unknown": issued_unknown, "unissued": unissued,
                          "ar": out, "ar_unknown": out_unknown, "unissued_days": days,
                          "unknown": issued_unknown + out_unknown})
-    no_proj_inv = [v for v in d.invoices if v["project"] not in proj]
+    no_proj_inv = [v for v in invs if v["project"] not in proj]
     c_tot, c_missing = ssum_or_none(P["contract"] for P in plist)
     unissued_tot, _ = ssum_or_none(x["unissued"] for x in inv_proj)
     issued_tot, _ = ssum_or_none(x["issued"] for x in inv_proj)
-    ar_unknown_n = sum(1 for v in d.invoices if v["kind"] != "환불" and v["outstanding"] is None)
+    ar_unknown_n = sum(1 for v in invs if v["kind"] != "환불" and v["outstanding"] is None)
     ar_tot = sum(v["outstanding"] for v in ar_rows)
     if not ar_rows and ar_unknown_n:
         ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
@@ -314,7 +318,7 @@ def compute(d, kind, asof, start=None):
         events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
                        "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
                        "project": v["project"], "source": "계산서"})
-    for v in d.invoices:
+    for v in invs:
         if v["kind"] == "환불" and v["outstanding"] is not None and v["outstanding"] < 0 and not v["paid_date"]:
             events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
                            "cat": "환불", "desc": v["client"], "basis": "계산서 환불", "project": v["project"],
@@ -497,7 +501,7 @@ def compute(d, kind, asof, start=None):
             v["total"] = None  # 모든 줄이 금액 미확인이면 합계는 0이 아니라 미확인
     dup = [s for s in d.schedule if "프로젝트" in s["cat"]]
     for s in dup:
-        d.issues.add(s["row"]["_file"], s["row"]["_line"],
+        issues.add(s["row"]["_file"], s["row"]["_line"],
                      "자금일정에 프로젝트 지급(%s)이 있음 — 프로젝트집행.csv와 중복일 수 있음" % s["cat"])
     R["s6"] = {"by_cat": by_cat6,
                "vendors": sorted(vendors.items(), key=lambda kv: (kv[1]["total"] is None, -(kv[1]["total"] or 0))),
@@ -544,7 +548,7 @@ def compute(d, kind, asof, start=None):
         "unlinked_txn": unlinked_txn, "unlinked_txn_total": sum(t["amount"] for t in unlinked_txn),
         "undated_out": R["s2"]["undated_out"], "undated_out_n": R["s2"]["undated_out_n"],
         "undated_out_unknown": R["s2"]["undated_out_unknown"],
-        "asof": asof_rows, "diffs": d.diffs, "issues": d.issues.items, "checks": checks,
+        "asof": asof_rows, "diffs": d.diffs, "issues": issues.items, "checks": checks,
         "stale": stale_accounts,
     }
     R["risks"] = risks(R)
