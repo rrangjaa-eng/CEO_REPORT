@@ -520,12 +520,16 @@ class TestXchkPanels(unittest.TestCase):
             cls.page = f.read()
 
     def test_vendor_panel(self):
+        # WR-03: 분개장에 미지급금 줄이 없는 가상꽃은 0이 아니라 미확인·판단 불가 (전에는 6곳 +10,976,000 · 판단 불가 1곳)
         self.assertEqual(T(self.page, "xchk-vendors-sum"),
-                         "차이 있는 거래처 표시 6곳 / 전체 6곳 · 차이 합계 +10,976,000 · 판단 불가 1곳 · 비교 거래처 9곳 · 기초잔액 미반영")
+                         "차이 있는 거래처 표시 5곳 / 전체 5곳 · 차이 합계 +13,176,000 · 판단 불가 2곳 (분개장 미지급금 줄 없음 2곳)"
+                         " · 비교 거래처 9곳 · 기초잔액 미반영")
         rows = body_rows(self.page, "xchk-vendors")
         self.assertEqual(cells(rows[0]), ["㈜가상제작", "165,000,000", "160,500,000", "+4,500,000"])
+        self.assertIn(["가상꽃", "미확인", "2,200,000", "판단 불가 (분개장 미지급금 줄 없음)"], [cells(r) for r in rows])
         self.assertEqual(len(rows), 7)
-        self.assertEqual(cells(rows[-1])[-1], "판단 불가")  # 가상숙박: 금액 미확인 요청이 있어 차이를 알 수 없다
+        # 가상숙박: 금액 미확인 요청이 있고 분개장에 미지급금 줄도 없어 차이를 알 수 없다 (WR-03: 전에는 미지급금 0, '판단 불가')
+        self.assertEqual(cells(rows[-1])[1:], ["미확인", "미확인", "판단 불가 (분개장 미지급금 줄 없음)"])
         head = element_html(self.page, "xchk-vendors")
         for h in ("거래처", "WEHAGO 미지급금", "인트라넷 요청", "차이"):
             self.assertIn(h, head)

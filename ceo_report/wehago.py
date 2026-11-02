@@ -662,7 +662,8 @@ def match_requests(books, requests):
 # ───────────── 거래처별 미지급금 (D-33) ─────────────
 def vendor_payables(books, requests, match):
     """분개장 미지급금·미지급비용 거래처별 잔액(대변−차변) 대 인트라넷 대기·승인 요청 합계 (W-9, W-13)."""
-    out = {"rows": [], "compared": 0, "diff_count": 0, "diff_sum": 0, "unknown_count": 0, "opening": False, "note": ""}
+    out = {"rows": [], "compared": 0, "diff_count": 0, "diff_sum": 0, "unknown_count": 0, "absent_count": 0,
+           "opening": False, "note": ""}
     if books.state != "ok":
         return out
     names, pay, opening = {}, {}, False
@@ -688,10 +689,15 @@ def vendor_payables(books, requests, match):
     rows = []
     for key in set(pay) | set(asked):
         total, unknown = ssum_or_none(asked.get(key, []))
-        payable = None if key in pay and pay[key]["unknown"] else (pay[key]["sum"] if key in pay else 0)
+        if key not in pay:  # 분개장에 이 거래처 미지급금 줄이 없다: 이름이 다르게 적혔거나 기간 밖일 수 있다 → 미확인, 0 아님 (WR-03)
+            payable, reason = None, "분개장 미지급금 줄 없음"
+        elif pay[key]["unknown"]:
+            payable, reason = None, "분개장 미지급금 금액 미확인"
+        else:
+            payable, reason = pay[key]["sum"], ""
         diff = None if payable is None or unknown else payable - (total or 0)
         rows.append({"key": key, "vendor": names.get(key) or intranet_names.get(key) or "(거래처 없음)",
-                     "payable": payable, "requested": total, "requested_unknown": unknown, "diff": diff})
+                     "payable": payable, "requested": total, "requested_unknown": unknown, "diff": diff, "reason": reason})
     out["compared"] = len(rows)
     shown = [r for r in rows if r["diff"] != 0]
     shown.sort(key=lambda r: (r["diff"] is None, -abs(r["diff"]) if r["diff"] is not None else 0, r["key"]))
@@ -701,6 +707,7 @@ def vendor_payables(books, requests, match):
     out["diff_count"] = sum(1 for r in shown if r["diff"] is not None)
     out["diff_sum"] = sum(r["diff"] for r in shown if r["diff"] is not None)
     out["unknown_count"] = sum(1 for r in shown if r["diff"] is None)
+    out["absent_count"] = sum(1 for r in shown if r["reason"] == "분개장 미지급금 줄 없음")
     out["opening"] = opening
     out["note"] = "" if opening else "기초잔액 미반영"
     return out

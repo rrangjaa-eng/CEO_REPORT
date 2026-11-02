@@ -838,17 +838,30 @@ class TestWehagoPayables(unittest.TestCase):
 
     def test_the_d33_truth(self):
         P = self.P
-        self.assertEqual((P["compared"], P["diff_count"], P["diff_sum"], P["unknown_count"]), (9, 6, 10976000, 1))
+        # WR-03: 가상꽃은 분개장에 미지급금 줄이 없어 0이 아니라 미확인 (전에는 0, 차이 −2,200,000: 6곳 +10,976,000, 판단 불가 1곳)
+        self.assertEqual((P["compared"], P["diff_count"], P["diff_sum"], P["unknown_count"], P["absent_count"]),
+                         (9, 5, 13176000, 2, 2))  # 가상숙박도 분개장에 줄이 없다
         self.assertEqual((P["opening"], P["note"]), (False, "기초잔액 미반영"))
         self.assertEqual(len(P["rows"]), 7)
         rows = [self.row(r) for r in P["rows"]]
         self.assertEqual(rows[:3], [("㈜가상제작", 165000000, 160500000, 4500000), ("가상임대", 3000000, 0, 3000000),
                                     ("(주) 가상버스", 5940000, 3300000, 2640000)])
-        self.assertEqual(rows[3:6], [("가상꽃", 0, 2200000, -2200000), ("가상인력", 7700000, 5500000, 2200000),
-                                     ("가상 조명", 1100000, 264000, 836000)])
+        self.assertEqual(rows[3:6], [("가상인력", 7700000, 5500000, 2200000), ("가상 조명", 1100000, 264000, 836000),
+                                     ("가상꽃", None, 2200000, None)])
+        self.assertEqual(P["rows"][5]["reason"], "분개장 미지급금 줄 없음")
         last = P["rows"][6]
         self.assertEqual((last["vendor"], last["diff"], last["requested"], last["requested_unknown"]),
                          ("가상숙박", None, None, 1))
+
+    def test_vendor_without_payable_lines_is_unknown_not_zero(self):
+        """WR-03: 분개장에 그 거래처 미지급금·미지급비용 줄이 없으면 미지급금은 0이 아니라 미확인 (D-02)."""
+        books = mem_books(journal=[(dt.date(2026, 3, 20), "7", "미지급금", 33000000, "가상제작", "")])
+        reqs = [mem_req("11", 5000000, vendor="다른곳")]
+        P = self.w.vendor_payables(books, reqs, self.w.match_requests(books, reqs))
+        other = [r for r in P["rows"] if r["vendor"] == "다른곳"][0]
+        self.assertEqual((other["payable"], other["requested"], other["diff"], other["reason"]),
+                         (None, 5000000, None, "분개장 미지급금 줄 없음"))
+        self.assertEqual((P["diff_count"], P["diff_sum"], P["unknown_count"], P["absent_count"]), (1, -33000000, 1, 1))
 
     def test_status_unknown_and_already_paid_requests_are_not_counted(self):
         names = [r["vendor"] for r in self.P["rows"]]
@@ -863,7 +876,7 @@ class TestWehagoPayables(unittest.TestCase):
         self.assertEqual((P["opening"], P["note"]), (True, ""))
         rent = [r for r in P["rows"] if r["vendor"] == "가상임대"][0]
         self.assertEqual((rent["payable"], rent["diff"]), (4000000, 4000000))
-        self.assertEqual(P["diff_sum"], 11976000)
+        self.assertEqual(P["diff_sum"], 14176000)  # WR-03: 가상꽃 −2,200,000 이 빠짐 (전에는 11,976,000)
 
     def test_opening_text_on_a_non_payable_line_does_not_count(self):
         other = _jl(dt.date(2026, 1, 2), 0, "10300", "보통예금", 1000000, None, "가상임대", "전기이월")

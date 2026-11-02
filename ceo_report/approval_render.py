@@ -558,7 +558,8 @@ WEHAGO_RULES = [
     " 일정에는 계산서 합계와 요청 금액 중 큰 금액을 넣고 인트라넷 요청 금액과 차액을 옆에 보임 · 계산서 하나는 요청 하나만"
     " · 이미 지급된 계산서는 근거로 쓰지 않음 (그때는 연결 불가, 일정은 요청 금액)",
     "WEHAGO 규칙 4 거래처 미지급금 = 분개장 미지급금·미지급비용의 대변 − 차변 누계(기초잔액·전기이월 줄 포함)"
-    " · 분개장에 기초잔액 줄이 없으면 기초잔액 미반영 · 인트라넷 요청은 대기+승인 중 이미 지급을 뺀 합계",
+    " · 분개장에 기초잔액 줄이 없으면 기초잔액 미반영 · 분개장에 그 거래처 미지급금 줄이 없으면 미확인(0 아님)"
+    " · 인트라넷 요청은 대기+승인 중 이미 지급을 뺀 합계",
     "WEHAGO 규칙 5 프로젝트 원가 = 계정과목에 (도)가 있고 계정 Code가 6으로 시작하는 5자리인 줄의 차변 − 대변"
     " · 적요의 [프로젝트 코드]로 연결하고 연결되지 않으면 프로젝트 미연결 원가",
 ]
@@ -702,8 +703,10 @@ def _vendors_panel(A):
     v = x["vendors"]
     rows = v["rows"][:SHOW_XCHK]
     shown = sum(1 for r in rows if r["diff"] is not None)
-    summary = "차이 있는 거래처 표시 %d곳 / 전체 %d곳 · 차이 합계 %s · 판단 불가 %d곳 · 비교 거래처 %d곳" % (
-        shown, v["diff_count"], _signed_won(v["diff_sum"]), v["unknown_count"], v["compared"])
+    absent = v.get("absent_count") or 0
+    summary = "차이 있는 거래처 표시 %d곳 / 전체 %d곳 · 차이 합계 %s · 판단 불가 %d곳%s · 비교 거래처 %d곳" % (
+        shown, v["diff_count"], _signed_won(v["diff_sum"]), v["unknown_count"],
+        " (분개장 미지급금 줄 없음 %d곳)" % absent if absent else "", v["compared"])
     if v["note"]:
         summary += " · " + v["note"]
     head = ('<thead><tr><th>거래처</th><th class="n">WEHAGO 미지급금(원)</th><th class="n">인트라넷 요청(대기+승인, 이미 지급 제외)(원)</th>'
@@ -714,8 +717,9 @@ def _vendors_panel(A):
             asked = _na("미확인")
         else:
             asked = esc(fmt_won(r["requested"]) + (" 외 금액 미확인 %d건" % r["requested_unknown"] if r["requested_unknown"] else ""))
+        diff = _signed_won(r["diff"]) + (" (%s)" % r["reason"] if r["diff"] is None and r.get("reason") else "")
         body.append('<tr><td>%s</td><td class="n">%s</td><td class="n">%s</td><td class="n">%s</td></tr>' % (
-            _w(r["vendor"]), esc(fmt_won(r["payable"])), asked, esc(_signed_won(r["diff"]))))
+            _w(r["vendor"]), _na("미확인") if r["payable"] is None else esc(fmt_won(r["payable"])), asked, esc(diff)))
     if not body:
         body = ['<tr><td colspan="4" class="note">차이 있는 거래처 0곳</td></tr>']
     return title + '<div class="tw"><table id="xchk-vendors"><caption id="xchk-vendors-sum">%s</caption>%s<tbody>%s</tbody></table></div>' % (
