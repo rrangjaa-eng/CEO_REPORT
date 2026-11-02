@@ -19,7 +19,7 @@ for _p in (ROOT, HERE):
 
 from test_convert import FAKE_PL_JOURNAL  # noqa: E402
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
-from test_convert_projects import check_lines, make_inputs, new_tmp, project_table  # noqa: E402
+from test_convert_projects import check_lines, make_inputs, new_tmp, project_table, snapshot_projects  # noqa: E402
 from test_wehago import _jl  # noqa: E402
 
 
@@ -58,9 +58,10 @@ class XInputs(object):
     """build_xchk 에 넣는 입력 한 벌 (모두 가상 자료)."""
 
 
-def xchk_inputs(test, journal=None, bank=None, extra_requests=None):
+def xchk_inputs(test, journal=None, bank=None, extra_requests=None, projects=None):
     """가상 장부(journal, 기본 FAKE_PL_JOURNAL) + 가상 스냅숏 -> build_xchk 입력. 장부·스냅숏 폴더는 임시 폴더에만 쓴다."""
-    inp = make_inputs(journal=FAKE_PL_JOURNAL if journal is None else journal, extra_requests=extra_requests)
+    inp = make_inputs(journal=FAKE_PL_JOURNAL if journal is None else journal, extra_requests=extra_requests,
+                      projects=projects)
     x = XInputs()
     x.books, x.cfg, x.costs, x.revenue = inp.books, inp.cfg, inp.costs, inp.revenue
     x.projects, x.requests, x.match = inp.projects, inp.requests, inp.match
@@ -515,6 +516,355 @@ class TestXchkUnknown(unittest.TestCase):
         y.meta = collections.OrderedDict([("분개장", "분개장 900101-1234567.xlsx")])
         t = xchk_table(y)
         self.assertIn("******-*******", t.rows[0]["비고"])
+
+
+# ───────────── Task 3: 보통예금 (D-48) 계좌잔액.csv · 입출금내역.csv 대조, load_xchk 차이와 안전 ─────────────
+CASH_ITEMS = ("기초 잔액", "WEHAGO 증감 (전체 기간)", "WEHAGO 잔액 (장부 기준일)", "계좌잔액.csv 잔액 합계")
+MONTH_ITEMS = ("WEHAGO 증감", "입출금내역 증감 (입금−출금)")
+NO_OPENING = "판단 불가 — 기초 잔액 줄 없음"
+
+
+def cash_table(journal=None, bank=None, cfg=None):
+    x = xchk_inputs(None, journal=None if journal is None else FAKE_PL_JOURNAL + journal, bank=bank)
+    if cfg:
+        x.cfg = dict(x.cfg, **cfg)
+    return x, xchk_table(x)
+
+
+def cash(test, table, item):
+    return one(test, table, "보통예금", None, item)
+
+
+def month(test, table, ym, item):
+    return one(test, table, "보통예금월", ym, item)
+
+
+class TestXchkCash(unittest.TestCase):
+    def test_without_an_opening_line_the_balance_is_undecided(self):
+        _, t = cash_table()
+        self.assertEqual([r["항목"] for r in picked(t, "보통예금")], list(CASH_ITEMS))
+        self.assertEqual(cells(cash(self, t, "기초 잔액")), ("", "0", NO_OPENING))
+        self.assertEqual(cells(cash(self, t, "WEHAGO 잔액 (장부 기준일)")), ("", "", NO_OPENING))
+        self.assertEqual(cash(self, t, "WEHAGO 증감 (전체 기간)")["금액"], "45000000")
+
+    def test_monthly_movement_without_an_opening_line(self):
+        _, t = cash_table()
+        self.assertEqual([r["대상"] for r in picked(t, "보통예금월", item="WEHAGO 증감")], ["2026-09", "2026-10"])
+        self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["금액"], "-12000000")
+        self.assertEqual(month(self, t, "2026-10", "WEHAGO 증감")["금액"], "57000000")
+        self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["건수"], "3")
+
+    def test_missing_bank_files_read_blank_with_the_file_name(self):
+        _, t = cash_table()
+        self.assertEqual(cells(cash(self, t, "계좌잔액.csv 잔액 합계")), ("", "", "계좌잔액.csv 없음"))
+        for ym in ("2026-09", "2026-10"):
+            self.assertEqual(cells(month(self, t, ym, "입출금내역 증감 (입금−출금)")), ("", "", "입출금내역.csv 없음"))
+
+    def test_opening_line_gives_the_balance_and_stays_out_of_every_month(self):
+        _, t = cash_table(journal=OPENING_CASH)
+        self.assertEqual(cells(cash(self, t, "기초 잔액")), ("300000000", "1", ""))
+        self.assertEqual(cells(cash(self, t, "WEHAGO 잔액 (장부 기준일)"))[0], "345000000")
+        self.assertEqual(cash(self, t, "WEHAGO 증감 (전체 기간)")["금액"], "45000000")
+        self.assertEqual([r["대상"] for r in picked(t, "보통예금월", item="WEHAGO 증감")], ["2026-09", "2026-10"])
+        self.assertIn("현금계정 증감 = 보통예금월 WEHAGO 증감 합계: 원본 45,000,000 · CSV 45,000,000 → 일치", check_lines(t))
+
+    def test_opening_line_is_found_by_either_memo_word_even_with_spaces(self):
+        word = _jl(dt.date(2026, 1, 2), 81, "10300", "보통예금", 100000000, None, "가상은행", "기초 잔액 이월")
+        _, t = cash_table(journal=[word])
+        self.assertEqual(cash(self, t, "기초 잔액")["금액"], "100000000")
+
+    def test_bank_balances_sum_the_latest_row_of_each_account(self):
+        bank = {"balances": BANK_BALANCES, "transactions": None}
+        x, t = cash_table(journal=OPENING_CASH, bank=bank)
+        row = cash(self, t, "계좌잔액.csv 잔액 합계")
+        self.assertEqual(cells(row), ("345000000", "2", "기준일 2026-10-31"))
+        self.assertIn("계좌잔액.csv는 현금계정 밖 계좌도 담을 수 있음", t.notes)
+        older = dict(BANK_BALANCES[0], 기준일="2026-09-30", 잔액="1,000")
+        newer = dict(BANK_BALANCES[1], 기준일="2026-10-30")
+        _, t = cash_table(bank={"balances": [older] + [BANK_BALANCES[0], newer], "transactions": None})
+        self.assertEqual(cells(cash(self, t, "계좌잔액.csv 잔액 합계")), ("345000000", "2", "기준일 2026-10-30, 2026-10-31"))
+
+    def test_bank_balance_row_without_amount_blanks_the_sum(self):
+        rows = [BANK_BALANCES[0], dict(BANK_BALANCES[1], 잔액="")]
+        _, t = cash_table(bank={"balances": rows, "transactions": None})
+        self.assertEqual(cells(cash(self, t, "계좌잔액.csv 잔액 합계")), ("", "2", "금액 미확인 1건"))
+
+    def test_bank_balance_row_without_date_blanks_the_sum(self):
+        rows = [BANK_BALANCES[0], dict(BANK_BALANCES[1], 기준일="")]
+        _, t = cash_table(bank={"balances": rows, "transactions": None})
+        row = cash(self, t, "계좌잔액.csv 잔액 합계")
+        self.assertEqual(row["금액"], "")
+        self.assertEqual(row["비고"], "기준일 확인 불가 1건")
+
+    def test_two_different_rows_for_one_account_and_date_blank_the_sum(self):
+        rows = [BANK_BALANCES[0], dict(BANK_BALANCES[0], 잔액="1,000"), BANK_BALANCES[1]]
+        _, t = cash_table(bank={"balances": rows, "transactions": None})
+        self.assertEqual(cells(cash(self, t, "계좌잔액.csv 잔액 합계")), ("", "2", "금액 미확인 1건"))
+
+    def test_an_empty_balance_file_is_not_zero(self):
+        _, t = cash_table(bank={"balances": [], "transactions": None})
+        self.assertEqual(cells(cash(self, t, "계좌잔액.csv 잔액 합계")), ("", "", "계좌잔액.csv 줄 없음"))
+
+    def test_bank_transactions_net_inflow_minus_outflow_per_month(self):
+        _, t = cash_table(journal=OPENING_CASH, bank={"balances": None, "transactions": BANK_TX})
+        self.assertEqual(cells(month(self, t, "2026-10", "입출금내역 증감 (입금−출금)")), ("57000000", "2", ""))
+        self.assertEqual(cells(month(self, t, "2026-09", "입출금내역 증감 (입금−출금)")), ("", "", "입출금내역 없음"))
+
+    def test_outflow_with_a_minus_sign_is_still_an_outflow(self):
+        rows = [BANK_TX[0], dict(BANK_TX[1], 금액="-53,000,000")]
+        _, t = cash_table(bank={"balances": None, "transactions": rows})
+        self.assertEqual(month(self, t, "2026-10", "입출금내역 증감 (입금−출금)")["금액"], "57000000")
+
+    def test_a_month_with_an_unreadable_bank_row_is_blank_and_counted(self):
+        rows = [BANK_TX[0], dict(BANK_TX[1], 금액="")]
+        _, t = cash_table(bank={"balances": None, "transactions": rows})
+        self.assertEqual(cells(month(self, t, "2026-10", "입출금내역 증감 (입금−출금)")), ("", "2", "금액 미확인 1건"))
+        rows = [BANK_TX[0], dict(BANK_TX[1], 입출금="이체")]
+        _, t = cash_table(bank={"balances": None, "transactions": rows})
+        self.assertEqual(cells(month(self, t, "2026-10", "입출금내역 증감 (입금−출금)")),
+                         ("", "2", "입출금 구분 확인 불가 1건"))
+
+    def test_a_bank_row_without_a_date_blanks_every_month(self):
+        rows = [BANK_TX[0], BANK_TX[1], dict(BANK_TX[1], 일자="")]
+        _, t = cash_table(bank={"balances": None, "transactions": rows})
+        for ym in ("2026-09", "2026-10"):
+            self.assertEqual(cells(month(self, t, ym, "입출금내역 증감 (입금−출금)")), ("", "", "일자 확인 불가 1건"))
+
+    def test_a_bank_month_without_books_cash_lines_is_listed_in_a_note(self):
+        rows = [BANK_TX[0], dict(BANK_TX[1], 일자="2026-12-01")]
+        _, t = cash_table(bank={"balances": None, "transactions": rows})
+        self.assertTrue(any("2026-12" in n for n in t.notes), t.notes)
+        self.assertEqual(len(picked(t, "보통예금월", "2026-12")), 0)
+
+    def test_a_cash_line_without_amount_blanks_totals_and_the_check_is_undecided(self):
+        unknown = _jl(dt.date(2026, 10, 30), 82, "10300", "보통예금", None, None, "가상은행", "금액 미정")
+        _, t = cash_table(journal=OPENING_CASH + [unknown])
+        self.assertEqual(cells(cash(self, t, "WEHAGO 증감 (전체 기간)")), ("", "4", "금액 미확인 1줄"))
+        self.assertEqual(cash(self, t, "WEHAGO 잔액 (장부 기준일)")["금액"], "")
+        self.assertEqual(cells(month(self, t, "2026-10", "WEHAGO 증감")), ("", "4", "금액 미확인 1줄"))
+        self.assertEqual(month(self, t, "2026-09", "WEHAGO 증감")["금액"], "-12000000")
+        self.assertIn("현금계정 증감 = 보통예금월 WEHAGO 증감 합계: 원본 미확인 · CSV 미확인 → 판단 불가", check_lines(t))
+
+    def test_cash_lines_after_the_book_date_count_in_the_movement_but_not_in_the_balance(self):
+        later = _jl(dt.date(2026, 11, 1), 83, "10300", "보통예금", 1000000, None, "가상은행", "기준일 이후 입금")
+        _, t = cash_table(journal=OPENING_CASH + [later])
+        self.assertEqual(cash(self, t, "WEHAGO 증감 (전체 기간)")["금액"], "46000000")
+        row = cash(self, t, "WEHAGO 잔액 (장부 기준일)")
+        self.assertEqual(row["금액"], "345000000")
+        self.assertIn("기준일 이후", row["비고"])
+        self.assertEqual(month(self, t, "2026-11", "WEHAGO 증감")["금액"], "1000000")
+        self.assertIn("현금계정 증감 = 보통예금월 WEHAGO 증감 합계: 원본 46,000,000 · CSV 46,000,000 → 일치", check_lines(t))
+
+    def test_a_cash_line_without_a_date_blanks_the_balance_and_breaks_the_check_visibly(self):
+        undated = _jl("", 84, "10300", "보통예금", 1000000, None, "가상은행", "날짜 없음")
+        _, t = cash_table(journal=OPENING_CASH + [undated])
+        self.assertEqual(cash(self, t, "WEHAGO 잔액 (장부 기준일)")["금액"], "")
+        self.assertIn("날짜 없음", cash(self, t, "WEHAGO 잔액 (장부 기준일)")["비고"])
+        self.assertIn("현금계정 증감 = 보통예금월 WEHAGO 증감 합계: 원본 46,000,000 · CSV 45,000,000 → 불일치", check_lines(t))
+
+    def test_cash_accounts_come_from_the_config_only(self):
+        other = _jl(dt.date(2026, 10, 30), 85, "10500", "정기예적금", 7000000, None, "가상은행", "예금")
+        _, t = cash_table(journal=[other], cfg={"cash_codes": ("10500",)})
+        self.assertEqual(cells(cash(self, t, "WEHAGO 증감 (전체 기간)")), ("7000000", "1", ""))
+        _, t = cash_table(journal=[other])
+        self.assertEqual(cash(self, t, "WEHAGO 증감 (전체 기간)")["금액"], "45000000")
+
+    def test_no_cash_line_at_all_is_a_zero_movement_of_zero_lines(self):
+        _, t = cash_table(cfg={"cash_codes": ("99999",)})
+        self.assertEqual(cells(cash(self, t, "WEHAGO 증감 (전체 기간)")), ("0", "0", ""))
+        self.assertEqual(len(picked(t, "보통예금월")), 0)
+
+    def test_table_stays_free_of_file_access_with_bank_rows_given_by_the_caller(self):
+        bank = {"balances": [dict(r, _line=2, _file="계좌잔액.csv") for r in BANK_BALANCES], "transactions": BANK_TX}
+        _, t = cash_table(journal=OPENING_CASH, bank=bank)
+        self.assertEqual(cash(self, t, "계좌잔액.csv 잔액 합계")["금액"], "345000000")
+
+
+def loaded(test, table):
+    tmp = new_tmp(test)
+    write_xchk(os.path.join(tmp, "입력"), table)
+    return mod("convert_xchk").load_xchk(os.path.join(tmp, "입력"))
+
+
+def edited(test, table, old, new):
+    """표를 쓴 파일에서 글자 old 를 new 로 바꾼 뒤 읽는다."""
+    tmp = new_tmp(test)
+    path = write_xchk(os.path.join(tmp, "입력"), table)
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read()
+    assert old in text, old
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(text.replace(old, new, 1))
+    return mod("convert_xchk").load_xchk(os.path.dirname(path))
+
+
+class TestXchkLoad(unittest.TestCase):
+    def full(self, bank=None, journal=OPENING_CASH, projects=None):
+        x = xchk_inputs(self, journal=FAKE_PL_JOURNAL + journal, bank=bank, projects=projects)
+        return loaded(self, xchk_table(x))
+
+    def test_cash_balance_difference_is_derived_only_with_an_opening_balance(self):
+        got = self.full(bank={"balances": BANK_BALANCES, "transactions": BANK_TX})
+        c = got["cash"]
+        self.assertEqual((c["opening"], c["change"], c["balance"], c["bank_balance"]), (300000000, 45000000, 345000000, 345000000))
+        self.assertEqual(c["balance_diff"], 0)
+        self.assertEqual(c["bank_note"], "기준일 2026-10-31")
+        got = self.full(bank={"balances": BANK_BALANCES, "transactions": None}, journal=[])
+        c = got["cash"]
+        self.assertIsNone(c["opening"])
+        self.assertEqual(c["opening_note"], NO_OPENING)
+        self.assertIsNone(c["balance"])
+        self.assertEqual(c["bank_balance"], 345000000)
+        self.assertIsNone(c["balance_diff"])
+
+    def test_cash_balance_difference_is_signed_wehago_minus_bank(self):
+        rows = [BANK_BALANCES[0], dict(BANK_BALANCES[1], 잔액="100,000,000")]
+        got = self.full(bank={"balances": rows, "transactions": None})
+        self.assertEqual(got["cash"]["bank_balance"], 300000000)
+        self.assertEqual(got["cash"]["balance_diff"], 45000000)
+
+    def test_no_difference_when_the_bank_balance_is_unknown(self):
+        rows = [BANK_BALANCES[0], dict(BANK_BALANCES[1], 잔액="")]
+        got = self.full(bank={"balances": rows, "transactions": None})
+        self.assertIsNone(got["cash"]["bank_balance"])
+        self.assertEqual(got["cash"]["bank_note"], "금액 미확인 1건")
+        self.assertIsNone(got["cash"]["balance_diff"])
+
+    def test_monthly_difference_only_when_both_sides_are_known(self):
+        got = self.full(bank={"balances": None, "transactions": BANK_TX})
+        months = dict((m["month"], m) for m in got["cash_months"])
+        self.assertEqual(list(months), ["2026-09", "2026-10"])
+        self.assertEqual((months["2026-10"]["wehago"], months["2026-10"]["bank"], months["2026-10"]["diff"]),
+                         (57000000, 57000000, 0))
+        self.assertEqual((months["2026-09"]["wehago"], months["2026-09"]["bank"], months["2026-09"]["diff"]),
+                         (-12000000, None, None))
+        self.assertEqual(months["2026-09"]["bank_note"], "입출금내역 없음")
+        rows = [BANK_TX[0], dict(BANK_TX[1], 금액="3,000,000")]
+        got = self.full(bank={"balances": None, "transactions": rows})
+        self.assertEqual(dict((m["month"], m) for m in got["cash_months"])["2026-10"]["diff"], 57000000 - 107000000)
+
+    def test_missing_bank_files_give_no_difference(self):
+        got = self.full()
+        self.assertEqual(got["cash"]["bank_note"], "계좌잔액.csv 없음")
+        self.assertIsNone(got["cash"]["balance_diff"])
+        for m in got["cash_months"]:
+            self.assertEqual((m["bank"], m["diff"], m["bank_note"]), (None, None, "입출금내역.csv 없음"))
+
+    def test_project_differences_use_known_values_only(self):
+        got = self.full()
+        by = dict((p["key"], p) for p in got["projects"])
+        self.assertEqual(by["26201"]["cost_vs_budget"], 50000000 - 300000000)
+        self.assertEqual(by["26220"]["cost_vs_budget"], 158000000 - 250000000)
+        self.assertEqual(by["26203"]["cost_vs_budget"], 45000000 - 60000000)
+        self.assertIsNone(by["26221"]["cost_vs_budget"])               # 실행가 빈칸
+        self.assertEqual(by["26201"]["request_vs_cost"], 44264000 - 50000000)
+        self.assertEqual(by["26220"]["request_vs_cost"], 166000000 - 158000000)
+        self.assertEqual(by["26203"]["request_vs_cost"], 49500000 - 45000000)
+        self.assertIsNone(by["26221"]["request_vs_cost"])              # 요청 금액 미확인 1건
+
+    def test_totals_count_registered_contracts_and_blanks_separately(self):
+        t = self.full()["totals"]
+        self.assertEqual((t["contract_sum"], t["contract_registered"], t["contract_unregistered"]), (530000000, 2, 2))
+        self.assertEqual((t["budget_sum"], t["budget_known"], t["budget_blank"]), (610000000, 3, 1))
+        self.assertEqual(t["over_budget"], 0)
+
+    def test_a_project_with_cost_over_the_execution_price_is_counted(self):
+        got = self.full(projects=snapshot_projects(**{"26203": {12: "40,000,000"}}))
+        self.assertEqual(got["totals"]["over_budget"], 1)
+        by = dict((p["key"], p) for p in got["projects"])
+        self.assertEqual(by["26203"]["cost_vs_budget"], 5000000)
+        self.assertEqual(got["totals"]["budget_sum"], 590000000)
+
+    def test_vendor_difference_is_wehago_payable_minus_requested(self):
+        got = self.full()
+        by = dict((v["vendor"], v) for v in got["vendors"])
+        self.assertEqual(by["㈜가상제작"]["diff"], 165000000 - 160500000)
+        self.assertEqual(by["가상임대"]["diff"], 3000000)
+        self.assertIsNone(by["가상꽃"]["diff"])
+        self.assertIsNone(by["가상숙박"]["diff"])
+        self.assertEqual(by["가상꽃"]["payable_note"], "분개장 미지급금 줄 없음")
+        self.assertEqual(by["가상숙박"]["requested_note"], "금액 미확인 1건")
+
+    def test_missing_file_is_no_data(self):
+        tmp = new_tmp(self)
+        got = mod("convert_xchk").load_xchk(os.path.join(tmp, "입력"))
+        self.assertEqual(got["state"], "자료 없음")
+        self.assertEqual(got["reason"], "위하고대조.csv 없음")
+        os.makedirs(os.path.join(tmp, "입력"))
+        self.assertEqual(mod("convert_xchk").load_xchk(os.path.join(tmp, "입력"))["state"], "자료 없음")
+
+    def test_unusable_result_has_every_key_and_no_numbers(self):
+        tmp = new_tmp(self)
+        good = self.full()
+        got = mod("convert_xchk").load_xchk(tmp)
+        self.assertEqual(sorted(got), sorted(good))
+        self.assertEqual((got["projects"], got["vendors"], got["cash_months"], got["unlinked_lines"]), ([], [], [], []))
+
+    def test_a_bad_amount_is_unreadable_and_names_the_line(self):
+        x = xchk_inputs(self)
+        t = xchk_table(x)
+        got = edited(self, t, ",50000000,2,", ",abc,2,")
+        self.assertEqual(got["state"], "읽을 수 없음")
+        self.assertRegex(got["reason"], r"위하고대조\.csv \d+번째 줄 금액")
+        self.assertIn("abc", got["reason"])
+        self.assertEqual(got["projects"], [])
+        line = int(re.search(r"(\d+)번째 줄", got["reason"]).group(1))
+        tmp = new_tmp(self)
+        path = write_xchk(os.path.join(tmp, "입력"), t)
+        with open(path, encoding="utf-8-sig") as f:
+            self.assertIn("50000000", f.read().splitlines()[line - 1])
+
+    def test_a_bad_count_is_unreadable(self):
+        t = xchk_table(xchk_inputs(self))
+        got = edited(self, t, ",50000000,2,", ",50000000,두,")
+        self.assertEqual(got["state"], "읽을 수 없음")
+        self.assertIn("건수", got["reason"])
+
+    def test_a_social_security_number_in_a_bad_cell_is_masked_in_the_reason(self):
+        t = xchk_table(xchk_inputs(self))
+        got = edited(self, t, ",50000000,2,", ",900101-1234567,2,")
+        self.assertEqual(got["state"], "읽을 수 없음")
+        self.assertIsNone(RRN_RUN.search(got["reason"]))
+
+    def test_unreadable_file_variants_never_raise(self):
+        tmp = new_tmp(self)
+        folder = os.path.join(tmp, "입력")
+        os.makedirs(folder)
+        target = os.path.join(folder, "위하고대조.csv")
+        with open(target, "wb") as f:
+            f.write(b"\xff\xfe\x00garbage\x80\x81")
+        self.assertNotEqual(mod("convert_xchk").load_xchk(folder)["state"], "ok")
+        os.remove(target)
+        os.makedirs(target)      # 폴더가 파일 자리에 있다
+        got = mod("convert_xchk").load_xchk(folder)
+        self.assertEqual(got["state"], "읽을 수 없음")
+        got = mod("convert_xchk").load_xchk(None)
+        self.assertEqual(got["state"], "자료 없음")
+
+    def test_loading_does_not_write_anything(self):
+        tmp = new_tmp(self)
+        folder = os.path.join(tmp, "입력")
+        write_xchk(folder, xchk_table(shared_inputs()))
+        before = sorted(os.listdir(folder))
+        mod("convert_xchk").load_xchk(folder)
+        self.assertEqual(sorted(os.listdir(folder)), before)
+
+    def test_values_edited_in_a_spreadsheet_with_commas_still_read(self):
+        t = xchk_table(xchk_inputs(self))
+        got = edited(self, t, ",50000000,2,", ',"50,000,000",2,')
+        self.assertEqual(got["state"], "ok", got["reason"])
+        self.assertEqual(dict((p["key"], p) for p in got["projects"])["26201"]["cost"], 50000000)
+
+    def test_a_duplicated_project_key_gives_no_derived_difference(self):
+        rows = snapshot_projects()
+        dup = list(rows[0])
+        dup[5] = "가상 컨퍼런스 복사"
+        dup[12] = "100,000,000"
+        got = self.full(projects=rows + [dup])
+        p = dict((p["key"], p) for p in got["projects"])["26201"]
+        self.assertIn("프로젝트번호 겹침", p["budget_note"])
+        self.assertIsNone(p["cost_vs_budget"])
+        self.assertEqual(got["totals"]["budget_dup"], 1)
 
 
 if __name__ == "__main__":
