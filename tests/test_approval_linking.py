@@ -5,6 +5,7 @@
 다른 시험 파일에서는 함수와 상수만 가져온다 (TestCase 클래스를 가져오면 시험이 두 번 돈다).
 """
 import ast
+import csv
 import datetime as dt
 import importlib
 import os
@@ -22,6 +23,7 @@ from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 from test_approval import (ASOF, NOW, edit_csv, element_html, load_approval_cli, sample_copy,  # noqa: E402
                            set_setting, write_fake_snapshot)
 from test_approval_wehago import body_rows, cells, code_row, new_tmp, T  # noqa: E402
+from test_convert_xchk import write_xchk  # noqa: E402
 from test_linking import LINK_EXTRA, LINK_REQUESTS, setup_cost, write_links_csv  # noqa: E402
 from test_wehago import FAKE_JOURNAL, _jl, write_fake_books  # noqa: E402
 
@@ -380,6 +382,128 @@ class TestApprovalLinkingPanel(unittest.TestCase):
         html = render._unlinked_panel(A)
         self.assertIn("프로젝트 미연결 원가 0건", html)
         self.assertIn("연결: 수동 3줄 · 코드 3줄 · 자동 3줄 · 미연결 0줄", html)
+
+
+# ───────────── Task 3: 승인 화면 = 월간 8번 (같은 장부·스냅숏·입력 폴더, 프로젝트별) ─────────────
+def monthly_side(test, tmp, input_dir):
+    """변환.py 가 하는 순서 그대로(convert.run 의 _build_tables): 같은 위하고 폴더·수집 폴더·입력 폴더에서
+    build_links -> build_xchk -> write_table -> load_xchk. 월간 쪽 위하고대조.csv 는 입력 폴더가 아닌 새 임시 폴더에 쓴다."""
+    convert, wehago = mod("convert"), mod("wehago")
+    books = wehago.load_books(os.path.join(tmp, "위하고"), ASOF, None)
+    assert books.state == "ok", books.reason
+    snap, _ = convert.read_latest_snapshot(os.path.join(tmp, "수집"))
+    cfg, _ = convert.read_config(input_dir)
+    links = convert.build_links(books, cfg, snap, input_dir, ASOF, NOW)
+    match = wehago.match_requests(books, links["requests"])
+    project_table = mod("convert_projects").build_projects(links["projects"], links["revenue"],
+                                                           convert.read_prev(input_dir, "프로젝트.csv"))
+    table = mod("convert_xchk").build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"],
+                                           match, project_table.rows, convert.xchk_meta(books, snap, NOW), cfg,
+                                           convert.read_bank(input_dir))
+    out = os.path.join(tmp, "월간")
+    path = write_xchk(out, table)
+    return mod("convert_xchk").load_xchk(out), path
+
+
+def csv_cell(path, kind, target, item):
+    """위하고대조.csv 에서 (구분, 대상, 항목) 줄의 금액 칸 글자"""
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["구분"] == kind and r["대상"] == target and r["항목"] == item]
+    assert len(rows) == 1, (kind, target, item, len(rows))
+    return rows[0]["금액"]
+
+
+def both(test, input_dir=None, journal=None):
+    """같은 장부·스냅숏·입력 폴더로 승인 화면과 월간 8번을 만든다 -> (page, A, monthly, monthly_csv_path)"""
+    folder = input_dir or SAMPLE
+    page, A, tmp = screen(test, input_dir=folder, journal=journal)
+    monthly, path = monthly_side(test, tmp, folder)
+    return page, A, monthly, path
+
+
+class TestApprovalMonthlyEqual(unittest.TestCase):
+    CASES = (("default", {}), ("link-days 200", {"link_days": 200}), ("manual 22 -> 26221", {"links": MANUAL_22}),
+             ("manual 22 -> 26888 (not in list)", {"links": [["2026-10-29", "22", "1", "26888"]]}))
+
+    def assert_equal_per_project(self, page, A, monthly, label):
+        self.assertEqual(monthly["state"], "ok", label)
+        by_code = dict((r["code"], r) for r in A["xchk"]["projects"])
+        seen = 0
+        for p in monthly["projects"]:
+            row = by_code.get(p["key"])
+            if row is None:
+                # 원가 줄이 없는 프로젝트는 승인 표에 없다 (01.1 규칙): 월간 건수가 0 일 때만 허용
+                self.assertEqual((p["cost_lines"], p["cost"]), (0, 0), "%s %s: 승인 화면에 행이 없는데 월간 원가 줄이 있음" % (label, p["key"]))
+                continue
+            seen += 1
+            self.assertEqual(row["cost"], p["cost"], "%s %s WEHAGO 원가" % (label, p["key"]))
+            self.assertEqual(row["requested"], p["requested"], "%s %s 요청 누계" % (label, p["key"]))
+            self.assertEqual(table_costs(page)[p["key"]], "미확인" if p["cost"] is None else "{:,}".format(p["cost"]),
+                             "%s %s 화면 글자" % (label, p["key"]))
+        self.assertEqual(seen, len(by_code), label)   # 승인 화면의 모든 행이 월간에도 있다
+
+    def test_per_project_cost_and_request_total_equal_for_every_setting(self):
+        for label, kw in self.CASES:
+            page, A, monthly, _ = both(self, input_dir=work_input(self, **kw))
+            self.assert_equal_per_project(page, A, monthly, label)
+
+    def test_unlinked_count_and_sum_equal_the_monthly_unlinked_total(self):
+        for label, kw in self.CASES:
+            page, A, monthly, _ = both(self, input_dir=work_input(self, **kw))
+            u = A["xchk"]["unlinked"]
+            self.assertEqual(u["count"], monthly["unlinked"]["count"], label)
+            self.assertEqual(u["sum"], monthly["unlinked"]["amount"], label)
+            self.assertEqual(len(monthly["unlinked_lines"]), u["count"], label)
+            self.assertEqual([i["amount"] for i in u["lines"]], [l["amount"] for l in monthly["unlinked_lines"]], label)
+
+    def test_the_known_numbers_of_the_three_settings(self):
+        expect = {"default": (26201, 40000000, 6, 3200000), "link-days 200": (26201, 41000000, 5, 2200000),
+                  "manual 22 -> 26221": (26221, 6200000, 5, 2400000)}
+        for label, kw in self.CASES[:3]:
+            page, A, monthly, _ = both(self, input_dir=work_input(self, **kw))
+            key, cost, count, total = expect[label]
+            mp = dict((p["key"], p) for p in monthly["projects"])
+            self.assertEqual(mp[str(key)]["cost"], cost, label)
+            self.assertEqual((monthly["unlinked"]["count"], monthly["unlinked"]["amount"]), (count, total), label)
+        # 26220 은 전표 40 이 지급요청 6001 로 자동 연결되어 월간도 158,200,000
+        page, A, monthly, _ = both(self)
+        self.assertEqual(dict((p["key"], p["cost"]) for p in monthly["projects"])["26220"], 158200000)
+
+    def test_a_request_total_with_an_unknown_amount_is_blank_on_both_surfaces(self):
+        page, A, monthly, path = both(self)
+        row = [r for r in A["xchk"]["projects"] if r["code"] == "26221"][0]
+        self.assertIsNone(row["requested"])                                       # 5106 의 금액을 모른다
+        self.assertEqual(csv_cell(path, "프로젝트원가", "26221", "요청 누계"), "")   # 월간 CSV 칸은 빈칸 (A-6)
+        self.assertIsNone([p for p in monthly["projects"] if p["key"] == "26221"][0]["requested"])
+        self.assertEqual(code_row(page, "xchk-projects", "26221")[3], "판단 불가")
+
+    def test_the_manual_link_to_a_key_outside_the_list_is_on_both_surfaces(self):
+        page, A, monthly, path = both(self, input_dir=work_input(self, links=[["2026-10-29", "22", "1", "26888"]]))
+        mp = dict((p["key"], p) for p in monthly["projects"])
+        self.assertEqual((mp["26888"]["name"], mp["26888"]["cost"]), ("(프로젝트 목록에 없음)", 800000))
+        self.assertIsNone(mp["26888"]["requested"])
+        self.assertEqual(code_row(page, "xchk-projects", "26888")[:2], ["26888", "(프로젝트 목록에 없음)"])
+        self.assertEqual(csv_cell(path, "프로젝트원가", "26888", "WEHAGO 원가"), "800000")
+
+    def test_projects_without_a_cost_line_are_only_in_the_monthly_table_with_zero_lines(self):
+        # 01.1 가상 장부(LINK 줄 없음)에서도 월간 표의 모든 프로젝트가 승인 표와 맞고, 빠진 프로젝트는 건수 0 이다
+        page, A, monthly, _ = both(self, journal=FAKE_JOURNAL)
+        self.assert_equal_per_project(page, A, monthly, "01.1 장부")
+        missing = [p for p in monthly["projects"] if p["key"] not in project_costs_of(A)]
+        for p in missing:
+            self.assertEqual(p["cost_lines"], 0)
+
+    def test_a_cost_line_without_an_amount_is_unknown_on_the_monthly_side_and_flagged_on_the_screen(self):
+        journal = LINK_JOURNAL + [_jl(dt.date(2026, 10, 30), 60, "61101", "행사외주비(도)", None, None, "가상금액모름",
+                                      "[26201] 금액 모름")]
+        page, A, monthly, _ = both(self, journal=journal)
+        mp = dict((p["key"], p) for p in monthly["projects"])
+        self.assertIsNone(mp["26201"]["cost"])     # 월간: 모르는 줄이 하나라도 있으면 칸이 빈칸 (B5)
+        row = [r for r in A["xchk"]["projects"] if r["code"] == "26201"][0]
+        self.assertEqual(row["cost_unknown"], 1)   # 승인 화면(01.1 규칙): 확인된 금액 옆에 '외 금액 미확인 1줄'
+        self.assertIn("외 금액 미확인 1줄", code_row(page, "xchk-projects", "26201")[4])
+        for key in ("26220", "26221", "26203"):    # 나머지 프로젝트는 그대로 같다
+            self.assertEqual(dict((r["code"], r["cost"]) for r in A["xchk"]["projects"])[key], mp[key]["cost"])
 
 
 if __name__ == "__main__":
