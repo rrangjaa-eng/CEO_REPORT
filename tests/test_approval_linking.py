@@ -422,6 +422,9 @@ def both(test, input_dir=None, journal=None):
 
 
 class TestApprovalMonthlyEqual(unittest.TestCase):
+    """RED 증거 (계획 W6): 이 클래스를 계획 02-08 의 연결 배선이 없는 커밋 6e3b9be(RED Task 1 tracer)에서 돌리면 7개 중 4개가 실패한다
+    (26220 승인 158,000,000 대 월간 158,200,000, 미연결 7건 대 6건). 배선이 있는 Task 1·2 GREEN 뒤에는 모두 통과하므로
+    Task 3 에서 고칠 코드는 없었고, 이 시험은 두 화면이 어긋나지 않게 지키는 시험이다."""
     CASES = (("default", {}), ("link-days 200", {"link_days": 200}), ("manual 22 -> 26221", {"links": MANUAL_22}),
              ("manual 22 -> 26888 (not in list)", {"links": [["2026-10-29", "22", "1", "26888"]]}))
 
