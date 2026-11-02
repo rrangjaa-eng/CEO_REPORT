@@ -491,5 +491,90 @@ class TestStructureCheck(_TmpMixin, unittest.TestCase):
         self.assertEqual(fake.calls, [])
 
 
+# ---------------------------------------------------------------------------
+# Task 3: 실행_승인검토.bat
+# ---------------------------------------------------------------------------
+
+class TestApprovalLauncher(unittest.TestCase):
+    """cmd.exe는 여기서 실행할 수 없어 파일 모양과 줄 순서만 본다. Windows 실행은 사람이 확인한다(끝 점검 목록)."""
+    NAME = "실행_승인검토.bat"
+    RUN = "%PY% 승인검토.py --수집 함 %*"
+
+    def raw(self, name=None):
+        path = os.path.join(ROOT, name or self.NAME)
+        self.assertTrue(os.path.exists(path), name or self.NAME)
+        with open(path, "rb") as f:
+            return f.read()
+
+    def lines(self, name=None):
+        return self.raw(name).decode("utf-8").split("\r\n")
+
+    def test_bytes_are_utf8_crlf_without_bom(self):
+        raw = self.raw()
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
+        self.assertGreater(raw.count(b"\n"), 0)
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
+        raw.decode("utf-8")
+
+    def test_content_markers_and_chcp_first(self):
+        text = self.raw().decode("utf-8")
+        for needle in ("chcp 65001", "%~dp0", "승인검토.py --수집 함 %*", "python --version", "py -3",
+                       "python.org", "pause"):
+            self.assertIn(needle, text, needle)
+        first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
+        self.assertLess(text.index("chcp 65001"), first_non_ascii)
+
+    def test_run_line_exit_code_flow(self):
+        lines = self.lines()
+        run = [i for i, ln in enumerate(lines) if ln.startswith("%PY% 승인검토.py")]
+        self.assertEqual(len(run), 1)
+        self.assertEqual(lines[run[0]], self.RUN)
+        checks = [i for i, ln in enumerate(lines) if "version_info" in ln and "(3, 8)" in ln]
+        self.assertEqual(len(checks), 2)
+        self.assertTrue(all(i < run[0] for i in checks))
+        ok = [i for i, ln in enumerate(lines) if "완료했습니다" in ln]
+        fail = [i for i, ln in enumerate(lines) if "오류가 발생했습니다" in ln]
+        self.assertEqual((len(ok), len(fail)), (1, 1))
+        guard = [i for i, ln in enumerate(lines) if i > run[0] and re.match(r'if (not )?"%RC%"==["]?0', ln, re.I)]
+        self.assertTrue(guard, "RC 검사가 없음")
+        self.assertLess(guard[0], ok[0])
+        self.assertLess(guard[0], fail[0])
+        self.assertEqual(lines[ok[0] - 1].strip().upper(), ":OK")
+        self.assertTrue(any(ln.strip() == "exit /b %RC%" for ln in lines))
+
+    def test_never_touches_the_password(self):
+        lines = self.lines()
+        for ln in lines:
+            self.assertNotIn("set /p", ln.lower())
+        run = next(ln for ln in lines if ln.startswith("%PY% 승인검토.py"))
+        for token in ("비밀", "pass", "pw"):
+            self.assertNotIn(token, run.lower())
+        text = "\n".join(lines).lower()
+        self.assertNotIn("%password%", text)
+        self.assertNotIn("%pw%", text)
+
+    def test_tells_the_user_what_will_be_asked(self):
+        lines = self.lines()
+        run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% 승인검토.py"))
+        notes = [ln for ln in lines[:run] if ln.lower().startswith("echo") and "ID" in ln and "비밀번호" in ln
+                 and "보이지 않" in ln]
+        self.assertEqual(len(notes), 1, notes)
+
+    def test_only_three_lines_differ_from_the_weekly_launcher(self):
+        weekly, mine = self.lines("실행_주간.bat"), self.lines()
+        added = [ln for ln in mine if ln not in weekly]
+        removed = [ln for ln in weekly if ln not in mine]
+        self.assertEqual(len(added), 3, added)
+        self.assertEqual(len(removed), 2, removed)
+        self.assertIn(self.RUN, added)
+        self.assertIn("%PY% 보고서.py 주간 %*", removed)
+        self.assertIn("echo 완료했습니다. 위 메시지를 확인하세요.", added)
+        self.assertIn("echo 결과 파일은 출력 폴더에 있습니다.", removed)
+
+    def test_launcher_is_tracked_not_ignored(self):
+        rc = subprocess.run(["git", "check-ignore", "-q", self.NAME], cwd=ROOT).returncode
+        self.assertEqual(rc, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
