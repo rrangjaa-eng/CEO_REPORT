@@ -698,6 +698,8 @@ class TestProjectBudget(Base):
                 fs = first_screen(render(R, "ceo"))
                 self.assertIn("예산 미책정 8건 (사전견적 없음 1건, 원가율 설정 오류 7건)", fs)
                 self.assertIn("예산 미지정 (원가율 설정 오류)", fs)
+                for ed in ("ceo", "mgmt"):
+                    self.assertNotIn("원가율 원가율", render(R, ed))
                 check_editions(self, R)
 
     def test_cost_rate_blank_uses_default_and_listed(self):
