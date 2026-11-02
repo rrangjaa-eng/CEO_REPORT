@@ -990,6 +990,19 @@ class TestWehagoSummaryRows(unittest.TestCase):
         self.assertEqual(len(books.einvoice), 2)
         self.assertEqual(len(books.ledger), 8)
 
+    def test_spaced_and_period_totals_in_the_ledger_date_column_are_skipped(self):
+        # 실제 매입매출장: 전표일자 칸에 '합       계'처럼 글자 사이 공백, '분기 누계'·'반기 누계', 구분은 '매입', 금액도 있음 (D-35c)
+        folder = folder_with(self)
+        extra = []
+        for text in ("합       계", "월       계", "누       계", "분기 누계", "반기 누계"):
+            row = ["매입", text, "", "", "", "", "1,000", "100", "1,100", "", "", "", "", ""]
+            extra.append(row)
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER] + FAKE_LEDGER + extra)
+        books = load(folder)
+        entry = books.files["매입매출장"]
+        self.assertEqual((entry["skipped"], entry["undated"]), (5, 0))
+        self.assertEqual(len(books.ledger), 8)
+
     def test_each_summary_word_at_the_start_of_any_cell_and_the_vendor_subtotal_anywhere(self):
         folder = folder_with(self)
         extra = []
