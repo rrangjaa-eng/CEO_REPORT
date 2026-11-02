@@ -580,6 +580,7 @@ class TestBuildExecsRequests(unittest.TestCase):
         for number in ("5107", "5109"):
             self.assertEqual(naming(t, number), [], number)
         self.assertEqual(by_slip(t, 3)[3], "지급완료")
+        self.assertTrue([n for n in t.notes if n.startswith("지급요청 5109: 이미 지급") and n.endswith("→ 넣지 않음")], t.notes)
         for number in ("1201", "5102", "5103", "5104", "5105", "5106", "5108"):
             self.assertEqual(len(naming(t, number)), 1, number)
 
