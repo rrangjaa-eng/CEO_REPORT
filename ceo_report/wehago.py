@@ -35,7 +35,7 @@ class WehagoError(Exception):
 
 
 class HeaderMismatch(WehagoError):
-    """머리글 이름이 예상과 다름: 없음/추가 이름을 가진다 (D-35a)."""
+    """필수 열이 없거나 이름이 다름: 없음 이름과, 함께 있던 추가 이름을 가진다 (D-35a, D-35c: 추가 열만으로는 멈추지 않는다)."""
 
     def __init__(self, file, kind, missing, extra):
         parts = (["없음: " + ", ".join(missing)] if missing else []) + (["추가: " + ", ".join(extra)] if extra else [])
@@ -236,6 +236,7 @@ class Books:
         self.state = "자료 없음"
         self.reason = ""
         self.book_date = None
+        self.after_ref = 0  # 장부 기준일 이후 전표 수 (파일별 값의 합, D-35c)
         self.files = {}
         self.header = None
         self.unused = []
@@ -248,7 +249,10 @@ _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
 
 
 def _check_header(rows, kind, name):
-    """머리글 이름(공백 제거)이 예상과 정확히 같아야 한다. 같은 이름은 나타난 순서로 짝짓는다 (W-2). 열 위치를 돌려준다."""
+    """필수 열 이름(공백 제거)이 모두 있어야 한다. 같은 이름은 나타난 순서로 짝짓는다 (W-2).
+
+    필수 열이 없거나 이름이 다르면 HeaderMismatch. 추가 열은 무시하고 (D-35c) (열 위치, 추가 열 이름 목록)을 돌려준다.
+    """
     header = [re.sub(r"\s+", "", h) for h in (rows[0] if rows else [])]
     while header and not header[-1]:
         header.pop()
@@ -260,17 +264,21 @@ def _check_header(rows, kind, name):
         else:
             missing.append(h)
     extra = [h or "(빈칸)" for h in remaining]
-    if missing or extra:
+    if missing:
         raise HeaderMismatch(name, kind, missing, extra)
     cols = {}
     for i, h in enumerate(header):
         cols.setdefault(h, []).append(i)
-    return cols
+    return cols, extra
 
 
 def _is_subtotal(row):
+    """합계·소계·일계·월계·누계로 시작하거나 '거래처별 소계'를 포함한 칸이 하나라도 있는 요약 줄 (D-35c)."""
     for c in row:
-        if re.sub(r"[\s\[\]()<>【】「」]+", "", c) in _SUBTOTAL:
+        s = c.strip()
+        if "거래처별소계" in re.sub(r"\s+", "", s):
+            return True
+        if s.lstrip("[]()<>【】「」 \t").startswith(_SUBTOTAL):
             return True
     return False
 
@@ -279,7 +287,7 @@ def read_book(path, kind, file_date=None, asof=None):
     """한 파일을 머리글 이름으로 읽어 (행 dict 목록, 요약)을 돌려준다. 머리글이 다르면 HeaderMismatch."""
     name = os.path.basename(path)
     rows = read_xlsx(path)
-    cols = _check_header(rows, kind, name)
+    cols, extra = _check_header(rows, kind, name)
     year_ref = (file_date or asof) if kind == "전자세금계산서(매입)" else None  # 'MM-DD'는 전자세금계산서만 (W-12)
     d1904 = rows.date1904
     date_col = {"분개장": "전표일자", "매입매출장": "전표일자", "전자세금계산서(매입)": "일자"}[kind]
@@ -288,20 +296,23 @@ def read_book(path, kind, file_date=None, asof=None):
         return mask_rrn(row[cols[header][n]].strip())
 
     out, last = [], None
-    info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0}
+    info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
+            "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else ""}
     for row in rows[1:]:
         if not any(c.strip() for c in row):
             info["skipped"] += 1
             continue
         date = _parse_date(row[cols[date_col][0]], d1904, year_ref)
-        if date is None and _is_subtotal(row):
-            info["skipped"] += 1  # 일계·월계·누계·합계·소계 줄: 저장하지 않고 마지막 날짜에도 넣지 않는다 (W-14)
+        if _is_subtotal(row):
+            info["skipped"] += 1  # 합계·소계·일계·월계·누계 줄: 저장하지 않고 마지막 날짜·날짜 없음에도 넣지 않는다 (W-14, D-35c)
             continue
         info["rows"] += 1
         if date is None:
             info["undated"] += 1
         else:
             last = date if last is None or date > last else last
+            if file_date is not None and date > file_date:
+                info["after_ref"] += 1  # 장부 기준일(파일 이름 날짜) 이후 전표: 남기되 센다 (D-35c)
         if kind == "분개장":
             item = {"date": date, "no": txt(row, "전표번호"), "account_code": txt(row, "Code", 0),
                     "account": txt(row, "계정과목"), "debit": _amount(row[cols["차변"][0]]),
@@ -395,7 +406,7 @@ def load_books(folder, asof, stale_days):
             continue
         fdate = _file_date(name)
         entry = {"name": name, "file_date": fdate, "last_date": None, "ref_date": fdate, "rows": 0, "skipped": 0,
-                 "undated": 0}
+                 "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": ""}
         books.files[kind] = entry
         try:
             rows, info = read_book(os.path.join(folder, name), kind, fdate, asof)
@@ -409,11 +420,13 @@ def load_books(folder, asof, stale_days):
             entry["error"] = "엑셀 내용을 읽을 수 없음"
             failures.append("%s 읽기 실패 — 엑셀 내용을 읽을 수 없음" % name)
         else:
-            entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other")))
+            entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
+                                                     "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
             staged[kind] = rows
     refs = [books.files[k]["ref_date"] for k in KINDS if k in books.files and books.files[k]["ref_date"]]
     books.book_date = min(refs) if refs else None
+    books.after_ref = sum(e["after_ref"] for e in books.files.values())
 
     missing = [k for k in KINDS if k not in chosen]
     if mismatches:
@@ -478,14 +491,17 @@ def _invoices(books, key, code):
 
 
 def _payment_lines(books, rq, key):
-    """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후, 적요에 코드가 있으면 같은 코드."""
+    """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후 장부 기준일 이전·당일, 적요에 코드가 있으면 같은 코드 (D-35c)."""
     reg = rq["registered"].date() if rq.get("registered") else None
+    ref = books.book_date
     out = []
     for i, line in enumerate(books.journal):
         if not _is_payable(line) or line["debit"] != rq["amount"] or line["vendor_norm"] != key:
             continue
         if line["date"] is None or (reg is not None and line["date"] < reg):
             continue
+        if ref is not None and line["date"] > ref:
+            continue  # 장부 기준일 이후 전표는 아직 확정 지급으로 보지 않는다
         if line["code"] is not None and line["code"] != rq["code"]:
             continue
         out.append(i)
