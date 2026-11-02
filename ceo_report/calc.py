@@ -251,7 +251,10 @@ def compute(d, kind, asof, start=None):
     for v in d.invoices:
         total = None if v["supply"] is None or v["vat"] is None else v["supply"] + v["vat"]
         v["total"] = total
-        v["outstanding"] = None if total is None else total - (v["paid"] or 0)
+        if total is None or (v["paid"] is None and v["paid_date"]):
+            v["outstanding"] = None  # 입금일은 있는데 입금액이 빈칸이면 미수액을 알 수 없다 (전액 미수로 단정하지 않음)
+        else:
+            v["outstanding"] = total - (v["paid"] or 0)
         if v["kind"] in ("선수금", "취소", "환불", "수정"):
             specials.append(v)
         if v["outstanding"] and v["outstanding"] > 0 and v["kind"] != "환불":
