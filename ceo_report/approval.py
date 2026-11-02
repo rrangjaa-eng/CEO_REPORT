@@ -539,9 +539,12 @@ def build(d, snap, asof, now, wehago_dir=None):
                 if ev.get("vat_unknown"):
                     vat_unknown_sched.append(ev)  # 부가세 칸이 비어 공급가액만 반영된 일정 (D-07)
 
-    data = {"asof": asof.isoformat(), "start": start, "reserve": reserve, "days": days,
+    # 지급 자료 파일이 빠졌으면 주별 잔액·최저 잔액을 만들지 않는다 (지급 0원으로 보지 않음). 시작 잔액 줄은 그대로 보인다.
+    out_missing = R["s2"]["out_missing"]
+    no_calc = ("지급 자료 없음(%s): 주별 잔액을 계산하지 않음" % ", ".join(out_missing)) if out_missing else None
+    data = {"asof": asof.isoformat(), "start": None if out_missing else start, "reserve": reserve, "days": days,
             "weeks": [[7 * i, 7 * i + 6] for i in range(n_weeks)], "base_in": base_in, "base_out": base_out,
-            "est_in": est_in, "requests": data_requests}
+            "est_in": est_in, "requests": data_requests, "no_calc": no_calc}
     projects, unrequested, unlinked, over_requested = _projects(_masked(snap.projects), req_all)
     lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
              "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,

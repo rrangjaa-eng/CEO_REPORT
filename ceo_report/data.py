@@ -21,6 +21,13 @@ SCHEMA = {
     "자료차이.csv": ["항목", "자료A", "금액A", "자료B", "금액B", "상태"],
 }
 
+# 지급 일정의 출처 파일과, 없으면 지급 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
+# 지급예정이 빠진 채 최저 잔액이 계산되므로 계산하지 않는다 (지급을 줄이지 않음).
+OUTFLOW_KEYS = {
+    "자금일정.csv": ["예정일", "입출금", "금액"],
+    "프로젝트집행.csv": ["상태", "공급가액", "일자"],  # 부가세 열이 없으면 기존처럼 부가세 미확인(공급가액만)으로 알린다
+}
+
 # 허용 값
 EXEC_STATES = ["지급완료", "요청미지급", "카드사용미결제", "카드결제완료", "집행계획미요청"]
 INVOICE_KINDS = ["발행", "선수금", "수정", "취소", "환불"]
@@ -63,11 +70,21 @@ def load(folder):
     d = Data()
     d.issues = iss
     d.present = {}
+    d.out_missing = []  # 지급 일정을 다 알 수 없게 만드는 파일: '자금일정.csv (파일 없음)' 꼴
     raw = {}
     for fname, cols in SCHEMA.items():
-        rows, ok = read_csv(os.path.join(folder, fname), cols, iss)
+        info = {}
+        rows, ok = read_csv(os.path.join(folder, fname), cols, iss, info)
         raw[fname] = rows
         d.present[fname] = ok
+        if fname in OUTFLOW_KEYS:
+            lost = [c for c in OUTFLOW_KEYS[fname] if c in info["missing"]]
+            if not os.path.exists(os.path.join(folder, fname)):
+                d.out_missing.append("%s (파일 없음)" % fname)
+            elif not ok:
+                d.out_missing.append("%s (읽지 못함)" % fname)
+            elif lost:
+                d.out_missing.append("%s (필수 열 없음: %s)" % (fname, ", ".join(lost)))
 
     # 설정
     d.settings = dict(DEFAULT_SETTINGS)

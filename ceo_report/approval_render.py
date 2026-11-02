@@ -288,7 +288,7 @@ UI_JS = r"""(function(){
     setText('h-est-low',estT);setText('h-est-unit',manUnit(estT));
     setText('h-est-sep',r.est_low===null?'':' · ');setText('h-est-day',r.est_low_day||'');
     short=$('h-short');while(short.firstChild)short.removeChild(short.firstChild);
-    if(data.start===null){short.textContent='시작 잔액 미확인: 주별 잔액을 계산하지 않음';}
+    if(data.start===null){short.textContent=data.no_calc||'시작 잔액 미확인: 주별 잔액을 계산하지 않음';}
     else{
       for(w=0;w<r.weeks.length;w++){
         if(!r.weeks[w].level)continue;
@@ -333,7 +333,7 @@ def _headline(A, S):
     badges = "".join('<span class="lv%s">%s %s</span>' % (_level_cls(w["level"]), esc(w["level"]), esc(_wlabel(data, i)))
                      for i, w in enumerate(S["weeks"]) if w["level"])
     if data["start"] is None:
-        short = esc("시작 잔액 미확인: 주별 잔액을 계산하지 않음")
+        short = esc(data.get("no_calc") or "시작 잔액 미확인: 주별 잔액을 계산하지 않음")
     else:
         short = badges or esc("부족·최소보유현금 미만 주 없음")
     total = (" (체크 합계 %s원)" % fmt_won(S["checked_sum"])) if n_tog else ""

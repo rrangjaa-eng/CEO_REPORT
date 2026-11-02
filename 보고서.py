@@ -145,6 +145,8 @@ def main(argv=None):
         _say("  " + m)
     if a.pdf == "만듦" and not browser:
         _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
+    if R["s2"]["out_missing"]:
+        _say("지급 자료 없음: %s — 계산 잔액·최저 잔액을 계산하지 않았습니다." % ", ".join(R["s2"]["out_missing"]))
     n = len(R["s7"]["issues"])
     if n:
         _say("입력 자료 확인 필요 %d건 — 보고서 7번 '입력 자료 확인 필요' 표에 있습니다." % n)

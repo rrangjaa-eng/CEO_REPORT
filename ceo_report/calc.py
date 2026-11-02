@@ -376,6 +376,9 @@ def compute(d, kind, asof, start=None):
                 b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
                 break
     start_cash = R["s1"]["available"]
+    out_missing = list(getattr(d, "out_missing", []))
+    if out_missing:
+        start_cash = None  # 지급 자료가 빠졌으면 계산 잔액·최저 잔액을 만들지 않는다 (지급 0원으로 보지 않음)
     bal_f = bal_a = start_cash
     for b in buckets:
         if start_cash is None:
@@ -423,7 +426,7 @@ def compute(d, kind, asof, start=None):
     # 날짜는 기간 안인데 금액을 모르는 지급예정: 합계·최저 잔액에 넣지 못하므로 건수를 함께 보인다 (D-02)
     out_unk = [ev for ev in amount_unknown if ev["io"] == "out" and ev["date"] is not None and asof < ev["date"] <= horizon]
     R["s2"] = {
-        "start": start_cash, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
+        "start": R["s1"]["available"], "out_missing": out_missing, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
@@ -657,6 +660,10 @@ def risks(R):
                 "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
                 "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
                 "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+    if s2["out_missing"]:
+        add("높음", "자료", "지급 자료를 읽지 못해 지급예정이 빠졌으므로 기간별 계산 잔액과 최저 잔액을 계산하지 않음: %s."
+            % ", ".join(s2["out_missing"]),
+            "입력 폴더에 해당 CSV를 양식(입력양식 폴더)의 머리글 그대로 'CSV UTF-8' 또는 'CSV'로 저장.")
     if R["s1"]["total"] is None:
         add("중간", "자료", "현재 계좌 잔액을 확인할 수 없어 기간별 계산 잔액과 최저 잔액을 계산하지 않음.",
             "계좌잔액.csv에 보고 기준일 잔액을 입력.")

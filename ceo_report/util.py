@@ -20,12 +20,15 @@ class Issues:
         self.items.append((file, line, msg))
 
 
-def read_csv(path, required, issues):
+def read_csv(path, required, issues, info=None):
     """엑셀에서 저장한 CSV를 읽는다. UTF-8(BOM 포함)과 CP949를 모두 받는다.
 
     파일이 없으면 빈 목록을 돌려주고, 그 사실을 문제 목록에 남긴다.
+    info(dict)를 주면 info['missing']에 머리글에 없는 필수 열 목록을 넣는다.
     """
     name = os.path.basename(path)
+    if info is not None:
+        info["missing"] = list(required)
     if not os.path.exists(path):
         issues.add(name, "-", "파일 없음 (이 묶음은 '자료 없음'으로 표시)")
         return [], False
@@ -55,6 +58,8 @@ def read_csv(path, required, issues):
             records.append((start, cells))
     header = header or []
     missing = [c for c in required if c not in header]
+    if info is not None:
+        info["missing"] = missing
     if missing:
         issues.add(name, 1, "필수 열 없음: " + ", ".join(missing))
     out = []
