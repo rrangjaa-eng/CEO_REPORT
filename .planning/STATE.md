@@ -1,15 +1,15 @@
 ---
 gsd_state_version: "1.0"
 status: unknown
-stopped_at: Completed 01.1-01-PLAN.md
-last_updated: "2026-11-02T10:02:10.024Z"
+stopped_at: Completed 01.1-02-PLAN.md
+last_updated: "2026-11-02T10:17:07.223Z"
 last_activity: 2026-11-02
-state_head: ea1133cbede7074085fe35bb6938284f57ba7c9a
+state_head: 1e8cb80c26d9d359e58b7465b9d3185311c469d1
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 8
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 current_phase_name: approval-screen
 ---
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Position
 
-Phase 01.1 (approval-screen) · Plan 1 of 6 complete (01.1-01) · Phase 1 plans 01-01, 01-02 complete · Next: 01.1-02 collector (wave 1), then wave 2
+Phase 01.1 (approval-screen) · Plans 2 of 6 complete (01.1-01, 01.1-02) · Phase 1 plans 01-01, 01-02 complete · Next: wave 2 (01.1-03 first; CRAWL-01..04 stay open until it lands)
 Last activity: 2026-11-02
 
 ## Decisions
@@ -37,6 +37,8 @@ Last activity: 2026-11-02
 - [Phase 1]: 01-02: 미발행 is 판단 불가 whenever any invoice supply of the project is unknown; section 5/7 unknown amounts shown as counts next to totals
 - [Phase 01.1] 01.1-01: A['amount_unknown'] = requests with unknown amount; unknown-amount schedule events are in A['amount_unknown_events']
 - [Phase 01.1] 01.1-01: pending request with unreadable 등록일 and no 지급요청일 is 날짜 확인 불가; weeks table in won, headline/toggle in 백만원 (P-9)
+- [Phase 01.1]: 01.1-02: page link equal to the current page after canonicalisation (page=1, no page name, trailing /0) is recognised but not fetched
+- [Phase 01.1]: 01.1-02: any list row with a differing cell count, a blank 번호, or a page link that also changes a filter value stops the run (no partial rows)
 
 ## Blockers
 
@@ -49,9 +51,10 @@ Last activity: 2026-11-02
 | Phase 1 P01 | ~10m | 3 tasks | 5 files |
 | Phase 1 P02 | ~30m | 3 tasks | 12 files |
 | Phase 01.1 P01 | ~10min | 2 tasks | 8 files |
+| Phase 01.1 P02 | 6 min | 3 tasks | 3 files |
 
 ## Session
 
-**Last session:** 2026-11-02T10:02:09.988Z
-**Stopped at:** Completed 01.1-01-PLAN.md
+**Last session:** 2026-11-02T10:17:07.183Z
+**Stopped at:** Completed 01.1-02-PLAN.md
 **Resume file:** None
