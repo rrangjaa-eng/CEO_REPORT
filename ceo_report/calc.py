@@ -3,10 +3,19 @@ import calendar
 import datetime as dt
 from collections import OrderedDict, defaultdict
 
-from .data import TRANSFER
-from .util import ssum
+from .data import DEFAULT_SETTINGS, TRANSFER
+from .util import setting_num, ssum, won, d2s
 
 DAY = dt.timedelta(days=1)
+
+# 숫자로 읽는 설정 항목과 입력 확인 목록에 쓰는 이름 (이름에 해석·권고 낱말을 넣지 않는다)
+NUM_SETTINGS = ("첫화면_프로젝트_표시수", "위험_최소보유현금", "위험_미수경과일", "위험_미발행경과일", "위험_자료경과일",
+                "위험_예산초과율")
+SETTING_LABELS = {
+    "첫화면_프로젝트_표시수": "첫화면_프로젝트_표시수", "위험_최소보유현금": "최소 보유현금",
+    "위험_미수경과일": "미수 경과일 기준", "위험_미발행경과일": "미발행 경과일 기준",
+    "위험_자료경과일": "자료 경과일 기준", "위험_예산초과율": "예산 초과율 기준",
+}
 
 
 def _add_months(d, n):
@@ -26,6 +35,10 @@ def period_of(kind, asof, start=None):
     return asof.replace(day=1), asof
 
 
+def _fmt_setting(v):
+    return "{:,}".format(v) if isinstance(v, int) else "%g" % v
+
+
 def _add(a, b):
     return None if a is None or b is None else a + b
 
@@ -35,6 +48,28 @@ def compute(d, kind, asof, start=None):
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
     R["settings"] = d.settings
+    # 설정 숫자는 여기서 한 번만 읽는다. 비었거나 틀리면 기본값을 쓰고 입력 확인 목록에 남긴다.
+    R["settings_num"], R["settings_default"] = {}, {}
+    for key in NUM_SETTINGS:
+        default = setting_num(DEFAULT_SETTINGS, key, None)[0]
+        if key not in d.settings_line:
+            value, reason = default, "설정 비어 있음"
+        else:
+            value, reason = setting_num(d.settings, key, default)
+        if key == "첫화면_프로젝트_표시수" and reason is None and (not isinstance(value, int) or value < 0):
+            value, reason = default, "0 이상 정수 아님"
+        if reason is not None:
+            label, raw = SETTING_LABELS[key], d.settings.get(key)
+            tail = "→ 기본값 %s 사용" % _fmt_setting(default)
+            if reason == "설정 비어 있음":
+                msg = "%s 설정 비어 있음 %s" % (label, tail)
+            elif reason == "숫자 아님":
+                msg = "%s 값이 숫자가 아님: '%s' %s" % (label, raw, tail)
+            else:
+                msg = "%s 값은 0 이상 정수여야 함: '%s' %s" % (label, raw, tail)
+            R["settings_default"][key] = reason
+            d.issues.add("설정.csv", d.settings_line.get(key, "-"), msg)
+        R["settings_num"][key] = value
     R["present"] = d.present
     checks = []  # 대조표: (항목, 값A, 값B, 일치여부)
 
@@ -149,7 +184,7 @@ def compute(d, kind, asof, start=None):
     budgeted = [P for P in plist if P["budget"] is not None]
     tot["expected_budgeted"] = sum(P["expected"] for P in budgeted)
     tot["paid_budgeted"] = sum(P["paid_total"] for P in budgeted)
-    n_show = int(d.settings.get("첫화면_프로젝트_표시수", "10") or 10)
+    n_show = R["settings_num"]["첫화면_프로젝트_표시수"]
     ranked = sorted(plist, key=lambda P: (-(P["budget"] if P["budget"] is not None else -1), -P["expected"]))
     shown = ranked[:n_show]
     rest = ranked[n_show:]
@@ -447,18 +482,17 @@ def _pl_sum(rows):
 
 def risks(R):
     """경영관리용에만 싣는 위험 분석과 해결방안. 기준값은 설정.csv에서 바꾼다."""
-    st = R["settings"]
+    sn = R["settings_num"]
     out = []
 
     def add(level, area, fact, action):
         out.append({"level": level, "area": area, "fact": fact, "action": action})
 
-    min_cash = int(st.get("위험_최소보유현금", "0") or 0)
-    ar_days = int(st.get("위험_미수경과일", "30") or 30)
-    ui_days = int(st.get("위험_미발행경과일", "30") or 30)
-    data_days = int(st.get("위험_자료경과일", "7") or 7)
-    over_pct = float(st.get("위험_예산초과율", "100") or 100)
-    from .util import won, d2s
+    min_cash = sn["위험_최소보유현금"]
+    ar_days = sn["위험_미수경과일"]
+    ui_days = sn["위험_미발행경과일"]
+    data_days = sn["위험_자료경과일"]
+    over_pct = sn["위험_예산초과율"]
     s2 = R["s2"]
     for mode, label in (("firm", "확정 일정만"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]

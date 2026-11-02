@@ -58,15 +58,24 @@ def read_csv(path, required, issues):
 
 
 _NUM_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_BLANKS = ("", "-", "미확인", "N/A", "n/a")
+
+
+def _plain(value):
+    """쉼표·'원'·공백을 없앤 글자."""
+    return str(value).strip().replace(",", "").replace("원", "").replace(" ", "")
+
+
+def is_blank(value):
+    """값이 없음(빈칸·'-'·'미확인'·'N/A')이면 True. 숫자 해석과 설정 해석이 같은 기준을 쓴다."""
+    return value is None or _plain(value) in _BLANKS
 
 
 def num(value, issues=None, row=None, col=""):
     """'1,234,000' '-500' '(500)' → 숫자. 빈칸·'-'·'미확인' → None."""
-    if value is None:
+    if is_blank(value):
         return None
-    s = str(value).strip().replace(",", "").replace("원", "").replace(" ", "")
-    if s in ("", "-", "미확인", "N/A", "n/a"):
-        return None
+    s = _plain(value)
     neg = s.startswith("(") and s.endswith(")")
     if neg:
         s = s[1:-1]
@@ -78,6 +87,21 @@ def num(value, issues=None, row=None, col=""):
     if neg:
         v = -v
     return int(round(v))
+
+
+def setting_num(settings, key, default):
+    """설정.csv 숫자 읽기 → (값, 사유). '50,000,000' '100%' 도 받는다.
+
+    비었거나 항목이 없으면 (기본값, '설정 비어 있음'), 숫자가 아니면 (기본값, '숫자 아님'). 오류를 내지 않는다.
+    """
+    raw = settings.get(key)
+    if is_blank(raw):
+        return default, "설정 비어 있음"
+    s = _plain(raw).replace("%", "")
+    if not _NUM_RE.match(s):
+        return default, "숫자 아님"
+    v = float(s)
+    return (int(v) if v == int(v) else v), None
 
 
 def date(value, issues=None, row=None, col=""):

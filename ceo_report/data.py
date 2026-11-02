@@ -61,9 +61,11 @@ def load(folder):
 
     # 설정
     d.settings = dict(DEFAULT_SETTINGS)
+    d.settings_line = {}  # 항목 → 줄 번호. 여기 없는 항목은 설정.csv에 행이 없는 것
     for r in raw["설정.csv"]:
         if r.get("항목"):
             d.settings[r["항목"]] = r.get("값", "")
+            d.settings_line[r["항목"]] = r["_line"]
 
     # 계좌잔액
     d.balances = []

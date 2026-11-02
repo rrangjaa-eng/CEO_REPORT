@@ -24,6 +24,7 @@ h3{font-size:13.5px;margin:16px 0 6px;color:var(--accent)}
 .kpi{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 .kpi .l{color:var(--sub);font-size:12px}
 .kpi .v{font-size:22px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .v .u{font-size:12px;font-weight:400;color:var(--sub);margin-left:2px}
 .kpi .s{color:var(--sub);font-size:11.5px;margin-top:2px}
 .mid{display:grid;grid-template-columns:1.45fr 1fr;gap:14px}
 .mid>div,.low>div,.kpis>div{min-width:0}
@@ -279,6 +280,7 @@ def render(R, mode):
 
 
 def _kpi(label, value, sub):
+    value += " <span class='u'>백만원</span>"
     return "<div class='kpi'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
         esc(label), value, sub)
 
@@ -610,13 +612,24 @@ def _s7(R):
     return "".join(h)
 
 
+def _num_text(v):
+    return "%d" % v if isinstance(v, int) else "%g" % v
+
+
 def _risk_section(R):
     h = [_h2(0, "위험 분석·해결방안 (경영관리 전용)", "risk")]
-    h.append("<div class='note'>아래 숫자는 대표 보고와 같은 계산 결과에서 가져옴. 기준값은 설정.csv에서 바꿀 수 있음 "
-             "(최소 보유현금 %s원, 미수 경과 %s일, 미발행 경과 %s일, 자료 경과 %s일, 예산 초과율 %s%%).</div>" % (
-                 won(int(R["settings"].get("위험_최소보유현금", 0) or 0)), R["settings"].get("위험_미수경과일"),
-                 R["settings"].get("위험_미발행경과일"), R["settings"].get("위험_자료경과일"),
-                 R["settings"].get("위험_예산초과율")))
+    sn, sd = R["settings_num"], R["settings_default"]
+
+    def part(key, fmt):
+        mark = " · 기본값 사용(%s)" % sd[key] if key in sd else ""
+        return fmt % _num_text(sn[key]) + mark
+
+    h.append("<div class='note'>아래 숫자는 대표 보고와 같은 계산 결과에서 가져옴. 기준값은 설정.csv에서 바꿀 수 있음 (%s).</div>"
+             % esc(", ".join([
+                 "최소 보유현금 %s원" % won(sn["위험_최소보유현금"]) + (" · 기본값 사용(%s)" % sd["위험_최소보유현금"]
+                                                                if "위험_최소보유현금" in sd else ""),
+                 part("위험_미수경과일", "미수 경과 %s일"), part("위험_미발행경과일", "미발행 경과 %s일"),
+                 part("위험_자료경과일", "자료 경과 %s일"), part("위험_예산초과율", "예산 초과율 %s%%")])))
     body = "".join('<tr class="%s"><td class="lv">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
         "h" if r["level"] == "높음" else "", esc(r["level"]), esc(r["area"]), esc(r["fact"]), esc(r["action"]))
         for r in R["risks"]) or '<tr><td colspan="4" class="note">해당 없음</td></tr>'
