@@ -378,7 +378,7 @@ class TestMonthlyDetail(unittest.TestCase):
 
     def test_vendor_table(self):
         rows = dict((r["거래처"], r) for r in table_cells(self.pages["mgmt"], "xchk-vendors-m"))
-        self.assertEqual(len(rows), 7 + 2)
+        self.assertEqual(len(rows), 7)  # 02-06 fixture: 7 vendor rows (the summary compares 9)
         v = rows["㈜가상제작"]
         self.assertEqual((v["WEHAGO 미지급"], v["인트라넷 요청 건수"], v["인트라넷 요청 금액"], v["차이 (WEHAGO−요청)"]),
                          ("165,000,000", "1건", "160,500,000", "4,500,000"))

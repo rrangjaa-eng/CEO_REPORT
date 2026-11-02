@@ -1038,6 +1038,156 @@ def _xk_summary(X):
     return '<div class="tw"><table id="xchk-summary" class="xk" style="width:100%%"><tbody>%s</tbody></table></div>' % body
 
 
+# 경영관리용 상세 표 (D-44). 모든 글자 칸은 esc()를 지난다 (esc 가 주민번호 모양을 먼저 가린다, T-02-37·38).
+XCHK_LINE_CAP = 20
+
+
+def _idt(tid, markup):
+    """table() 결과의 <table class=...> 에 id 를 붙인다."""
+    return markup.replace('<table class="', '<table id="%s" class="' % tid, 1)
+
+
+def _xk_none(text="-"):
+    return esc(text)
+
+
+def _xk_count(n, unit):
+    return _xk_none() if n is None else esc("%d%s" % (n, unit))
+
+
+def _xk_diff(v):
+    return _na("판단 불가") if v is None else esc(won(v))
+
+
+def _xk_join(*notes):
+    return esc(" · ".join(n for n in notes if n))
+
+
+def _xk_absent(amount, count, note):
+    """이 사실 줄이 파일에 아예 없음 (알 수 없는 것과 구분: 없으면 '-')."""
+    return amount is None and count is None and not note
+
+
+def _xk_status_table(X):
+    rows = []
+    for name, v in X["status"].items():
+        c, ic = v["count"], v["invoice_count"]
+        absent = _xk_absent(v["invoice"], ic, v["invoice_note"])
+        rows.append([esc(name), _xk_count(c, "건"),
+                     _xk_none() if c == 0 else _xk_amount(v["amount"], v["note"]),
+                     _xk_none() if absent else _xk_count(ic, "건"),
+                     _xk_none() if absent or ic == 0 else _xk_amount(v["invoice"], v["invoice_note"]),
+                     _xk_join(v["note"], v["invoice_note"])])
+    return _idt("xchk-status", table(["요청 상태", "인트라넷 요청 건수", "인트라넷 요청 금액", "WEHAGO 계산서 건수", "WEHAGO 계산서 금액", "비고"],
+                                     rows, num_cols=(1, 2, 3, 4)))
+
+
+def _xk_projects_table(X):
+    rows = []
+    for p in X["projects"]:
+        no_budget = not p["has_budget"]
+        no_request = _xk_absent(p["requested"], p["requested_count"], p["requested_note"])
+        rows.append([esc(p["key"]), esc(p["name"]), _xk_amount(p["cost"], p["cost_note"]), _xk_count(p["cost_lines"], "줄"),
+                     _xk_none() if no_budget else _xk_amount(p["budget"], p["budget_note"]),
+                     _xk_none() if no_budget else _xk_diff(p["cost_vs_budget"]),
+                     _xk_none() if no_request else _xk_amount(p["requested"], p["requested_note"]),
+                     _xk_none() if no_request else _xk_count(p["requested_count"], "건"),
+                     _xk_none() if no_request else _xk_diff(p["request_vs_cost"]),
+                     _xk_join(p["cost_note"], p["budget_note"], p["requested_note"])])
+    return _idt("xchk-projects", table(["번호", "프로젝트", "WEHAGO 원가", "원가 줄", "실행가", "원가−실행가", "요청 누계", "요청 건수",
+                                        "요청 누계−원가", "비고"], rows, num_cols=(2, 3, 4, 5, 6, 7, 8)))
+
+
+def _xk_outside_table(X):
+    o = X["outside"]
+    if o["amount"] is None and o["count"] is None:
+        rows = [[esc("프로젝트 밖 지급요청 (인트라넷)"), _xk_none(), _na("판단 불가"), esc(o["note"])]]
+    else:
+        rows = [[esc("프로젝트 밖 지급요청 (인트라넷)"), _xk_count(o["count"], "건"), _xk_amount(o["amount"], o["note"]), esc(o["note"])]]
+    return _idt("xchk-outside", table(["구분", "건수", "금액", "비고"], rows, num_cols=(1, 2)))
+
+
+def _xk_lines_table(tid, lines, fact):
+    """줄 목록(첫 20줄만) + 합계 줄. 20줄을 넘으면 몇 줄 중 몇 줄인지 표 위에 적는다."""
+    shown = lines[:XCHK_LINE_CAP]
+    rows = [[esc(ln["key"]), esc(ln["vendor"]), esc(ln["label"]), _xk_amount(ln["amount"], ln["memo"]), esc(ln["memo"])] for ln in shown]
+    total = ["합계", "", "", _xk_amount(fact["amount"], fact["note"]), esc(fact["note"])]
+    cut = ("전체 %d줄 중 %d줄 표시" % (len(lines), len(shown)) if len(lines) > len(shown) else "전체 %d줄 모두 표시" % len(lines))
+    return "<div class='note'>%s</div>" % esc(cut) + _idt(tid, table(["전표", "거래처", "연결 결과", "금액", "적요"], rows,
+                                                                   num_cols=(3,), total=total))
+
+
+def _xk_vendors_table(X):
+    rows = []
+    for v in X["vendors"]:
+        no_request = _xk_absent(v["requested"], v["requested_count"], v["requested_note"])
+        rows.append([esc(v["vendor"]), _xk_amount(v["payable"], v["payable_note"]),
+                     _xk_none() if no_request else _xk_count(v["requested_count"], "건"),
+                     _xk_none() if no_request else _xk_amount(v["requested"], v["requested_note"]),
+                     _xk_diff(v["diff"]), _xk_join(v["payable_note"], v["requested_note"])])
+    return _idt("xchk-vendors-m", table(["거래처", "WEHAGO 미지급", "인트라넷 요청 건수", "인트라넷 요청 금액", "차이 (WEHAGO−요청)", "비고"],
+                                        rows, num_cols=(1, 2, 3, 4)))
+
+
+def _xk_revenue_table(X):
+    rows = []
+    for c in X["revenue"]:
+        if not c["has_contract"]:
+            contract = _xk_none()
+        elif c["contract"] is None:
+            contract = _na("미등록")
+        else:
+            contract = esc(won(c["contract"]))
+        rows.append([esc(c["key"]), esc(c["name"]), _xk_amount(c["wehago"], c["wehago_note"]), _xk_count(c["wehago_lines"], "줄"), contract,
+                     _xk_none() if c["quote"] is None else esc(won(c["quote"])),
+                     _xk_join(c["wehago_note"], c["contract_note"], c["quote_note"])])
+    t = X["totals"]
+    known = [c["wehago"] for c in X["revenue"] if c["wehago"] is not None]
+    unknown = len(X["revenue"]) - len(known)
+    total = ["합계", "", esc(won(sum(known))) if not unknown else _na("판단 불가") + " " + esc(won(sum(known))),
+             _xk_none(), esc(won(t["contract_sum"])) if t["contract_registered"] else _na("등록된 값 없음"), "",
+             esc("미등록 %d건" % t["contract_unregistered"])]
+    return _idt("xchk-revenue", table(["번호", "프로젝트", "WEHAGO 매출", "매출 줄", "계약금액 (수동 입력)", "견적금액", "비고"], rows,
+                                      num_cols=(2, 3, 4, 5), total=total))
+
+
+def _xk_cash_tables(X):
+    c = X["cash"]
+    rows = [[esc("기초 잔액"), _xk_amount(c["opening"], c["opening_note"]),
+             _xk_count(c["opening_lines"], "줄"), esc(c["opening_note"])],
+            [esc("WEHAGO 증감 (전체 기간)"), _xk_amount(c["change"], c["change_note"]), _xk_count(c["change_lines"], "줄"), esc(c["change_note"])],
+            [esc("WEHAGO 잔액 (장부 기준일)"), _xk_amount(c["balance"], c["balance_note"]), _xk_none(), esc(c["balance_note"])],
+            [esc("계좌잔액.csv 잔액 합계"), _xk_amount(c["bank_balance"], c["bank_note"]), _xk_count(c["bank_accounts"], "개 계좌"),
+             esc(c["bank_note"])],
+            [esc("차이 (장부 잔액 − 계좌잔액.csv)"), _xk_diff(c["balance_diff"]), _xk_none(),
+             esc("" if c["balance_diff"] is not None else "장부 잔액과 계좌잔액.csv 합계를 모두 알 때만 계산")]]
+    out = _idt("xchk-cash", table(["항목", "금액", "건수", "비고"], rows, num_cols=(1, 2)))
+    months = []
+    for m in X["cash_months"]:
+        months.append([esc(m["month"]), _xk_amount(m["wehago"], m["wehago_note"]), _xk_count(m["wehago_lines"], "줄"),
+                       _xk_amount(m["bank"], m["bank_note"]), _xk_count(m["bank_count"], "건"), _xk_diff(m["diff"]),
+                       _xk_join(m["wehago_note"], m["bank_note"])])
+    out += "<h3>월별 보통예금 증감</h3>" + _idt("xchk-cash-months", table(
+        ["월", "WEHAGO 증감", "줄", "입출금내역 증감 (입금−출금)", "건수", "차이 (WEHAGO−입출금내역)", "비고"], months, num_cols=(1, 2, 3, 4, 5)))
+    return out
+
+
+def _xk_detail(X):
+    """경영관리용에만 붙는 상세 묶음. 시험의 numbers_of 가 이 표지 사이를 뺀다 (REP-02: 요약 숫자는 두 판이 같다)."""
+    h = ["<div id='xchk-detail'>",
+         "<div class='note'>상세 (경영관리용). 값은 위하고대조.csv의 사실이며, 차이는 두 값을 모두 알 때만 계산 (모르면 ‘판단 불가’).</div>",
+         "<h3>지급요청 대조 (상태별)</h3>", _xk_status_table(X),
+         "<h3>프로젝트별 (도)원가 · 실행가 · 요청 누계</h3>", _xk_projects_table(X),
+         "<h3>프로젝트 밖 지급요청</h3>", _xk_outside_table(X),
+         "<h3>프로젝트 미연결 원가 줄</h3>", _xk_lines_table("xchk-unlinked", X["unlinked_lines"], X["unlinked"]),
+         "<h3>거래처별 미지급 대조</h3>", _xk_vendors_table(X),
+         "<h3>프로젝트별 매출 · 계약금액 (수동 입력)</h3>", _xk_revenue_table(X),
+         "<h3>프로젝트 미연결 매출 줄</h3>", _xk_lines_table("xchk-revenue-unlinked", X["revenue_unlinked_lines"], X["revenue_unlinked"]),
+         "<h3>보통예금 (WEHAGO 10300)</h3>", _xk_cash_tables(X),
+         "</div><!-- /xchk-detail -->"]
+    return "".join(h)
+
+
 def _s8(R, mode):
     """월간 8번 WEHAGO 기준 대조. 요약은 두 판 모두 (합계·건수만), 상세 표는 경영관리용에만 (D-44)."""
     X = R.get("xchk")
@@ -1049,6 +1199,8 @@ def _s8(R, mode):
     h.append(_xk_summary(X))
     h.append("<div class='note'>금액은 장부 기준일까지 분개장 전체 기간 합계 (월별 매출·손익은 4번). 알 수 없는 값은 ‘판단 불가’로 표시하고 "
              "0으로 넣지 않음. 계약금액은 사람이 입력한 값.</div>")
+    if mode == "mgmt":
+        h.append(_xk_detail(X))
     return "".join(h)
 
 
