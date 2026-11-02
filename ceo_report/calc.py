@@ -96,6 +96,11 @@ def compute(d, kind, asof, start=None):
     accounts = list(latest.values())
     total_bal, bal_unknown = ssum(a["balance"] for a in accounts)
     restricted, restr_unknown = ssum(a["restricted"] for a in accounts)
+    if not accounts or bal_unknown == len(accounts):
+        # 알려진 잔액이 하나도 없으면 현재 현금은 0이 아니라 미확인 (D-02). 시작 잔액이 없으므로 일정·최저 잔액도 계산하지 않는다.
+        total_bal = None
+    if not accounts:
+        restricted = None
     stale_accounts = [a for a in accounts if a["date"] < p1]
     in_p = [t for t in d.txns if p0 <= t["date"] <= p1]
     ext = [t for t in in_p if t["cat"] != TRANSFER]
@@ -121,18 +126,21 @@ def compute(d, kind, asof, start=None):
     for b in sorted(d.balances, key=lambda x: x["date"]):
         if b["date"] == p0 - DAY:
             start_snap[b["account"]] = b
-    start_calc = total_bal - tin + tout - tr_in + tr_out
-    for a in unknown_bal:
-        fin, fout = acct_flow.get(a["account"], [0, 0])
-        start_calc += fin - fout
+    start_calc = None
+    if total_bal is not None:
+        start_calc = total_bal - tin + tout - tr_in + tr_out
+        for a in unknown_bal:
+            fin, fout = acct_flow.get(a["account"], [0, 0])
+            start_calc += fin - fout
     start_bank = None
-    if start_snap and set(start_snap) == set(latest):
+    if total_bal is not None and start_snap and set(start_snap) == set(latest):
         start_bank, start_bank_unknown = ssum(b["balance"] for n, b in start_snap.items() if n not in unknown_names)
         if start_bank_unknown:
             start_bank = None
     R["s1"] = {
         "accounts": accounts, "total": total_bal, "bal_unknown": bal_unknown, "restricted": restricted,
-        "restr_unknown": restr_unknown, "available": total_bal - restricted, "stale": stale_accounts,
+        "restr_unknown": restr_unknown, "available": None if total_bal is None else total_bal - restricted,
+        "stale": stale_accounts,
         "bal_unknown_names": unknown_names, "bal_unknown_restricted": bal_unknown_restricted,
         "in": tin, "out": tout, "start_calc": start_calc, "start_bank": start_bank,
         "end": total_bal, "by_cat": dict(by_cat), "transfer_in": tr_in, "transfer_out": tr_out,
@@ -143,7 +151,7 @@ def compute(d, kind, asof, start=None):
                    sum(v[0] for v in by_cat.values()) == tin))
     checks.append(("분류별 출금 합 = 출금 합계", sum(v[1] for v in by_cat.values()), tout,
                    sum(v[1] for v in by_cat.values()) == tout))
-    if start_bank is not None:
+    if start_bank is not None and start_calc is not None:
         label = "기간 시작 잔액 (은행 잔액 = 거래로 계산한 값)"
         if bal_unknown:
             label += " · 잔액 미확인 %d계좌 제외" % bal_unknown
@@ -337,6 +345,9 @@ def compute(d, kind, asof, start=None):
     start_cash = R["s1"]["available"]
     bal_f = bal_a = start_cash
     for b in buckets:
+        if start_cash is None:
+            b["bal_firm"] = b["bal_all"] = None  # 시작 잔액을 모르면 0에서 시작해 계산하지 않는다
+            continue
         bal_f += b["in_firm"] - b["out_firm"]
         bal_a += b["in_firm"] + b["in_est"] - b["out_firm"] - b["out_est"]
         b["bal_firm"], b["bal_all"] = bal_f, bal_a
@@ -345,6 +356,9 @@ def compute(d, kind, asof, start=None):
                    key=lambda x: x["date"])
     mins = {}
     for mode in ("firm", "all"):
+        if start_cash is None:
+            mins[mode] = (None, None)
+            continue
         bal, low, low_d = start_cash, start_cash, asof
         daily = defaultdict(int)
         for ev in dated:
@@ -552,11 +566,16 @@ def risks(R):
     s2 = R["s2"]
     for mode, label in (("firm", "확정 일정만"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]
+        if low is None:
+            continue  # 시작 잔액을 모르면 자금 위험을 만들지 않는다 (아래 자료 항목에서 알림)
         if low < min_cash:
             add("높음" if low < 0 else "중간", "자금",
                 "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
                 "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
                 "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+    if R["s1"]["total"] is None:
+        add("중간", "자료", "현재 계좌 잔액을 확인할 수 없어 기간별 계산 잔액과 최저 잔액을 계산하지 않음.",
+            "계좌잔액.csv에 보고 기준일 잔액을 입력.")
     if s2["undated_out"]:
         add("중간", "자금", "지급일이 없는 지급예정 %s원 (%d건)이 일정 그래프에 들어가지 않음."
             % (won(s2["undated_out"]), R["s7"]["undated_out_n"]),

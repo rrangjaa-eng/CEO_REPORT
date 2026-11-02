@@ -109,9 +109,12 @@ def chart(s2):
     Wd, H, pl, pr, pt, pb = 470, 250, 54, 10, 14, 52
     n = len(bs)
     gw = (Wd - pl - pr) / n
-    vals = [0, s2["start"]]
+    has_bal = s2["start"] is not None  # 시작 잔액을 모르면 계산 잔액 선을 그리지 않는다 (0에서 시작하지 않음)
+    vals = [0] + ([s2["start"]] if has_bal else [])
     for b in bs:
-        vals += [b["in_firm"] + b["in_est"], -(b["out_firm"] + b["out_est"]), b["bal_firm"], b["bal_all"]]
+        vals += [b["in_firm"] + b["in_est"], -(b["out_firm"] + b["out_est"])]
+        if has_bal:
+            vals += [b["bal_firm"], b["bal_all"]]
     step = _nice_step((max(vals) - min(vals)) / 4 or 1)
     hi = step * math.ceil(max(vals) / step)
     lo = step * math.floor(min(vals) / step)
@@ -144,26 +147,34 @@ def chart(s2):
         y_oe = y(-(b["out_firm"] + b["out_est"]))
         out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#e2aa9b"/>' % (x1, y_of, bw, y_oe - y_of))
         cx = pl + i * gw + gw / 2
-        pts_f.append("%.1f,%.1f" % (cx, y(b["bal_firm"])))
-        pts_a.append("%.1f,%.1f" % (cx, y(b["bal_all"])))
+        if has_bal:
+            pts_f.append("%.1f,%.1f" % (cx, y(b["bal_firm"])))
+            pts_a.append("%.1f,%.1f" % (cx, y(b["bal_all"])))
         lab = b["label"].replace(" (일부)", "*")
         if b["type"] == "month":
             lab = lab.split(" ")[1]
         out.append('<text x="%.1f" y="%d" font-size="9.5" text-anchor="middle" fill="#1d2433">%s</text>'
                    % (cx, H - pb + 14, esc(lab)))
-    out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join(pts_f))
-    out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="1.5" stroke-dasharray="4 3"/>'
-               % " ".join(pts_a))
-    for p in pts_f:
-        x_, y_ = p.split(",")
-        out.append('<circle cx="%s" cy="%s" r="2.5" fill="#1f4e8c"/>' % (x_, y_))
+    if has_bal:
+        out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join(pts_f))
+        out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="1.5" stroke-dasharray="4 3"/>'
+                   % " ".join(pts_a))
+        for p in pts_f:
+            x_, y_ = p.split(",")
+            out.append('<circle cx="%s" cy="%s" r="2.5" fill="#1f4e8c"/>' % (x_, y_))
+    else:
+        out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">잔액 미확인 — 계산 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
+                   % (pl + 6, pt + 12))
     out.append('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">단위: 백만원 · 4주는 주별, 이후는 월별 (* 일부 기간)</text>'
                % (pl, H - 8))
     out.append("</svg>")
     legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정</span>'
               '<span><i style="background:#9cc9b3"></i>입금 추정</span><span><i style="background:#b5523b"></i>지급 확정</span>'
-              '<span><i style="background:#e2aa9b"></i>지급 추정</span><span><i style="background:#1f4e8c"></i>계산 잔액(확정)</span>'
-              '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>계산 잔액(확정+추정)</span></div>')
+              '<span><i style="background:#e2aa9b"></i>지급 추정</span>')
+    if has_bal:
+        legend += ('<span><i style="background:#1f4e8c"></i>계산 잔액(확정)</span>'
+                   '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>계산 잔액(확정+추정)</span>')
+    legend += "</div>"
     return "".join(out) + legend
 
 
@@ -191,8 +202,8 @@ def render(R, mode):
         restr_note += " · 제한금액 미확인 %d계좌" % s1["restr_unknown"]
     h.append("<div class='kpis'>")
     h.append(_kpi("현재 현금 (계좌 합계)", M(s1["total"]), esc("%d개 계좌 · 은행 기준일 %s" % (
-        len(s1["accounts"]), _bank_dates(s1)) + _bal_note(s1))))
-    h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note + _bal_note(s1))))
+        len(s1["accounts"]), _bank_dates(s1)) + _bal_note(s1)), unit=s1["total"] is not None))
+    h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note + _bal_note(s1)), unit=s1["available"] is not None))
     h.append(_kpi("향후 4주 입금예정", M(s2["in4_firm"] + s2["in4_est"]),
                   esc("확정 %s · 추정 %s" % (man(s2["in4_firm"]), man(s2["in4_est"])))))
     out4_sub = "확정 %s · 추정 %s" % (man(s2["out4_firm"]), man(s2["out4_est"]))
@@ -233,8 +244,8 @@ def render(R, mode):
     h.append(chart(s2))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("최저 계산 잔액 · 확정 일정만", "%s (%s)%s" % (M(lf), esc(d2s(lfd)), _vat_note(s2["vat_unknown_firm_n"]))),
-                 ("최저 계산 잔액 · 확정+추정", "%s (%s)%s" % (M(la), esc(d2s(lad)), _vat_note(s2["vat_unknown_n"]))),
+    h.append(kv([("최저 계산 잔액 · 확정 일정만", _min_cell(lf, lfd, s2["vat_unknown_firm_n"])),
+                 ("최저 계산 잔액 · 확정+추정", _min_cell(la, lad, s2["vat_unknown_n"])),
                  ("날짜 없는 입금예정 / 지급예정", "%s / %s" % (M(s2["undated_in"]), M(s2["undated_out"]))),
                  ("입금예정일 경과 미수 (일정 미포함)", M(s5["overdue_total"])),
                  ("예정일 지난 미처리 입금 / 지급 (일정 미포함)",
@@ -284,10 +295,28 @@ def render(R, mode):
     return "".join(h)
 
 
-def _kpi(label, value, sub):
-    value += " <span class='u'>백만원</span>"
+def _kpi(label, value, sub, unit=True):
+    if unit:
+        value += " <span class='u'>백만원</span>"
     return "<div class='kpi'><div class='l'>%s</div><div class='v'>%s</div><div class='s'>%s</div></div>" % (
         esc(label), value, sub)
+
+
+def _min_cell(low, day, vat_n):
+    """최저 계산 잔액 칸. 시작 잔액을 모르면 숫자를 만들지 않고 '잔액 미확인'만 보인다."""
+    if low is None:
+        return _na("잔액 미확인")
+    return "%s (%s)%s" % (M(low), esc(d2s(day)), _vat_note(vat_n))
+
+
+def _won_or_unknown(v):
+    return "잔액 미확인" if v is None else won(v) + "원"
+
+
+def _min_cell_won(low, day, vat_n):
+    if low is None:
+        return _na("잔액 미확인")
+    return esc("%s원 (%s)" % (won(low), d2s(day))) + _vat_note(vat_n)
 
 
 def _vat_note(n):
@@ -306,7 +335,11 @@ def _past_side(n, amt, unk):
 def _bal_note(s1):
     """잔액 빈칸 계좌가 합계에서 빠졌음을 알리는 보조 문구 (없으면 빈 문자열)."""
     n = s1["bal_unknown"]
-    return " · 잔액 미확인 %d계좌 (합계 제외)" % n if n else ""
+    if n:
+        return " · 잔액 미확인 %d계좌 (합계 제외)" % n
+    if s1["total"] is None:
+        return " · 잔액 미확인 (계좌 자료 없음)"
+    return ""
 
 
 def _bank_dates(s1):
@@ -384,6 +417,8 @@ def _s1(R, per):
     h.append(table(["계좌", "은행", "잔액 기준일", "잔액", "사용제한", "제한 사유", "사용 가능액", per + " 입금", per + " 출금"],
                    rows, num_cols=(3, 4, 6, 7, 8),
                    total=["합계", "", "", W(s1["total"]), W(s1["restricted"]), "", W(s1["available"]), "", ""]))
+    if not s1["accounts"]:
+        h.append("<div class='note'>%s</div>" % esc("잔액 미확인 — 계좌 잔액 자료가 없어 현재 현금·사용 가능액을 계산하지 않음."))
     if s1["bal_unknown"]:
         txt = "잔액 미확인 %d계좌 (합계 제외): %s" % (s1["bal_unknown"], ", ".join(s1["bal_unknown_names"]))
         if s1["bal_unknown_restricted"]:
@@ -411,8 +446,8 @@ def _s2(R):
     s2 = R["s2"]
     h = [_h2(2, "앞으로의 입금·지급 일정과 계산 잔액")]
     h.append("<div class='note'>%s</div>" % esc(
-        "시작값은 보고 기준일 사용 가능액 %s원%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠.%s"
-        % (won(s2["start"]), _bal_note({"bal_unknown": s2["start_unknown"]}),
+        "시작값은 보고 기준일 사용 가능액 %s%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠.%s"
+        % (_won_or_unknown(s2["start"]), _bal_note(R["s1"]),
            " 부가세 미확인 %d건은 공급가액만 반영." % s2["vat_unknown_n"] if s2["vat_unknown_n"] else "")))
     rows = []
     for b in s2["buckets"]:
@@ -421,15 +456,16 @@ def _s2(R):
     h.append(table(["구간", "기간", "입금 확정", "입금 추정", "지급 확정", "지급 추정", "계산 잔액 (확정)", "계산 잔액 (확정+추정)"],
                    rows, num_cols=(2, 3, 4, 5, 6, 7)))
     m3 = [b for b in s2["buckets"] if b["type"] == "week" or b.get("within3")]
-    h.append("<div class='note'>3개월 시점(%s) 계산 잔액: 확정 %s원 / 확정+추정 %s원 · 6개월 시점(%s): 확정 %s원 / 확정+추정 %s원</div>"
-             % (d2s(m3[-1]["to"]), won(m3[-1]["bal_firm"]), won(m3[-1]["bal_all"]), d2s(s2["buckets"][-1]["to"]),
-                won(s2["buckets"][-1]["bal_firm"]), won(s2["buckets"][-1]["bal_all"])))
+    if s2["start"] is None:
+        h.append("<div class='note'>%s</div>" % esc("시작 잔액 미확인 — 구간별 계산 잔액, 3·6개월 시점 잔액, 최저 계산 잔액은 계산하지 않음."))
+    else:
+        h.append("<div class='note'>3개월 시점(%s) 계산 잔액: 확정 %s원 / 확정+추정 %s원 · 6개월 시점(%s): 확정 %s원 / 확정+추정 %s원</div>"
+                 % (d2s(m3[-1]["to"]), won(m3[-1]["bal_firm"]), won(m3[-1]["bal_all"]), d2s(s2["buckets"][-1]["to"]),
+                    won(s2["buckets"][-1]["bal_firm"]), won(s2["buckets"][-1]["bal_all"])))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만",
-                  esc("%s원 (%s)" % (won(lf), d2s(lfd))) + _vat_note(s2["vat_unknown_firm_n"])),
-                 ("기간 중 최저 계산 잔액 · 확정+추정",
-                  esc("%s원 (%s)" % (won(la), d2s(lad))) + _vat_note(s2["vat_unknown_n"]))]))
+    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만", _min_cell_won(lf, lfd, s2["vat_unknown_firm_n"])),
+                 ("기간 중 최저 계산 잔액 · 확정+추정", _min_cell_won(la, lad, s2["vat_unknown_n"]))]))
     ev_rows = lambda evs: [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"),
                             W(e["amount"]) + (_na(" 부가세 미확인") if e.get("vat_unknown") and e["amount"] is not None else ""),
                             esc("확정" if e["firm"] else "추정"), esc(e["cat"]), esc(e["project"]), esc(e["desc"]),
