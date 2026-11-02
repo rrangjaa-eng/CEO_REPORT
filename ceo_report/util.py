@@ -5,6 +5,7 @@
 import csv
 import datetime as dt
 import html
+import io
 import os
 import re
 
@@ -40,18 +41,32 @@ def read_csv(path, required, issues):
     if text is None:
         issues.add(name, "-", "글자 인코딩을 읽지 못함 (UTF-8 또는 CP949로 저장 필요)")
         return [], False
-    rows = list(csv.DictReader(text.splitlines()))
-    header = rows[0].keys() if rows else next(csv.reader(text.splitlines()), [])
-    header = [h.strip() for h in header if h is not None]
+    # 디코딩한 글자를 줄바꿈 그대로(newline="") csv 모듈에 넘긴다. splitlines()는 \x0b \x1c \x85 \u2028 같은 문자에서도
+    # 줄을 갈라 칸 안의 글자를 망가뜨리고 줄 번호도 어긋나게 한다.
+    reader = csv.reader(io.StringIO(text, newline=""))
+    header, records, prev_end = None, [], 0
+    for cells in reader:
+        start, prev_end = prev_end + 1, reader.line_num  # 이 기록이 시작한 실제 파일 줄 (칸 안 줄바꿈·빈 줄 포함)
+        if not cells:
+            continue
+        if header is None:
+            header = [h.strip() for h in cells]
+        else:
+            records.append((start, cells))
+    header = header or []
     missing = [c for c in required if c not in header]
     if missing:
         issues.add(name, 1, "필수 열 없음: " + ", ".join(missing))
     out = []
-    for i, r in enumerate(rows, start=2):
-        clean = {(k or "").strip(): (v or "").strip() for k, v in r.items() if k is not None}
+    for line, cells in records:
+        clean = {}
+        for k, v in zip(header, cells):  # 헤더보다 많은 칸은 버린다 (DictReader와 같음)
+            clean[k] = (v or "").strip()
+        for k in header[len(cells):]:
+            clean.setdefault(k, "")
         if not any(clean.values()):
             continue
-        clean["_line"] = i
+        clean["_line"] = line
         clean["_file"] = name
         out.append(clean)
     return out, True
