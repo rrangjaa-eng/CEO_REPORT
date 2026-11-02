@@ -93,13 +93,57 @@ def _carried_project(columns, old, key, notes):
     return row
 
 
-def build_projects(projects, revenue, prev_rows):
+PERIOD_LABEL = "분개장 시작 전 이력이 있는 프로젝트 → 매출반영누계 판단 불가 (빈칸)"
+
+
+def journal_span(books):
+    """(분개장 첫 전표일, 마지막 전표일). 날짜 있는 줄이 없으면 (None, None)."""
+    dated = [ln["date"] for ln in books.journal if ln.get("date") is not None]
+    return (min(dated), max(dated)) if dated else (None, None)
+
+
+def period_text(books):
+    """'2026-09-15~2026-10-31' (누계 칸이 어느 장부 기간의 합인지, 02-REVIEW WR-05). 날짜 있는 줄이 없으면 ''."""
+    first, last = journal_span(books)
+    return "%s~%s" % (first.isoformat(), last.isoformat()) if first else ""
+
+
+def out_of_period(books, projects, requests):
+    """{프로젝트번호: 까닭}: 분개장 첫 전표일보다 이른 이력(행사일, 그 프로젝트 지급요청의 등록일)이 있는 프로젝트 (WR-05).
+
+    그런 프로젝트의 매출·원가 누계는 분개장 기간 밖의 줄을 모르므로 0 이 아니라 판단 불가다 (D-02).
+    """
+    start, _ = journal_span(books)
+    out = collections.OrderedDict()
+    if start is None:
+        return out
+    for key, p in projects.items():
+        why = []
+        if p.get("event_date") is not None and p["event_date"] < start:
+            why.append("행사일 %s" % p["event_date"].isoformat())
+        early = sorted(rq["registered"].date() for rq in requests
+                       if rq.get("code") == key and rq.get("registered") is not None and rq["registered"].date() < start)
+        if early:
+            why.append("지급요청 등록 %s" % early[0].isoformat())
+        if why:
+            out[key] = "분개장 시작 %s 전 %s" % (start.isoformat(), " · ".join(why))
+    return out
+
+
+def period_check(history, rows):
+    """대조 (WR-05): 기간 밖 이력이 있는 프로젝트 수 = 프로젝트.csv 에서 그 프로젝트의 매출반영누계가 빈칸인 줄 수."""
+    marked = sum(1 for r in rows if (r.get("프로젝트번호") or "").strip() in history and is_blank(r.get("매출반영누계")))
+    return Check(PERIOD_LABEL, len(history), marked)
+
+
+def build_projects(projects, revenue, prev_rows, history=None, period=""):
     """프로젝트.csv: 스냅숏 프로젝트 한 건당 한 줄 (스냅숏 순서), 그다음 이전 파일에만 있는 프로젝트 줄 (이전 파일 순서).
 
     projects: linking.projects_of 결과, revenue: linking.link_revenue 결과, prev_rows: convert.read_prev(..., "프로젝트.csv").
     상태·예산수정일·계약금액·완료일은 이전 파일에서 프로젝트번호의 숫자가 같은 줄이 정확히 하나일 때만 옮긴다 (D-49).
     스냅숏에 없는 이전 줄(끝난 행사·손으로 넣은 프로젝트)은 수동 칸과 함께 그대로 옮긴다 (02-REVIEW WR-03: 버리면 계약금액이
     합계에서 빠지고 그 번호를 가리키는 집행·계산서 줄이 갈 곳을 잃는다).
+    history: out_of_period 결과. 그 프로젝트의 매출반영누계는 0 이 아니라 빈칸 (판단 불가, WR-05). period: 분개장 기간 글.
     """
     notes = []
     by_digits = {}
@@ -116,7 +160,7 @@ def build_projects(projects, revenue, prev_rows):
             amounts.setdefault(ln["project"], []).append(ln["amount"])
         else:
             linked_elsewhere.append(ln["amount"])
-    rows = []
+    rows, period_total = [], {}
     for key in keys:
         p = projects[key]
         if p.get("dup"):
@@ -128,7 +172,8 @@ def build_projects(projects, revenue, prev_rows):
                 notes.append("%s %s 숫자 아님 → 빈칸" % (key, "사전견적" if field == "estimate" else "실행가"))
         row["행사일"] = p.get("event_text") if p.get("event_text") is not None else cell_date(p["event_date"])
         total = _sum_or_none(amounts.get(key, []))
-        row["매출반영누계"] = cell_amount(total)
+        period_total[key] = total
+        row["매출반영누계"] = "" if history and key in history else cell_amount(total)
         same = by_digits.get(_digits(key), []) if _digits(key) else []
         old = same[0] if len(same) == 1 else {}
         if len(same) > 1:
@@ -158,10 +203,19 @@ def build_projects(projects, revenue, prev_rows):
                             sum(v for v in cells if v is not None)))
         checks.append(Check("%s 빈칸" % label, sum(1 for v in source if v is None),
                             sum(1 for c in snap_rows if c[column] == "")))
-    csv_total = _sum_or_none([num(r["매출반영누계"]) for r in snap_rows] + linked_elsewhere + unlinked)
+    # 매출반영누계를 비운 기간 밖 프로젝트도 이 대조에서는 분개장 기간의 합으로 센다 (대조는 같은 기간끼리)
+    csv_total = _sum_or_none([num(r["매출반영누계"]) if not (history and r["프로젝트번호"] in history)
+                              else period_total[r["프로젝트번호"]] for r in snap_rows] + linked_elsewhere + unlinked)
     source_total = _sum_or_none([ln["amount"] for ln in revenue["lines"]])
     checks.append(Check("매출 줄 합계 = 매출반영누계 합계 + 미연결 매출", source_total, csv_total))
     checks.append(carry_check(prev_rows, keys, rows))
+    if history is not None:
+        checks.append(period_check(history, rows))
+    if period:
+        notes.append("매출반영누계는 분개장 기간 %s 합계 (그 앞의 매출은 모름)" % period)
+    if history:
+        notes.append("매출반영누계 판단 불가 (기간 밖) %d건 — 0이 아니라 빈칸으로 둠: %s"
+                     % (len(history), "; ".join("%s (%s)" % (k, v) for k, v in history.items())))
     return Table("프로젝트.csv", columns, rows, checks, notes)
 
 

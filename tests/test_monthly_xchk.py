@@ -94,11 +94,29 @@ def run_cli(test, folder, kind, asof, extra=()):
     return rc, buf.getvalue(), pages, out_dir
 
 
-def summary_rows(page):
-    """8번 요약 표 -> {이름: 보통 글자 값}."""
+PERIOD_LABEL = re.compile(r" \(\d{4}-\d{2}~\d{4}-\d{2} 장부 기준\)|, \d{4}-\d{2}~\d{4}-\d{2} 장부 기준(?=\))")
+
+
+def base_label(text):
+    """머리글·요약 이름에서 분개장 기간 표시('(2026-09~2026-10 장부 기준)', 02-REVIEW WR-05)를 뺀 이름.
+
+    '프로젝트 (도)원가 (2026-09~2026-10 장부 기준)' -> '프로젝트 (도)원가', '매출 (분개장, 2026-09~2026-10 장부 기준)' -> '매출 (분개장)'.
+    기간이 이름에 있는지는 raw_summary_labels 로 따로 본다.
+    """
+    return PERIOD_LABEL.sub("", text)
+
+
+def raw_summary_labels(page):
     start = page.index("<table id=\"xchk-summary\"")
     body = page[start:page.index("</table>", start)]
-    return dict((plain(k), plain(v)) for k, v in re.findall(r"<tr><th>(.*?)</th><td[^>]*>(.*?)</td></tr>", body, re.S))
+    return [plain(k) for k in re.findall(r"<tr><th>(.*?)</th>", body, re.S)]
+
+
+def summary_rows(page):
+    """8번 요약 표 -> {이름(기간 표시 뺌): 보통 글자 값}."""
+    start = page.index("<table id=\"xchk-summary\"")
+    body = page[start:page.index("</table>", start)]
+    return dict((base_label(plain(k)), plain(v)) for k, v in re.findall(r"<tr><th>(.*?)</th><td[^>]*>(.*?)</td></tr>", body, re.S))
 
 
 def section8(page):
@@ -128,7 +146,7 @@ def table_cells(page, tid):
     """id 가 tid 인 표 -> [{머리글: 보통 글자}, ...] (본문 줄만, 합계 줄 포함)."""
     start = page.index('<table id="%s"' % tid)
     body = page[start:page.index("</table>", start)]
-    head = [plain(c) for c in re.findall(r"<th[^>]*>(.*?)</th>", body.split("</thead>")[0], re.S)]
+    head = [base_label(plain(c)) for c in re.findall(r"<th[^>]*>(.*?)</th>", body.split("</thead>")[0], re.S)]
     rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body.split("</thead>")[1], re.S)
     return [dict(zip(head, [plain(c) for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S)])) for r in rows]
 
@@ -195,14 +213,18 @@ class TestMonthlySection(unittest.TestCase):
     def test_meta_line_has_book_date_snapshot_and_conversion_time(self):
         for mode, page in self.pages.items():
             with self.subTest(mode):
-                self.assertEqual(meta_line(page), "장부 기준일 2026-10-31 · 인트라넷 스냅숏 20261102_000000 (수집 2026-11-02 00:00:00)"
-                                 " · 변환 시각 2026-11-02 00:00:00")
+                # 02-REVIEW WR-05: 분개장 기간이 메타 줄에 들어간다
+                self.assertEqual(meta_line(page), "장부 기준일 2026-10-31 · 분개장 기간 2026-09-15~2026-10-31"
+                                 " · 인트라넷 스냅숏 20261102_000000 (수집 2026-11-02 00:00:00) · 변환 시각 2026-11-02 00:00:00")
 
     def test_summary_rows_have_the_known_labels_in_order(self):
         for mode, page in self.pages.items():
             with self.subTest(mode):
                 self.assertEqual(list(summary_rows(page)), ["지급요청 대조", "프로젝트 (도)원가", "프로젝트 미연결 원가", "거래처 미지급",
                                                             "매출 (분개장)", "보통예금 (WEHAGO 10300)"])
+                # 02-REVIEW WR-05: 누계 줄 이름에 분개장 기간을 붙인다
+                self.assertEqual(raw_summary_labels(page)[1], "프로젝트 (도)원가 (2026-09~2026-10 장부 기준)")
+                self.assertEqual(raw_summary_labels(page)[4], "매출 (분개장, 2026-09~2026-10 장부 기준)")
 
     def test_payment_request_row_counts_by_status(self):
         for mode, page in self.pages.items():
@@ -698,7 +720,7 @@ class TestMonthlyMissing(unittest.TestCase):
                 for label, value in rows.items():
                     self.assertIn("판단 불가", value, label)
                 self.assertNotIn("0건", value)
-                self.assertEqual(meta_line(page), "장부 기준일 기록 없음 · 인트라넷 스냅숏 기록 없음 · 변환 시각 기록 없음")
+                self.assertEqual(meta_line(page), "장부 기준일 기록 없음 · 분개장 기간 기록 없음 · 인트라넷 스냅숏 기록 없음 · 변환 시각 기록 없음")
         editions_ok(self, pages["ceo"], pages["mgmt"])
         self.assertNotIn("위하고 대조", out)
 
@@ -713,7 +735,7 @@ class TestMonthlyMissing(unittest.TestCase):
         self.assertEqual(rc, 0)
         for mode, page in pages.items():
             with self.subTest(mode):
-                self.assertTrue(meta_line(page).startswith("장부 기준일 2026-10-31 (보고 기준일보다 30일 이전) · 인트라넷 스냅숏"),
+                self.assertTrue(meta_line(page).startswith("장부 기준일 2026-10-31 (보고 기준일보다 30일 이전) · 분개장 기간 "),
                                 meta_line(page))
         editions_ok(self, pages["ceo"], pages["mgmt"])
 

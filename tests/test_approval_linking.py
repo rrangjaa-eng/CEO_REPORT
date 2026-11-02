@@ -440,6 +440,12 @@ class TestApprovalMonthlyEqual(unittest.TestCase):
     CASES = (("default", {}), ("link-days 200", {"link_days": 200}), ("manual 22 -> 26221", {"links": MANUAL_22}),
              ("manual 22 -> 26888 (not in list)", {"links": [["2026-10-29", "22", "1", "26888"]]}))
 
+    @staticmethod
+    def monthly_cost(p):
+        """월간 쪽 프로젝트 원가. 02-REVIEW WR-05: 분개장 시작 전 이력(가상 스냅숏의 26201 지급요청 2026-06-01 등록)이 있으면
+        누계 칸은 판단 불가 (기간 밖)이고, 승인 화면과 같은 기간의 값은 '분개장 기간' 합계 줄에 있다."""
+        return p["cost_period"] if p["out_of_period"] else p["cost"]
+
     def assert_equal_per_project(self, page, A, monthly, label):
         self.assertEqual(monthly["state"], "ok", label)
         by_code = dict((r["code"], r) for r in A["xchk"]["projects"])
@@ -451,9 +457,9 @@ class TestApprovalMonthlyEqual(unittest.TestCase):
                 self.assertEqual((p["cost_lines"], p["cost"]), (0, 0), "%s %s: 승인 화면에 행이 없는데 월간 원가 줄이 있음" % (label, p["key"]))
                 continue
             seen += 1
-            self.assertEqual(row["cost"], p["cost"], "%s %s WEHAGO 원가" % (label, p["key"]))
+            self.assertEqual(row["cost"], self.monthly_cost(p), "%s %s WEHAGO 원가" % (label, p["key"]))
             self.assertEqual(with_status_check(A, p["key"], row["requested"]), p["requested"], "%s %s 요청 누계" % (label, p["key"]))
-            self.assertEqual(table_costs(page)[p["key"]], "미확인" if p["cost"] is None else "{:,}".format(p["cost"]),
+            self.assertEqual(table_costs(page)[p["key"]], "미확인" if self.monthly_cost(p) is None else "{:,}".format(self.monthly_cost(p)),
                              "%s %s 화면 글자" % (label, p["key"]))
         self.assertEqual(seen, len(by_code), label)   # 승인 화면의 모든 행이 월간에도 있다
 
@@ -478,7 +484,8 @@ class TestApprovalMonthlyEqual(unittest.TestCase):
             page, A, monthly, _ = both(self, input_dir=work_input(self, **kw))
             key, cost, count, total = expect[label]
             mp = dict((p["key"], p) for p in monthly["projects"])
-            self.assertEqual(mp[str(key)]["cost"], cost, label)
+            self.assertEqual(self.monthly_cost(mp[str(key)]), cost, label)
+            self.assertEqual(mp["26201"]["out_of_period"], True, label)   # WR-05: 2026-06-01 등록 요청 (분개장 2026-10-15 시작)
             self.assertEqual((monthly["unlinked"]["count"], monthly["unlinked"]["amount"]), (count, total), label)
         # 26220 은 전표 40 이 지급요청 6001 로 자동 연결되어 월간도 158,200,000
         page, A, monthly, _ = both(self)

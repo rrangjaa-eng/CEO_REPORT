@@ -727,7 +727,9 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         tables.extend(_unwritten("인트라넷 스냅숏 없음 (기존 파일 그대로)")[2:])
     else:
         match = wehago.match_requests(books, links["requests"])
-        project_table = convert_projects.build_projects(links["projects"], links["revenue"], prev["프로젝트.csv"])
+        history = convert_projects.out_of_period(books, links["projects"], links["requests"])   # WR-05
+        project_table = convert_projects.build_projects(links["projects"], links["revenue"], prev["프로젝트.csv"], history,
+                                                        convert_projects.period_text(books))
         execs = convert_projects.build_execs(books, links["costs"], links["requests"], match, prev["프로젝트집행.csv"], cfg,
                                              links["projects"])
         xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,

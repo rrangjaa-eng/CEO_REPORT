@@ -922,9 +922,27 @@ def _xk_meta(R, X):
                 out += esc(" (보고 기준일보다 %d일 이전)" % days)
             elif days < 0:
                 out += esc(" (보고 기준일보다 %d일 이후)" % -days)
-    for key in ("인트라넷 스냅숏", "변환 시각"):
+    for key in ("분개장 기간", "인트라넷 스냅숏", "변환 시각"):
         out += " · " + esc(key) + " " + (esc(meta[key]) if meta.get(key) else _na("기록 없음"))
     return out
+
+
+def _xk_period(X):
+    """'2026-09~2026-10 장부 기준': 누계 칸이 어느 분개장 기간의 합인지 (02-REVIEW WR-05). 기록이 없으면 ''."""
+    m = re.match(r"^(\d{4}-\d{2})-\d{2}~(\d{4}-\d{2})-\d{2}$", X["meta"].get("분개장 기간", ""))
+    return "%s~%s 장부 기준" % m.groups() if m else ""
+
+
+def _xk_label(text, X):
+    per = _xk_period(X)
+    return text + (" (" + per + ")" if per else "")
+
+
+def _xk_period_cell(amount, note, out, period):
+    """누계 칸. 기간 밖 이력이 있는 프로젝트는 '판단 불가 (기간 밖)' 과 분개장 기간 합계를 같이 보인다 (0 으로 보이지 않음)."""
+    if not out:
+        return _xk_amount(amount, note)
+    return _na("판단 불가 (기간 밖)") + ("" if period is None else " " + esc("기간 합계 " + won(period)))
 
 
 def _xk_status(X):
@@ -959,9 +977,12 @@ def _xk_projects(X):
     if not projects:
         return _na("판단 불가 (프로젝트원가 줄 없음)")
     known = [p["cost"] for p in projects if p["cost"] is not None]
-    missing = len(projects) - len(known)
-    if missing:
-        head = _na("판단 불가 (금액 미확인 %d개 프로젝트)" % missing) + " 확인된 합계 " + esc(won(sum(known)))
+    outside = sum(1 for p in projects if p.get("out_of_period"))
+    missing = len(projects) - len(known) - outside
+    if missing or outside:
+        why = " · ".join(x for x in ("금액 미확인 %d개 프로젝트" % missing if missing else "",
+                                     "기간 밖 %d개 프로젝트" % outside if outside else "") if x)
+        head = _na("판단 불가 (%s)" % why) + " 확인된 합계 " + esc(won(sum(known)))
     else:
         head = esc(won(sum(known)))
     parts = ["%d개 프로젝트" % len(projects)]
@@ -1042,9 +1063,10 @@ def _xk_cash(X):
 
 
 def _xk_summary(X):
-    rows = [("지급요청 대조", _xk_status(X)), ("프로젝트 (도)원가", _xk_projects(X)),
+    rows = [("지급요청 대조", _xk_status(X)), (_xk_label("프로젝트 (도)원가", X), _xk_projects(X)),
             ("프로젝트 미연결 원가", _xk_fact(X["unlinked"], "줄")), ("거래처 미지급", _xk_vendors(X)),
-            ("매출 (분개장)", _xk_revenue(X)), ("보통예금 (WEHAGO 10300)", _xk_cash(X))]
+            ("매출 (분개장, %s)" % _xk_period(X) if _xk_period(X) else "매출 (분개장)", _xk_revenue(X)),
+            ("보통예금 (WEHAGO 10300)", _xk_cash(X))]
     body = "".join('<tr><th>%s</th><td style="white-space:normal">%s</td></tr>' % (esc(k), v) for k, v in rows)
     return '<div class="tw"><table id="xchk-summary" class="xk" style="width:100%%"><tbody>%s</tbody></table></div>' % body
 
@@ -1109,14 +1131,16 @@ def _xk_projects_table(X):
     for p in X["projects"]:
         no_budget = not p["has_budget"]
         no_request = _xk_absent(p["requested"], p["requested_count"], p["requested_note"])
-        rows.append([esc(p["key"]), esc(p["name"]), _xk_amount(p["cost"], p["cost_note"]), _xk_count(p["cost_lines"], "줄"),
+        rows.append([esc(p["key"]), esc(p["name"]),
+                     _xk_period_cell(p["cost"], p["cost_note"], p.get("out_of_period"), p.get("cost_period")),
+                     _xk_count(p["cost_lines"], "줄"),
                      _xk_none() if no_budget else _xk_amount(p["budget"], p["budget_note"]),
                      _xk_none() if no_budget else _xk_diff(p["cost_vs_budget"]),
                      _xk_none() if no_request else _xk_amount(p["requested"], p["requested_note"]),
                      _xk_none() if no_request else _xk_count(p["requested_count"], "건"),
                      _xk_none() if no_request else _xk_diff(p["request_vs_cost"]),
                      _xk_join(p["cost_note"], p["budget_note"], p["requested_note"])])
-    return _idt("xchk-projects", table(["번호", "프로젝트", "WEHAGO 원가", "원가 줄", "실행가", "원가−실행가", "요청 누계", "요청 건수",
+    return _idt("xchk-projects", table(["번호", "프로젝트", _xk_label("WEHAGO 원가", X), "원가 줄", "실행가", "원가−실행가", "요청 누계", "요청 건수",
                                         "요청 누계−원가", "비고"], rows, num_cols=(2, 3, 4, 5, 6, 7, 8)))
 
 
@@ -1160,7 +1184,9 @@ def _xk_revenue_table(X):
             contract = _na("미등록")
         else:
             contract = esc(won(c["contract"]))
-        rows.append([esc(c["key"]), esc(c["name"]), _xk_amount(c["wehago"], c["wehago_note"]), _xk_count(c["wehago_lines"], "줄"), contract,
+        rows.append([esc(c["key"]), esc(c["name"]),
+                     _xk_period_cell(c["wehago"], c["wehago_note"], c.get("out_of_period"), c.get("wehago_period")),
+                     _xk_count(c["wehago_lines"], "줄"), contract,
                      _xk_none() if c["quote"] is None else esc(won(c["quote"])),
                      _xk_join(c["wehago_note"], c["contract_note"], c["quote_note"])])
     t = X["totals"]
@@ -1169,7 +1195,7 @@ def _xk_revenue_table(X):
     total = ["합계", "", esc(won(sum(known))) if not unknown else _na("판단 불가") + " " + esc(won(sum(known))),
              _xk_none(), esc(won(t["contract_sum"])) if t["contract_registered"] else _na("등록된 값 없음"), "",
              esc("미등록 %d건" % t["contract_unregistered"])]
-    return _idt("xchk-revenue", table(["번호", "프로젝트", "WEHAGO 매출", "매출 줄", "계약금액 (수동 입력)", "견적금액", "비고"], rows,
+    return _idt("xchk-revenue", table(["번호", "프로젝트", _xk_label("WEHAGO 매출", X), "매출 줄", "계약금액 (수동 입력)", "견적금액", "비고"], rows,
                                       num_cols=(2, 3, 4, 5), total=total))
 
 
@@ -1223,8 +1249,11 @@ def _s8(R, mode):
         return "".join(h)
     h.append('<div class="meta xchk-meta">%s</div>' % _xk_meta(R, X))
     h.append(_xk_summary(X))
-    h.append("<div class='note'>금액은 장부 기준일까지 분개장 전체 기간 합계 (월별 매출·손익은 4번). 알 수 없는 값은 ‘판단 불가’로 표시하고 "
-             "0으로 넣지 않음. 계약금액은 사람이 입력한 값.</div>")
+    span = X["meta"].get("분개장 기간", "")
+    h.append("<div class='note'>%s (월별 매출·손익은 4번). 알 수 없는 값은 ‘판단 불가’로 표시하고 "
+             "0으로 넣지 않음. 분개장 시작 전 이력(행사일·지급요청 등록)이 있는 프로젝트의 누계는 ‘판단 불가 (기간 밖)’. "
+             "계약금액은 사람이 입력한 값.</div>"
+             % esc("WEHAGO 원가·매출은 분개장 기간 %s 합계" % span if span else "WEHAGO 원가·매출은 분개장 전체 기간 합계 (분개장 기간 기록 없음)"))
     if mode == "mgmt":
         h.append(_xk_detail(X))
     return "".join(h)

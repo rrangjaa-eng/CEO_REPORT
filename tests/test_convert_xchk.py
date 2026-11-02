@@ -206,7 +206,8 @@ class TestXchkTracer(unittest.TestCase):
         write_xchk(os.path.join(tmp, "입력"), self.table)
         got = mod("convert_xchk").load_xchk(os.path.join(tmp, "입력"))
         self.assertEqual(got["state"], "ok", got["reason"])
-        self.assertEqual(got["meta"], dict(META))
+        # 02-REVIEW WR-05: build_xchk 가 분개장 기간 기준 줄을 더한다
+        self.assertEqual(got["meta"], dict(META, **{"분개장 기간": "2026-09-15~2026-10-31"}))
         by = dict((p["key"], p) for p in got["projects"])
         self.assertEqual([p["key"] for p in got["projects"]], ["26201", "26220", "26221", "26203"])
         self.assertEqual((by["26201"]["cost"], by["26201"]["cost_lines"]), (50000000, 2))

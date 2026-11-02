@@ -869,5 +869,86 @@ class TestWR04HandEnteredRows(unittest.TestCase):
         self.assertEqual((c.source, c.csv, convert.check_result(c)), (3, 0, "불일치"))
 
 
+
+# ───────────── WR-05: 누계는 분개장 기간 기준, 기간 앞 이력이 있으면 판단 불가 (기간 밖) ─────────────
+D_EARLY = dt.date(2026, 10, 1)
+PERIOD_JOURNAL = AUTO_JOURNAL + [
+    jl(D_EARLY, 39, "10800", "수입수수료미수금", 33000000, None, "가상고객", "[26220] 선금"),
+    jl(D_EARLY, 39, "41200", "수입수수료", None, 30000000, "가상고객", "[26220] 선금"),
+    jl(D_EARLY, 39, "25500", "부가세예수금", None, 3000000, "가상고객")]
+# 26220 의 지급요청 6001 은 2026-10-20 에 등록 (분개장 시작 2026-10-01 뒤), 26221 은 행사일이 분개장 시작 전 (2026-09-10)
+PERIOD_PROJECTS = [proj(1, "[26220] 가상 전시"), proj(2, "[26221] 가상 지난 워크숍", event="2026-09-10")]
+EARLY_PAYMENTS = AUTO_PAYMENTS + [pay(6009, "[26220] 가상 전시", "가상무대", "2026-09-01 09:00:00", 5000000)]
+
+
+def xrow(table, key, item):
+    got = [r for r in table.rows if r["대상"] == key and r["항목"] == item]
+    return got[0] if got else None
+
+
+class TestWR05JournalPeriod(unittest.TestCase):
+    def test_the_period_is_recorded_and_in_period_projects_keep_their_numbers(self):
+        r = Run(PERIOD_JOURNAL, AUTO_PAYMENTS, PERIOD_PROJECTS, AUTO_LEDGER)
+        t = r.xchk()
+        self.assertEqual(xrow(t, "", "분개장 기간")["비고"], "2026-10-01~2026-10-30")
+        self.assertEqual(xrow(t, "26220", "WEHAGO 원가")["금액"], "200000")
+        self.assertEqual(xrow(t, "26220", "WEHAGO 매출")["금액"], "30000000")
+        # 26221: 행사일 2026-09-10 이 분개장 시작(2026-10-01) 전 → 0 이 아니라 판단 불가 (기간 밖)
+        cell = xrow(t, "26221", "WEHAGO 원가")
+        self.assertEqual(cell["금액"], "")
+        self.assertIn("판단 불가 (기간 밖: 분개장 시작 2026-10-01 전 행사일 2026-09-10)", cell["비고"])
+        self.assertEqual(xrow(t, "26221", "WEHAGO 원가 (분개장 기간)")["금액"], "0")
+        self.assertEqual(xrow(t, "26221", "WEHAGO 매출")["금액"], "")
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_a_request_registered_before_the_journal_start_marks_the_project(self):
+        r = Run(PERIOD_JOURNAL, EARLY_PAYMENTS, PERIOD_PROJECTS, AUTO_LEDGER)
+        t = r.xchk()
+        cell = xrow(t, "26220", "WEHAGO 원가")
+        self.assertEqual(cell["금액"], "")
+        self.assertIn("판단 불가 (기간 밖: 분개장 시작 2026-10-01 전 지급요청 등록 2026-09-01)", cell["비고"])
+        self.assertEqual(xrow(t, "26220", "WEHAGO 원가 (분개장 기간)")["금액"], "200000")
+        for label, res in results(t).items():   # 대조는 기간 합계로 한다
+            self.assertEqual(res, "일치", label)
+
+    def test_project_csv_revenue_total_is_unknown_for_out_of_period_projects(self):
+        r = Run(PERIOD_JOURNAL, EARLY_PAYMENTS, PERIOD_PROJECTS, AUTO_LEDGER)
+        history = convert_projects.out_of_period(r.books, r.projects, r.requests)
+        self.assertEqual(sorted(history), ["26220", "26221"])
+        t = convert_projects.build_projects(r.projects, r.revenue, [], history, convert_projects.period_text(r.books))
+        rows = dict((x["프로젝트번호"], x) for x in t.rows)
+        self.assertEqual((rows["26220"]["매출반영누계"], rows["26221"]["매출반영누계"]), ("", ""))
+        self.assertTrue([n for n in t.notes if n.startswith("매출반영누계 판단 불가 (기간 밖) 2건")], t.notes)
+        self.assertTrue([n for n in t.notes if n.startswith("매출반영누계는 분개장 기간 2026-10-01~2026-10-30 합계")], t.notes)
+        for label, res in results(t).items():
+            self.assertEqual(res, "일치", label)
+
+    def test_the_period_checks_catch_a_known_zero(self):
+        r = Run(PERIOD_JOURNAL, AUTO_PAYMENTS, PERIOD_PROJECTS, AUTO_LEDGER)
+        t = r.xchk()
+        before = [dict(x) for x in t.rows]
+        for x in before:   # 고치기 전 모양: 기간 밖 프로젝트의 누계가 0 (아는 값)
+            if x["대상"] == "26221" and x["항목"] in ("WEHAGO 원가", "WEHAGO 매출"):
+                x["금액"] = "0"
+        history = convert_projects.out_of_period(r.books, r.projects, r.requests)
+        for c in convert_xchk.period_checks(history, before):
+            self.assertEqual(convert.check_result(c), "불일치", c.label)
+        h = convert_projects.out_of_period(r.books, r.projects, r.requests)
+        rows = [{"프로젝트번호": "26221", "매출반영누계": "0"}, {"프로젝트번호": "26220", "매출반영누계": "30000000"}]
+        self.assertEqual(convert.check_result(convert_projects.period_check(h, rows)), "불일치")
+
+    def test_section_8_labels_the_period_and_shows_out_of_period_cells(self):
+        r = Run(PERIOD_JOURNAL, AUTO_PAYMENTS, PERIOD_PROJECTS, AUTO_LEDGER)
+        X, html = render_s8(self, r.xchk())
+        self.assertIn("WEHAGO 원가 (2026-10~2026-10 장부 기준)", html)
+        self.assertIn("WEHAGO 매출 (2026-10~2026-10 장부 기준)", html)
+        self.assertIn("분개장 기간 2026-10-01~2026-10-30", html)
+        p = [x for x in X["projects"] if x["key"] == "26221"][0]
+        self.assertTrue(p["out_of_period"])
+        self.assertIsNone(p["cost_vs_budget"])
+        self.assertIn("판단 불가 (기간 밖)", html)
+
+
 if __name__ == "__main__":
     unittest.main()

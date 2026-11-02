@@ -14,6 +14,7 @@ import re
 from . import util
 from .convert import Check, Table, cell_amount
 from .convert_pl import _classify, _net
+from .convert_projects import out_of_period, period_text
 from .util import is_blank, mask_rrn, num, won
 from .wehago import STATUSES, norm_vendor, vendor_payables
 
@@ -129,16 +130,46 @@ def request_total_check(requests, rows):
     return Check(REQUEST_TOTAL_LABEL, len(requests), sum(counts))
 
 
-def _cost_rows(projects, costs, requests):
+OUT_OF_PERIOD = "판단 불가 (기간 밖"
+PERIOD_SUFFIX = " (분개장 기간)"
+
+
+def _total_rows(kind, key, name, item, total, count, note, history):
+    """누계 줄. 기간 밖 이력이 있는 프로젝트(WR-05)는 누계 칸을 비우고 까닭을 적은 뒤, 분개장 기간 합계를 따로 한 줄 더 쓴다."""
+    if key not in history:
+        return [_row(kind, key, name, item, total, count, note)]
+    why = "%s: %s)" % (OUT_OF_PERIOD, history[key])
+    return [_row(kind, key, name, item, None, count, " · ".join(x for x in (why, note) if x)),
+            _row(kind, key, name, item + PERIOD_SUFFIX, total, count, note)]
+
+
+def _period_cells(rows, item):
+    """대조용: item 줄들, 단 기간 밖 프로젝트는 비운 누계 대신 분개장 기간 합계 줄 (대조는 같은 기간끼리)."""
+    period = dict((r["대상"], r) for r in rows if r["항목"] == item + PERIOD_SUFFIX)
+    return [period.get(r["대상"], r) if r["대상"] in period else r for r in rows if r["항목"] == item]
+
+
+def period_checks(history, rows):
+    """대조 (WR-05): 기간 밖 이력이 있는 프로젝트 수 = 그 프로젝트의 WEHAGO 원가·매출 누계 칸이 빈칸인 줄 수 (0 이면 '불일치')."""
+    out = []
+    for kind, item in (("프로젝트원가", "WEHAGO 원가"), ("매출계약", "WEHAGO 매출")):
+        cells = [r for r in rows if r["구분"] == kind and r["항목"] == item and r["대상"] in history]
+        out.append(Check("분개장 시작 전 이력이 있는 프로젝트 → %s 판단 불가 (빈칸)" % item, len(history),
+                         sum(1 for r in cells if is_blank(r["금액"]))))
+    return out
+
+
+def _cost_rows(projects, costs, requests, history=None):
     """프로젝트원가: 프로젝트마다 WEHAGO 원가 (모든 날짜의 줄), 실행가, 요청 누계 (코드가 프로젝트 키이고 상태를 읽은 요청)."""
     rows = []
+    history = history or {}
     known = list(requests)   # 상태를 읽지 못한 요청도 든다 (D-52: 버리지 않음, 비고에 건수)
     for key in _project_keys(projects, costs["lines"]):
         p = projects.get(key)
         mine = [ln for ln in costs["lines"] if ln["project"] == key]
         total, unknown = _known_sum([ln["amount"] for ln in mine])
         name = p["name"] if p is not None else NOT_LISTED
-        rows.append(_row("프로젝트원가", key, name, "WEHAGO 원가", total, len(mine), _unknown_note(unknown, "줄")))
+        rows.extend(_total_rows("프로젝트원가", key, name, "WEHAGO 원가", total, len(mine), _unknown_note(unknown, "줄"), history))
         if p is not None:
             notes = (["프로젝트번호 겹침 (첫 줄의 실행가)"] if p.get("dup") else []) + (
                 ["실행가 빈칸"] if p["budget"] is None else [])
@@ -177,16 +208,17 @@ def _vendor_rows(books, requests, match):
     return rows
 
 
-def _revenue_rows(projects, revenue, project_rows):
+def _revenue_rows(projects, revenue, project_rows, history=None):
     """매출계약: 프로젝트마다 WEHAGO 매출, 계약금액 (수동 입력, 빈칸·숫자 아님은 미등록), 견적금액. 계약금액은 매출로 채우지 않는다 (D-49)."""
     typed = dict(((r.get("프로젝트번호") or "").strip(), r.get("계약금액", "")) for r in project_rows)
+    history = history or {}
     rows = []
     for key in _project_keys(projects, revenue["lines"]):
         p = projects.get(key)
         mine = [ln for ln in revenue["lines"] if ln["project"] == key]
         total, unknown = _known_sum([ln["amount"] for ln in mine])
         name = p["name"] if p is not None else NOT_LISTED
-        rows.append(_row("매출계약", key, name, "WEHAGO 매출", total, len(mine), _unknown_note(unknown, "줄")))
+        rows.extend(_total_rows("매출계약", key, name, "WEHAGO 매출", total, len(mine), _unknown_note(unknown, "줄"), history))
         if p is not None:
             contract = num(typed.get(key, ""))
             rows.append(_row("매출계약", key, name, "계약금액 (수동 입력)", contract, None, "" if contract is not None else "미등록"))
@@ -355,11 +387,14 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     bank = bank or {}
     if books.state != "ok":
         return Table(XCHK_FILE, XCHK_COLUMNS, [], written=False, reason="WEHAGO 장부를 쓸 수 없음")
+    meta = collections.OrderedDict(meta)
+    meta["분개장 기간"] = period_text(books) or "날짜 있는 전표 없음"   # 누계 칸이 어느 기간의 합인지 (WR-05)
+    history = out_of_period(books, projects, requests)
     rows = _meta_rows(meta)
     status_rows = _status_rows(match)
-    cost_rows = _cost_rows(projects, costs, requests)
+    cost_rows = _cost_rows(projects, costs, requests, history)
     unlinked_rows = _unlinked_cost_rows(costs)
-    revenue_rows = _revenue_rows(projects, revenue, project_rows)
+    revenue_rows = _revenue_rows(projects, revenue, project_rows, history)
     unlinked_revenue = _unlinked_revenue_rows(revenue)
     rows.extend(status_rows)
     rows.extend(_status_check_rows(requests))
@@ -373,11 +408,11 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     rows.extend(cash_rows)
 
     checks = []
-    wehago_cells = [r for r in cost_rows if r["항목"] == "WEHAGO 원가"]
+    wehago_cells = _period_cells(cost_rows, "WEHAGO 원가")
     total_row = [r for r in unlinked_rows if r["구분"] == "미연결원가"][0]
     checks.append(Check("(도) 원가 = 프로젝트원가 + 미연결원가", _source_total(books, cfg, "direct"),
                         _sum_cells(wehago_cells + [total_row])))
-    sales = [r for r in revenue_rows if r["항목"] == "WEHAGO 매출"]
+    sales = _period_cells(revenue_rows, "WEHAGO 매출")
     sales_total = [r for r in unlinked_revenue if r["구분"] == "매출미연결"][0]
     checks.append(Check("매출 = 매출계약 WEHAGO 매출 + 매출미연결", _source_total(books, cfg, "revenue"),
                         _sum_cells(sales + [sales_total])))
@@ -388,7 +423,12 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     checks.append(Check("미연결 원가 줄", source_lines, sum(1 for r in unlinked_rows if r["구분"] == "미연결원가줄")))
     checks.append(Check("현금계정 증감 = 보통예금월 WEHAGO 증감 합계", move_total,
                         _sum_cells([r for r in cash_rows if r["구분"] == "보통예금월" and r["항목"] == MONTH_CHANGE])))
-    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, _status_note(requests) + cash_notes)
+    checks.extend(period_checks(history, rows))
+    notes = _status_note(requests) + cash_notes
+    if history:
+        notes.append("기간 밖 이력이 있는 프로젝트 %d건: WEHAGO 원가·매출 누계 판단 불가 (분개장 기간 합계는 따로 한 줄): %s"
+                     % (len(history), "; ".join("%s (%s)" % (k, v) for k, v in history.items())))
+    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, notes)
 
 
 # ───────────── load_xchk ─────────────
@@ -442,13 +482,15 @@ def _parse(row):
 
 
 def _project_of(row):
-    return {"key": row["대상"], "name": row["이름"], "cost": None, "cost_lines": None, "cost_note": "", "budget": None,
+    return {"key": row["대상"], "name": row["이름"], "cost": None, "cost_lines": None, "cost_note": "", "cost_period": None,
+            "out_of_period": False, "budget": None,
             "budget_note": "", "has_budget": False, "requested": None, "requested_count": None,
             "requested_note": "", "cost_vs_budget": None, "request_vs_cost": None}
 
 
 def _contract_of(row):
     return {"key": row["대상"], "name": row["이름"], "wehago": None, "wehago_lines": None, "wehago_note": "",
+            "wehago_period": None, "out_of_period": False,
             "has_contract": False, "contract": None, "contract_note": "", "quote": None, "quote_note": ""}
 
 
@@ -464,6 +506,9 @@ def _load_rows(rows):
             p = projects.setdefault(row["대상"], _project_of(row))
             if item == "WEHAGO 원가":
                 p["cost"], p["cost_lines"], p["cost_note"] = row["_amount"], row["_count"], row["비고"]
+                p["out_of_period"] = row["비고"].startswith(OUT_OF_PERIOD)
+            elif item == "WEHAGO 원가" + PERIOD_SUFFIX:
+                p["cost_period"] = row["_amount"]
             elif item == "실행가":
                 p["budget"], p["budget_note"], p["has_budget"] = row["_amount"], row["비고"], True
             elif item == "요청 누계":
@@ -501,6 +546,9 @@ def _load_rows(rows):
             c = contracts.setdefault(row["대상"], _contract_of(row))
             if item == "WEHAGO 매출":
                 c["wehago"], c["wehago_lines"], c["wehago_note"] = row["_amount"], row["_count"], row["비고"]
+                c["out_of_period"] = row["비고"].startswith(OUT_OF_PERIOD)
+            elif item == "WEHAGO 매출" + PERIOD_SUFFIX:
+                c["wehago_period"] = row["_amount"]
             elif item == "계약금액 (수동 입력)":
                 c["contract"], c["contract_note"], c["has_contract"] = row["_amount"], row["비고"], True
             elif item == "견적금액":
