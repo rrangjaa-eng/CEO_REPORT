@@ -392,7 +392,8 @@ def build(d, snap, asof, now, wehago_dir=None):
         row = match["rows"][rq["번호"]]
         rq["xchk"], rq["xstatus"], rq["xrow"] = row["label"], row["status"], row
         rq["invoice_total"], rq["diff"] = row["invoice_total"], row["diff"]
-        if row["status"] == "금액 차이":
+        if row["status"] == "금액 차이" and row["schedule_amount"] != rq["amount"]:
+            # D-30a: 계산서가 더 크면 계산서 합계로. D-30b: 더 적으면 요청 금액 그대로 (지급을 줄이지 않는다)
             rq["schedule_amount"], rq["amount_source"] = row["schedule_amount"], "WEHAGO 계산서"
 
     # 입력 일정과 스냅숏 요청 맞추기 (A-3, P-6): 번호로 맞거나, 프로젝트·금액·날짜가 같으면 같은 지급으로 본다

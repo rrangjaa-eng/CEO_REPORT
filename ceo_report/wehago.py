@@ -483,6 +483,40 @@ def _invoices(books, key, code):
     return None, []
 
 
+def paid_invoices(books):
+    """분개장에서 이미 지급된 매입 계산서 {(출처, 번호표)} (CR-01, D-30b).
+
+    미지급금·미지급비용 차변이 같은 거래처·같은 합계이고, 전표일자가 계산서 일자 이후·장부 기준일 이전·당일이며,
+    적요에 코드가 있으면 같은 코드인 줄이 그 계산서를 지급한 줄이다. 지급 줄 하나는 계산서 하나만 지급한 것으로 본다
+    (출처마다 따로, 날짜 순으로 짝짓는다). 요청과 무관하게 정해지므로 결과가 요청 순서에 따라 달라지지 않는다.
+    """
+    ref = books.book_date
+    lines = [(line["date"], i) for i, line in enumerate(books.journal)
+             if _is_payable(line) and line["debit"] is not None and line["date"] is not None
+             and (ref is None or line["date"] <= ref)]
+    lines.sort()
+    out = set()
+    for source, rows in (("매입매출장", books.ledger), ("전자세금계산서(매입)", books.einvoice)):
+        used = set()
+        order = sorted(range(len(rows)), key=lambda i: (rows[i]["date"] or dt.date.min, i))
+        for i in order:
+            inv = rows[i]
+            if inv["total"] is None:
+                continue
+            for _, j in lines:
+                line = books.journal[j]
+                if j in used or line["debit"] != inv["total"] or line["vendor_norm"] != inv["vendor_norm"]:
+                    continue
+                if inv["date"] is not None and line["date"] < inv["date"]:
+                    continue
+                if line["code"] is not None and line["code"] != inv["code"]:
+                    continue
+                used.add(j)
+                out.add((source, i))
+                break
+    return out
+
+
 def _payment_lines(books, rq, key):
     """W-7 후보: 미지급금·미지급비용 차변이 같은 금액·같은 거래처, 전표일자가 등록일 이후 장부 기준일 이전·당일, 적요에 코드가 있으면 같은 코드 (D-35c)."""
     reg = rq["registered"].date() if rq.get("registered") else None
@@ -515,9 +549,13 @@ def _summary(requests, rows):
         picked = [rows[rq["번호"]] for rq in items]
         total, unknown = ssum_or_none(rq["amount"] for rq in items)
         invoices = [r["invoice_total"] for r in picked if r["invoice_total"] is not None]
+        diff_status = status == "금액 차이"
         out[status] = {"count": len(items), "sum": total, "unknown": unknown,
-                       "diff": sum(r["diff"] for r in picked) if status == "금액 차이" else None,
-                       "invoice_sum": sum(invoices) if status in ("계산서 있음", "금액 차이") else None}
+                       "diff": sum(r["diff"] for r in picked) if diff_status else None,
+                       "invoice_sum": sum(invoices) if status in ("계산서 있음", "금액 차이") else None,
+                       # D-30b: 일정에 쓰는 금액 합계와, 계산서가 요청보다 적어 요청 금액으로 둔 건수
+                       "schedule_sum": sum(r["schedule_amount"] for r in picked) if diff_status else None,
+                       "lower": sum(1 for r in picked if r["diff"] < 0) if diff_status else None}
     return out
 
 
@@ -534,7 +572,8 @@ def match_requests(books, requests):
         return {"rows": rows, "summary": _summary(requests, rows)}
 
     known = set(r["vendor_norm"] for src in (books.journal, books.ledger, books.einvoice) for r in src)
-    pending, pay_users, inv_users = {}, {}, {}
+    settled = paid_invoices(books)  # 이미 지급된 계산서는 어떤 요청의 근거도 아니다 (CR-01, D-30b)
+    pending, pay_users, inv_users, lone_users = {}, {}, {}, {}
     for rq in requests:  # 1회전: 요청마다 후보를 모은다
         no, key = rq["번호"], norm_vendor(rq["vendor"])
         if rq["amount"] is None:
@@ -546,12 +585,15 @@ def match_requests(books, requests):
         lines = _payment_lines(books, rq, key)
         for i in lines:
             pay_users.setdefault(i, []).append(no)
-        item = {"lines": lines, "source": None, "found": [], "exact": []}
+        item = {"lines": lines, "source": None, "found": [], "open": [], "exact": []}
         if not lines and rq["code"]:
             item["source"], item["found"] = _invoices(books, key, rq["code"])
-            item["exact"] = [(i, r) for i, r in item["found"] if r["total"] == rq["amount"]]
+            item["open"] = [(i, r) for i, r in item["found"] if (item["source"], i) not in settled]
+            item["exact"] = [(i, r) for i, r in item["open"] if r["total"] == rq["amount"]]
             if len(item["exact"]) == 1:
                 inv_users.setdefault((item["source"], item["exact"][0][0]), []).append(no)
+            elif not item["exact"] and len(item["open"]) == 1:
+                lone_users.setdefault((item["source"], item["open"][0][0]), []).append(no)
         pending[no] = item
     for rq in requests:  # 2회전: 겹침을 보고 상태를 정한다
         no = rq["번호"]
@@ -570,23 +612,33 @@ def match_requests(books, requests):
         if not rq["code"]:
             rows[no] = _row(rq, "연결 불가", "연결 불가 (프로젝트 코드 없음)")
             continue
-        source, found, exact = item["source"], item["found"], item["exact"]
+        source, found, open_, exact = item["source"], item["found"], item["open"], item["exact"]
         suffix = "" if source == "매입매출장" else " (전자세금계산서)"
         more = {"source": source, "candidates": len(found)}
         if not found:
             rows[no] = _row(rq, "계산서 없음", "계산서 없음", **more)
+        elif not open_:
+            # 후보 계산서가 모두 분개장에서 이미 지급됨: 이 요청의 계산서가 아니다. 일정은 인트라넷 요청 금액 (D-30b)
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 %d건 모두 이미 지급됨)" % len(found), **more)
         elif len(exact) == 1:
             if len(inv_users[(source, exact[0][0])]) > 1:
                 rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 공유)", **more)
             else:
                 rows[no] = _row(rq, "계산서 있음", "계산서 있음" + suffix, invoice_total=exact[0][1]["total"], diff=0, **more)
-        elif not exact and len(found) == 1 and found[0][1]["total"] is not None:
-            total = found[0][1]["total"]
+        elif not exact and len(open_) == 1 and open_[0][1]["total"] is not None:
+            k = (source, open_[0][0])
+            if inv_users.get(k) or len(lone_users[k]) > 1:
+                # 계산서 하나는 요청 하나만: 다른 요청과 맞거나 다른 요청도 이 계산서 하나뿐이면 쓰지 않는다 (CR-01)
+                rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 공유)", **more)
+                continue
+            total = open_[0][1]["total"]
             diff = total - rq["amount"]
-            rows[no] = _row(rq, "금액 차이", "금액 차이 (계산서 %s · 차액 %s)%s" % (won(total), _signed(diff), suffix),
-                            invoice_total=total, diff=diff, schedule_amount=total, **more)  # D-30a: 일정은 WEHAGO 합계
+            # D-30a: 일정은 WEHAGO 합계. D-30b: 계산서가 요청보다 적으면 지급을 줄이지 않고 요청 금액으로 둔다
+            keep = " · 일정은 인트라넷 요청 금액" if diff < 0 else ""
+            rows[no] = _row(rq, "금액 차이", "금액 차이 (계산서 %s · 차액 %s%s)%s" % (won(total), _signed(diff), keep, suffix),
+                            invoice_total=total, diff=diff, schedule_amount=max(total, rq["amount"]), **more)
         else:
-            rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 %d건)" % len(found), **more)
+            rows[no] = _row(rq, "연결 불가", "연결 불가 (계산서 후보 %d건)" % len(open_), **more)
     return {"rows": rows, "summary": _summary(requests, rows)}
 
 

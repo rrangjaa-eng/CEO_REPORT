@@ -69,8 +69,16 @@ def xchk_summary_text(A):
     for status in XCHK_ORDER:
         s = S[status]
         if status == "금액 차이" and s["count"]:
-            parts.append("금액 차이 %d건 %s (인트라넷 요청 %s · 차액 %s, 일정은 계산서 금액)" % (
-                s["count"], fmt_won(s["invoice_sum"]), fmt_won(s["sum"]), _signed(s["diff"])))
+            lower = s.get("lower") or 0
+            if not lower:
+                rule = "일정은 계산서 금액"
+            elif lower == s["count"]:
+                rule = "일정은 인트라넷 요청 금액: 계산서가 더 적음"
+            else:  # D-30b: 계산서와 요청 중 큰 금액
+                rule = "일정은 큰 금액 %s: 계산서 %d건 · 인트라넷 요청 %d건(계산서가 더 적음)" % (
+                    fmt_won(s["schedule_sum"]), s["count"] - lower, lower)
+            parts.append("금액 차이 %d건 %s (인트라넷 요청 %s · 차액 %s, %s)" % (
+                s["count"], fmt_won(s["invoice_sum"]), fmt_won(s["sum"]), _signed(s["diff"]), rule))
         elif status == "이미 지급" and s["count"]:
             kept = len(A["paid_after_balance"])
             if kept == 0:
@@ -545,7 +553,9 @@ WEHAGO_RULES = [
     "WEHAGO 규칙 2 상태 순서와 이미 지급 조건: 금액 미확인 → 거래처 후보 없음 → 이미 지급 → 프로젝트 코드 없음 → 계산서 확인 순"
     " · 이미 지급은 분개장 미지급금·미지급비용 차변이 같은 금액·같은 거래처이고 전표일자가 등록일 이후 장부 기준일 이전 또는 당일이며"
     " 후보가 한 건으로 다른 요청과 겹치지 않을 때만 · 그 밖에는 연결 불가이고 일정에 그대로 둠",
-    "WEHAGO 규칙 3 금액 차이: 계산서 한 건의 합계가 요청 금액과 다르면 일정에는 계산서 합계를 넣고 인트라넷 요청 금액과 차액을 옆에 보임",
+    "WEHAGO 규칙 3 금액 차이: 분개장에서 아직 지급되지 않았고 다른 요청이 쓰지 않는 계산서 한 건의 합계가 요청 금액과 다르면"
+    " 일정에는 계산서 합계와 요청 금액 중 큰 금액을 넣고 인트라넷 요청 금액과 차액을 옆에 보임 · 계산서 하나는 요청 하나만"
+    " · 이미 지급된 계산서는 근거로 쓰지 않음 (그때는 연결 불가, 일정은 요청 금액)",
     "WEHAGO 규칙 4 거래처 미지급금 = 분개장 미지급금·미지급비용의 대변 − 차변 누계(기초잔액·전기이월 줄 포함)"
     " · 분개장에 기초잔액 줄이 없으면 기초잔액 미반영 · 인트라넷 요청은 대기+승인 중 이미 지급을 뺀 합계",
     "WEHAGO 규칙 5 프로젝트 원가 = 계정과목에 (도)가 있고 계정 Code가 6으로 시작하는 5자리인 줄의 차변 − 대변"

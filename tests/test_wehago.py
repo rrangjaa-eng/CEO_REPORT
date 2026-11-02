@@ -756,7 +756,9 @@ class TestWehagoMatch(unittest.TestCase):
                 r[0] = serial(dt.date(2026, 10, 28))  # 5109 등록일(10-29)보다 앞
             return r
         m = self.w.match_requests(with_journal(self, edit=earlier), self.reqs)
-        self.assertEqual(label(m, "5109"), "계산서 있음")
+        # CR-01/D-30b: 그 지급 줄이 계산서(10-22)를 이미 지급했으므로 계산서도 이 요청의 근거가 아니다 (전에는 '계산서 있음')
+        self.assertEqual(label(m, "5109"), "연결 불가 (계산서 후보 1건 모두 이미 지급됨)")
+        self.assertEqual(m["rows"]["5109"]["schedule_amount"], 49500000)
 
     def test_payment_must_carry_the_same_project_code(self):
         def other_code(r):
@@ -1109,3 +1111,108 @@ class TestWehagoAfterRef(unittest.TestCase):
         self.assertEqual(books.files["분개장"]["after_ref"], 1)
         m = w.match_requests(books, requests_all())
         self.assertEqual(label(m, "5109"), "이미 지급 (분개장 2026-10-30 전표 20)")
+
+
+# ───────────── CR-01: 계산서 하나는 요청 하나만, 이미 지급된 계산서는 근거가 아니다 (D-30b) ─────────────
+def mem_books(ledger=(), journal=(), book_date=dt.date(2026, 10, 31)):
+    """메모리 위 가상 장부 (state ok). ledger: (날짜, 거래처, 코드, 합계), journal: (날짜, 전표, 계정, 차변, 거래처, 적요)."""
+    w = mod("wehago")
+    b = w.Books()
+    b.state, b.book_date = "ok", book_date
+    b.ledger = [{"date": d, "no": str(i + 1), "vendor": v, "vendor_norm": w.norm_vendor(v), "item": "[%s] 가상" % c,
+                 "code": c, "supply": None, "vat": None, "total": t} for i, (d, v, c, t) in enumerate(ledger)]
+    b.journal = [{"date": d, "no": no, "account_code": "25300" if acc == "미지급금" else "10300", "account": acc,
+                  "debit": debit, "credit": None, "vendor": v, "vendor_norm": w.norm_vendor(v), "memo": memo,
+                  "code": mod("approval").project_code(memo)} for d, no, acc, debit, v, memo in journal]
+    if not b.journal:  # 거래처가 장부에 있어야 후보가 된다
+        b.journal = [{"date": dt.date(2026, 1, 2), "no": "0", "account_code": "10300", "account": "보통예금", "debit": 1,
+                      "credit": None, "vendor": v, "vendor_norm": w.norm_vendor(v), "memo": "", "code": None}
+                     for _, v, _, _ in ledger]
+    return b
+
+
+def mem_req(no, amount, vendor="가상제작", code="26201", registered=dt.datetime(2026, 10, 2), status="pending"):
+    return {"번호": no, "id": "r" + no, "vendor": vendor, "amount": amount, "code": code, "registered": registered,
+            "status": status}
+
+
+class TestWehagoInvoiceClaims(unittest.TestCase):
+    def setUp(self):
+        self.w = mod("wehago")
+
+    def rows(self, books, reqs):
+        m = self.w.match_requests(books, reqs)
+        return dict((no, (r["status"], r["label"], r["schedule_amount"])) for no, r in m["rows"].items()), m
+
+    def test_one_lone_invoice_cannot_back_two_requests(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 1), "가상제작", "26201", 110000000)])
+        got, m = self.rows(books, [mem_req("1", 50000000), mem_req("2", 60000000)])
+        self.assertEqual(got["1"], ("연결 불가", "연결 불가 (계산서 후보 공유)", 50000000))
+        self.assertEqual(got["2"], ("연결 불가", "연결 불가 (계산서 후보 공유)", 60000000))
+        self.assertEqual(m["summary"]["금액 차이"]["count"], 0)
+
+    def test_an_exactly_matched_invoice_is_not_reused_as_another_requests_lone_invoice(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 1), "가상제작", "26201", 110000000)])
+        for order in ((0, 1), (1, 0)):
+            reqs = [mem_req("1", 110000000), mem_req("2", 50000000)]
+            got, _ = self.rows(books, [reqs[i] for i in order])
+            self.assertEqual(got["1"], ("계산서 있음", "계산서 있음", 110000000))
+            self.assertEqual(got["2"], ("연결 불가", "연결 불가 (계산서 후보 공유)", 50000000))
+
+    def test_an_invoice_already_paid_in_the_journal_is_not_a_backing_invoice(self):
+        books = mem_books(ledger=[(dt.date(2026, 3, 5), "가상제작", "26201", 33000000)],
+                          journal=[(dt.date(2026, 3, 20), "7", "미지급금", 33000000, "가상제작", "")])
+        got, _ = self.rows(books, [mem_req("9", 77000000, vendor="(주)가상제작", registered=dt.datetime(2026, 10, 28, 10))])
+        self.assertEqual(got["9"], ("연결 불가", "연결 불가 (계산서 후보 1건 모두 이미 지급됨)", 77000000))
+
+    def test_paid_invoice_is_left_out_and_the_other_unpaid_one_is_used(self):
+        books = mem_books(ledger=[(dt.date(2026, 3, 5), "가상제작", "26201", 33000000),
+                                  (dt.date(2026, 10, 20), "가상제작", "26201", 80000000)],
+                          journal=[(dt.date(2026, 3, 20), "7", "미지급금", 33000000, "가상제작", "")])
+        got, _ = self.rows(books, [mem_req("9", 77000000)])
+        self.assertEqual(got["9"], ("금액 차이", "금액 차이 (계산서 80,000,000 · 차액 +3,000,000)", 80000000))
+
+    def test_a_lower_invoice_never_shrinks_the_scheduled_amount(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 20), "가상제작", "26201", 33000000)])
+        got, m = self.rows(books, [mem_req("9", 77000000)])
+        self.assertEqual(got["9"], ("금액 차이", "금액 차이 (계산서 33,000,000 · 차액 −44,000,000 · 일정은 인트라넷 요청 금액)",
+                                    77000000))
+        r = m["rows"]["9"]
+        self.assertEqual((r["invoice_total"], r["diff"]), (33000000, -44000000))
+        s = m["summary"]["금액 차이"]
+        self.assertEqual((s["count"], s["sum"], s["invoice_sum"], s["schedule_sum"], s["lower"]),
+                         (1, 77000000, 33000000, 77000000, 1))
+
+    def test_a_payment_line_settles_at_most_one_invoice(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 1), "가상제작", "26201", 33000000),
+                                  (dt.date(2026, 10, 2), "가상제작", "26201", 33000000)],
+                          journal=[(dt.date(2026, 10, 3), "7", "미지급금", 33000000, "가상제작", "")])
+        self.assertEqual(self.w.paid_invoices(books), set([("매입매출장", 0)]))
+
+    def test_payment_after_the_book_date_or_before_the_invoice_does_not_settle_it(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 10), "가상제작", "26201", 33000000)],
+                          journal=[(dt.date(2026, 10, 5), "6", "미지급금", 33000000, "가상제작", ""),
+                                   (dt.date(2026, 11, 3), "7", "미지급금", 33000000, "가상제작", "")])
+        self.assertEqual(self.w.paid_invoices(books), set())
+
+    def test_payment_with_another_project_code_does_not_settle_it(self):
+        books = mem_books(ledger=[(dt.date(2026, 10, 1), "가상제작", "26201", 33000000)],
+                          journal=[(dt.date(2026, 10, 3), "7", "미지급금", 33000000, "가상제작", "[26299] 다른 행사")])
+        self.assertEqual(self.w.paid_invoices(books), set())
+
+    def test_build_schedules_the_larger_amount_and_says_so(self):
+        """approval.build: 계산서가 더 적은 금액 차이 요청은 인트라넷 요청 금액으로 일정에 들어간다 (D-30b)."""
+        tmp = new_tmp(self)
+        folder = os.path.join(tmp, "위하고")
+        led = [r for r in FAKE_LEDGER if r[2] != 2]
+        led.append(_L("매입", "2026-10-21", 2, "㈜가상제작", "000-00-00002", "[26220] 가상 전시 제작", 100000000, 10000000))
+        write_fake_books(folder, ledger=led)
+        snap = mod("snapshot").read_snapshot(write_fake_snapshot(os.path.join(tmp, "수집")))
+        A = mod("approval").build(mod("data").load(SAMPLE), snap, ASOF, NOW, folder)
+        rq = [r for r in A["requests_all"] if r["번호"] == "5103"][0]
+        self.assertEqual((rq["xstatus"], rq["schedule_amount"], rq["amount_source"]), ("금액 차이", 160500000, "인트라넷 요청"))
+        self.assertEqual(rq["xchk"], "금액 차이 (계산서 110,000,000 · 차액 −50,500,000 · 일정은 인트라넷 요청 금액)")
+        item = [r for r in A["data"]["requests"] if r["id"] == rq["id"]][0]
+        self.assertEqual(item["amount"], 160500000)
+        self.assertIn("금액 차이 1건 110,000,000 (인트라넷 요청 160,500,000 · 차액 −50,500,000, "
+                      "일정은 인트라넷 요청 금액: 계산서가 더 적음)", mod("approval_render").xchk_summary_text(A))
