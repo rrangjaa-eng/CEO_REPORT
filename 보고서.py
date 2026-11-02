@@ -78,7 +78,12 @@ def main(argv=None):
     if asof is None:
         print("기준일 형식 오류: %s" % a.기준일)
         return 2
-    start = parse_date(a.시작일) if a.시작일 else None
+    start = None
+    if a.시작일:
+        start = parse_date(a.시작일)
+        if start is None or start > asof:
+            print("시작일 형식 오류 또는 기준일보다 늦음: %s (YYYY-MM-DD, 기준일 %s 이전)" % (a.시작일, asof))
+            return 2
     if not os.path.isdir(a.입력):
         print("입력 폴더가 없습니다: %s" % a.입력)
         return 2
