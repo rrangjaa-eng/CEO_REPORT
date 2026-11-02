@@ -18,8 +18,8 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from test_approval import write_fake_snapshot  # noqa: E402
-from test_convert import (ASOF, FAKE_PL_JOURNAL, NOW, convert_input, jl_sort, read_result_lines, sha,  # noqa: E402
-                          write_convert_books)
+from test_convert import (ASOF, FAKE_PL_JOURNAL, NOW, cli_argv, convert_input, jl_sort, read_result_lines,  # noqa: E402
+                          run_convert, sha, write_convert_books)
 from test_convert import setUpModule  # noqa: E402,F401  (샘플을 임시 폴더에 새로 쓴다)
 from test_linking import write_links_csv  # noqa: E402
 
@@ -272,6 +272,111 @@ class TestConvertPlLinks(unittest.TestCase):
             self.assertIn(key, links)
         self.assertTrue(links["snapshot"])
         self.assertEqual(len(links["requests"]), 9)
+
+
+# ───────────── Task 3: 스냅숏이 없거나 읽을 수 없을 때 (D-38, D-45) ─────────────
+RRN = re.compile(r"\d{6}\s*[-.]?\s*\d{7}")
+NO_SNAPSHOT_OCT = [
+    (W, "2026-10", "회사", "회사 전체", "94000000", "249500000", "4500000", "Y"),
+    (W, "2026-10", "프로젝트", "26201", "0", "40000000", "", "Y"),
+    (W, "2026-10", "프로젝트", "26203", "0", "45000000", "", "Y"),
+    (W, "2026-10", "프로젝트", "26220", "0", "158000000", "", "Y"),
+    (W, "2026-10", "프로젝트", "26221", "0", "5400000", "", "Y"),
+    (W, "2026-10", "프로젝트", "26999", "0", "300000", "", "Y"),
+    (W, "2026-10", "프로젝트", "프로젝트 미연결", "94000000", "800000", "", "Y"),
+]
+
+
+def break_snapshot_count(input_dir, collect, wehago_dir):
+    """수집정보.csv 의 지급요청_건수를 10으로 바꾼다 (파일에는 9건)."""
+    path = os.path.join(mod("snapshot").latest_snapshot(collect), "수집정보.csv")
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        text = f.read()
+    assert "지급요청_건수,9" in text
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(text.replace("지급요청_건수,9", "지급요청_건수,10"))
+
+
+class TestConvertPlNoSnapshot(unittest.TestCase):
+    def check_code_only(self, r):
+        self.assertEqual(r.code, 0, r.stdout)
+        rows = r.wehago_rows()
+        self.assertEqual([x for x in rows if x[1] == "2026-10"], NO_SNAPSHOT_OCT)
+        self.assertEqual([x for x in rows if x[2] == "팀"], [])
+        self.assertEqual([x for x in rows if x[1] == "2026-09"],
+                         [(W, "2026-09", "회사", "회사 전체", "100000000", "10000000", "2000000", "Y"),
+                          (W, "2026-09", "프로젝트", "26201", "100000000", "10000000", "", "Y")])
+        lines = r.result_lines()
+        self.assertIn("  알림 팀별 손익 없음 (인트라넷 스냅숏 없음)", lines)
+        self.assertEqual([ln for ln in lines if "팀별 합계" in ln], [])
+        self.assertEqual(len(unit_check_lines(lines)), 4)   # 프로젝트별 2달 x 2
+        self.assertIn("대조 불일치 0건", lines)
+
+    def test_empty_collect_folder_gives_code_only_project_rows_and_no_team_rows(self):
+        r = convert_with_snapshot(self, snapshot=False)
+        self.check_code_only(r)
+        self.assertIn("인트라넷 스냅숏: 없음 — 자동 연결 안 함", r.result_lines())
+
+    def test_unreadable_snapshot_behaves_the_same_with_the_reason(self):
+        r = convert_with_snapshot(self, setup=break_snapshot_count)
+        self.check_code_only(r)
+        self.assertIn("인트라넷 스냅숏: 읽지 못함 — 지급요청 건수가 수집정보와 다릅니다: 수집정보 10건, 파일 9건",
+                      r.result_lines())
+
+    def test_corrupt_snapshot_files_never_stop_the_conversion(self):
+        def setup(input_dir, collect, wehago_dir):
+            path = os.path.join(mod("snapshot").latest_snapshot(collect), "지급요청.csv")
+            with open(path, "wb") as f:
+                f.write(b"\xff\xfe\x00garbage\x80\x81")
+
+        r = convert_with_snapshot(self, setup=setup)
+        self.check_code_only(r)
+        self.assertTrue(any(ln.startswith("인트라넷 스냅숏: 읽지 못함 — 지급요청.csv") for ln in r.result_lines()))
+
+    def test_unfinished_snapshot_folder_is_ignored(self):
+        def setup(input_dir, collect, wehago_dir):
+            os.makedirs(os.path.join(collect, "인트라넷_20261102_000000.작성중"))
+
+        r = convert_with_snapshot(self, snapshot=False, setup=setup)
+        self.check_code_only(r)
+        self.assertIn("인트라넷 스냅숏: 없음 — 자동 연결 안 함", r.result_lines())
+
+    def test_unfinished_snapshot_folder_does_not_hide_the_finished_one(self):
+        def setup(input_dir, collect, wehago_dir):
+            os.makedirs(os.path.join(collect, "인트라넷_20261102_000000.작성중"))
+
+        r = convert_with_snapshot(self, setup=setup)
+        self.assertTrue(any(ln.startswith("인트라넷 스냅숏: 인트라넷_20261101_180000 (수집") for ln in r.result_lines()))
+        self.assertEqual(len([x for x in r.wehago_rows() if x[2] == "팀"]), 4)
+
+    def test_a_manual_link_works_without_a_snapshot(self):
+        r = convert_with_snapshot(self, snapshot=False, links_rows=[["2026-10-29", "22", "1", "26221"]])
+        rows = [x for x in r.wehago_rows() if x[1] == "2026-10"]
+        self.assertIn((W, "2026-10", "프로젝트", "26221", "0", "6200000", "", "Y"), rows)
+        self.assertIn((W, "2026-10", "프로젝트", "프로젝트 미연결", "94000000", "0", "", "Y"), rows)
+
+    def test_work_list_and_stdout_hide_resident_numbers(self):
+        r = convert_with_snapshot(self, snapshot=False)
+        text = "\n".join(r.result_lines() + r.res.lines)
+        self.assertIsNone(RRN.search(text))
+        self.assertIn("  미연결 원가 2026-10-29 22-1 가상강사 800,000 가상 개인강사 ******-******* 강사료 — 미연결 "
+                      "(코드 없음 · 프로젝트 목록 없음)", r.result_lines())
+        with open(os.path.join(r.input_dir, "손익.csv"), encoding="utf-8-sig") as f:
+            self.assertIsNone(RRN.search(f.read()))
+
+    def test_work_list_masks_a_resident_number_that_reaches_it_unmasked(self):
+        raw = "가상 개인강사 123456-1234567 강사료"
+        converted = mod("convert")._text_bytes(["  미연결 원가 2026-10-29 22-1 가상강사 800,000 " + raw]).decode("utf-8")
+        self.assertIsNone(RRN.search(converted))
+        self.assertIn("******-*******", converted)
+
+    def test_command_line_prints_no_resident_number_either(self):
+        tmp, input_dir, collect, wehago_dir = convert_input(self)
+        write_convert_books(wehago_dir)
+        rc, out = run_convert(cli_argv(input_dir, collect, wehago_dir))
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(RRN.search(out))
+        self.assertIn("프로젝트 연결: 원가 미연결 1건 800,000 · 매출 미연결 3건 94,000,000 (변환결과.txt 목록)", out)
 
 
 if __name__ == "__main__":
