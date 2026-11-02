@@ -31,6 +31,17 @@ td.lv-reserve{color:var(--warn);font-weight:700}
 #requests td.c1,#requests th.c1{position:sticky;left:0;background:var(--bg)}
 tr.off td{color:var(--sub)}
 .sec{font-size:15px;margin:22px 0 6px}
+#req-controls{margin:6px 0}
+#req-controls button{min-height:44px;min-width:44px;padding:0 14px;margin-right:8px;border:1px solid var(--line);
+border-radius:6px;background:var(--soft);color:var(--ink);font:inherit;cursor:pointer}
+#attention a{color:inherit;text-decoration:underline}
+@media screen and (max-width:820px){
+.tw{max-width:100%}
+#requests td:first-child,#requests th:first-child{position:sticky;left:0;background:var(--bg);z-index:2}
+#requests td:first-child label{display:flex;min-height:44px;min-width:44px}
+#h-low{font-size:24px}
+#start-line{overflow-wrap:anywhere}
+}
 """
 
 CALC_JS = r"""function fmtWon(v){
@@ -139,6 +150,10 @@ UI_JS = r"""(function(){
       if(!short.firstChild)short.textContent='부족·최소보유현금 미만 주 없음';
     }
   }
+  function setAll(v){for(var j=0;j<boxes.length;j++){boxes[j].checked=v;}update();}
+  var all=$('check-all'),none=$('check-none');
+  if(all)all.addEventListener('click',function(){setAll(true);});
+  if(none)none.addEventListener('click',function(){setAll(false);});
   for(var i=0;i<boxes.length;i++){boxes[i].addEventListener('change',update);}
 })();"""
 
@@ -449,6 +464,8 @@ def render_approval(A, collected_now):
         _attention(A),
         '<h2 class="sec">승인 대기 요청 (체크 = 승인 가정)</h2>',
         _scope_line(A),
+        '<div id="req-controls"><button type="button" id="check-all">전부 체크</button>'
+        '<button type="button" id="check-none">전부 해제</button></div>',
         _requests_table(A, S),
         '<h2 class="sec">주별 일정 (월요일 시작, 단위 원)</h2>',
         _weeks_table(A, S),
