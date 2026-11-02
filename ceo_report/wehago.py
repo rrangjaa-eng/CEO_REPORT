@@ -265,7 +265,10 @@ def _check_header(rows, kind, name):
 
 
 def _is_subtotal(row):
-    """합계·소계·일계·월계·누계로 시작하거나 '거래처별 소계'를 포함한 칸이 하나라도 있는 요약 줄 (D-35c)."""
+    """합계·소계·일계·월계·누계로 시작하거나 '거래처별 소계'를 포함한 칸이 하나라도 있는가 (D-35c).
+
+    요약 줄 판정은 read_book 이 이 검사와 '날짜 칸이 날짜로 읽히지 않음'을 함께 본다 (WR-02, D-35d).
+    """
     for c in row:
         s = re.sub(r"\s+", "", c)  # 실제 파일은 '합       계'처럼 글자 사이에 공백을 넣는다
         if "거래처별소계" in s:
@@ -296,8 +299,10 @@ def read_book(path, kind, file_date=None, asof=None):
             info["skipped"] += 1
             continue
         date = _parse_date(row[cols[date_col][0]], d1904, year_ref)
-        if _is_subtotal(row):
-            info["skipped"] += 1  # 합계·소계·일계·월계·누계 줄: 저장하지 않고 마지막 날짜·날짜 없음에도 넣지 않는다 (W-14, D-35c)
+        if date is None and _is_subtotal(row):
+            # 합계·소계·일계·월계·누계 줄: 저장하지 않고 마지막 날짜·날짜 없음에도 넣지 않는다 (W-14, D-35c).
+            # 날짜가 읽히는 줄은 적요·거래처·품명이 '합계…'로 시작해도 실제 전표다 (WR-02, D-35d)
+            info["skipped"] += 1
             continue
         info["rows"] += 1
         if date is None:

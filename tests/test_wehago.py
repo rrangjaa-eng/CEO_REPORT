@@ -1035,14 +1035,36 @@ class TestWehagoSummaryRows(unittest.TestCase):
         entry = load(folder).files["분개장"]
         self.assertEqual((entry["skipped"], entry["undated"], entry["rows"]), (6, 0, 34))
 
-    def test_a_dated_row_with_a_summary_cell_is_skipped_and_does_not_move_last_date(self):
+    def test_a_dated_row_with_a_summary_word_is_a_real_row(self):
+        # WR-02 (D-35d): 날짜가 읽히는 줄은 요약 줄이 아니다. 전에는 이 줄을 건너뛰었다 (skipped 1, rows 34).
         folder = folder_with(self)
         row = list(FAKE_JOURNAL[0])
         row[0], row[9] = serial(dt.date(2027, 1, 5)), "소계"
         write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + FAKE_JOURNAL + [row])
         entry = load(folder).files["분개장"]
-        self.assertEqual((entry["skipped"], entry["rows"]), (1, 34))
-        self.assertEqual(entry["last_date"], dt.date(2026, 10, 30))
+        self.assertEqual((entry["skipped"], entry["rows"]), (0, 35))
+        self.assertEqual(entry["last_date"], dt.date(2027, 1, 5))
+
+    def test_memo_vendor_or_item_starting_with_a_summary_word_is_kept(self):
+        """WR-02: 적요 '합계금액 정산 [26201]' 같은 실제 지급 줄이 버려지면 이미 지급·미지급금·원가가 바뀐다."""
+        folder = folder_with(self)
+        pay = pay_line(memo="합계금액 정산 [26203]")
+        journal = [list(r) for r in FAKE_JOURNAL if not (r[1] == 20 and r[4] == "미지급금")] + [pay]
+        cost = _jl(dt.date(2026, 10, 29), 30, "61101", "행사외주비(도)", 700000, None, "소계상사", "누계 보정 [26201]")
+        write_xlsx(kind_path(folder, "분개장"), [JOURNAL_HEADER] + journal + [cost])
+        led = list(FAKE_LEDGER[0])
+        led[5] = "소계 정리분 [26201]"
+        write_xlsx(kind_path(folder, "매입매출장"), [LEDGER_HEADER] + FAKE_LEDGER + [led])
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual((books.files["분개장"]["skipped"], books.files["매입매출장"]["skipped"]), (0, 0))
+        self.assertEqual(len(books.journal), 35)
+        self.assertEqual(len(books.ledger), 9)
+        m = mod("wehago").match_requests(books, requests_all())
+        self.assertEqual(label(m, "5109"), "이미 지급 (분개장 2026-10-30 전표 25)")
+        loose = mod("wehago").project_costs(books, ["26201"])["unlinked"]["lines"]  # 코드가 맨 앞이 아니라 미연결 원가
+        self.assertEqual([(i["vendor"], i["memo"], i["amount"]) for i in loose if i["vendor"] == "소계상사"],
+                         [("소계상사", "누계 보정 [26201]", 700000)])
 
     def test_a_word_in_the_middle_of_a_normal_cell_is_not_a_summary(self):
         folder = folder_with(self)
