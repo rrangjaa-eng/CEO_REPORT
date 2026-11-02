@@ -414,5 +414,49 @@ class TestPaidCashReason(unittest.TestCase):
         self.assertEqual(rows["전체"][COL_PAID_CASH].split(" 외 ")[1], "금액·부가세 미확인 2건")
 
 
+# ───────────── 6. 전부 미확인인 합계는 0이 아니다 (예산 미지정 계약금액, 사전견적 합계) ─────────────
+COL_ESTIMATE = 4  # 3번 묶음 표: 사전견적
+
+
+def _kv(html, label):
+    m = re.search('<div class="kv"><span>' + re.escape(label) + '</span><span>(.*?)</span></div>', html, re.S)
+    return re.sub(r"<[^>]+>", "", m.group(1)) if m else None
+
+
+class TestAllUnknownTotals(unittest.TestCase):
+    def test_all_estimates_blank_total_is_unknown(self):
+        def edit(S):
+            for r in S["프로젝트.csv"]:
+                r[5] = ""
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertIsNone(R["s3"]["total"]["estimate"])
+        self.assertEqual(R["s3"]["total"]["estimate_missing"], 8)
+        rows = _s3_rows(render(R, "ceo"))
+        self.assertEqual(rows["전체"][COL_ESTIMATE], "미등록 8건")
+
+    def test_partial_estimate_total_shows_missing_count(self):
+        R = compute(load(sample_folder(self)), "weekly", ASOF)
+        rows = _s3_rows(render(R, "ceo"))
+        self.assertEqual(rows["전체"][COL_ESTIMATE], "665,000,000 외 미등록 1건")
+
+    def test_no_budget_contract_all_blank_is_not_zero(self):
+        def edit(S):
+            for r in S["프로젝트.csv"]:
+                if r[0] == "P26204":       # 예산 미지정 프로젝트는 P26204 한 건
+                    r[7] = ""
+        R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
+        self.assertIsNone(R["s7"]["no_budget_contract"])
+        import test_report as tr
+        val = _kv(tr.section(render(R, "ceo"), 7), "예산 미지정 프로젝트")
+        self.assertNotIn("계약 0원", val)
+        self.assertIn("계약 미등록 1건", val)
+
+    def test_no_budget_contract_known_unchanged(self):
+        R = compute(load(sample_folder(self)), "weekly", ASOF)
+        import test_report as tr
+        val = _kv(tr.section(render(R, "ceo"), 7), "예산 미지정 프로젝트")
+        self.assertEqual(val, "1건 · 계약 50,000,000원 · 예상 총집행 18,000,000원")
+
+
 if __name__ == "__main__":
     unittest.main()

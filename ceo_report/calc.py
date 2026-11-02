@@ -212,7 +212,7 @@ def compute(d, kind, asof, start=None):
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
     tot["budget"], tot["budget_missing"] = ssum(P["budget"] for P in plist)
-    tot["estimate"], tot["estimate_missing"] = ssum(P["estimate"] for P in plist)
+    tot["estimate"], tot["estimate_missing"] = ssum_or_none(P["estimate"] for P in plist)  # 전부 미등록이면 0이 아니라 None
     remain_known = [P["remain"] for P in plist if P["remain"] is not None]
     tot["remain"] = sum(remain_known)
     tot["remain_excluded"] = sum(1 for P in plist if P["budget"] is not None and P["remain"] is None)
@@ -543,7 +543,7 @@ def compute(d, kind, asof, start=None):
     unlinked_txn = [t for t in in_p if t["io"] == "출금" and t["cat"] == "프로젝트지급"
                     and (not t["project"] or t["project"] not in proj)]
     plan_total, plan_unknown_n = ssum(p["amount"] for p in plan_rows)
-    nb_contract, nb_contract_missing = ssum(P["contract"] for P in no_budget)
+    nb_contract, nb_contract_missing = ssum_or_none(P["contract"] for P in no_budget)  # 전부 미등록이면 0이 아니라 None
     asof_rows = []
     for a in d.asof:
         asof_rows.append(dict(a, age=None if a["date"] is None else (asof - a["date"]).days))

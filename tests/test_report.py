@@ -975,9 +975,9 @@ class TestUserRulesLocked(Base):
                 if r[0] == "P26204":
                     r[7] = ""
         R = self.edit("프로젝트.csv", mutate)
-        self.assertEqual(R["s7"]["no_budget_contract"], 0)
+        self.assertIsNone(R["s7"]["no_budget_contract"])  # 검토 6: 전부 미등록이면 0이 아니라 None
         self.assertEqual(R["s7"]["no_budget_contract_missing"], 1)
-        self.assertIn("계약금액 미등록 1건", section(render(R, "ceo"), 7))
+        self.assertIn("계약 미등록 1건", re.sub(r"<[^>]+>", "", section(render(R, "ceo"), 7)))
 
 
 _BASE_R = None

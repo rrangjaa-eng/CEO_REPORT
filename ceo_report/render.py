@@ -374,6 +374,11 @@ def _amt_unk(v, unk, label="미확인", fmt=W):
     return fmt(v) + (_na(" 외 %s %d건" % (label, unk)) if unk > 0 else "")
 
 
+def _won_unit(v):
+    """'1,234원'. 값이 없으면 '미확인'."""
+    return _na("미확인") if v is None else esc(won(v) + "원")
+
+
 def _no_budget_note(s3):
     """'예산 미책정 N건 (사유별 건수)'. 없으면 빈 글자."""
     reasons = s3["no_budget_reasons"]
@@ -562,7 +567,8 @@ def _s3(R, per):
     h.append(table(["번호", "프로젝트", "팀", "상태", "사전견적", "원가 예산", "예산 사유", "예산 수정일", per + " 지급", "누적 지급",
                     "지급 실출금(VAT포함)", "요청 미지급", "카드 미결제", "미요청 계획", "예상 총집행", "지급률", "예상 잔여예산",
                     "금액 미확인"], rows, num_cols=(4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16),
-                   total=["전체", "%d건" % len(s3["projects"]), "", "", W(tot["estimate"]), W(tot["budget"], "판단 불가"),
+                   total=["전체", "%d건" % len(s3["projects"]), "", "",
+                          _amt_unk(tot["estimate"], tot["estimate_missing"], "미등록"), W(tot["budget"], "판단 불가"),
                           esc(note_nb), "", W(tot["paid_period"]),
                           W(tot["paid_total"]), _amt_unk(tot["paid_cash"], tot["paid_cash_unknown"], tot["paid_cash_reason"]), W(tot["requested"]), W(tot["card_unpaid"]),
                           W(tot["planned"]), W(tot["expected"]), esc(pct(tot["paid_budgeted"], tot["budget"])),
@@ -732,9 +738,9 @@ def _s7(R):
                 esc(" 계획 금액 미확인 %d건 (합계 제외)." % s7["plan_unknown_n"]) if s7["plan_unknown_n"] else ""))
     h.append("<h3>미반영·미연결 현황</h3>")
     h.append("<div style='max-width:620px'>%s</div>" % kv([
-        ("예산 미지정 프로젝트", "%d건 · 계약 %s원%s · 예상 총집행 %s원"
-         % (len(s7["no_budget"]), won(s7["no_budget_contract"]),
-            " (계약금액 미등록 %d건)" % s7["no_budget_contract_missing"] if s7["no_budget_contract_missing"] else "",
+        ("예산 미지정 프로젝트", "%d건 · 계약 %s · 예상 총집행 %s원"
+         % (len(s7["no_budget"]),
+            _amt_unk(s7["no_budget_contract"], s7["no_budget_contract_missing"], "미등록", _won_unit),
             won(s7["no_budget_expected"]))),
         ("프로젝트 미연결 지급 (출금 내역)", "%s원 (%d건)" % (won(s7["unlinked_txn_total"]), len(s7["unlinked_txn"]))),
         ("프로젝트 미연결 집행 (집행 자료)", "%s원 (%d건)" % (won(R["s3"]["unlinked_total"]), len(R["s3"]["unlinked"]))),
