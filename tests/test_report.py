@@ -1319,5 +1319,37 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             check_editions(self, R)
 
 
+class TestCliArguments(unittest.TestCase):
+    """WR-01: 잘못된 --시작일을 조용히 무시하지 않는다."""
+
+    def run_cli(self, *extra):
+        cli = load_cli()
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.main(["주간", "--기준일", "2026-11-02", "--출력", out, "--pdf", "안함"] + list(extra))
+        return rc, buf.getvalue(), os.listdir(out)
+
+    def test_bad_start_date_is_an_error(self):
+        rc, text, files = self.run_cli("--시작일", "2026-13-45")
+        self.assertEqual(rc, 2)
+        self.assertIn("시작일", text)
+        self.assertIn("2026-13-45", text)
+        self.assertEqual(files, [])
+
+    def test_start_date_after_reference_date_is_an_error(self):
+        rc, text, files = self.run_cli("--시작일", "2026-11-03")
+        self.assertEqual(rc, 2)
+        self.assertIn("시작일", text)
+        self.assertEqual(files, [])
+
+    def test_valid_start_date_sets_period(self):
+        rc, text, files = self.run_cli("--시작일", "2026-10-20")
+        self.assertEqual(rc, 0)
+        self.assertIn("집계 기간 2026-10-20 ~ 2026-11-02", text)
+        self.assertEqual(len(files), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
