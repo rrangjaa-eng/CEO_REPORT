@@ -62,6 +62,12 @@ def setUpModule():
                    stdout=subprocess.DEVNULL)
 
 
+def kv_value(html, label):
+    """render.kv()가 쓰는 '이름 / 값' 줄에서 값 부분만 꺼낸다. 없으면 None."""
+    m = re.search('<div class="kv"><span>' + re.escape(label) + '</span><span>(.*?)</span></div>', html, re.S)
+    return m.group(1) if m else None
+
+
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -298,6 +304,128 @@ class TestUnknownBalance(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(os.path.join(out, "2026-11-02_주간_대표보고.html"), encoding="utf-8") as f:
             self.assertIn(self.NOTE, f.read())
+
+
+class TestUnknownAmountsAndPastDue(Base):
+    """미확인 금액은 0이 아니다 (R2), 예정일 지난 미처리는 첫 화면에 (R3), 부가세 미확인 표시 (D-07)."""
+    PAST_ROW = ["2026-10-30", "지급", "5,000,000", "확정", "거래처미지급", "", "인쇄소", "청구서", "기한 경과"]
+    BLANK_PAST_ROW = ["2026-10-31", "지급", "", "확정", "거래처미지급", "", "현수막", "청구서", "금액 미정"]
+
+    def add_schedule_rows(self, *new_rows):
+        return probe_folder(self, "자금일정.csv", lambda rows: rows.extend([list(r) for r in new_rows]))
+
+    def probe(self, folder):
+        R = compute(load(folder), "weekly", ASOF)
+        return R, render(R, "ceo")
+
+    def vendor_row(self, html, name):
+        m = re.search(r"<tr[^>]*><td>" + re.escape(name) + r"</td>.*?</tr>", section(html, 6), re.S)
+        self.assertIsNotNone(m, name)
+        return m.group(0)
+
+    def test_vendor_unknown_amount_not_zero(self):
+        v = dict(self.R["s6"]["vendors"])["진행팀"]
+        self.assertIsNone(v["total"])
+        self.assertEqual((v["unknown"], v["n"]), (1, 1))
+        row = self.vendor_row(render(self.R, "ceo"), "진행팀")
+        self.assertIn("미확인 1건", row)
+        self.assertNotIn('<td class="n">0</td>', row)
+
+    def test_vendor_partial_unknown_counted(self):
+        R, html = self.probe(self.add_schedule_rows(
+            ["2026-11-20", "지급", "", "추정", "거래처미지급", "", "디자인스튜디오", "청구서", "추가 청구 금액 미정"]))
+        v = dict(R["s6"]["vendors"])["디자인스튜디오"]
+        self.assertEqual((v["total"], v["unknown"], v["n"]), (3_300_000, 1, 2))
+        row = self.vendor_row(html, "디자인스튜디오")
+        self.assertIn("3,300,000", row)
+        self.assertIn("미확인 1건", row)
+
+    def test_nonproject_payments_not_double_counted(self):
+        s6 = self.R["s6"]
+        self.assertEqual(s6["total"], 584_100_000)
+        vendors = dict(s6["vendors"])
+        self.assertEqual((vendors["사운드랩"]["total"], vendors["사운드랩"]["n"]), (44_000_000, 1))
+        in_cats = set(s["vendor"] for g in s6["by_cat"].values() for s in g["rows"])
+        for name in ("사운드랩", "전시제작사", "공연장"):
+            self.assertNotIn(name, in_cats)
+        self.assertNotIn("법인카드 5860", vendors)
+
+    def test_past_due_on_first_screen(self):
+        s2 = self.R["s2"]
+        self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
+        self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (0, 0, 0))
+        fs = first_screen(render(self.R, "ceo"))
+        self.assertEqual(kv_value(fs, "예정일 지난 미처리 입금 / 지급 (일정 미포함)"), "1건 110.0 / 0건 0.0")
+
+    def test_past_due_payment_not_in_schedule(self):
+        R, html = self.probe(self.add_schedule_rows(self.PAST_ROW))
+        s2 = R["s2"]
+        self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (5_000_000, 1, 0))
+        self.assertEqual([b["out_firm"] for b in s2["buckets"]], [b["out_firm"] for b in self.R["s2"]["buckets"]])
+        self.assertEqual(s2["min"], self.R["s2"]["min"])
+        for c in R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+        self.assertIn("/ 1건 5.0", first_screen(html))
+
+    def test_nonproject_scope_and_undated_on_first_screen(self):
+        s6 = self.R["s6"]
+        self.assertEqual((s6["undated_n"], s6["unknown_n"]), (2, 0))
+        fs = first_screen(render(self.R, "ceo"))
+        self.assertIn("프로젝트 밖 지급예정 (등록분 전체)", fs)
+        self.assertIn("584.1 · 날짜 없음 2건", fs)
+
+    def test_past_due_unknown_amount_counted_not_zero(self):
+        label = "예정일 지난 미처리 입금 / 지급 (일정 미포함)"
+        with self.subTest("A: known + blank"):
+            R, html = self.probe(self.add_schedule_rows(self.PAST_ROW, self.BLANK_PAST_ROW))
+            s2 = R["s2"]
+            self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (5_000_000, 2, 1))
+            self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
+            val = kv_value(first_screen(html), label)
+            self.assertTrue(val.startswith("1건 110.0 / 2건 5.0"), val)
+            self.assertIn("금액 미확인 1건", val)
+            self.assertEqual([b["out_firm"] for b in s2["buckets"]], [b["out_firm"] for b in self.R["s2"]["buckets"]])
+            self.assertEqual(s2["min"], self.R["s2"]["min"])
+            for c in R["s7"]["checks"]:
+                self.assertTrue(c[3], c[0])
+        with self.subTest("B: only blank"):
+            R, html = self.probe(self.add_schedule_rows(self.BLANK_PAST_ROW))
+            s2 = R["s2"]
+            self.assertIsNone(s2["past_out"])
+            self.assertEqual((s2["past_out_n"], s2["past_out_unknown"]), (1, 1))
+            val = kv_value(first_screen(html), label)
+            self.assertIn("금액 미확인 1건", val)
+            self.assertNotIn("1건 0.0", val)
+
+    def test_blank_vat_on_scheduled_outflow_marked(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[2] == "사운드랩":
+                    r[5] = ""
+        R, html = self.probe(probe_folder(self, "프로젝트집행.csv", mutate))
+        s2 = R["s2"]
+        self.assertEqual((s2["vat_unknown_n"], s2["vat_unknown_n4"], s2["vat_unknown_firm_n"]), (1, 1, 1))
+        self.assertEqual(s2["out4_firm"], 170_100_000)
+        self.assertEqual(s2["min"]["firm"], (23_800_000, dt.date(2027, 4, 25)))
+        self.assertEqual(s2["min"]["all"], (152_300_000, dt.date(2027, 4, 25)))
+        fs = first_screen(html)
+        self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)
+        for lab in ("최저 계산 잔액 · 확정 일정만", "최저 계산 잔액 · 확정+추정"):
+            self.assertIn("부가세 미확인 1건", kv_value(fs, lab), lab)
+        s2h = section(html, 2)
+        self.assertIn("부가세 미확인 1건은 공급가액만 반영", s2h)
+        for lab in ("기간 중 최저 계산 잔액 · 확정 일정만", "기간 중 최저 계산 잔액 · 확정+추정"):
+            self.assertIn("부가세 미확인 1건", kv_value(s2h, lab), lab)
+        row = re.search(r"<tr[^>]*><td>2026-11-13</td><td>지급</td>.*?</tr>", s2h, re.S).group(0)
+        self.assertIn("40,000,000", row)
+        self.assertIn("부가세 미확인", row)
+        vrow = self.vendor_row(html, "사운드랩")
+        self.assertIn("40,000,000", vrow)
+        self.assertIn("부가세 미확인 1건", vrow)
+        for c in R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+        self.assertEqual(self.R["s2"]["vat_unknown_n"], 0)
+        self.assertNotIn("부가세 미확인", first_screen(render(self.R, "ceo")))
 
 
 if __name__ == "__main__":
