@@ -173,7 +173,7 @@ class TestSchedule(Base):
     def test_undated_not_in_buckets(self):
         s2 = self.R["s2"]
         self.assertEqual(s2["undated_out"], 15_000_000 + 2_000_000 + 77_000_000 + 11_000_000)
-        self.assertEqual(s2["undated_in"], 30_000_000 + 8_800_000)
+        self.assertEqual(s2["undated_in"], 30_000_000)  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
 
     def test_overdue_receivable_not_forecast(self):
         dated = [e for e in self.R["events"] if e["date"] and e["date"] > ASOF]
@@ -884,7 +884,7 @@ class TestUserRulesLocked(Base):
     def test_receivable_amounts_and_overdue_days(self):
         s5 = self.R["s5"]
         self.assertEqual((s5["contract"], s5["issued"], s5["unissued"], s5["ar"]),
-                         (828_000_000, 358_000_000, 470_000_000, 228_800_000))
+                         (828_000_000, 358_000_000, 470_000_000, 220_000_000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
         self.assertEqual([(v["project"], v["overdue_days"], v["outstanding"]) for v in s5["overdue"]],
                          [("P26202", 33, 110_000_000)])
 
@@ -1277,7 +1277,7 @@ class TestFirstScreenCountsD04(unittest.TestCase):
 
     def test_undated_line_has_counts_and_amounts(self):
         fs = first_screen(render(sample_result(), "ceo"))
-        self.assertEqual(kv_value(fs, self.UNDATED), "2건 38.8 / 4건 105.0")
+        self.assertEqual(kv_value(fs, self.UNDATED), "1건 30.0 / 4건 105.0")  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
 
     def test_overdue_receivable_line_has_count(self):
         fs = first_screen(render(sample_result(), "ceo"))
@@ -1292,10 +1292,10 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             R = compute(load(self.add_rows(blank_out)), "weekly", ASOF)
             s2 = R["s2"]
             self.assertEqual((s2["undated_out"], s2["undated_out_n"], s2["undated_out_unknown"]), (105_000_000, 5, 1))
-            self.assertEqual((s2["undated_in"], s2["undated_in_n"], s2["undated_in_unknown"]), (38_800_000, 2, 0))
+            self.assertEqual((s2["undated_in"], s2["undated_in_n"], s2["undated_in_unknown"]), (30_000_000, 1, 0))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
             html = render(R, "ceo")
             val = kv_value(first_screen(html), self.UNDATED)
-            self.assertTrue(val.startswith("2건 38.8 / 5건 105.0"), val)
+            self.assertTrue(val.startswith("1건 30.0 / 5건 105.0"), val)
             self.assertIn("금액 미확인 1건", val)
             self.assertEqual(R["s7"]["undated_out_n"], 5)
             check_editions(self, R)

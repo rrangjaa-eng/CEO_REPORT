@@ -637,7 +637,7 @@ class TestApprovalRequests(unittest.TestCase):
     def test_unknowns_are_listed_not_summed(self):
         A = self.A
         io = lambda items, k: [e for e in items if e["io"] == k]  # noqa: E731
-        self.assertEqual((len(io(A["undated"], "in")), ssum_amounts(io(A["undated"], "in"))), (2, 38800000))
+        self.assertEqual((len(io(A["undated"], "in")), ssum_amounts(io(A["undated"], "in"))), (1, 30000000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
         self.assertEqual((len(io(A["undated"], "out")), ssum_amounts(io(A["undated"], "out"))), (4, 105000000))
         self.assertEqual((len(io(A["past"], "in")), ssum_amounts(io(A["past"], "in"))), (1, 110000000))
         self.assertEqual(len(io(A["past"], "out")), 0)
@@ -905,7 +905,7 @@ class TestApprovalPanel(unittest.TestCase):
                 "상태 확인 필요 1건 (일정 제외, 확인된 금액 1,100,000)",
                 "지급요청일 없음 2건 (목요일 14시 승인 → 금요일 지급 규칙으로 계산)",
                 "지급요청일 지남·대기 중 1건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)",
-                "날짜 없는 예정 금액: 입금 2건 38,800,000 · 지급 4건 105,000,000",
+                "날짜 없는 예정 금액: 입금 1건 30,000,000 · 지급 4건 105,000,000",  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
                 "예정일이 잔액 기준일(2026-11-02) 이전 또는 당일인 미처리: 입금 1건 110,000,000 · 지급 0건",
                 "기간 밖(8주 이후): 입금 1건 · 지급 26건 · 대기 요청 0건",
                 "잔액 미확인 0계좌",
@@ -916,7 +916,7 @@ class TestApprovalPanel(unittest.TestCase):
         P = self.A["panel"]
         self.assertEqual(P["amount_unknown"]["n"], len(self.A["amount_unknown"]))
         self.assertEqual((P["status_unknown"]["n"], P["status_unknown"]["sum"]), (1, 1100000))
-        self.assertEqual(P["undated"]["n"], 6)
+        self.assertEqual(P["undated"]["n"], 5)  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
         self.assertEqual((P["pending"]["n"], P["pending"]["sum"], P["pending"]["unknown"]), (5, 206964000, 1))
 
     def test_unknown_amount_event_is_listed_not_summed(self):
@@ -1092,7 +1092,7 @@ class TestApprovalLayout(unittest.TestCase):
 
     def test_attention_line(self):
         t = T(self.page, "attention")
-        self.assertTrue(t.startswith("확인 필요: 금액 미확인 요청 1건 · 상태 확인 필요 1건 · 날짜 없는 예정 금액 6건 · "
+        self.assertTrue(t.startswith("확인 필요: 금액 미확인 요청 1건 · 상태 확인 필요 1건 · 날짜 없는 예정 금액 5건 · "
                                      "프로젝트 미연결 1건 · 부가세 일정 미등록"), t)
         self.assertTrue(t.endswith(" → 아래 상세"), t)
         tail = len(self.A["issues"])

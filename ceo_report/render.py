@@ -645,7 +645,7 @@ def _s5(R):
                           _amt_unk(s5["issued"], s5["issued_unknown_n"]),
                           _amt_unk(s5["unissued"], s5["unissued_unknown_n"], "판단 불가"),
                           _amt_unk(s5["ar"], s5["ar_unknown_n"]), ""]))
-    h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가). 미수 = 발행 합계(VAT포함) − 입금액. "
+    h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가). 미수 = 발행 합계(VAT포함) − 입금액 − 같은 프로젝트 취소·수정(음수) 상계. "
              "완료일이 없으면 미발행 경과일을 계산하지 않음.</div>")
     h.append("<h3>발행 후 미수 (%d건)</h3>" % len(s5["ar_rows"]))
     rows = [[esc(v["project"]), esc(v["client"]), esc(d2s(v["date"])), esc(v["kind"]), W(v["total"]), W(v["paid"], "0"),
@@ -655,13 +655,26 @@ def _s5(R):
                    num_cols=(4, 5, 6, 9), total=["합계", "", "", "", "", "", W(sum(v["outstanding"] for v in s5["ar_rows"])), "", "", ""]))
     h.append("<h3>선수금·취소·환불·수정 (%d건)</h3>" % len(s5["specials"]))
     rows = [[esc(v["project"]), esc(v["client"]), esc(d2s(v["date"])), esc(v["kind"]), W(v["supply"]), W(v["vat"]),
-             W(v["paid"], "-"), esc(d2s(v["paid_date"], "-"))] for v in s5["specials"]]
-    h.append(table(["프로젝트", "거래처", "발행일", "구분", "공급가액", "부가세", "입금액", "입금일"], rows, num_cols=(4, 5, 6)))
+             W(v["paid"], "-"), esc(d2s(v["paid_date"], "-")), _credit_cell(v)] for v in s5["specials"]]
+    h.append(table(["프로젝트", "거래처", "발행일", "구분", "공급가액", "부가세", "입금액", "입금일", "미수 상계(VAT포함)"], rows,
+                   num_cols=(4, 5, 6, 8)))
+    h.append("<div class='note'>취소·수정(음수) 계산서는 같은 프로젝트(거래처를 알면 같은 거래처)의 남은 미수에서 빼고, "
+             "뺄 미수가 없는 금액은 입금예정으로 만들지 않음.</div>")
     if s5["no_project"]:
         h.append("<h3>프로젝트 미연결 계산서 (%d건)</h3>" % len(s5["no_project"]))
         rows = [[esc(v["project"] or "-"), esc(v["client"]), esc(d2s(v["date"])), W(v["supply"])] for v in s5["no_project"]]
         h.append(table(["프로젝트", "거래처", "발행일", "공급가액"], rows, num_cols=(3,)))
     return "".join(h)
+
+
+def _credit_cell(v):
+    """취소·수정 음수 계산서가 미수에서 뺀 금액 (뺄 미수가 없어 남은 금액도 함께)."""
+    if "credit_applied" not in v:
+        return ""
+    out = W(v["credit_applied"])
+    if v["credit_left"]:
+        out += _na(" · 뺄 미수 없음 %s" % won(v["credit_left"]))
+    return out
 
 
 def _vendor_unknown(v):

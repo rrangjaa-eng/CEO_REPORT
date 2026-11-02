@@ -259,6 +259,8 @@ def compute(d, kind, asof, start=None):
             v["outstanding"] = None  # 입금일은 있는데 입금액이 빈칸이면 미수액을 알 수 없다 (전액 미수로 단정하지 않음)
         else:
             v["outstanding"] = total - (v["paid"] or 0)
+    _net_credits(invs)
+    for v in invs:
         if v["kind"] in ("선수금", "취소", "환불", "수정"):
             specials.append(v)
         if v["outstanding"] and v["outstanding"] > 0 and v["kind"] != "환불":
@@ -553,6 +555,39 @@ def compute(d, kind, asof, start=None):
     }
     R["risks"] = risks(R)
     return R
+
+
+def _net_credits(invs):
+    """취소·수정 계산서의 음수 미수를 같은 프로젝트(거래처를 둘 다 알면 같은 거래처)의 남은 미수에서 뺀다.
+
+    계산서와 그 취소를 함께 넣어도 입금예정이 남지 않게 한다. 금액이 같은 미수 한 건을 먼저, 그다음 발행일 순으로 뺀다.
+    프로젝트 미수는 0 밑으로 내려가지 않는다: 뺄 미수가 없는 음수는 버리고(입금예정·환급을 만들지 않음) 'credit_left'로 남긴다.
+    """
+    for c in invs:
+        c.setdefault("netted", 0)
+    for c in invs:
+        if c["kind"] not in ("취소", "수정") or c["outstanding"] is None or c["outstanding"] >= 0:
+            continue
+        credit = -c["outstanding"]
+        if not c["project"] and not c["client"]:
+            c["credit_applied"], c["credit_left"] = 0, credit  # 프로젝트·거래처를 모두 모르면 어디서도 빼지 않는다
+            continue
+        cands = [v for v in invs if v is not c and v["kind"] != "환불" and v["project"] == c["project"]
+                 and v["outstanding"] is not None and v["outstanding"] > 0
+                 and (c["project"] or c["client"] == v["client"])
+                 and (not c["client"] or not v["client"] or c["client"] == v["client"])]
+        exact = [v for v in cands if v["outstanding"] == credit][:1]
+        rest = sorted((v for v in cands if not any(v is x for x in exact)),
+                      key=lambda v: (v["date"] is None, v["date"] or dt.date.min))
+        left = credit
+        for v in exact + rest:
+            if left <= 0:
+                break
+            take = min(left, v["outstanding"])
+            v["outstanding"] -= take
+            v["netted"] += take
+            left -= take
+        c["credit_applied"], c["credit_left"] = credit - left, left
 
 
 def _blank_proj(p, rate):

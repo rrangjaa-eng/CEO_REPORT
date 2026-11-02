@@ -199,5 +199,73 @@ class TestNegativeOutflow(unittest.TestCase):
         self.assertEqual(sum(A["data"]["base_out"]) - sum(A0["data"]["base_out"]), 30000000)
 
 
+# ───────────── 3. 취소·수정(음수) 계산서는 같은 프로젝트 미수를 줄인다 ─────────────
+def _inv(kind, supply, vat, due="", client="가상고객", date="2026-10-20", project="P26201", firm="Y"):
+    return [project, client, date, kind, supply, vat, due, firm, "", ""]
+
+
+class TestCancelNetting(unittest.TestCase):
+    def run_invoices(self, rows):
+        def edit(S):
+            S["계산서.csv"] = rows
+        return compute(load(sample_folder(self, edit)), "weekly", ASOF)
+
+    @staticmethod
+    def inflows(R):
+        return [(ev["date"], ev["amount"]) for ev in R["events"] if ev["source"] == "계산서"]
+
+    @staticmethod
+    def ar_of(R, pid):
+        return [x for x in R["s5"]["by_project"] if x["P"]["id"] == pid][0]["ar"]
+
+    def test_full_cancellation_leaves_no_inflow(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("취소", "-10,000,000", "-1,000,000", date="2026-10-25", firm="")])
+        self.assertEqual(self.inflows(R), [])
+        self.assertEqual(R["s5"]["ar_rows"], [])
+        self.assertEqual(R["s5"]["ar"], 0)
+        self.assertEqual(self.ar_of(R, "P26201"), 0)
+        self.assertEqual(R["s2"]["in4_firm"], 0)
+
+    def test_partial_correction_reduces_inflow(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("수정", "-2,000,000", "-200,000", date="2026-10-25", firm="")])
+        self.assertEqual(self.inflows(R), [(dt.date(2026, 11, 20), 8800000)])
+        self.assertEqual(R["s5"]["ar"], 8800000)
+        self.assertEqual(self.ar_of(R, "P26201"), 8800000)
+        self.assertEqual(R["s2"]["in4_firm"], 8800000)
+        import test_report as tr
+        s5 = tr.section(render(R, "ceo"), 5)
+        self.assertIn("미수 상계", s5)
+        self.assertIn("2,200,000", s5)  # 상계한 금액이 5번 묶음에 보인다
+
+    def test_receivable_never_below_zero_and_other_projects_untouched(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("취소", "-15,000,000", "-1,500,000", date="2026-10-25", firm=""),
+                               _inv("발행", "5,000,000", "500,000", "2026-11-25", project="P26203", client="C사")])
+        self.assertEqual(self.ar_of(R, "P26201"), 0)
+        self.assertEqual(self.ar_of(R, "P26203"), 5500000)
+        self.assertEqual(self.inflows(R), [(dt.date(2026, 11, 25), 5500000)])
+        self.assertEqual(R["s5"]["ar"], 5500000)
+        import test_report as tr
+        self.assertIn("뺄 미수 없음 5,500,000", tr.section(render(R, "ceo"), 5))
+
+    def test_known_different_client_is_not_netted(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("취소", "-10,000,000", "-1,000,000", client="다른고객", date="2026-10-25", firm="")])
+        self.assertEqual(self.inflows(R), [(dt.date(2026, 11, 20), 11000000)])
+
+    def test_blank_client_cancellation_nets_within_project(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("취소", "-10,000,000", "-1,000,000", client="", date="2026-10-25", firm="")])
+        self.assertEqual(self.inflows(R), [])
+
+    def test_both_editions_agree(self):
+        R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
+                               _inv("수정", "-2,000,000", "-200,000", date="2026-10-25", firm="")])
+        import test_report as tr
+        tr.check_editions(self, R)
+
+
 if __name__ == "__main__":
     unittest.main()
