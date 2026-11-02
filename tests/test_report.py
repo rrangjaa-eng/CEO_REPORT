@@ -1157,5 +1157,111 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
         check_editions(self, R)
 
 
+class TestAllUnknownTotals(unittest.TestCase):
+    """CR-03: 값이 모두 미확인인 합계는 0이 아니라 판단 불가·미확인이고, 일부 미확인이면 합계 옆에 건수가 붙는다 (D-02)."""
+
+    def test_ssum_or_none(self):
+        from ceo_report import util
+        ssum_or_none = util.ssum_or_none
+        self.assertEqual(ssum_or_none([]), (0, 0))
+        self.assertEqual(ssum_or_none([1, 2]), (3, 0))
+        self.assertEqual(ssum_or_none([1, None]), (1, 1))
+        self.assertEqual(ssum_or_none([None, None]), (None, 2))
+        self.assertEqual(ssum_or_none(iter([0, None])), (0, 1))
+
+    def edit(self, filename, mutate):
+        R = compute(load(probe_folder(self, filename, mutate)), "weekly", ASOF)
+        return R, render(R, "ceo")
+
+    def tot_row(self, html, n):
+        return table_cells(re.findall(r'<tr class="tot">.*?</tr>', section(html, n), re.S)[0])
+
+    def test_paid_cash_total_unknown_when_all_vat_blank(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[3] == "지급완료":
+                    r[5] = ""
+        R, html = self.edit("프로젝트집행.csv", mutate)
+        tot = R["s3"]["total"]
+        self.assertIsNone(tot["paid_cash"])
+        self.assertEqual(tot["paid_cash_unknown"], 7)
+        cell = self.tot_row(html, 3)[10]
+        self.assertIn("부가세 미확인 7건", cell)
+        self.assertNotRegex(cell, r"\d")
+        self.assertIsNotNone(sample_result()["s3"]["total"]["paid_cash"])
+        check_editions(self, R)
+
+    def test_partial_paid_cash_shows_count(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[2] == "무대제작사" and r[1] == "무대·구조물 2차":
+                    r[5] = ""
+        R, html = self.edit("프로젝트집행.csv", mutate)
+        tot = R["s3"]["total"]
+        self.assertEqual(tot["paid_cash_unknown"], 1)
+        self.assertIsNotNone(tot["paid_cash"])
+        self.assertIn("외 부가세 미확인 1건", self.tot_row(html, 3)[10])
+
+    def test_all_contracts_blank(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                r[7] = ""
+        R, html = self.edit("프로젝트.csv", mutate)
+        s5, s4 = R["s5"], R["s4"]
+        self.assertIsNone(s5["contract"])
+        self.assertEqual(s5["contract_missing"], 8)
+        self.assertIsNone(s5["unissued"])
+        self.assertEqual(s5["unissued_unknown_n"], 8)
+        self.assertIsNone(s4["unrecognized"])
+        self.assertEqual(s4["unrecognized_missing"], 8)
+        fs = first_screen(html)
+        self.assertIn("미등록 8건", kv_value(fs, "계약금액"))
+        self.assertIn("판단 불가 8건", kv_value(fs, "미발행금액"))
+        self.assertIn("미확인 8건", kv_value(fs, "계약 중 매출 미반영"))
+        for lab in ("계약금액", "미발행금액", "계약 중 매출 미반영"):
+            self.assertNotIn("0.0", kv_value(fs, lab), lab)
+        self.assertIn("미확인 8건", self.tot_row(html, 4)[4])
+        self.assertIn("미등록 8건", self.tot_row(html, 4)[2])
+        self.assertNotIn(">0<", self.tot_row(html, 4)[4])
+        check_editions(self, R)
+
+    def test_partial_unknown_counts_beside_first_screen_totals(self):
+        R = sample_result()
+        fs = first_screen(render(R, "ceo"))
+        self.assertEqual(R["s4"]["unrecognized_missing"], 1)
+        self.assertIn("618.0", kv_value(fs, "계약 중 매출 미반영"))
+        self.assertIn("미확인 1건", kv_value(fs, "계약 중 매출 미반영"))
+        self.assertIn("판단 불가 1건", kv_value(fs, "미발행금액"))
+        self.assertIn("미등록 1건", kv_value(fs, "계약금액"))
+        self.assertIn("미확인 1건", self.tot_row(render(R, "ceo"), 4)[4])
+
+    def test_category_total_unknown_when_every_row_unknown(self):
+        def mutate(rows):
+            rows.extend([["2026-11-20", "지급", "", "추정", "시험분류", "", "가나다", "청구서", ""],
+                         ["2026-11-21", "지급", "", "추정", "시험분류", "", "라마바", "청구서", ""]])
+        R, html = self.edit("자금일정.csv", mutate)
+        g = R["s6"]["by_cat"]["시험분류"]
+        self.assertIsNone(g["total"])
+        self.assertEqual(g["unknown"], 2)
+        self.assertEqual(R["s6"]["total"], 584_100_000)
+        row = re.findall(r"<tr[^>]*><td>시험분류</td>.*?</tr>", section(html, 6), re.S)[0]
+        cells = table_cells(row)
+        self.assertIn("미확인", cells[2])
+        self.assertNotRegex(cells[2], r"\d")
+        self.assertEqual(cells[4], "2건")
+        check_editions(self, R)
+
+    def test_all_nonproject_amounts_unknown_total_is_unknown(self):
+        def mutate(rows):
+            for r in rows[1:]:
+                if r[1] == "지급":
+                    r[2] = ""
+        R, html = self.edit("자금일정.csv", mutate)
+        self.assertIsNone(R["s6"]["total"])
+        val = kv_value(first_screen(html), "프로젝트 밖 지급예정 (등록분 전체)")
+        self.assertTrue(val.startswith('<span class="na">미확인</span>'), val)
+        self.assertIn("금액 미확인", val)
+
+
 if __name__ == "__main__":
     unittest.main()
