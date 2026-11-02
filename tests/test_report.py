@@ -1186,8 +1186,7 @@ class TestAllUnknownTotals(unittest.TestCase):
         self.assertIsNone(tot["paid_cash"])
         self.assertEqual(tot["paid_cash_unknown"], 7)
         cell = self.tot_row(html, 3)[10]
-        self.assertIn("부가세 미확인 7건", cell)
-        self.assertNotRegex(cell, r"\d")
+        self.assertEqual(re.sub(r"<[^>]+>", "", cell), "부가세 미확인 7건")
         self.assertIsNotNone(sample_result()["s3"]["total"]["paid_cash"])
         check_editions(self, R)
 

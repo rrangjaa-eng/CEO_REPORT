@@ -134,6 +134,13 @@ def ssum(values):
     return total, unknown
 
 
+def ssum_or_none(values):
+    """ssum과 같지만, 값이 있는데 전부 미확인이면 합계를 0이 아니라 None(판단 불가)으로 돌려준다 (D-02)."""
+    vals = list(values)
+    total, unknown = ssum(vals)
+    return (None if vals and unknown == len(vals) else total), unknown
+
+
 def won(v, empty="미확인"):
     if v is None:
         return empty

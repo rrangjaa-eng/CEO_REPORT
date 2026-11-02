@@ -4,7 +4,7 @@ import datetime as dt
 from collections import OrderedDict, defaultdict
 
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
-from .util import is_blank, setting_num, ssum, won, d2s
+from .util import is_blank, setting_num, ssum, ssum_or_none, won, d2s
 
 DAY = dt.timedelta(days=1)
 
@@ -173,6 +173,8 @@ def compute(d, kind, asof, start=None):
         if amt is None:
             P["unknown_cost"] += 1
             P["line_unknown"][e["state"]] += 1
+            if e["state"] == "지급완료":
+                P["paid_cash"] = None  # 공급가액을 모르면 실제 출금액도 알 수 없다
             continue
         st = e["state"]
         if st == "지급완료":
@@ -214,7 +216,9 @@ def compute(d, kind, asof, start=None):
         tot["budget"] = None  # 원가 예산이 하나도 없으면 합계는 0이 아니라 판단 불가 (D-02)
     tot["line_n"] = {st: sum(P["line_n"][st] for P in plist) for st in EXEC_STATES}
     tot["line_unknown"] = {st: sum(P["line_unknown"][st] for P in plist) for st in EXEC_STATES}
-    tot["paid_cash"], tot["paid_cash_unknown"] = ssum(P["paid_cash"] for P in plist)
+    # 지급완료 줄이 있는 프로젝트만 대상: 부가세·공급가액을 모르는 프로젝트가 전부면 0이 아니라 미확인 (D-02)
+    tot["paid_cash"], tot["paid_cash_unknown"] = ssum_or_none(
+        P["paid_cash"] for P in plist if P["line_n"]["지급완료"] > 0)
     tot["unknown_cost"] = sum(P["unknown_cost"] for P in plist)
     budgeted = [P for P in plist if P["budget"] is not None]
     tot["expected_budgeted"] = sum(P["expected"] for P in budgeted)
@@ -276,17 +280,23 @@ def compute(d, kind, asof, start=None):
                          "ar": out, "ar_unknown": out_unknown, "unissued_days": days,
                          "unknown": issued_unknown + out_unknown})
     no_proj_inv = [v for v in d.invoices if v["project"] not in proj]
-    c_tot, c_missing = ssum(P["contract"] for P in plist)
+    c_tot, c_missing = ssum_or_none(P["contract"] for P in plist)
+    unissued_tot, _ = ssum_or_none(x["unissued"] for x in inv_proj)
+    issued_tot, _ = ssum_or_none(x["issued"] for x in inv_proj)
+    ar_unknown_n = sum(1 for v in d.invoices if v["kind"] != "환불" and v["outstanding"] is None)
+    ar_tot = sum(v["outstanding"] for v in ar_rows)
+    if not ar_rows and ar_unknown_n:
+        ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
     R["s5"] = {
         "by_project": inv_proj, "ar_rows": ar_rows, "overdue": sorted(overdue, key=lambda v: -v["overdue_days"]),
         "specials": specials, "no_project": no_proj_inv,
         "contract": c_tot, "contract_missing": c_missing,
-        "issued": sum(x["issued"] for x in inv_proj if x["issued"] is not None),
+        "issued": issued_tot,
         "issued_unknown_n": sum(x["issued_unknown"] for x in inv_proj),
         "unissued_unknown_n": sum(1 for x in inv_proj if x["unissued"] is None),
-        "ar_unknown_n": sum(1 for v in d.invoices if v["kind"] != "환불" and v["outstanding"] is None),
-        "unissued": sum(x["unissued"] for x in inv_proj if x["unissued"] is not None),
-        "ar": sum(v["outstanding"] for v in ar_rows),
+        "ar_unknown_n": ar_unknown_n,
+        "unissued": unissued_tot,
+        "ar": ar_tot,
         "overdue_total": sum(v["outstanding"] for v in overdue),
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
     }
@@ -423,7 +433,7 @@ def compute(d, kind, asof, start=None):
             table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd)})
         pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months}
     R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
-               "unrecognized": sum(P["unrecognized"] for P in plist if P["unrecognized"] is not None),
+               "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
                "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None)}
 
     # ───────────── 6. 프로젝트 밖 지급과 지급의무 ─────────────
@@ -438,6 +448,9 @@ def compute(d, kind, asof, start=None):
             g["total"] += s["amount"]
         if s["date"] is None:
             g["undated"] += 1
+    for g in by_cat6.values():
+        if g["unknown"] == len(g["rows"]):
+            g["total"] = None  # 분류 안의 모든 줄이 금액 미확인이면 합계는 0이 아니라 미확인
     vendors = OrderedDict()
 
     def _vendor(name):
@@ -477,7 +490,7 @@ def compute(d, kind, asof, start=None):
                      "자금일정에 프로젝트 지급(%s)이 있음 — 프로젝트집행.csv와 중복일 수 있음" % s["cat"])
     R["s6"] = {"by_cat": by_cat6,
                "vendors": sorted(vendors.items(), key=lambda kv: (kv[1]["total"] is None, -(kv[1]["total"] or 0))),
-               "total": sum(g["total"] for g in by_cat6.values()),
+               "total": ssum_or_none(g["total"] for g in by_cat6.values())[0],
                "undated_n": sum(g["undated"] for g in by_cat6.values()),
                "unknown_n": sum(g["unknown"] for g in by_cat6.values())}
 
