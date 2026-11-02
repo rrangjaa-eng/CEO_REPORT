@@ -657,8 +657,9 @@ class TestConvertProvisional(unittest.TestCase):
         self.assertIn("  대조 매출 (41200 대변−차변): 원본 194,000,000 · CSV 미확인 → 판단 불가", lines)
         self.assertIn("  대조 직접비 (6xxxx (도) 차변−대변): 원본 259,500,000 · CSV 259,500,000 → 일치", lines)
         self.assertIn("대조 불일치 0건", lines)
-        self.assertIn("대조 판단 불가 1건", lines)
-        self.assertIn("대조 판단 불가 1건", out)
+        # 02-03: 회사 합계 확인 1건 + 프로젝트별 합계 확인(2026-10 매출) 1건
+        self.assertIn("대조 판단 불가 2건", lines)
+        self.assertIn("대조 판단 불가 2건", out)
         d = mod("data").load(input_dir)
         R = mod("calc").compute(d, "monthly", dt.date(2026, 10, 31))
         company = [t for t in R["s4"]["sources"]["WEHAGO"]["table"] if t["unit"] == "회사"][0]

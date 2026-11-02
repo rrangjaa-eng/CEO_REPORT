@@ -118,6 +118,7 @@ def _listing(groups):
 
 
 UNLINKED_PROJECT = "프로젝트 미연결"
+UNLINKED_TEAM = "미연결"
 MEASURES = (("revenue", "매출"), ("direct", "직접비"))   # 팀·프로젝트 줄에 싣는 값 (공통비는 배분 규칙이 없어 비움)
 
 
@@ -149,6 +150,42 @@ def _cell(pair):
     return None if pair[1] else pair[0]
 
 
+def _team_of(key, projects):
+    if key is None:
+        return UNLINKED_TEAM
+    if key not in projects:
+        return "팀 미확인"
+    return (projects[key]["team"] or "").strip() or "팀 미지정"
+
+
+def _team_totals(units, projects):
+    """프로젝트 열쇠별 합계 → 팀별 합계 (순서: 팀 이름순, 미연결 맨 뒤). 모르는 금액은 팀 칸도 모른다."""
+    teams = {}
+    for key, cells in units.items():
+        t = teams.setdefault(_team_of(key, projects), {"revenue": [0, 0], "direct": [0, 0]})
+        for measure, _ in MEASURES:
+            t[measure][0] += cells[measure][0]
+            t[measure][1] += cells[measure][1]
+    names = sorted(n for n in teams if n != UNLINKED_TEAM) + ([UNLINKED_TEAM] if UNLINKED_TEAM in teams else [])
+    return OrderedDict((n, teams[n]) for n in names)
+
+
+def _team_row(columns, ym, name, cells, final):
+    values = ["WEHAGO", ym, "팀", name, cell_amount(_cell(cells["revenue"])), cell_amount(_cell(cells["direct"])),
+              "", "" if final else "Y"]
+    return dict(zip(columns, values))
+
+
+def _unit_checks(ym, company, kind, groups):
+    """달·종류(매출/직접비)마다 한 줄: 회사 칸 = 팀(또는 프로젝트) 칸 합계 (미연결 포함). 모르는 칸이 하나라도 있으면 '판단 불가'."""
+    out = []
+    for measure, label in MEASURES:
+        unknown = any(g[measure][1] for g in groups)
+        out.append(Check("%s %s %s 합계(미연결 포함) = 회사" % (label, ym, kind), company[measure],
+                         None if unknown else sum(g[measure][0] for g in groups)))
+    return out
+
+
 def _project_row(columns, ym, key, cells, projects, snapshot, final):
     if key is None:
         target = UNLINKED_PROJECT
@@ -175,6 +212,7 @@ def build_pl(books, cfg, prev_rows, links=None):
     csv_sum = dict((k, 0) for k, _, _ in CATEGORIES)
     csv_unknown = dict((k, False) for k, _, _ in CATEGORIES)
     unit_totals = _unit_totals(links) if links is not None else {}
+    unit_checks = []
     for ym, cats in per.items():
         cells = {}
         for key, label, _ in CATEGORIES:
@@ -190,12 +228,23 @@ def build_pl(books, cfg, prev_rows, links=None):
                   cell_amount(cells["common"]), "" if int(ym[:4]) in closed else "Y"]
         rows.append(dict(zip(columns, values)))
         if links is not None:
-            units = unit_totals.get(ym, {})
-            for key in _project_order(list(units), links["projects"]):
-                rows.append(_project_row(columns, ym, key, units[key], links["projects"], links["snapshot"],
-                                         int(ym[:4]) in closed))
+            final = int(ym[:4]) in closed
+            units = unit_totals.get(ym, OrderedDict())
+            company = {"revenue": cells["revenue"], "direct": cells["direct"]}
+            if links["snapshot"]:   # 팀 이름은 인트라넷 프로젝트 목록에서만 온다 (P3-2)
+                teams = _team_totals(units, links["projects"])
+                rows.extend(_team_row(columns, ym, n, c, final) for n, c in teams.items())
+                unit_checks.extend(_unit_checks(ym, company, "팀별", list(teams.values())))
+            keys = _project_order(list(units), links["projects"])
+            rows.extend(_project_row(columns, ym, k, units[k], links["projects"], links["snapshot"], final) for k in keys)
+            unit_checks.extend(_unit_checks(ym, company, "프로젝트별", [units[k] for k in keys]))
     labels = _labels(cfg)
     checks = [Check(labels[k], source[k], None if csv_unknown[k] else csv_sum[k]) for k, _, _ in CATEGORIES]
+    checks.extend(unit_checks)
+    if links is not None:
+        if not links["snapshot"]:
+            notes.append("팀별 손익 없음 (인트라넷 스냅숏 없음)")
+        notes.append("팀·프로젝트 줄의 공통비는 비워 둠 (배분 규칙 없음)")
     for key, label, _ in CATEGORIES:
         n, total, unknown = undated[key]
         if n:

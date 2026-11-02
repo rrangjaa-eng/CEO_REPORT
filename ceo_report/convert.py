@@ -336,12 +336,64 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     costs = linking.link_costs(books, requests, projects, overrides, cfg["link_days"], cfg["direct_prefixes"],
                                cfg["direct_mark"], cfg["vat_codes"])
     revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])
+    unused = linking.unused_links(books, overrides, costs["used"] | revenue["used"])
     return {"costs": costs, "revenue": revenue, "projects": projects, "snapshot": snap is not None,
-            "requests": requests, "overrides": overrides, "notes": notes}
+            "requests": requests, "overrides": overrides, "notes": notes, "unused": unused}
+
+
+LINK_HINT = "프로젝트연결.csv에 전표일자·전표번호·줄·프로젝트번호를 적으면 다음 변환부터 그 프로젝트로 연결됩니다"
+
+
+def _basis_text(summary):
+    """'수동 0건 0 · 코드 9건 258,400,000 · 자동 0건 0 · 미연결 2건 1,100,000' (금액 모르는 줄은 건수를 덧붙인다)."""
+    parts = []
+    for basis, s in summary.items():
+        text = "%s %d건 %s" % (basis, s["count"], won(s["sum"]))
+        if s["unknown"]:
+            text += " (금액 미확인 %d건)" % s["unknown"]
+        parts.append(text)
+    return " · ".join(parts)
+
+
+def _unlinked_total(summary):
+    s = summary["미연결"]
+    return "%d건 %s%s" % (s["count"], won(s["sum"]), " (금액 미확인 %d건)" % s["unknown"] if s["unknown"] else "")
+
+
+def _list_order(ln):
+    no = ln["no"]
+    return (ln["date"].isoformat() if ln["date"] else "9999-99-99", (0, int(no), no) if no.isdigit() else (1, 0, no), ln["line"])
+
+
+def link_lines(links):
+    """변환결과.txt 의 연결 구역: 기준별 요약, 미연결 줄 목록 (원가 다음 매출, 날짜·전표번호·줄 순), 수동 지정 알림."""
+    out = ["[연결] 프로젝트 연결",
+           "  원가 줄: " + _basis_text(links["costs"]["summary"]),
+           "  매출 줄: " + _basis_text(links["revenue"]["summary"])]
+    listed = 0
+    for kind, result in (("원가", links["costs"]), ("매출", links["revenue"])):
+        for ln in sorted((x for x in result["lines"] if x["basis"] == "미연결"), key=_list_order):
+            parts = ["미연결", kind, ln["date"].isoformat() if ln["date"] else "날짜 없음", "%s-%d" % (ln["no"], ln["line"]),
+                     ln["vendor"], won(ln["amount"]), ln["memo"]]
+            out.append("  " + " ".join(p for p in parts if p != "") + " — " + ln["label"])
+            listed += 1
+    if listed:
+        out.append("  " + LINK_HINT)
+    for note in links["notes"]:
+        if not note.startswith("%s 없음" % linking.LINK_FILE):
+            out.append("  알림 " + note)
+    for key, project, why in links["unused"]:
+        out.append("  알림 %s %s %s-%d → %s: %s" % (linking.LINK_FILE, key[0], key[1], key[2], project, why))
+    return out
+
+
+def link_stdout_line(links):
+    return "프로젝트 연결: 원가 미연결 %s · 매출 미연결 %s (변환결과.txt 목록)" % (
+        _unlinked_total(links["costs"]["summary"]), _unlinked_total(links["revenue"]["summary"]))
 
 
 def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
-                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함"):
+                 snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
            _books_line(books, asof),
@@ -360,6 +412,8 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
             out.append("  대조 %s: 원본 %s · CSV %s → %s" % (c.label, won(c.source), won(c.csv), check_result(c)))
         for n in t.notes:
             out.append("  알림 " + n)
+    if links is not None:
+        out.extend(link_lines(links))
     out.append(backup_line)
     out.append("손대지 않은 파일: " + (", ".join(kept) if kept else "없음"))
     missing = [m for m in MANUAL if m not in kept]
@@ -407,7 +461,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         tables[0].notes.append("이전 손익.csv를 읽지 못해 WEHAGO 외 출처 줄을 옮기지 못함 (%s 에 원본 보관)" % where)
     kept = [m for m in MANUAL if os.path.exists(os.path.join(input_dir, m))]
     backup_line = "이전 파일: %s (%s)" % (where, ", ".join(moved)) if backup else "이전 파일: 없음"
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line)
+    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links)
     payloads = [(t.name, table_bytes(t)) for t in tables if t.written] + [("변환결과.txt", _text_bytes(lines))]
     try:
         write_files(input_dir, payloads, stamp, backup)
@@ -425,6 +479,8 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
                                              " · 기준일보다 %d일 이전" % late if late > 0 else ""))
     for t in tables:
         out.append("%s 만듦 %d줄" % (t.name, len(t.rows)) if t.written else "%s 만들지 않음 — %s" % (t.name, t.reason))
+    if res.links is not None:
+        out.append(util.mask_rrn(link_stdout_line(res.links)))
     if backup:
         out.append(backup_line)
     if _undecided(tables):
