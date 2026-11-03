@@ -107,5 +107,26 @@ class TestPlanInCalc(unittest.TestCase):
         self.assertFalse(any(e["source"] == "자금계획서" for e in R["events"]))
 
 
+class TestPlanInReport(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        refresh()
+
+    def test_report_explains_plan_basis(self):
+        from ceo_report.render import render
+        folder = TestPlanInCalc.folder(self)
+        html = render(compute(load(folder), "weekly", ASOF), "mgmt")
+        self.assertIn("일정 기준: WEHAGO 자금계획서 (자료일 2026-11-02, 2026-11)", html)
+        self.assertIn("자금계획서에 없는 기존 일정", html)
+        self.assertIn("이미 지급·입금되어 일정에서 뺀 자금계획서 줄 (1건)", html)
+        self.assertIn("자금계획서로 날짜가 바뀐 일정 (1건)", html)
+
+    def test_stale_plan_is_said(self):
+        from ceo_report.render import render
+        folder = TestPlanInCalc.folder(self, stamp="2026-10-20")
+        html = render(compute(load(folder), "weekly", ASOF), "mgmt")
+        self.assertIn("자금계획서 쓰지 않음", html)
+
+
 if __name__ == "__main__":
     unittest.main()
