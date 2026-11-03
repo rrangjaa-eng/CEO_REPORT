@@ -56,10 +56,10 @@ class TestWeeklyHasNoPastDue(unittest.TestCase):
         R["events"] = R["events"] + [
             {"date": D(2026, 10, 20), "io": "out", "amount": 7, "desc": "지난 것", "firm": True, "cat": "x"}]
         self.assertFalse([e for e in week_outflows(R)["rows"] if e["desc"] == "지난 것"])
-        R2 = compute(load(SAMPLE), "weekly", D(2026, 11, 6))   # 금요일 당일 보고: 그날 것은 금요일 목록에
+        R2 = compute(load(SAMPLE), "weekly", D(2026, 11, 6))   # 금요일 당일 보고: 그날 것은 이미 나간 것 (자금 표와 같은 규칙)
         W = week_outflows(R2)
-        self.assertEqual(W["fri"], D(2026, 11, 6))
-        self.assertTrue(all(e["date"] >= D(2026, 11, 6) for e in W["rows"]))
+        self.assertEqual(W["fri"], D(2026, 11, 13))
+        self.assertTrue(all(e["date"] > D(2026, 11, 6) for e in W["rows"]))
 
     def test_monthly_still_has_the_past_due_box(self):
         M = render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo")

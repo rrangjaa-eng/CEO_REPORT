@@ -320,7 +320,8 @@ def apply(events, plan, asof, stale_days, problem=""):
               "cat": "자금계획서 " + (p["cat"] or p["io"]), "desc": p["vendor"],
               "basis": "자금계획서 예정일 %s (%s)" % (p["date"].isoformat(), p["file"] or "자료일 %s" % p["stamp"]),
               "project": old["project"] if old else "", "source": "자금계획서", "plan_state": p["state"]}
-        if p["state"] == "예정일 지남":
+        # 변환 때 '예정'이었어도 보고 기준일에 날짜가 지났으면 같은 규칙 (2026-11-03 검토: 그대로 두면 일정에서 빠져 자금이 커 보임)
+        if p["state"] == "예정일 지남" or (p["state"] == "예정" and p["date"] <= asof):
             if io == "out":
                 ev["date"] = _next_friday(asof)
                 ev["basis"] += ", 예정일 지난 미지급 → 다음 금요일"

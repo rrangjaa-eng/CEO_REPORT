@@ -730,11 +730,13 @@ from .calc import PAY_WEEKDAY  # noqa: E402  금요일 출금 (사용자 2026-11
 def week_outflows(R):
     """주간 대표 보고의 지급 목록 (사용자 2026-11-03: 매주 금요일 출금).
 
-    fri  = 기준일 뒤 첫 금요일(기준일이 금요일이면 그날)까지 나갈 것 + 예정일이 지났는데 아직 처리되지 않은 것 → 금요일 출금 목록
+    fri  = 기준일 뒤 첫 금요일까지 나갈 것 → 금요일 출금 목록. 기준일이 금요일이면 그날 것은 이미 나간 것으로 보고(자금 표와 같은 규칙)
+           다음 금요일 목록을 보인다 (2026-11-03 검토: 목록과 자금 표가 어긋나 가용자금이 커 보이던 것 고침)
     next = 그 금요일 다음 날(토)부터 다음 금요일까지 → 다음 주 지급 예정
     날짜 순, 같은 날은 금액 큰 순. 금액을 모르는 줄은 0으로 치지 않고 따로 센다."""
+    from .calc import pay_friday
     asof = R["asof"]
-    fri = asof + dt.timedelta(days=(PAY_WEEKDAY - asof.weekday()) % 7)
+    fri = pay_friday(asof)
     end = fri + dt.timedelta(days=7)   # 다음 주 = 토요일부터 다음 금요일까지 (사용자 2026-11-03)
     rows = []
     for e in R["events"]:
@@ -1109,7 +1111,12 @@ def month_flow(R):
         b = idx.get((ev["date"].year, ev["date"].month))
         if b is not None:
             b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
-    start = None if s2["start"] is None else s2["start"] - s1["in"] + s1["out"]
+    # 월초 가용액 = 지금 가용액 − 이번 달 입금 + 출금. 잔액을 모르는(가용액에 안 든) 계좌의 이번 달 입출금은 되돌리지 않는다 (2026-11-03 검토)
+    known = set(a["account"] for a in s1["accounts"] if a["balance"] is not None)
+    ext = [t for t in s1.get("txns", []) if t["account"] in known and t["cat"] != "계좌간이체"]
+    k_in = sum(t["amount"] for t in ext if t["io"] == "입금")
+    k_out = sum(t["amount"] for t in ext if t["io"] == "출금")
+    start = None if s2["start"] is None else s2["start"] - k_in + k_out
     bf = ba = start
     for b in bs:
         if start is None:

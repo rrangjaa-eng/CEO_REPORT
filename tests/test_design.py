@@ -184,12 +184,14 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertNotIn("<table class='sign'>", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                                 dt.date(2026, 10, 31)), "ceo"))
 
-    def test_friday_is_the_report_day_itself_when_asof_is_friday(self):
+    def test_friday_report_lists_next_friday_like_the_cash_table(self):
         from ceo_report.render import week_outflows
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 11, 5))
         self.assertEqual(week_outflows(R)["fri"], dt.date(2026, 11, 6))   # 목요일 보고 → 다음 날 금요일
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 11, 6))
-        self.assertEqual(week_outflows(R)["fri"], dt.date(2026, 11, 6))
+        # 금요일 보고: 그날 것은 자금 표처럼 이미 나간 것 → 다음 금요일 목록 (2026-11-03 검토, 목록 = 자금 표)
+        self.assertEqual(week_outflows(R)["fri"], dt.date(2026, 11, 13))
+        self.assertEqual(R["s2"]["periods"][0]["end"], dt.date(2026, 11, 13))
 
     def test_monthly_shows_team_sales_and_margin(self):
         """월간 대표 보고 팀별 표 (사용자 2026-11-03): 매출·매출총이익·수익률은 상세 4번(s4)과 같고, 급여·판관비는 부서비용.csv

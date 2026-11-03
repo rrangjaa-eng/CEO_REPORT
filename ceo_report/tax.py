@@ -60,7 +60,30 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
         return (any(_sq(x["account_code"]) in out_codes and (x.get("debit") or 0) for x in lines)
                 and not any(c in in_codes for c in codes) and not any(c.startswith("4") for c in codes))
     payments = set(k for k, lines in slips.items() if k[0] is not None and is_payment(lines))
+
+    def is_offset_settle(lines):   # 한 전표 정리: 예수금 차변 / 대급금 대변 / 미지급세금(또는 통장) 대변 (2026-11-03 검토)
+        return (any(_sq(x["account_code"]) in out_codes and (x.get("debit") or 0) for x in lines)
+                and any(_sq(x["account_code"]) in in_codes and (x.get("credit") or 0) for x in lines)
+                and any(_sq(x["account_code"]) not in out_codes | in_codes and (x.get("credit") or 0) for x in lines)
+                and not any(_sq(x["account_code"]).startswith("4") for x in lines))
+    for k, lines in slips.items():
+        if k[0] is not None and k not in payments and is_offset_settle(lines):
+            payments.add(k)
     cash = set(k for k in payments if _from_bank(slips[k]))   # 통장에서 바로 낸 것 (미지급비용으로 잡은 것은 아직 안 나감)
+
+    def payable_of(lines):   # 납부 금액 = 예수금·대급금이 아닌 계정 대변 (미지급세금·통장)
+        return sum((x.get("credit") or 0) for x in lines if _sq(x["account_code"]) not in out_codes | in_codes)
+
+    def cleared(key):   # 미지급으로 잡은 납부액을 그 뒤 기준일까지 통장에서 갚았나 (2026-11-03 검토: 두 번 빠지지 않게)
+        acc = set(_sq(x["account_code"]) for x in slips[key]
+                  if _sq(x["account_code"]) not in out_codes | in_codes and (x.get("credit") or 0))
+        amt = payable_of(slips[key])
+        for k2, lines in slips.items():
+            if k2[0] is None or k2 == key or not (key[0] <= k2[0] <= asof) or not _from_bank(lines):
+                continue
+            if sum((x.get("debit") or 0) for x in lines if _sq(x["account_code"]) in acc) >= amt > 0:
+                return True
+        return False
     dated = [ln["date"] for ln in journal if ln["date"] is not None]
     if not dated:
         return []
@@ -79,9 +102,10 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
             if day is None:
                 continue
             if key in payments:
-                if q_end < day <= due:   # 이 분기분 납부(또는 미지급 계상) 전표: 확정 금액
-                    settled = (settled or 0) + sum((x.get("debit") or 0) for x in lines if _sq(x["account_code"]) in out_codes)
-                    paid = paid or (key in cash and day <= asof)
+                inside = q_start <= day <= q_end and is_offset_settle(lines)   # 분기 안 한 전표 정리
+                if q_end < day <= due or inside:   # 이 분기분 납부(또는 미지급 계상) 전표: 확정 금액
+                    settled = (settled or 0) + payable_of(lines)
+                    paid = paid or (day <= asof and (key in cash or cleared(key)))
                 continue
             if not q_start <= day <= q_end:
                 continue
@@ -480,6 +504,9 @@ def _io(t):
     return "in" if t["kind"] == DEPOSIT_IN else "out"
 
 
+NOT_TAX = ("남은 예산", "프로젝트집행", "계산서")
+
+
 def merge(events, taxes):
     """세금 예상을 일정에 넣는다. 이미 일정(자금계획서·자금일정 등)에 같은 세금이 있으면 넣지 않고 그 금액과 비교만 한다.
 
@@ -511,6 +538,8 @@ def merge(events, taxes):
             if found[n] is not None:
                 continue
             for i, ev in enumerate(events):
+                if ev.get("source") in NOT_TAX:   # 프로젝트 원가·남은 예산 줄은 세금이 아니다 (근거 글에 '부가세 10%'가 있어도)
+                    continue
                 if i not in taken and near(ev, t) and test(ev, t):
                     found[n] = ev
                     taken.add(i)

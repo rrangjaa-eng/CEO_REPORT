@@ -379,9 +379,14 @@ def _plan_notes(F, moved, absent):
 
 
 def _budget_note(budget_sched):
-    """D-54: 남은 예산(원가 예산 − 예상총집행)을 지급 예정으로 넣은 건수·금액."""
-    return ("프로젝트 남은 예산 지급 예정 %s (원가 예산 − 예상집행, 부가세 10%% 더함, 행사일 다음 달 말 금요일)"
-            % _count_text(budget_sched))
+    """D-54: 남은 예산(원가 예산 − 예상총집행)을 지급 예정으로 넣은 프로젝트 수·금액 (8주 안에 든 몫).
+    2026-11-03 사용자 결정: 다음 금요일부터 행사일 다음 달 말 금요일까지 매주 금요일로 나눠 잡으므로 줄 수가 아니라 프로젝트 수로 센다."""
+    projects = sorted(set(e.get("project") or "" for e in budget_sched))
+    total, _ = ssum_or_none(e["amount"] for e in budget_sched)
+    if not budget_sched:
+        return "프로젝트 남은 예산 지급 예정 0건"
+    return ("프로젝트 남은 예산 지급 예정 %d개 프로젝트 · 8주 안 %s (원가 예산 − 예상집행, 부가세 10%% 더함, "
+            "다음 금요일부터 행사일 다음 달 말 금요일까지 매주 나눠 잡음)" % (len(projects), won(total or 0)))
 
 
 NOT_LISTED = "(프로젝트 목록에 없음)"   # 월간 대조(convert_xchk)와 같은 글자

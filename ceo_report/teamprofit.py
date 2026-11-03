@@ -80,7 +80,9 @@ def build(pl_table, dept_rows, ym, ytd=False):
     def cost(d):
         if costs is None:
             return None, None, None
-        c = costs.get(d, {"salary": 0, "sga": 0, "heads": None})
+        if d not in costs:   # 손익엔 있는데 부서비용에 없는 팀 (이름이 다르거나 빠짐): 0이 아니라 미확인 (2026-11-03 검토)
+            return None, None, None
+        c = costs[d]
         return c["salary"], c["sga"], c["heads"]
 
     def team_row(t):
