@@ -22,7 +22,7 @@ for _p in (ROOT, HERE):
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 from test_approval import (ASOF, COLLECTED, FAKE_PAYMENTS, FAKE_PROJECTS, NOW, as_dicts,  # noqa: E402
                            write_fake_snapshot)
-from test_wehago import FAKE_JOURNAL, _jl, write_fake_books  # noqa: E402
+from test_wehago import FAKE_JOURNAL, FAKE_LEDGER, LEDGER_HEADER, _L, _jl, write_fake_books, write_xlsx  # noqa: E402
 
 
 def mod(name):
@@ -742,6 +742,111 @@ class TestLinkingNoSnapshot(unittest.TestCase):
         # 가상강사 800,000 은 요청 6101 의 후보: 줄 22 가 자동 연결된다 (같은 거래처·금액·기간)
         self.assertEqual((ln["basis"], ln["request"], ln["project"]), ("자동", "6101", "26201"))
         self.assertIsNone(re.search(r"\d{6}\s*[-.]?\s*\d{7}", repr(reqs)))
+
+
+# ───────────── 매입매출장 프로젝트명 칸 (D-53) ─────────────
+PJ_HEADER = LEDGER_HEADER + ["Code", "계정과목", "Code", "부서명", "Code", "프로젝트명", "Code", "카드사명"]
+
+
+def _pj(row, project):
+    """FAKE_LEDGER 모양 줄 + 추가 8열 (프로젝트명만 채움)."""
+    return list(row) + ["61101", "행사외주비", "", "", "P1" if project else "", project, "", ""]
+
+
+def pj_ledger(extra_rows=()):
+    rows = [_pj(r, "") for r in FAKE_LEDGER]
+    # 1: 적요 코드 26201 과 다른 프로젝트명 (프로젝트명이 이긴다)
+    rows[0][-3] = "[26220] 가상 전시"
+    rows += [list(r) for r in extra_rows]
+    return rows
+
+
+PJ_EXTRA = [
+    # 22: 적요 코드 없음 -> 프로젝트명으로 연결 (공백 없는 '[26201]가상' 모양도 읽는다)
+    _pj(_L("매입", "2026-10-29", 22, "가상강사", "", "강사료", 800000, 0), "[26201]가상 컨퍼런스"),
+    # 23: 적요 코드 26999(목록에 없음) + 프로젝트명 26221 -> 26221
+    _pj(_L("매입", "2026-10-29", 23, "가상기타", "", "[26999] 가상 기타 행사", 300000, 0), "[26221] 가상 워크숍"),
+    # 32: 매출 줄 프로젝트명 -> 매출 연결에도 쓴다
+    _pj(_L("매출", "2026-10-28", 32, "가상고객X", "", "기타 용역", 20000000, 2000000), "[26221] 가상 워크숍"),
+]
+
+
+def setup_pj(test, journal=FAKE_JOURNAL, ledger=None, header=PJ_HEADER):
+    tmp = new_tmp(test)
+    folder = os.path.join(tmp, "book")
+    write_fake_books(folder, journal=journal)
+    write_xlsx(os.path.join(folder, "매입매출장_20261031.xlsx"),
+               [header] + (pj_ledger(PJ_EXTRA) if ledger is None else ledger))
+    books = mod("wehago").load_books(folder, ASOF, None)
+    assert books.state == "ok", books.reason
+    snap = link_snapshot(os.path.join(tmp, "snap"), extra=None)
+    L = mod("linking")
+    return L, books, L.requests_of(snap, ASOF, NOW), L.projects_of(snap)
+
+
+class TestLinkingProjectColumn(unittest.TestCase):
+    def test_books_keep_slip_projects_for_purchase_and_sales(self):
+        _, books, _, _ = setup_pj(self)
+        self.assertEqual(books.slip_projects[("2026-10-20", "1")], "26220")
+        self.assertEqual(books.slip_projects[("2026-10-29", "22")], "26201")
+        self.assertEqual(books.slip_projects[("2026-10-28", "32")], "26221")
+        self.assertNotIn(("2026-10-21", "2"), books.slip_projects)   # 프로젝트명 빈칸
+
+    def test_no_project_column_means_empty_map(self):
+        tmp = new_tmp(self)
+        books = write_link_books(os.path.join(tmp, "b"), FAKE_JOURNAL)
+        self.assertEqual(books.slip_projects, {})
+        L = mod("linking")
+        snap = link_snapshot(os.path.join(tmp, "snap"), extra=None)
+        res = L.link_costs(books, L.requests_of(snap, ASOF, NOW), L.projects_of(snap), {})
+        (ln,) = by_no(res)["1"]
+        self.assertEqual((ln["project"], ln["label"]), ("26201", "코드 [26201]"))
+
+    def test_cost_order_manual_then_project_column_then_memo_code(self):
+        L, books, reqs, projects = setup_pj(self)
+        res = L.link_costs(books, reqs, projects, {})
+        n = by_no(res)
+        (a,) = n["1"]
+        self.assertEqual((a["project"], a["basis"], a["label"]),
+                         ("26220", "코드", "프로젝트명 [26220] (적요 코드 [26201]와 다름)"))
+        (b,) = n["22"]
+        self.assertEqual((b["project"], b["basis"], b["label"], b["request"]),
+                         ("26201", "코드", "프로젝트명 [26201]", None))
+        (c,) = n["23"]
+        self.assertEqual((c["project"], c["basis"], c["label"]), ("26221", "코드", "프로젝트명 [26221]"))
+        (d,) = n["2"]
+        self.assertEqual((d["project"], d["label"]), ("26220", "코드 [26220]"))
+        manual = L.link_costs(books, reqs, projects, {("2026-10-20", "1", 1): "26203"})
+        (m,) = by_no(manual)["1"]
+        self.assertEqual((m["project"], m["basis"]), ("26203", "수동"))
+
+    def test_project_column_code_not_in_list_falls_back_to_memo_code(self):
+        rows = pj_ledger()
+        rows[0][-3] = "[26888] 없는 프로젝트"
+        L, books, reqs, projects = setup_pj(self, ledger=rows)
+        (a,) = by_no(L.link_costs(books, reqs, projects, {}))["1"]
+        self.assertEqual((a["project"], a["basis"], a["label"]), ("26201", "코드", "코드 [26201]"))
+
+    def test_no_project_list_uses_project_column_as_is(self):
+        L, books, _, _ = setup_pj(self)
+        (b,) = by_no(L.link_costs(books, [], {}, {}))["22"]
+        self.assertEqual((b["project"], b["basis"], b["label"]), ("26201", "코드", "프로젝트명 [26201] (%s)" % L.NO_LIST))
+
+    def test_revenue_uses_sales_row_project_column(self):
+        L, books, _, projects = setup_pj(self, journal=FAKE_JOURNAL + REV_LINES)
+        res = L.link_revenue(books, projects, {})
+        (c,) = by_no(res)["32"]
+        self.assertEqual((c["project"], c["basis"], c["label"], c["amount"]),
+                         ("26221", "코드", "프로젝트명 [26221]", 20000000))
+        self.assertEqual(total(res), 194000000)
+
+    def test_conflicting_rows_for_one_slip_are_not_used(self):
+        rows = pj_ledger(PJ_EXTRA)
+        rows.append(_pj(_L("매입", "2026-10-29", 22, "가상강사", "", "강사료 2", 100000, 0), "[26203] 가상 전시부스"))
+        L, books, reqs, projects = setup_pj(self, ledger=rows)
+        self.assertNotIn(("2026-10-29", "22"), books.slip_projects)
+        (b,) = by_no(L.link_costs(books, reqs, projects, {}))["22"]
+        self.assertNotEqual(b["label"][:5], "프로젝트명")
 
 
 class TestLinkingScope(unittest.TestCase):
