@@ -316,7 +316,7 @@ class TestChecksAndOutput(Base):
                             "--입력", SAMPLE, "--출력", out, "--pdf", "안함"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(os.listdir(out)),
-                         ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
+                         ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html", "지급예정기록"])
 
 
 class TestUnknownBalance(unittest.TestCase):
@@ -800,7 +800,7 @@ class TestCliOutputs(unittest.TestCase):
             rc = cli.main(["주간", "--기준일", "2026-11-02", "--입력", SAMPLE, "--출력", out])
         self.assertEqual(rc, 0)
         self.assertEqual(sorted(os.listdir(out)),
-                         ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html"])
+                         ["2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_대표보고.html", "지급예정기록"])
         self.assertIn("Edge/Chrome을 찾지 못해", buf.getvalue())
 
     def test_cli_pdf_when_browser_available(self):
@@ -812,7 +812,7 @@ class TestCliOutputs(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(os.listdir(out)), [
             "2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_경영관리보고.pdf",
-            "2026-11-02_주간_대표보고.html", "2026-11-02_주간_대표보고.pdf"])
+            "2026-11-02_주간_대표보고.html", "2026-11-02_주간_대표보고.pdf", "지급예정기록"])
         for name in os.listdir(out):
             if name.endswith(".pdf"):
                 with open(os.path.join(out, name), "rb") as f:
@@ -1387,7 +1387,7 @@ class TestCliArguments(unittest.TestCase):
         rc, text, files = self.run_cli("--시작일", "2026-10-20")
         self.assertEqual(rc, 0)
         self.assertIn("집계 기간 2026-10-20 ~ 2026-11-02", text)
-        self.assertEqual(len(files), 2)
+        self.assertEqual(len(files), 3)   # 보고서 2개 + 지급예정기록 폴더 (주간)
 
 
 class TestPdfLaunch(unittest.TestCase):

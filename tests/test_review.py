@@ -118,9 +118,10 @@ class TestRrnMasked(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertNotIn(FAKE_RRN, buf.getvalue())
         self.assertIn(MASK, buf.getvalue())
-        for name in os.listdir(out):
-            with open(os.path.join(out, name), encoding="utf-8") as f:
-                self.assertNotIn(FAKE_RRN, f.read())
+        for folder, _, names in os.walk(out):   # 지급예정기록 폴더 안의 기록도 본다
+            for name in names:
+                with open(os.path.join(folder, name), encoding="utf-8-sig") as f:
+                    self.assertNotIn(FAKE_RRN, f.read())
 
     def test_approval_cli_stdout_masked(self):
         import test_approval as ta

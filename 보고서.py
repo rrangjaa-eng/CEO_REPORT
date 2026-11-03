@@ -154,6 +154,10 @@ def main(argv=None):
         # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
         from ceo_report.convert_xchk import load_xchk
         R["xchk"] = load_xchk(a.입력)
+    if kind == "weekly":
+        # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
+        from ceo_report.weekdiff import load_previous
+        R["week_prev"] = load_previous(a.출력, asof)
     label = "주간" if kind == "weekly" else "월간"
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
@@ -174,6 +178,12 @@ def main(argv=None):
                 pdf_failed = True
             else:
                 made.append(base + ".pdf")
+    if kind == "weekly":
+        from ceo_report.weekdiff import write_record
+        try:
+            made.append(write_record(a.출력, R))
+        except OSError as e:
+            _say("지급 예정 기록을 남기지 못했습니다 (다음 주 변동 비교에 쓰임): %s" % e)
     _say("보고 기준일 %s · 집계 기간 %s ~ %s" % (asof, R["period"][0], R["period"][1]))
     _say("만든 파일:")
     for m in made:

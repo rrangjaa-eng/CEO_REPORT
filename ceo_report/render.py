@@ -252,7 +252,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}table.pt.wo tr.gone td{color:var(--sub);text-decoration:line-through}table.pt.wo tr.gone td:last-child,table.pt.wo tr.gone td:nth-child(6){text-decoration:none}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -533,24 +533,64 @@ def week_outflows(R):
 
 
 def _week_out_table(R):
+    """이번 주 지급 목록 + 지난주 예상 대비 (사용자 2026-11-03). 지난주 기록은 보고서.py 가 읽어 R['week_prev']에 둔다.
+
+    지난주 기록이 있으면 줄마다 '지난주 대비' 칸을 두고, 지난주엔 있었는데 지금 목록에 없는 지급은 '빠짐' 줄로 덧붙인다."""
+    from .weekdiff import compare
     W_ = week_outflows(R)
+    prev = R.get("week_prev")
+    C = compare(prev, [e for e in W_["rows"] if not e["overdue"]], W_["start"], W_["end"]) if prev else None
+    md = lambda d: d2s(d)[5:].replace("-", "/")
     h = ["<div class='card'><table class='pt wo'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
-         "<th>금액</th><th>상태</th></tr></thead><tbody>"]
+         "<th>금액</th><th>상태</th>%s</tr></thead><tbody>" % ("<th>지난주 대비</th>" if C else "")]
+    cols = 7 if C else 6
     if not W_["rows"]:
-        h.append("<tr><td colspan='6'>이번 주 지급 예정 없음</td></tr>")
+        h.append("<tr><td colspan='%d'>이번 주 지급 예정 없음</td></tr>" % cols)
+
+    def vs(c):
+        if c is None:
+            return ""
+        k = c["kind"]
+        if k == "같음":
+            return "같음"
+        if k == "새로 생김":
+            return "새로 생김"
+        if k == "날짜 바뀜":
+            return "날짜 %s에서 옮김" % md(c["prev_date"])
+        if k in ("금액 확인됨", "금액 미확인"):
+            return "지난주 %s" % ("미확인" if c["prev"] is None else won(c["prev"]))
+        d = (c["cur"] or 0) - (c["prev"] or 0)
+        return "%s%s (지난주 %s)" % ("+" if d > 0 else "", won(d), won(c["prev"]))
     for e in W_["rows"]:
         state = "예정일 지남" if e["overdue"] else ("확정" if e["firm"] else "예상")
         amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
-        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td></tr>"
-                 % (" class='od'" if e["overdue"] else "", esc(d2s(e["date"])[5:].replace("-", "/")), esc(e.get("desc") or ""),
-                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state)))
+        extra = ("<td>%s</td>" % esc("—" if e["overdue"] else vs(C["by_cur"].get(id(e))))) if C else ""
+        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td>%s</tr>"
+                 % (" class='od'" if e["overdue"] else "", esc(md(e["date"])), esc(e.get("desc") or ""),
+                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state), extra))
+    for c in (C["changes"] if C else []):
+        if c["kind"] == "빠짐":
+            h.append("<tr class='gone'><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td></td><td>목록에서 빠짐</td><td>%s</td></tr>"
+                     % (esc(md(c["prev_date"])), esc(c["desc"]), esc(c["project"]), esc(c["cat"]),
+                        esc("지난주 미확인" if c["prev"] is None else "−%s (지난주 %s)" % (won(c["prev"]), won(c["prev"])))))
     h.append("</tbody></table>")
     tail = "확정 %s · 예상 %s" % (won(W_["firm"]), won(W_["est"]))
     if W_["overdue"]:
         tail += " · 예정일 지난 미처리 %s (위 1주 지급 예정에는 안 들어감)" % won(W_["overdue"])
     if W_["unknown_n"]:
         tail += " · 금액 미확인 %d건" % W_["unknown_n"]
-    h.append("<div class='note'>%s건 · 합계 %s</div></div>" % (len(W_["rows"]), esc(tail)))
+    h.append("<div class='note'>%s건 · 합계 %s</div>" % (len(W_["rows"]), esc(tail)))
+    if C is None:
+        h.append("<div class='note'>지난주 예상 기록 없음 — 주간 보고를 만들 때마다 지급 예정을 기록해 두고 다음 주 보고부터 비교합니다</div>")
+    else:
+        def total(t, unknown):
+            return won(t) + (" (금액 미확인 %d건 제외)" % unknown if unknown else "")
+        diff = "미확인 (금액 미확인 줄이 있음)" if C["diff"] is None else (
+            "%s%s" % ("+" if C["diff"] > 0 else "", won(C["diff"])) if C["diff"] else "변동 없음")
+        h.append("<div class='wchg'>%s</div><div class='note'>빠짐 = 이미 지급됐거나 날짜가 이번 주 밖으로 옮겨진 것. "
+                 "예정일 지난 미처리는 비교에서 뺌</div>" % esc("지난주(%s) 예상 %s → 지금 %s · 변동 %s" % (
+                     md(C["asof"]), total(C["prev_total"], C["prev_unknown"]), total(C["cur_total"], C["cur_unknown"]), diff)))
+    h.append("</div>")
     return "".join(h)
 
 
@@ -581,6 +621,11 @@ def _first_screen(R, mode, per):
     monthly = R["kind"] == "monthly"
     h = ["<div class='page fs'>"]
     i = 0
+    if not monthly:   # 주간은 이번 주 지급 목록이 맨 위 (사용자 2026-11-03)
+        wo = week_outflows(R)
+        h.append(_q(i, "이번 주 지급 예정 (%s ~ %s)" % (d2s(wo["start"])[5:].replace("-", "/"), d2s(wo["end"])[5:].replace("-", "/"))))
+        i += 1
+        h.append(_week_out_table(R))
     if monthly:
         h.append(_q(i, "이번 달 자금 흐름"))
         h.append(_flow_card(s1, per))
@@ -590,11 +635,6 @@ def _first_screen(R, mode, per):
     h.append(_avail_table(R))
     h.append("<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
              % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))
-    if not monthly:
-        wo = week_outflows(R)
-        h.append(_q(i, "이번 주 지급 예정 (%s ~ %s)" % (d2s(wo["start"])[5:].replace("-", "/"), d2s(wo["end"])[5:].replace("-", "/"))))
-        i += 1
-        h.append(_week_out_table(R))
     blocks = [("프로젝트 예산은 남나?", _project_bars(R, per)),
               ("%s 실적" % _ym_text(R["s4"]["ym"]), _results(R) + (_team_table(R) if monthly else ""))]
     if monthly:   # 월간은 실적·팀별 표를 자금 바로 아래(1쪽)에 둔다: A4 세로 2쪽 (사용자 2026-11-03)
