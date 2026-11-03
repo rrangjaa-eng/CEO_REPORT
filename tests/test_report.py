@@ -255,11 +255,13 @@ class TestProjects(Base):
 
     def test_remaining_budget_turned_into_payment(self):
         # D-54 (2026-11-03 사용자 결정, D-06 뒤집음): 남은 예산은 지급 예정. 2027-01-20 행사 → 2027-02-26, 부가세 10% 더함
+        # 2026-11-03 사용자 결정: 다음 금요일부터 그날까지 매주 금요일로 나눠 잡는다
         p = self.P("P26208")
         self.assertEqual(p["remain"], round(20_000_000 * 0.70) - 350_000)
         ev = [e for e in self.R["events"] if e["project"] == "P26208"]
-        self.assertEqual([(e["source"], e["amount"], e["date"]) for e in ev],
-                         [("남은 예산", 15_015_000, dt.date(2027, 2, 26))])
+        self.assertTrue(all(e["source"] == "남은 예산" and e["date"].weekday() == 4 for e in ev))
+        self.assertEqual((ev[0]["date"], ev[-1]["date"], len(ev)), (dt.date(2026, 11, 6), dt.date(2027, 2, 26), 17))
+        self.assertEqual(sum(e["amount"] for e in ev), 15_015_000)
 
     def test_unlinked_exec(self):
         self.assertEqual(self.R["s3"]["unlinked_total"], 300_000)

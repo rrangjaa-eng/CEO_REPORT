@@ -422,10 +422,25 @@ def compute(d, kind, asof, start=None, pick=None):
                            "basis": "계좌잔액.csv 제한해제일", "project": "", "source": "계좌잔액"})
     for P in R["s3"]["projects"]:
         if P["remain_cash"]:
-            events.append({"date": P["remain_due"], "io": "out", "amount": P["remain_cash"], "firm": False,
-                           "cat": "프로젝트 남은 예산", "desc": P["name"],
-                           "basis": "남은 예산 %s원 + 부가세 10%%, 행사일 다음 달 말 금요일" % won(P["remain"]),
-                           "project": P["id"], "source": "남은 예산"})
+            # 매주 금요일로 나눠 잡는다 (사용자 2026-11-03): 다음 지급 금요일부터 행사일 다음 달 말 금요일까지 같은 금액.
+            # 진행 중 계속 쓰는 예산이 한 날짜에 몰려 그 전 기간 가용자금이 커 보이지 않게. 행사일을 모르면 날짜 없는 한 줄.
+            days = [P["remain_due"]]
+            if P["remain_due"] is not None:
+                days, f = [], pay_friday(asof)
+                while f <= P["remain_due"]:
+                    days.append(f)
+                    f += 7 * DAY
+                days = days or [P["remain_due"]]
+            n = len(days)
+            each = P["remain_cash"] // n
+            for k, day in enumerate(days):
+                amt = each if k < n - 1 else P["remain_cash"] - each * (n - 1)
+                events.append({"date": day, "io": "out", "amount": amt, "firm": False,
+                               "cat": "프로젝트 남은 예산", "desc": P["name"],
+                               "basis": "남은 예산 %s원 + 부가세 10%%%s" % (won(P["remain"]), (
+                                   ", %s~%s 매주 금요일 나눔 (%d/%d)" % (d2s(days[0]), d2s(days[-1]), k + 1, n) if n > 1
+                                   else ", 행사일 다음 달 말 금요일" if day else "")),
+                               "project": P["id"], "source": "남은 예산", "split": (k + 1, n)})
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
                                            int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만

@@ -402,7 +402,7 @@ class TestApprovalTracer(unittest.TestCase):
         p = self.page
         self.assertLess(p.index('id="headline"'), p.index("<table"))
         h = T(p, "headline")
-        self.assertIn("전부 승인 시 최저 잔액 96.3 백만원 · 2026-12-25", h)
+        self.assertIn("전부 승인 시 최저 잔액 89.2 백만원 · 2026-12-25", h)
         # D-54: 남은 예산 7,700,000(12/25)이 들어가 마지막 주가 최소보유현금 미만이 된다
         self.assertIn("최소보유현금 미만 12/21~12/27", h)
         open_tag = re.search(r'<div[^>]*id="headline"[^>]*>', p).group(0)
@@ -412,7 +412,7 @@ class TestApprovalTracer(unittest.TestCase):
 
     def test_estimate_line_and_start_line(self):
         p = self.page
-        self.assertIn("추정 입금 포함 시 최저 잔액 118.3 백만원 · 2026-12-25", T(p, "h-est"))
+        self.assertIn("추정 입금 포함 시 최저 잔액 111.2 백만원 · 2026-12-25", T(p, "h-est"))
         s = T(p, "start-line")
         self.assertIn("시작 잔액(사용 가능액) 542.4 백만원", s)
         self.assertIn("잔액 기준일 2026-11-02", s)
@@ -423,15 +423,15 @@ class TestApprovalTracer(unittest.TestCase):
         p = self.page
         self.assertEqual(sorted(checked_req_ids(p)), ["r0", "r1"])
         r0, r1 = row_html(p, "r0"), row_html(p, "r1")
-        self.assertEqual(span_text(r0, "r-toggle-v"), "140.3")
-        self.assertEqual(span_text(r1, "r-toggle-v"), "256.8")
+        self.assertEqual(span_text(r0, "r-toggle-v"), "133.2")
+        self.assertEqual(span_text(r1, "r-toggle-v"), "249.7")
         self.assertEqual(span_text(r0, "r-mode"), "빼면")
         self.assertLess(p.index('data-id="r0"'), p.index('data-id="r1"'))
         self.assertIn("1201 가상음향 44,000,000 승인 가정", text_of(r0))
 
     def test_week_cells_and_css(self):
         p = self.page
-        self.assertEqual(week_cell(p, 0, "w-out"), "50,700,000")
+        self.assertEqual(week_cell(p, 0, "w-out"), "52,545,735")   # + 남은 예산 매주 나눔 1,845,735 (사용자 2026-11-03)
         self.assertIn("position:sticky", p)
         self.assertIn(":root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;"
                       "--out:#b5523b;", p)
@@ -602,7 +602,7 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual([x["번호"] for x in A["approved_paid"]], ["5104"])
         self.assertEqual(ssum_amounts(A["approved_paid"]), 5500000)
         self.assertEqual(A["rolled"], [])
-        self.assertEqual(A["data"]["base_out"][4], 49500000)
+        self.assertEqual(A["data"]["base_out"][4], 49500000 + 1845735)   # 금요일: 남은 예산 나눔 883,235 + 962,500
         self.assertEqual(A["data"]["base_out"][8], 14900000)
         r = by_no(A)
         self.assertFalse(r["5105"]["toggle"])
@@ -618,23 +618,23 @@ class TestApprovalRequests(unittest.TestCase):
 
     def test_all_checked_numbers(self):
         S = self.S
-        self.assertEqual((S["low"], S["low_day"]), (90536000, "2026-12-25"))
-        self.assertEqual((S["est_low"], S["est_low_day"]), (112536000, "2026-12-25"))
+        self.assertEqual((S["low"], S["low_day"]), (83470120, "2026-12-25"))   # 남은 예산 매주 나눔: P26208 몫 8주 7,065,880 먼저
+        self.assertEqual((S["est_low"], S["est_low_day"]), (105470120, "2026-12-25"))
         w = S["weeks"]
-        self.assertEqual((w[0]["out"], w[0]["min"], w[0]["end"]), (53164000, 489236000, 489236000))
-        self.assertEqual((w[1]["in"], w[1]["out"], w[1]["min"], w[1]["end"]), (88000000, 92700000, 396536000, 484536000))
-        self.assertEqual((w[2]["out"], w[2]["est_in"], w[2]["end"]), (161300000, 22000000, 323236000))
-        self.assertEqual((w[7]["out"], w[7]["end"], w[7]["level"]), (60700000, 90536000, "최소보유현금 미만"))
+        self.assertEqual((w[0]["out"], w[0]["min"], w[0]["end"]), (55009735, 487390265, 487390265))   # 주마다 남은 예산 나눔 1,845,735 더 나감
+        self.assertEqual((w[1]["in"], w[1]["out"], w[1]["min"], w[1]["end"]), (88000000, 94545735, 392844530, 480844530))
+        self.assertEqual((w[2]["out"], w[2]["est_in"], w[2]["end"]), (163145735, 22000000, 317698795))
+        self.assertEqual((w[7]["out"], w[7]["end"], w[7]["level"]), (54845735, 83470120, "최소보유현금 미만"))   # 12/25 몫 7,700,000 한꺼번에 → 나눔 1,845,735
         self.assertEqual([x["level"] for x in w[:7]], [""] * 7)
 
     def test_toggle_values_and_none_checked(self):
         r = by_no(self.A)
         tg = self.S["toggle"]
-        self.assertEqual(tg[r["1201"]["id"]][0], 134536000)
-        self.assertEqual(tg[r["5102"]["id"]][0], 90800000)
-        self.assertEqual(tg[r["5103"]["id"]][0], 251036000)
-        self.assertEqual(tg[r["5108"]["id"]][0], 92736000)
-        self.assertEqual(mod("approval").scenario(self.A, [])["low"], 297500000)
+        self.assertEqual(tg[r["1201"]["id"]][0], 127470120)
+        self.assertEqual(tg[r["5102"]["id"]][0], 83734120)
+        self.assertEqual(tg[r["5103"]["id"]][0], 243970120)
+        self.assertEqual(tg[r["5108"]["id"]][0], 85670120)
+        self.assertEqual(mod("approval").scenario(self.A, [])["low"], 290434120)
 
     def test_unknowns_are_listed_not_summed(self):
         A = self.A
@@ -643,15 +643,15 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual((len(io(A["undated"], "out")), ssum_amounts(io(A["undated"], "out"))), (4, 105000000))
         self.assertEqual((len(io(A["past"], "in")), ssum_amounts(io(A["past"], "in"))), (1, 110000000))
         self.assertEqual(len(io(A["past"], "out")), 0)
-        self.assertEqual((len(io(A["beyond"], "in")), len(io(A["beyond"], "out"))), (1, 27))  # D-54: 2027-02-26 남은 예산
+        self.assertEqual((len(io(A["beyond"], "in")), len(io(A["beyond"], "out"))), (1, 35))  # 남은 예산 매주 나눔: P26208 2027-02-26까지 중 8주 밖 9줄
         self.assertEqual(len(A["amount_unknown_events"]), 1)
 
     def test_screen_headline_and_notes(self):
         h = T(self.page, "headline")
-        self.assertIn("전부 승인 시 최저 잔액 90.5 백만원 · 2026-12-25", h)
+        self.assertIn("전부 승인 시 최저 잔액 83.5 백만원 · 2026-12-25", h)
         self.assertIn("최소보유현금 미만", h)
         self.assertIn("12/21~12/27", h)
-        self.assertIn("추정 입금 포함 시 최저 잔액 112.5 백만원 · 2026-12-25", T(self.page, "h-est"))
+        self.assertIn("추정 입금 포함 시 최저 잔액 105.5 백만원 · 2026-12-25", T(self.page, "h-est"))
         n = T(self.page, "schedule-notes")
         for line in (
                 "승인 완료·예상 지급일이 잔액 기준일(2026-11-02) 이전 또는 당일 1건 5,500,000 (잔액에 반영된 것으로 봄)",
@@ -683,9 +683,9 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual([x["번호"] for x in A["approved_paid"]], ["5104"])
         self.assertEqual(ssum_amounts([e for e in A["past"] if e["io"] == "in"]), 110000000)
         S = mod("approval").scenario(A, all_ids(A))
-        self.assertEqual((S["low"], S["low_day"]), (80536000, "2026-12-25"))
+        self.assertEqual((S["low"], S["low_day"]), (73470120, "2026-12-25"))
         w0 = S["weeks"][0]
-        self.assertEqual((w0["in"], w0["out"], w0["min"]), (4000000, 67164000, 479236000))
+        self.assertEqual((w0["in"], w0["out"], w0["min"]), (4000000, 69009735, 477390265))
         n = T(page, "schedule-notes")
         self.assertIn("잔액 기준일(2026-10-30) 이후·1주 시작(11/02) 전 일정: 입금 1건 4,000,000 · 지급 2건 8,000,000 "
                       "(1주 첫날 11/02에 반영)", n)
@@ -724,9 +724,9 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual(len(A["replaced"]), 3)
         self.assertEqual(ssum_amounts(A["replaced"]), 96800000)
         S = mod("approval").scenario(A, all_ids(A))
-        self.assertEqual(S["weeks"][1]["out"], 92700000)
+        self.assertEqual(S["weeks"][1]["out"], 94545735)
         self.assertEqual(len(A["possible_duplicates"]), 1)
-        self.assertEqual((S["low"], S["low_day"]), (-69964000, "2026-12-25"))
+        self.assertEqual((S["low"], S["low_day"]), (-77029880, "2026-12-25"))
         self.assertIn("중복 가능성 1건 (확인된 금액 160,500,000) — 일정에 그대로 둠, 확인 필요", T(page, "schedule-notes"))
 
     def test_probe_c_number_duplicate_is_dropped(self):
@@ -737,7 +737,7 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual(len(A["duplicates"]), 1)
         self.assertIn("중복 제외 1건 (확인된 금액 3,300,000)", T(page, "schedule-notes"))
         S = mod("approval").scenario(A, all_ids(A))
-        self.assertEqual((S["low"], S["weeks"][1]["out"]), (90536000, 92700000))
+        self.assertEqual((S["low"], S["weeks"][1]["out"]), (83470120, 94545735))
 
     def test_number_match_drops_an_input_line_only_when_the_request_is_scheduled(self):
         """WR-06: 번호가 같아도 스냅숏 요청이 일정에 없으면(금액 미확인 5106, 반려 5107) 입력 일정은 그대로 둔다."""
@@ -764,7 +764,7 @@ class TestApprovalRequests(unittest.TestCase):
                   "홍길동", "승인", "승인", "미승인"]]
         page, A = full_screen(self, extra=extra)
         S = mod("approval").scenario(A, all_ids(A))
-        self.assertEqual(S["low"], -309464000)
+        self.assertEqual(S["low"], -316529880)
         self.assertEqual(S["weeks"][0]["level"], "")
         self.assertEqual([w["level"] for w in S["weeks"][1:]], ["부족"] * 7)
         self.assertIn("부족", T(page, "headline"))
@@ -909,7 +909,7 @@ class TestApprovalPanel(unittest.TestCase):
                 "지급요청일 지남·대기 중 1건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)",
                 "날짜 없는 예정 금액: 입금 1건 30,000,000 · 지급 4건 105,000,000",  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
                 "예정일이 잔액 기준일(2026-11-02) 이전 또는 당일인 미처리: 입금 1건 110,000,000 · 지급 0건",
-                "기간 밖(8주 이후): 입금 1건 · 지급 27건 · 대기 요청 0건",
+                "기간 밖(8주 이후): 입금 1건 · 지급 35건 · 대기 요청 0건",
                 "잔액 미확인 0계좌",
                 "부가세 미확인 일정 0건 (공급가액만 반영)"):
             self.assertIn(line, u)
@@ -1284,7 +1284,7 @@ class TestApprovalBrowser(unittest.TestCase):
 
     def test_uncheck_updates_headline_in_under_a_second(self):
         dom = browser_dom(self, self.page, UNCHECK_5103)
-        self.assertEqual(T(dom, "h-low"), "251.0")
+        self.assertEqual(T(dom, "h-low"), "244.0")
         self.assertEqual(T(dom, "h-label"), "체크한 3건 승인 시")
         self.assertEqual(week_cell(dom, 7, "w-level"), "")
         ms = body_attr(dom, "data-ms")
@@ -1395,9 +1395,9 @@ class TestApprovalControls(unittest.TestCase):
     def test_check_none_and_check_all_in_a_browser(self):
         dom = browser_dom(self, self.page, CLICK_BUTTONS)
         self.assertEqual(body_attr(dom, "data-none-label"), "체크한 0건 승인 시")
-        self.assertEqual(body_attr(dom, "data-none-low"), "297.5")
+        self.assertEqual(body_attr(dom, "data-none-low"), "290.4")
         self.assertEqual(body_attr(dom, "data-all-label"), "전부 승인 시")
-        self.assertEqual(body_attr(dom, "data-all-low"), "90.5")
+        self.assertEqual(body_attr(dom, "data-all-low"), "83.5")
         self.assertEqual(body_attr(dom, "data-none-dis"), "false")
         self.assertEqual(body_attr(dom, "data-all-dis"), "false")
 

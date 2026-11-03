@@ -743,6 +743,16 @@ def week_outflows(R):
         if e["date"] <= asof and e["date"] < fri:
             continue   # 예정일 지난 미처리는 주간에 싣지 않는다 (사용자 2026-11-03: 월간 '지난 미수금·지급'에만)
         rows.append(dict(e, overdue=False))
+    # 남은 예산을 매주 금요일로 나눈 줄은 날짜마다 한 줄로 합친다 (사용자 2026-11-03: 목록 합계 = 자금 표 금액, 줄은 늘리지 않음)
+    plan = OrderedDict()
+    for e in [e for e in rows if e.get("source") == "남은 예산"]:
+        plan.setdefault(e["date"], []).append(e)
+    if plan:
+        rows = [e for e in rows if e.get("source") != "남은 예산"]
+        for day, es in plan.items():
+            rows.append({"date": day, "io": "out", "amount": sum(e["amount"] for e in es), "firm": False, "overdue": False,
+                         "cat": "프로젝트 남은 예산", "desc": "진행 프로젝트 %d개" % len(es), "project": "",
+                         "detail": "아직 요청 전 금액을 매주 나눠 잡은 예상", "source": "남은 예산", "merged": es})
     rows.sort(key=lambda e: (e["date"], -(e["amount"] or 0)))
 
     def sums(rs):
@@ -775,7 +785,7 @@ def _vs(c):
     return "%s%s (지난주 %s)" % ("+" if d > 0 else "", won(d), won(c["prev"]))
 
 
-CAT_SHOW = {"프로젝트 남은 예산": "프로젝트 지급 예정 (미요청)"}   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
+CAT_SHOW = {"프로젝트 남은 예산": "프로젝트 지급 예정 (미요청·예상)"}   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
 
 
 def _cat_name(e, default=""):

@@ -152,7 +152,10 @@ class TestReportIsADocument(unittest.TestCase):
         W = week_outflows(R)
         self.assertEqual(W["fri"], dt.date(2026, 11, 6))
         self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]],
-                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000)])
+                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000), ("2026-11-06", 1_845_735)])
+        # 남은 예산 매주 나눔은 날짜마다 한 줄로 합쳐 보인다 (사용자 2026-11-03): P26207 962,500 + P26208 883,235
+        merged = W["pay"]["rows"][-1]
+        self.assertEqual((merged["source"], len(merged["merged"]), merged["firm"]), ("남은 예산", 2, False))
         self.assertTrue(all(dt.date(2026, 11, 7) <= e["date"] <= dt.date(2026, 11, 13) for e in W["next"]["rows"]))
         self.assertTrue(W["next"]["rows"])
         self.assertEqual(W["pay"]["unknown_n"], 1)
@@ -162,7 +165,7 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertIn("다음 주 지급 예정 (11/07 토 ~ 11/13 금)", fs)
             self.assertLess(fs.index("금요일(11/06) 출금 목록"), fs.index("다음 주 지급 예정"))
             table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
-            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 3)
+            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 4)   # + 남은 예산 나눔 합친 한 줄
             self.assertIn("전시제작사", table)
             self.assertIn("금액 미확인", table)
             self.assertIn("3건 · 합계 50,700,000 · 확정 50,700,000 · 예상 0 · 금액 미확인 1건", fs)

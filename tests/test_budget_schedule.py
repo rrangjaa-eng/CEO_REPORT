@@ -22,7 +22,15 @@ ASOF = dt.date(2026, 11, 2)
 
 
 def budget_events(R):
-    return dict((e["project"], e) for e in R["events"] if e["source"] == "남은 예산")
+    """프로젝트별로 묶음: 금액 = 나눠 잡은 줄의 합, date = 마지막 날 (행사일 다음 달 말 금요일), dates = 매주 금요일 목록."""
+    out = {}
+    for e in R["events"]:
+        if e["source"] == "남은 예산":
+            g = out.setdefault(e["project"], dict(e, amount=0, dates=[]))
+            g["amount"] += e["amount"]
+            g["dates"].append(e["date"])
+            g["date"] = e["date"]
+    return out
 
 
 class TestBudgetDue(unittest.TestCase):
@@ -59,6 +67,17 @@ class TestBudgetEvents(unittest.TestCase):
         # P26208: 2027-01-20 행사 → 2027-02-26 (해를 넘김), 13,650,000 × 1.1
         self.assertEqual(ev["P26208"]["date"], dt.date(2027, 2, 26))
         self.assertEqual(ev["P26208"]["amount"], 15015000)
+
+    def test_spread_over_every_friday_until_due(self):
+        """진행 중 계속 쓰는 예산: 다음 금요일부터 행사일 다음 달 말 금요일까지 매주 나눠 잡는다 (사용자 2026-11-03)."""
+        R = compute(load(SAMPLE), "weekly", ASOF)
+        ev = budget_events(R)["P26207"]
+        self.assertEqual(ev["dates"][0], dt.date(2026, 11, 6))
+        self.assertEqual(ev["dates"], [dt.date(2026, 11, 6) + dt.timedelta(days=7 * k) for k in range(len(ev["dates"]))])
+        self.assertEqual(len(ev["dates"]), 8)   # 11/06 ~ 12/25
+        rows = [e for e in R["events"] if e["source"] == "남은 예산" and e["project"] == "P26207"]
+        self.assertEqual(sorted(set(e["amount"] for e in rows[:-1])), [7700000 // 8])
+        self.assertIn("매주 금요일 나눔 (1/8)", rows[0]["basis"])
 
     def test_not_for_done_over_or_unknown(self):
         ev = budget_events(compute(load(SAMPLE), "weekly", ASOF))
