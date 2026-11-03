@@ -30,8 +30,8 @@ from test_wehago import (EINVOICE_HEADER, FAKE_EINVOICE, FAKE_JOURNAL, FAKE_LEDG
 ASOF = dt.date(2026, 11, 2)
 NOW = dt.datetime(2026, 11, 2, 0, 0)
 
-HEAD_ALL = "전부 승인 시 최저 잔액 143.2 백만원 · 2026-12-25"
-HEAD_INTRANET = "전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25"
+HEAD_ALL = "전부 승인 시 최저 잔액 135.5 백만원 · 2026-12-25"
+HEAD_INTRANET = "전부 승인 시 최저 잔액 90.5 백만원 · 2026-12-25"
 SUMMARY_OK = ("WEHAGO 대조 (장부 기준일 2026-10-31): 계산서 있음 3건 51,700,000 · 금액 차이 1건 165,000,000 "
               "(인트라넷 요청 160,500,000 · 차액 +4,500,000, 일정은 계산서 금액) · 계산서 없음 1건 264,000 · "
               "이미 지급 1건 49,500,000 (일정에서 뺌) · 연결 불가 3건 4,400,000 외 금액 미확인 1건")
@@ -153,12 +153,12 @@ class TestXchkScreen(unittest.TestCase):
         self.assertEqual(self.rc, 0)
         self.assertTrue(T(self.page, "headline").startswith(HEAD_ALL), T(self.page, "headline"))
         self.assertIn("부족·최소보유현금 미만 주 없음", T(self.page, "headline"))
-        self.assertEqual(T(self.page, "h-est"), "추정 입금 포함 시 최저 잔액 165.2 백만원 · 2026-12-25")
+        self.assertEqual(T(self.page, "h-est"), "추정 입금 포함 시 최저 잔액 157.5 백만원 · 2026-12-25")
 
     def test_week_totals_and_toggle_cells(self):
         self.assertEqual(week_cell(self.page, 0, "w-out"), "3,664,000")
         self.assertEqual(week_cell(self.page, 2, "w-out"), "165,800,000")
-        for no, want in (("1201", "187.2"), ("5102", "143.5"), ("5103", "308.2"), ("5108", "145.4")):
+        for no, want in (("1201", "179.5"), ("5102", "135.8"), ("5103", "300.5"), ("5108", "137.7")):
             row = req_row(self.page, no)
             self.assertEqual(span_text(row, "r-toggle-v"), want, no)
 
@@ -227,7 +227,7 @@ class TestXchkScreen(unittest.TestCase):
     def test_stdout_has_counts_only(self):
         self.assertIn("WEHAGO 대조: 계산서 있음 3건 · 금액 차이 1건 · 계산서 없음 1건 · 이미 지급 1건 · 연결 불가 3건", self.stdout)
         self.assertIn(BOOK_DATES, self.stdout)
-        self.assertIn("전부 승인 시 최저 잔액 143.2", self.stdout)
+        self.assertIn("전부 승인 시 최저 잔액 135.5", self.stdout)
         for text in ("가상음향", "44,000,000", "165,000,000", "49,500,000"):
             self.assertNotIn(text, self.stdout)
 
@@ -466,7 +466,7 @@ class TestXchkAmountRule(unittest.TestCase):
         self.assertIn("3,630,000", td(row, "a-amt"))
         self.assertIn("인트라넷 요청 3,300,000 · 차액 +330,000", td(row, "a-amt"))
         self.assertEqual(week_cell(page, 1, "w-out"), "93,030,000")
-        self.assertTrue(T(page, "headline").startswith("전부 승인 시 최저 잔액 142.9 백만원"), T(page, "headline"))
+        self.assertTrue(T(page, "headline").startswith("전부 승인 시 최저 잔액 135.2 백만원"), T(page, "headline"))
 
 
 class TestXchkCollect(unittest.TestCase):
@@ -480,7 +480,7 @@ class TestXchkCollect(unittest.TestCase):
         rc, text, err, fake, mocks = run_collect_cli(self, argv)
         self.assertEqual(rc, 0, text)
         page = read_only_html(out)
-        self.assertIn("143.2", T(page, "headline"))
+        self.assertIn("135.5", T(page, "headline"))
         self.assertIn("WEHAGO 대조 (장부 기준일 2026-10-31)", T(page, "xchk-summary"))
         self.assertIn("WEHAGO 대조: 계산서 있음 3건", text)
         self.assertTrue(mocks["browser"].called)

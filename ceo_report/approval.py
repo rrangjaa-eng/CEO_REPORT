@@ -323,6 +323,12 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
     return lines
 
 
+def _budget_note(budget_sched):
+    """D-54: 남은 예산(원가 예산 − 예상총집행)을 지급 예정으로 넣은 건수·금액."""
+    return ("프로젝트 남은 예산 지급 예정 %s (원가 예산 − 예상집행, 부가세 10%% 더함, 행사일 다음 달 말 금요일)"
+            % _count_text(budget_sched))
+
+
 NOT_LISTED = "(프로젝트 목록에 없음)"   # 월간 대조(convert_xchk)와 같은 글자
 
 
@@ -472,6 +478,7 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
 
     # 요청 분류를 입력 일정 맞추기보다 먼저 한다: 일정에 실제로 들어간 요청만 입력 일정 줄을 대신할 수 있다 (WR-06)
     undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
+    budget_sched = []
     stale_in = []  # 잔액 기준일 이후·가장 늦은 계좌 날짜 이전·당일 입금 (WR-05)
     # 요청 분류: 대기 → 체크 가능, 승인 완료 → 잔액 기준일 이후면 고정 지급 (A-3, P-3, P-8)
     data_requests = []
@@ -585,6 +592,8 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
                 (base_in if ev["firm"] else est_in)[i] += ev["amount"]
             else:
                 base_out[i] += ev["amount"]
+                if ev["source"] == "남은 예산":
+                    budget_sched.append(ev)  # D-54: 남은 예산을 행사일 다음 달 말 금요일 지급 예정으로 넣은 것
                 if ev.get("vat_unknown"):
                     vat_unknown_sched.append(ev)  # 부가세 칸이 비어 공급가액만 반영된 일정 (D-07)
 
@@ -620,7 +629,7 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
             "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid, links),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,
-                            _account_notes(accounts, cutoff, newest, stale_in), number_kept),
-            "number_kept": number_kept,
+                            _account_notes(accounts, cutoff, newest, stale_in), number_kept) + [_budget_note(budget_sched)],
+            "number_kept": number_kept, "budget_sched": budget_sched,
             "newest_balance_date": newest, "stale_in": stale_in,
             "issues": list(issues.items)}

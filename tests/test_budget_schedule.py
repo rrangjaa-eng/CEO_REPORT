@@ -69,8 +69,17 @@ class TestBudgetEvents(unittest.TestCase):
             self.assertNotIn(pid, ev)
 
     def test_unknown_remaining_listed(self):
-        R = compute(load(SAMPLE), "weekly", ASOF)
+        # 완료 프로젝트는 목록에도 없다. 진행 중인데 금액 미확인 원가가 있으면 남은 예산 판단 불가로 목록에 남는다
+        self.assertEqual(compute(load(SAMPLE), "weekly", ASOF)["s3"]["remain_unknown"], [])
+
+        def reopen(rows):
+            i = rows[0].index("상태")
+            for r in rows[1:]:
+                if r[0] == "P26206":
+                    r[i] = "진행"
+        R = compute(load(probe_folder(self, "프로젝트.csv", reopen)), "weekly", ASOF)
         self.assertEqual([P["id"] for P in R["s3"]["remain_unknown"]], ["P26206"])
+        self.assertNotIn("P26206", budget_events(R))
 
     def test_missing_event_date_is_undated(self):
         def blank_date(rows):

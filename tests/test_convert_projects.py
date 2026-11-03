@@ -811,7 +811,9 @@ class TestBuildExecsNoDouble(unittest.TestCase):
         table = mod("convert").Table("프로젝트집행.csv", mod("data").SCHEMA["프로젝트집행.csv"], rest)
         convert.write_table(os.path.join(reduced, "프로젝트집행.csv"), table)
         B = approval.build(mod("data").load(reduced), snap, ASOF, NOW)
-        total = lambda X: sum(x["amount"] for x in X["data"]["requests"]) + sum(X["data"]["base_out"])
+        # 남은 예산 지급 예정(D-54)은 프로젝트집행 줄이 빠지면 커지는 것이 맞으므로 비교에서 뺀다
+        total = lambda X: (sum(x["amount"] for x in X["data"]["requests"]) + sum(X["data"]["base_out"])
+                           - sum(ev["amount"] for ev in X["budget_sched"]))
         self.assertEqual(total(A), total(B))
         self.assertGreater(total(A), 0)
 

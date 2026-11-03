@@ -5,6 +5,7 @@ from collections import OrderedDict, defaultdict
 
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
+from .util import date as parse_date
 
 DAY = dt.timedelta(days=1)
 
@@ -22,6 +23,34 @@ SETTING_LABELS = {
 def _add_months(d, n):
     y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
     return dt.date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def budget_due(event_date, asof):
+    """남은 예산의 지급 예정일 (D-54): 행사일 다음 달 마지막 금요일. 그 날이 기준일 이전·당일이면 기준일 다음 금요일.
+
+    행사일을 모르면 None (날짜 없는 지급 예정). 12월 행사는 다음 해 1월 말로 이어진다.
+    """
+    if event_date is None:
+        return None
+    nxt = _add_months(dt.date(event_date.year, event_date.month, 1), 1)
+    due = _month_end(nxt)
+    due -= (due.weekday() - 4) % 7 * DAY
+    if due <= asof:
+        due = asof + ((4 - asof.weekday()) % 7 or 7) * DAY
+    return due
+
+
+def _event_date(text):
+    if isinstance(text, dt.date):
+        return text
+    try:
+        return parse_date(text)
+    except Exception:  # 해석할 수 없는 행사일은 날짜 없는 지급 예정으로 둔다
+        return None
+
+
+BUDGET_VAT = 0.1      # 남은 예산은 공급가 기준이므로 지급(현금)은 부가세 10%를 더한다 (적게 보이지 않게)
+DONE_STATES = ("완료",)
 
 
 def _month_end(d):
@@ -246,7 +275,18 @@ def compute(d, kind, asof, start=None):
         n = sum(1 for P in plist if P["budget_reason"] == reason)
         if n:
             reason_n[reason] = n
+    # D-54: 남은 예산 → 지급 예정 (완료 프로젝트 제외). 금액 미확인 원가가 있어 남은 예산을 모르면 0으로 넣지 않고 목록으로
+    for P in plist:
+        P["remain_due"], P["remain_cash"] = None, None
+        if (P.get("state") or "").strip() in DONE_STATES or P["budget"] is None:
+            continue
+        if P["remain"] is not None and P["remain"] > 0:
+            P["remain_cash"] = int(round(P["remain"] * (1 + BUDGET_VAT)))
+            P["remain_due"] = budget_due(_event_date(P.get("event_date")), asof)
+    remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None
+                      and (P.get("state") or "").strip() not in DONE_STATES]
     R["s3"] = {"projects": plist, "ranked": ranked, "shown": shown, "rest": rest, "total": tot,
+               "remain_unknown": remain_unknown,
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
                "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
     linked_lines = sum(len(P["lines"]) for P in plist)
@@ -348,6 +388,12 @@ def compute(d, kind, asof, start=None):
                            "cat": "프로젝트 " + ("지급요청" if e["state"] == "요청미지급" else "집행계획"),
                            "desc": e["vendor"] or e["item"], "basis": e["basis"], "project": e["project"],
                            "source": "프로젝트집행", "vat_unknown": e["vat"] is None})
+    for P in R["s3"]["projects"]:
+        if P["remain_cash"]:
+            events.append({"date": P["remain_due"], "io": "out", "amount": P["remain_cash"], "firm": False,
+                           "cat": "프로젝트 남은 예산", "desc": P["name"],
+                           "basis": "남은 예산 %s원 + 부가세 10%%, 행사일 다음 달 말 금요일" % won(P["remain"]),
+                           "project": P["id"], "source": "남은 예산"})
     R["events"] = events
 
     week_ends = [asof + 7 * (i + 1) * DAY for i in range(4)]

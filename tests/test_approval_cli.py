@@ -32,7 +32,7 @@ from test_approval import (FAKE_PAYMENTS, FAKE_PROJECTS, SAMPLE, as_dicts, eleme
 from test_intranet import (PASSWORD, USER, FakeTransport, PAYMENT_HEADER, login_page,  # noqa: E402
                            make_fake_opener, payment_page, project_page, site_routes)
 
-HEADLINE = "전부 승인 시 최저 잔액 98.2 백만원 · 2026-12-25"
+HEADLINE = "전부 승인 시 최저 잔액 90.5 백만원 · 2026-12-25"
 
 
 def setUpModule():

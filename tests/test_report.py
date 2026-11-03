@@ -220,10 +220,13 @@ class TestProjects(Base):
         self.assertEqual(p["paid_cash"], 77_000_000)
         self.assertEqual(p["paid_period"], 10_000_000)
 
-    def test_remaining_budget_not_turned_into_payment(self):
+    def test_remaining_budget_turned_into_payment(self):
+        # D-54 (2026-11-03 사용자 결정, D-06 뒤집음): 남은 예산은 지급 예정. 2027-01-20 행사 → 2027-02-26, 부가세 10% 더함
         p = self.P("P26208")
         self.assertEqual(p["remain"], round(20_000_000 * 0.70) - 350_000)
-        self.assertFalse(any(e["project"] == "P26208" for e in self.R["events"]))
+        ev = [e for e in self.R["events"] if e["project"] == "P26208"]
+        self.assertEqual([(e["source"], e["amount"], e["date"]) for e in ev],
+                         [("남은 예산", 15_015_000, dt.date(2027, 2, 26))])
 
     def test_unlinked_exec(self):
         self.assertEqual(self.R["s3"]["unlinked_total"], 300_000)
@@ -457,7 +460,7 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual((s2["vat_unknown_n"], s2["vat_unknown_n4"], s2["vat_unknown_firm_n"]), (1, 1, 1))
         self.assertEqual(s2["out4_firm"], 170_100_000)
         self.assertEqual(s2["min"]["firm"], (23_800_000, dt.date(2027, 4, 25)))
-        self.assertEqual(s2["min"]["all"], (152_300_000, dt.date(2027, 4, 25)))
+        self.assertEqual(s2["min"]["all"], (129_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
         fs = first_screen(html)
         self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)
         for lab in ("최저 계산 잔액 · 확정 일정만", "최저 계산 잔액 · 확정+추정"):
@@ -736,8 +739,8 @@ class TestProjectBudget(Base):
         r3 = self.row(section(html, 3), "P26204")[0]
         self.assertIn("예산 미지정", r3)
         self.assertIn("판단 불가", r3)
-        self.assertIn("집행계획 미등록 금액", section(html, 3))
-        self.assertIn("남은 예산은 ‘집행계획 미등록 금액’", first_screen(html))
+        self.assertIn("행사일 다음 달 말 금요일 지급 예정", section(html, 3))   # D-54 (D-06 뒤집음)
+        self.assertIn("행사일 다음 달 말 금요일 지급 예정", first_screen(html))
 
 
 class TestCliOutputs(unittest.TestCase):
@@ -847,7 +850,7 @@ class TestUserRulesLocked(Base):
     def test_min_balance_firm_and_estimate(self):
         mn = self.R["s2"]["min"]
         self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
-        self.assertEqual(mn["all"], (148_300_000, dt.date(2027, 4, 25)))
+        self.assertEqual(mn["all"], (125_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
         fs = first_screen(render(self.R, "ceo"))
         self.assertIn("최저 계산 잔액 · 확정 일정만", fs)
         self.assertIn("최저 계산 잔액 · 확정+추정", fs)

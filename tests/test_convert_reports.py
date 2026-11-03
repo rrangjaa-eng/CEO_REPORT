@@ -139,9 +139,18 @@ def scheduled_total(A):
     return sum(r["schedule_amount"] for r in A["requests_all"] if r["scheduled"])
 
 
+def base_out_without_budget(A):
+    """날짜별 고정 지급에서 남은 예산 지급 예정(D-54)을 뺀 것. 남은 예산은 프로젝트집행 줄이 빠지면 커지는 것이 맞으므로
+    요청 줄 유무 비교(같은 지출 두 번 안 셈)에서는 뺀다."""
+    out = list(A["data"]["base_out"])
+    for ev in A["budget_sched"]:
+        out[(ev["date"] - A["monday"]).days] -= ev["amount"]
+    return out
+
+
 def outflow_total(A):
-    """8주 일정에 들어간 지급 합계: 고정 지급(날짜별) + 체크할 수 있는 요청."""
-    return sum(A["data"]["base_out"]) + sum(r["amount"] for r in A["data"]["requests"])
+    """8주 일정에 들어간 지급 합계(남은 예산 제외): 고정 지급(날짜별) + 체크할 수 있는 요청."""
+    return sum(base_out_without_budget(A)) + sum(r["amount"] for r in A["data"]["requests"])
 
 
 class TestConvertedNoDouble(unittest.TestCase):
@@ -208,7 +217,7 @@ class TestConvertedNoDouble(unittest.TestCase):
 
     def test_the_whole_outflow_schedule_is_the_same_with_and_without_those_rows(self):
         self.assertEqual(outflow_total(self.A), outflow_total(self.B))
-        self.assertEqual(self.A["data"]["base_out"], self.B["data"]["base_out"])
+        self.assertEqual(base_out_without_budget(self.A), base_out_without_budget(self.B))
         self.assertEqual(self.A["data"]["requests"], self.B["data"]["requests"])
 
     def test_the_request_with_an_unknown_amount_is_listed_not_added_as_zero(self):
