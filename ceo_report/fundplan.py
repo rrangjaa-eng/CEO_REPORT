@@ -247,3 +247,96 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             r["근거"] = "" if journal is not None else "분개장 없음: 미리 지급·입금했는지 확인 못함"
         counts[r["상태"]] += 1
     return counts
+
+
+# ───────────── 보고서 계산에 반영 (calc) ─────────────
+MATCH_DAYS = 7               # 거래처가 달라도 같은 금액·이 날수 안이면 같은 건으로 본다
+FLAG_SOURCES = ("자금일정", "계산서", "프로젝트집행")   # 자금계획서에 없으면 알리는 기존 일정 (남은 예산은 원래 추정이라 알리지 않음)
+
+
+def _next_friday(asof):
+    return asof + dt.timedelta(days=(4 - asof.weekday()) % 7 or 7)
+
+
+def apply(events, plan, asof, stale_days, problem=""):
+    """자금계획서 줄로 일정을 바꾼다 (D-55 '자금계획서 기준'). -> (새 일정 목록, 설명 dict 또는 None).
+
+    plan: data.load 의 d.fundplan (없으면 None -> 기존 일정 그대로, 설명 None).
+    자료일이 기준일보다 stale_days 일 넘게 오래됐으면 쓰지 않는다. 쓸 때는
+      · '예정'·'예정일 지남' 줄을 확정 일정으로 넣는다. 지급 '예정일 지남'은 기준일 다음 금요일로 옮기고,
+        입금 '예정일 지남'은 추정으로 두어(날짜 그대로, 지난 날짜 묶음) 잔액 계산에 넣지 않는다.
+      · '이미 지급'·'이미 입금' 줄은 넣지 않고 목록에만 보인다.
+      · 기존 일정 중 같은 입출금·같은 금액이고 거래처가 같거나 예정일이 MATCH_DAYS 일 안인 건은 자금계획서 줄로 바꾼다
+        (한 건은 한 줄에만, 거래처가 맞는 것 먼저). 이미 지급·입금 줄과 맞는 기존 일정은 빼낸다.
+      · 자금계획서가 다루는 달에 있는데 맞는 줄이 없는 기존 일정은 그대로 두고 '자금계획서에 없음'으로 알린다.
+    """
+    if plan is None:
+        if problem:
+            return events, {"used": False, "reason": "자금계획.csv " + problem + " → 기존 일정 사용"}
+        return events, None
+    from .wehago import norm_vendor
+    if not plan:
+        return events, {"used": False, "reason": "자금계획.csv 에 줄이 없음 → 기존 일정 사용"}
+    stamp = min(p["stamp"] for p in plan)
+    months = sorted(set(p["ym"] for p in plan))
+    info = {"used": False, "stamp": stamp, "months": months, "reason": "", "matched": [], "missing": [], "done": [],
+            "moved": [], "late_in": [], "added": []}
+    if (asof - stamp).days > stale_days:
+        info["reason"] = "자금계획서 자료일 %s이 기준일보다 %d일 이전 (허용 %d일) → 기존 일정 사용" % (
+            stamp.isoformat(), (asof - stamp).days, stale_days)
+        return events, info
+    info["used"] = True
+    taken = set()
+
+    def find(p):
+        io = "out" if p["io"] == "지급" else "in"
+        key = norm_vendor(p["vendor"])
+        best = None
+        for i, ev in enumerate(events):
+            if i in taken or ev["io"] != io or ev["amount"] != p["amount"] or ev.get("source") not in FLAG_SOURCES:
+                continue
+            same = bool(key) and norm_vendor(ev.get("desc") or "") == key
+            near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
+            if not (same or near):
+                continue
+            rank = (0 if same else 1, abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
+            if best is None or rank < best[0]:
+                best = (rank, i)
+        if best is None:
+            return None
+        taken.add(best[1])
+        return events[best[1]]
+
+    new = []
+    for p in sorted(plan, key=lambda x: (x["date"], x["io"], x["vendor"])):
+        old = find(p)
+        if p["state"] in ("이미 지급", "이미 입금"):
+            info["done"].append({"plan": p, "old": old})
+            continue
+        io = "out" if p["io"] == "지급" else "in"
+        ev = {"date": p["date"], "io": io, "amount": p["amount"], "firm": True,
+              "cat": "자금계획서 " + (p["cat"] or p["io"]), "desc": p["vendor"],
+              "basis": "자금계획서 예정일 %s (%s)" % (p["date"].isoformat(), p["file"] or "자료일 %s" % p["stamp"]),
+              "project": old["project"] if old else "", "source": "자금계획서", "plan_state": p["state"]}
+        if p["state"] == "예정일 지남":
+            if io == "out":
+                ev["date"] = _next_friday(asof)
+                ev["basis"] += ", 예정일 지난 미지급 → 다음 금요일"
+                info["moved"].append(ev)
+            else:
+                ev["firm"] = False
+                ev["basis"] += ", 입금 지연"
+                info["late_in"].append(ev)
+        new.append(ev)
+        if old is not None:
+            info["matched"].append({"plan": ev, "old": old})
+        else:
+            info["added"].append(ev)
+    for i, ev in enumerate(events):
+        if i in taken:
+            continue
+        if ev.get("source") in FLAG_SOURCES and ev["date"] is not None and ev["date"].strftime("%Y-%m") in months:
+            ev = dict(ev, plan_note="자금계획서에 없음")
+            info["missing"].append(ev)
+        new.append(ev)
+    return new, info

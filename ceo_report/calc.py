@@ -3,6 +3,7 @@ import calendar
 import datetime as dt
 from collections import OrderedDict, defaultdict
 
+from . import fundplan
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
 from .util import date as parse_date
@@ -414,6 +415,8 @@ def compute(d, kind, asof, start=None):
                            "cat": "프로젝트 남은 예산", "desc": P["name"],
                            "basis": "남은 예산 %s원 + 부가세 10%%, 행사일 다음 달 말 금요일" % won(P["remain"]),
                            "project": P["id"], "source": "남은 예산"})
+    events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
+                                           int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""))
     R["events"] = events
 
     week_ends = [asof + 7 * (i + 1) * DAY for i in range(4)]

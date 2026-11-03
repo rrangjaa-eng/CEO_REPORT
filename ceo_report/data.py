@@ -21,6 +21,10 @@ SCHEMA = {
     "자료차이.csv": ["항목", "자료A", "금액A", "자료B", "금액B", "상태"],
 }
 
+# 변환.py 가 자금계획서(지출입금현황)에서 만드는 선택 파일 (D-55). 없으면 기존 일정만 쓴다. SCHEMA 에 넣지 않는다 (빈 양식 없음).
+FUNDPLAN_FILE = "자금계획.csv"
+FUNDPLAN_KEYS = ["예정일", "입출금", "거래처", "금액", "대상월", "자료일", "상태"]
+
 # 지급 일정의 출처 파일과, 없으면 지급 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
 # 지급예정이 빠진 채 최저 잔액이 계산되므로 계산하지 않는다 (지급을 줄이지 않음).
 OUTFLOW_KEYS = {
@@ -150,6 +154,28 @@ def load(folder):
         if s["amount"] is None:
             iss.add(r["_file"], r["_line"], "금액 미확인 → 일정 합계에서 제외, 건수만 표시")
         d.schedule.append(s)
+
+    # 자금계획 (선택, D-55): 읽지 못한 줄이 하나라도 있으면 통째로 쓰지 않는다 (틀린 일정으로 기존 일정을 지우지 않음)
+    d.fundplan, d.fundplan_problem = None, ""
+    path = os.path.join(folder, FUNDPLAN_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, FUNDPLAN_KEYS, iss, info)
+        if not ok or info["missing"]:
+            d.fundplan_problem = "읽지 못함" if not ok else "필수 열 없음: " + ", ".join(info["missing"])
+        else:
+            d.fundplan, bad = [], 0
+            for r in rows:
+                f = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": r.get("입출금", ""), "cat": r.get("분류", ""),
+                     "vendor": r.get("거래처", ""), "amount": num(r.get("금액"), iss, r, "금액"), "ym": r.get("대상월", ""),
+                     "stamp": date(r.get("자료일"), iss, r, "자료일"), "state": r.get("상태", "") or "예정",
+                     "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r}
+                if f["date"] is None or f["amount"] is None or f["stamp"] is None or f["io"] not in ("지급", "입금"):
+                    iss.add(r["_file"], r["_line"], "예정일·입출금·금액·자료일 중 확인 불가 → 자금계획 전체를 쓰지 않음")
+                    bad += 1
+                d.fundplan.append(f)
+            if bad:
+                d.fundplan, d.fundplan_problem = None, "확인 못한 줄 %d개" % bad
 
     # 프로젝트
     d.projects = {}
