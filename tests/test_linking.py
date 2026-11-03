@@ -813,7 +813,8 @@ class TestLinkingProjectColumn(unittest.TestCase):
         self.assertEqual((b["project"], b["basis"], b["label"], b["request"]),
                          ("26201", "코드", "프로젝트명 [26201]", None))
         (c,) = n["23"]
-        self.assertEqual((c["project"], c["basis"], c["label"]), ("26221", "코드", "프로젝트명 [26221]"))
+        self.assertEqual((c["project"], c["basis"], c["label"]),
+                         ("26221", "코드", "프로젝트명 [26221] (적요 코드 [26999]와 다름)"))
         (d,) = n["2"]
         self.assertEqual((d["project"], d["label"]), ("26220", "코드 [26220]"))
         manual = L.link_costs(books, reqs, projects, {("2026-10-20", "1", 1): "26203"})

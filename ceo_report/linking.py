@@ -1,7 +1,8 @@
 """프로젝트 연결 (D-38, D-40): WEHAGO 원가·매출 줄이 어느 프로젝트의 것인지 정한다.
 
-원가 줄 순서: 수동(입력/프로젝트연결.csv) -> 적요 [코드] -> 인트라넷 지급요청 하나(자동) -> 미연결.
-매출 줄 순서: 수동 -> 적요 [코드] -> 클라이언트·견적금액이 같은 프로젝트 하나(자동) -> 미연결.
+원가 줄 순서: 수동(입력/프로젝트연결.csv) -> 매입매출장 프로젝트명 칸 -> 적요 [코드] -> 인트라넷 지급요청 하나(자동) -> 미연결.
+매출 줄 순서: 수동 -> 매입매출장 프로젝트명 칸 -> 적요 [코드] -> 클라이언트·견적금액이 같은 프로젝트 하나(자동) -> 미연결.
+프로젝트명 칸(D-53)은 분개장 줄과 같은 (전표일자, 전표번호)의 매입매출장 줄에서 읽고, 기준은 '코드', 이름은 '프로젝트명 [코드]'.
 자동 연결은 후보가 정확히 하나일 때만 한다. 둘 이상이거나 하나의 요청을 여러 줄이 노리면 연결하지 않고 후보 수를 보인다.
 
 이 모듈의 함수는 장부·스냅숏·요청·프로젝트를 바꾸지 않고, 입력 순서가 달라도 같은 결과를 낸다.
@@ -170,8 +171,13 @@ def _summary(lines):
     return out
 
 
-def _line(index, key, row, amount):
-    return {"index": index, "key": key, "date": row.get("date"), "no": key[1], "line": key[2],
+def _slips(books):
+    """{(전표일자 ISO, 전표번호): 프로젝트명 칸 코드} — 전표번호는 분개장 열쇠와 같은 모양으로 맞춘다."""
+    return dict(((d, _norm_no(n)), c) for (d, n), c in (getattr(books, "slip_projects", None) or {}).items())
+
+
+def _line(index, key, row, amount, slip=None):
+    return {"slip_code": slip, "index": index, "key": key, "date": row.get("date"), "no": key[1], "line": key[2],
             "vendor": mask_rrn(row.get("vendor")), "vendor_norm": row.get("vendor_norm") or norm_vendor(row.get("vendor")),
             "memo": mask_rrn(row.get("memo")), "account_code": _squash(row.get("account_code")),
             "account": row.get("account", ""), "amount": amount, "project": None, "basis": "미연결", "request": None,
@@ -185,6 +191,15 @@ def _fixed(ln, overrides, projects, used):
         ln.update(project=manual, basis="수동",
                   label=MANUAL_LABEL if (not projects or manual in projects) else MANUAL_UNKNOWN_LABEL)
         used.add(ln["key"])
+        return True
+    slip = ln.get("slip_code")
+    if slip is not None and (not projects or slip in projects):
+        label = "프로젝트명 [%s]" % slip
+        if not projects:
+            label += " (%s)" % NO_LIST
+        elif ln["code"] is not None and ln["code"] != slip:
+            label += " (적요 코드 [%s]와 다름)" % ln["code"]
+        ln.update(project=slip, basis="코드", label=label)
         return True
     code = ln["code"]
     if code is None:
@@ -229,6 +244,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
     """
     journal = books.journal
     keys = line_keys(journal)
+    slips = _slips(books)
     prefixes = tuple(str(p) for p in direct_prefixes)
     mark = _squash(direct_mark)
     vat = set(_squash(c) for c in vat_codes)
@@ -238,7 +254,8 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
         if not (re.match(r"^\d{5}$", code) and code.startswith(prefixes) and mark in _squash(row.get("account"))):
             continue
         d, c = row.get("debit"), row.get("credit")
-        lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0)))
+        lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
+                           slips.get(keys[i][:2])))
     used = set()
     pending = []
     for ln in lines:
@@ -315,13 +332,15 @@ def link_revenue(books, projects, overrides, revenue_codes=("41200",)):
     """
     journal = books.journal
     keys = line_keys(journal)
+    slips = _slips(books)
     codes = set(_squash(c) for c in revenue_codes)
     lines = []
     for i, row in enumerate(journal):
         if _squash(row.get("account_code")) not in codes:
             continue
         d, c = row.get("debit"), row.get("credit")
-        lines.append(_line(i, keys[i], row, None if d is None and c is None else (c or 0) - (d or 0)))
+        lines.append(_line(i, keys[i], row, None if d is None and c is None else (c or 0) - (d or 0),
+                           slips.get(keys[i][:2])))
     used = set()
     for ln in lines:
         if _fixed(ln, overrides, projects, used):

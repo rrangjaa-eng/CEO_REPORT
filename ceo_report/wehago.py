@@ -237,6 +237,8 @@ class Books:
         self.journal = []
         self.ledger = []
         self.einvoice = []
+        # 매입매출장 '프로젝트명' 칸의 코드: {(전표일자 ISO, 번호 글자): 프로젝트 코드} (D-53). 칸이 없거나 비면 빈 dict
+        self.slip_projects = {}
 
 
 _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
@@ -300,7 +302,8 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     out, last = [], None
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
             "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
-            "sales_rows": []}
+            "sales_rows": [], "slip_projects": {}}
+    slips = {}   # (전표일자 ISO, 번호) -> 코드, 한 전표에 서로 다른 코드가 있으면 None (쓰지 않음)
     for row in rows[1:]:
         if not any(c.strip() for c in row):
             info["skipped"] += 1
@@ -326,6 +329,11 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
             item["code"] = project_code(item["memo"])
         elif kind == "매입매출장":
             sort = row[cols["구분"][0]].strip()
+            if "프로젝트명" in cols and date is not None:   # 추가 열 (D-53): 매입·매출 줄 모두 전표별 코드로 남긴다
+                pcode = project_code(txt(row, "프로젝트명"))
+                if pcode:
+                    k = (date.isoformat(), row[cols["번호"][0]].strip())
+                    slips[k] = pcode if slips.get(k, pcode) == pcode else None
             if sort != "매입":  # 매출 줄은 세고 (keep_sales 일 때만 남긴다). 사업자(주민)번호 칸은 아예 읽지 않는다 (W-11)
                 info["sales" if sort == "매출" else "other"] += 1
                 if sort != "매출" or not keep_sales:
@@ -348,6 +356,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
         item["vendor_norm"] = norm_vendor(item["vendor"])
         out.append(item)
     info["last_date"] = last
+    info["slip_projects"] = dict((k, v) for k, v in slips.items() if v)
     return out, info
 
 
@@ -423,7 +432,7 @@ def load_books(folder, asof, stale_days):
             unused.extend(ranked[:-1])
     books.unused = sorted(unused)
 
-    staged, mismatches, failures = {}, [], []
+    staged, mismatches, failures, slip_projects = {}, [], [], {}
     for kind in KINDS:
         name = chosen.get(kind)
         if name is None:
@@ -448,6 +457,8 @@ def load_books(folder, asof, stale_days):
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
             staged[kind] = rows
+            if kind == "매입매출장":
+                slip_projects = info["slip_projects"]
     refs = [books.files[k]["ref_date"] for k in KINDS if k in books.files and books.files[k]["ref_date"]]
     books.book_date = min(refs) if refs else None
     books.after_ref = sum(e["after_ref"] for e in books.files.values())
@@ -483,6 +494,7 @@ def load_books(folder, asof, stale_days):
                 books.state = "ok"
     if books.state == "ok":  # 부분 사용 없음: ok 일 때만 행을 준다 (D-35a)
         books.journal, books.ledger, books.einvoice = staged["분개장"], staged["매입매출장"], staged["전자세금계산서(매입)"]
+        books.slip_projects = slip_projects
     return books
 
 
