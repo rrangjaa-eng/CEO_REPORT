@@ -131,7 +131,9 @@ def load(folder):
     for r in raw["계좌잔액.csv"]:
         b = {"date": date(r.get("기준일"), iss, r, "기준일"), "account": r.get("계좌명", ""), "bank": r.get("은행", ""),
              "balance": num(r.get("잔액"), iss, r, "잔액"), "restricted": num(r.get("사용제한금액"), iss, r, "사용제한금액"),
-             "reason": r.get("제한사유", ""), "row": r}
+             "reason": r.get("제한사유", ""), "row": r,
+             # 제한해제일 (선택 칸, 사용자 2026-11-03): 정기예금 만기일 등. 그날부터 쓸 수 있는 돈으로 자금 일정에 들어간다
+             "release": date(r.get("제한해제일"), iss, r, "제한해제일") if (r.get("제한해제일") or "").strip() else None}
         if b["date"] is None:
             iss.add(r["_file"], r["_line"], "기준일 없음 → 제외")
             continue

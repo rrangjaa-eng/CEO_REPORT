@@ -132,7 +132,12 @@ def compute(d, kind, asof, start=None, pick=None):
             latest[b["account"]] = b
     accounts = list(latest.values())
     total_bal, bal_unknown = ssum(a["balance"] for a in accounts)
-    restricted, restr_unknown = ssum(a["restricted"] for a in accounts)
+    # 제한해제일이 기준일 이전이면 이미 풀린 돈: 빼지 않는다 (사용자 2026-11-03)
+    released = [a for a in accounts if a.get("release") and a["release"] <= asof and a["restricted"]]
+    for a in released:
+        issues.add(a["row"]["_file"], a["row"]["_line"], "제한해제일 %s 지남 (%s) → 사용제한 %s 빼지 않음. 계좌잔액.csv 정리 필요"
+                   % (a["release"], a["account"], won(a["restricted"])))
+    restricted, restr_unknown = ssum(0 if a in released else a["restricted"] for a in accounts)
     if not accounts or bal_unknown == len(accounts):
         # 알려진 잔액이 하나도 없으면 현재 현금은 0이 아니라 미확인 (D-02). 시작 잔액이 없으므로 일정·최저 잔액도 계산하지 않는다.
         total_bal = None
@@ -410,6 +415,11 @@ def compute(d, kind, asof, start=None, pick=None):
                            "cat": "프로젝트 " + ("지급요청" if e["state"] == "요청미지급" else "집행계획"),
                            "desc": e["vendor"] or e["item"], "basis": e["basis"], "project": e["project"],
                            "source": "프로젝트집행", "vat_unknown": e["vat"] is None})
+    for a in R["s1"]["accounts"]:   # 사용제한 해제 (정기예금 만기 등): 그날 쓸 수 있는 돈이 된다 (사용자 2026-11-03)
+        if a.get("release") and a["release"] > asof and a["restricted"]:
+            events.append({"date": a["release"], "io": "in", "amount": a["restricted"], "firm": True,
+                           "cat": "사용제한 해제", "desc": a["account"] + (" · " + a["reason"] if a["reason"] else ""),
+                           "basis": "계좌잔액.csv 제한해제일", "project": "", "source": "계좌잔액"})
     for P in R["s3"]["projects"]:
         if P["remain_cash"]:
             events.append({"date": P["remain_due"], "io": "out", "amount": P["remain_cash"], "firm": False,
@@ -425,7 +435,7 @@ def compute(d, kind, asof, start=None, pick=None):
     attach(events, getattr(d, "pay_details", None) or [])
     R["events"] = events
 
-    week_ends = [asof + 7 * (i + 1) * DAY for i in range(4)]
+    week_ends = [pay_friday(asof) + 7 * i * DAY for i in range(4)]   # 금요일 출금 주 (토~금)
     buckets = []
     s = asof + DAY
     for i, we in enumerate(week_ends):
@@ -717,10 +727,20 @@ def account_year(rows, ym, problem=""):
             "total": sum(g["total"] for g in groups), "partial": any(g["partial"] for g in groups)}
 
 
+PAY_WEEKDAY = 4   # 금요일: 회사는 매주 금요일에 출금 (사용자 2026-11-03)
+
+
+def pay_friday(asof):
+    """자금 표·그림의 첫 주 끝 = 기준일 뒤 첫 금요일. 기준일이 금요일이면 그날 지급은 이미 지난 것으로 보므로 다음 금요일."""
+    return asof + ((PAY_WEEKDAY - asof.weekday() - 1) % 7 + 1) * DAY
+
+
 def period_ends(kind, asof):
     """기간별 가용자금의 기간 (사용자 2026-11-03): 주간 = 기준일부터 1~4주, 월간 = 다음 1~3개월 말일."""
-    if kind == "weekly":
-        return [("%d주" % i, asof + 7 * i * DAY) for i in range(1, 5)]
+    if kind == "weekly":   # 금요일 출금 주 단위 (사용자 2026-11-03: 다음 주 지급 목록과 같은 기간·같은 금액)
+        f = pay_friday(asof)
+        labs = ("이번 주", "다음 주", "3주째", "4주째", "5주째")[1 if asof.weekday() == PAY_WEEKDAY else 0:]
+        return [(lab, f + 7 * i * DAY) for i, lab in enumerate(labs[:4])]
     return [("%d개월" % i, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 
 
@@ -729,8 +749,12 @@ def available_periods(start, dated, ends, min_cash, asof):
 
     같은 날 입출금은 합쳐서 본다. 시작 가용액을 모르면 잔액·가용자금은 None, 최소 보유현금을 모르면 가용자금만 None."""
     out = []
+    prev = asof
     for label, end in ends:
-        row = {"label": label, "end": end}
+        frm = prev if label != "지정일" else asof   # 그 기간 = 앞 기간 끝 다음 날부터 (지정일은 오늘부터)
+        if label != "지정일":
+            prev = end
+        row = {"label": label, "end": end, "from": frm + DAY}
         for mode in ("firm", "all"):
             daily = defaultdict(int)
             tin = tout = 0
@@ -743,7 +767,9 @@ def available_periods(start, dated, ends, min_cash, asof):
                 else:
                     tout += e["amount"]
                     daily[e["date"]] -= e["amount"]
-            r = {"in": tin, "out": tout, "bal": None, "low": None, "low_date": None, "avail": None}
+            pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and (mode == "all" or e["firm"]))
+            pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and (mode == "all" or e["firm"]))
+            r = {"in": tin, "out": tout, "pin": pin, "pout": pout, "bal": None, "low": None, "low_date": None, "avail": None}
             if start is not None:
                 bal, low, low_d = start, start, asof
                 for day in sorted(daily):

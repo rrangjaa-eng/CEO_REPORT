@@ -72,11 +72,11 @@ class TestEvidenceOnlyInManagement(unittest.TestCase):
         for kind in ("weekly", "monthly"):
             R = compute(load(SAMPLE), kind, D(2026, 10, 31))
             ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
-            self.assertIn("경영관리 보고로 요청 때 제출합니다", ceo)
+            self.assertIn("‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다", ceo)
             self.assertNotIn("class='mgonly'", ceo)
             self.assertNotIn("<div class='xbox'>", ceo.split("<div class='toc'>")[0])
             self.assertIn("class='mgonly'", mgmt)
-            self.assertIn("프로젝트별 원가 예산·집행 (근거)", mgmt)
+            self.assertIn("프로젝트별 원가 예산·집행", mgmt)
 
 
 if __name__ == "__main__":

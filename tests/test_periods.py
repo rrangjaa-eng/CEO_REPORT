@@ -18,7 +18,12 @@ def ev(day, io, amount, firm=True):
 class TestPeriodEnds(unittest.TestCase):
     def test_weekly_four_weeks(self):
         self.assertEqual(period_ends("weekly", D(2026, 10, 31)),
-                         [("1주", D(2026, 11, 7)), ("2주", D(2026, 11, 14)), ("3주", D(2026, 11, 21)), ("4주", D(2026, 11, 28))])
+                         [("이번 주", D(2026, 11, 6)), ("다음 주", D(2026, 11, 13)), ("3주째", D(2026, 11, 20)), ("4주째", D(2026, 11, 27))])
+
+    def test_weekly_weeks_end_on_pay_friday(self):
+        """주간 기간 = 금요일 출금 주(토~금) (사용자 2026-11-03: 다음 주 지급 예정 목록과 같은 금액). 금요일 기준일이면 그날 지급은 지난 것."""
+        self.assertEqual(period_ends("weekly", D(2026, 11, 6))[0], ("다음 주", D(2026, 11, 13)))
+        self.assertEqual(period_ends("weekly", D(2026, 11, 2))[0], ("이번 주", D(2026, 11, 6)))
 
     def test_monthly_three_month_ends(self):
         self.assertEqual(period_ends("monthly", D(2026, 10, 31)),

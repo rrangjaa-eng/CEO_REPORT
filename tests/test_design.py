@@ -84,7 +84,7 @@ class TestAvailableFundsTable(unittest.TestCase):
     def test_rows_follow_calc_for_both_editions_and_modes(self):
         for kind, R in self.R.items():
             labels = [p["label"] for p in R["s2"]["periods"]]
-            self.assertEqual(labels, ["1주", "2주", "3주", "4주"] if kind == "weekly" else ["1개월", "2개월", "3개월"])
+            self.assertEqual(labels, ["이번 주", "다음 주", "3주째", "4주째"] if kind == "weekly" else ["1개월", "2개월", "3개월"])
             for edition in ("ceo", "mgmt"):
                 html = render(R, edition)
                 with self.subTest(kind=kind, edition=edition):
@@ -92,7 +92,9 @@ class TestAvailableFundsTable(unittest.TestCase):
                     self.assertEqual(len(got), len(R["s2"]["periods"]))
                     for p, cells in zip(R["s2"]["periods"], got):
                         r = p["all"]
-                        self.assertEqual(cells[0][0], p["label"])
+                        self.assertEqual(" ".join(cells[0][:len(p["label"].split())]), p["label"])
+                        self.assertEqual(cells[1][0], "{:,}".format(r["pin"]))    # 그 기간 금액 (누적 아님)
+                        self.assertEqual(cells[2][0], "{:,}".format(r["pout"]))
                         self.assertEqual(cells[3][0], "{:,}".format(r["bal"]))
                         self.assertEqual(cells[4][0], "{:,}".format(r["low"]))
                         self.assertEqual(cells[5], ["{:,}".format(r["avail"]), "확정분만", "{:,}".format(p["firm"]["avail"])])
@@ -222,7 +224,10 @@ class TestReportIsADocument(unittest.TestCase):
                 self.assertNotIn("부서별 급여+판관비", fs)
             self.assertIn("27,600,000", fs.split("10월 실적")[1].split("<table")[0])   # 회사 순수익 = 실적 카드의 10월 이익
             self.assertNotIn("프로젝트 예산은 남나?", fs)   # 대표용 첫 화면엔 프로젝트 막대 없음, 예산 초과만 한 줄 (사용자 2026-11-03)
-            self.assertIn("<div class='overl'><b class='neg'>예산 초과 2건</b>", fs)
+            if edition == "mgmt":   # 대표용엔 예산 언급 없음, 예산 초과 줄은 경영관리용에만 (사용자 2026-11-03)
+                self.assertIn("<div class='overl'><b class='neg'>예산 초과 2건</b>", fs)
+            else:
+                self.assertNotIn("예산", re.sub(r"<[^>]+>", "", fs[fs.index("<body"):]))
         self.assertNotIn("pt tm", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo"))
 
     def test_team_profit_unknown_without_dept_file(self):
@@ -371,7 +376,8 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         heads = [re.sub("<[^>]+>", "", h) for h in re.findall(r"<div class='q'>.*?</div>", ceo)]
         self.assertEqual([h[1:].strip().split(" ")[0] for h in heads], ["금요일(11/06)", "10월", "지금"])
         self.assertNotIn("class='prow'", ceo)
-        self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", ceo)
+        self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
+        self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
         mgmt = render(R, "mgmt")
         fs = mgmt.split("<div class='toc'>")[0]
         ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", fs)
@@ -379,7 +385,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
         self.assertEqual(ids, ["P26206", "P26203", "P26201", "P26207", "P26204", "P26208"])
         self.assertIn("행사일 순", fs)
-        self.assertLess(fs.index("지금 자금은"), fs.index("프로젝트별 원가 예산·집행 (근거)"))
+        self.assertLess(fs.index("지금 자금은"), fs.index("프로젝트별 원가 예산·집행"))
 
 class TestMonthlyMonthAndYearApart(unittest.TestCase):
     """월간 (사용자 2026-11-03): 이번 달 실적과 올해 누적 실적을 따로 나누고, 경영관리의 영업외 수익을 그 부서 실적으로 보인다."""

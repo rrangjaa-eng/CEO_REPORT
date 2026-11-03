@@ -70,8 +70,8 @@ def _check_day(text, label):
     return d
 
 
-def task_argv(task, paths, asof="", pick=""):
-    """작업 이름 -> (모듈 이름, argv). 날짜는 비우면 오늘."""
+def task_argv(task, paths, asof="", pick="", nums=""):
+    """작업 이름 -> (모듈 이름, argv). 날짜는 비우면 오늘. 근거주간·근거월간은 nums(근거 번호, 예: 1-1,3-2)가 있어야 한다."""
     _check_day(asof, "기준일")
     _check_day(pick, "가용자금 볼 날짜")
     day = ["--기준일", asof] if asof else []
@@ -79,6 +79,9 @@ def task_argv(task, paths, asof="", pick=""):
         return "변환", day + ["--입력", paths.input, "--수집폴더", paths.collect]
     if task in ("주간", "월간"):
         return "보고서", [task] + day + (["--가용일", pick] if pick else []) + ["--입력", paths.input, "--출력", paths.output]
+    if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
+        from .evidence import parse_nums
+        return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
     if task == "승인검토":
         return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect]
     raise ValueError("모르는 작업: %s" % task)
@@ -95,13 +98,13 @@ def _module(name):
     return m
 
 
-def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None):
+def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums=""):
     """작업 하나를 돌리고 (종료코드, 새로 생긴 출력 파일 목록)을 돌려준다. 글은 say(한 줄)로 넘긴다.
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
     try:
-        name, argv = task_argv(task, paths, asof, pick)
+        name, argv = task_argv(task, paths, asof, pick, nums)
     except ValueError as e:
         say(str(e))
         return 2, []

@@ -865,7 +865,7 @@ class TestUserRulesLocked(Base):
         self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
         self.assertEqual(mn["all"], (125_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
         fs = first_screen(render(self.R, "mgmt"))
-        self.assertIn("기간 중 최저 잔액", fs)
+        self.assertIn("오늘부터 최저 잔액", fs)
         self.assertIn("확정분만", fs)
         self.assertIn("예상분 포함", fs)
 

@@ -74,6 +74,14 @@ class Window(object):
         self._btn(f2, "주간 보고", lambda: self.start("주간"), big=True)
         self._btn(f2, "월간 보고", lambda: self.start("월간"), big=True)
         self._btn(f2, "출력 폴더 열기", lambda: self.open_dir(self.paths.output))
+        # 대표가 근거 번호로 요청하면: 같은 기준일 경영관리 보고에서 그 근거만 PDF로 (사용자 2026-11-03)
+        ev = ttk.Frame(f2)
+        ev.pack(side="left", padx=(16, 0))
+        self.ev_kind, self.ev_nums = tk.StringVar(value="주간"), tk.StringVar()
+        ttk.Combobox(ev, textvariable=self.ev_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left")
+        ttk.Label(ev, text="근거 번호").pack(side="left", padx=(6, 0))
+        ttk.Entry(ev, textvariable=self.ev_nums, width=12).pack(side="left", padx=4)
+        self._btn(ev, "근거자료 PDF", lambda: self.start("근거" + self.ev_kind.get()))
 
         # ③ 지급 승인 검토
         f3 = ttk.LabelFrame(outer, text="③ 지급 승인 검토 — 인트라넷 지급요청을 읽어 승인 화면을 엽니다", style="Sec.TLabelframe", padding=8)
@@ -223,11 +231,12 @@ class Window(object):
         self.set_busy(True, "%s 중… 끝나면 결과가 여기에 보입니다" % task)
         uid, pw = self.uid.get(), self.pw.get()
         asof, pick = self.asof.get().strip(), self.pick.get().strip()
+        nums = self.ev_nums.get().strip()
 
         def work():
             try:
                 rc, files = app.run_task(task, self.paths, self.say, asof=asof, pick=pick, collect=collect,
-                                         credentials=(lambda: (uid, pw)) if collect else None)
+                                         credentials=(lambda: (uid, pw)) if collect else None, nums=nums)
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []
@@ -238,7 +247,8 @@ class Window(object):
         if task == "승인검토":
             self.pw.set("")   # 비밀번호는 쓰고 바로 비운다
         if rc == 0:
-            pdfs = [f for f in files if f.lower().endswith(".pdf") and "대표" in os.path.basename(f)]
+            pdfs = [f for f in files if f.lower().endswith(".pdf")
+                    and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
             if pdfs:
                 open_path(pdfs[-1])
                 self.say("열었음: %s" % os.path.basename(pdfs[-1]))

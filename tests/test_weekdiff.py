@@ -104,7 +104,7 @@ class TestWeeklyReport(unittest.TestCase):
         R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 6), 8_800_000, "샘플 빠진 지급"),
                                                             ev(D(2026, 11, 9), 1_000_000, "다음 주 것")]}
         fs = first_screen(render(R, "ceo"))
-        part = fs[fs.index("출금 목록"):fs.index("실적</div>")]
+        part = fs[fs.index("출금 목록"):fs.index("10월 실적")]
         # 비교 줄은 금요일 출금 카드 안 (다음 주 요약 표 앞): 지난주가 이번 금요일까지로 본 금액 vs 이번 금요일 (사용자 2026-11-03)
         self.assertLess(part.index("지난주 대비:"), part.index("다음 주 지급 예정"))
         self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 항목별 요약

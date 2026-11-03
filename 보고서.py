@@ -113,6 +113,48 @@ def to_pdf(browser, html_path, pdf_path):
     return "PDF 실패 (브라우저가 파일을 만들지 않음)"
 
 
+def _evidence(a, kind, asof):
+    """근거자료만 따로 (사용자 2026-11-03): 보고서를 다시 만들지 않고, 대표에게 낸 그 경영관리 보고에서 뽑는다 (같은 숫자)."""
+    from ceo_report import evidence
+    label = "주간" if kind == "weekly" else "월간"
+    try:
+        nums = evidence.parse_nums(a.근거)
+    except ValueError as e:
+        _say(str(e))
+        return 2
+    src = os.path.join(a.출력, "%s_%s_경영관리보고.html" % (asof.isoformat(), label))
+    if not os.path.isfile(src):
+        _say("%s 경영관리 보고가 없습니다: %s — 먼저 그 날짜의 %s 보고를 만드세요." % (asof, src, label))
+        return 2
+    with open(src, encoding="utf-8") as f:
+        mg = f.read()
+    try:
+        doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label))
+    except ValueError as e:
+        _say(str(e))
+        return 2
+    base = os.path.join(a.출력, "%s_%s_근거자료_%s" % (asof.isoformat(), label, "_".join(nums)))
+    try:
+        with open(base + ".html", "w", encoding="utf-8") as f:
+            f.write(doc)
+    except OSError as e:
+        _say(_write_help(a.출력, e))
+        return 7
+    made = [base + ".html"]
+    browser = find_browser() if a.pdf == "만듦" else None
+    if browser:
+        err = to_pdf(browser, base + ".html", base + ".pdf")
+        if err:
+            _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+        else:
+            made.append(base + ".pdf")
+    _say("근거 %s · %s %s 경영관리 보고에서 뽑음" % (", ".join(nums), asof, label))
+    _say("만든 파일:")
+    for m in made:
+        _say("  " + m)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="대표 주간·월간 보고서")
     ap.add_argument("유형", choices=["주간", "월간", "weekly", "monthly"])
@@ -122,12 +164,15 @@ def main(argv=None):
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
+    ap.add_argument("--근거", default=None, help="대표가 요청한 근거 번호 (예: 1-1,3-2). 이미 만든 경영관리 보고에서 그 근거만 따로 만듦")
     a = ap.parse_args(argv)
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
     asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
     if asof is None:
         _say("기준일 형식 오류: %s" % a.기준일)
         return 2
+    if a.근거 is not None:
+        return _evidence(a, kind, asof)
     start = None
     if a.시작일:
         start = parse_date(a.시작일)
