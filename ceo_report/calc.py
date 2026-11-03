@@ -486,6 +486,8 @@ def compute(d, kind, asof, start=None):
                 low, low_d = bal, day
         mins[mode] = (low, low_d)
     four = buckets[:4]
+    min_cash = R["settings_num"].get("위험_최소보유현금")
+    periods = available_periods(start_cash, dated, period_ends(R["kind"], asof), min_cash, asof)
     # 예정일이 지난 미처리: 확인된 금액만 합산하고, 건수는 금액 미확인 건도 센다. 일정·최저 잔액에는 넣지 않는다.
     past_all = past + [ev for ev in amount_unknown if ev["date"] is not None and ev["date"] <= asof]
     past_sum = {}
@@ -507,6 +509,7 @@ def compute(d, kind, asof, start=None):
     R["s2"] = {
         "start": R["s1"]["available"], "out_missing": out_missing, "in_missing": in_missing, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
         "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
+        "periods": periods, "min_cash": min_cash, "dated": dated,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
         "undated_in": undated_sum["in"][0], "undated_in_n": undated_sum["in"][1], "undated_in_unknown": undated_sum["in"][2],
@@ -647,6 +650,45 @@ def compute(d, kind, asof, start=None):
     }
     R["risks"] = risks(R)
     return R
+
+
+def period_ends(kind, asof):
+    """기간별 가용자금의 기간 (사용자 2026-11-03): 주간 = 기준일부터 1~4주, 월간 = 다음 1~3개월 말일."""
+    if kind == "weekly":
+        return [("%d주" % i, asof + 7 * i * DAY) for i in range(1, 5)]
+    return [("%d개월" % i, _month_end(_add_months(asof, i))) for i in range(1, 4)]
+
+
+def available_periods(start, dated, ends, min_cash, asof):
+    """기간마다 확정분만(firm)·예상분 포함(all)으로 입금·지급 예정, 예상 잔액, 기간 중 최저 잔액(날짜), 가용자금.
+
+    같은 날 입출금은 합쳐서 본다. 시작 가용액을 모르면 잔액·가용자금은 None, 최소 보유현금을 모르면 가용자금만 None."""
+    out = []
+    for label, end in ends:
+        row = {"label": label, "end": end}
+        for mode in ("firm", "all"):
+            daily = defaultdict(int)
+            tin = tout = 0
+            for e in dated:
+                if not (asof < e["date"] <= end) or (mode == "firm" and not e["firm"]):
+                    continue
+                if e["io"] == "in":
+                    tin += e["amount"]
+                    daily[e["date"]] += e["amount"]
+                else:
+                    tout += e["amount"]
+                    daily[e["date"]] -= e["amount"]
+            r = {"in": tin, "out": tout, "bal": None, "low": None, "low_date": None, "avail": None}
+            if start is not None:
+                bal, low, low_d = start, start, asof
+                for day in sorted(daily):
+                    bal += daily[day]
+                    if bal < low:
+                        low, low_d = bal, day
+                r.update(bal=bal, low=low, low_date=low_d, avail=None if min_cash is None else low - min_cash)
+            row[mode] = r
+        out.append(row)
+    return out
 
 
 def event_unissued(inv_proj, asof, in_missing):
