@@ -533,6 +533,9 @@ def _excluded_box(R):
     for t in R.get("tax") or []:   # 세금 납부 예상 (사용자 2026-11-03)
         amt = "금액 미확인" if t["amount"] is None else won(t["amount"])
         period = re.sub(r"^\d{4}년 ", "", t["period"]) if t["period"].startswith("%d년" % R["asof"].year) else t["period"]
+        if t["due"] is None:
+            items.append("%s %s %s (%s) → 일정에 넣지 않음" % (t["kind"], period, amt, t["state"]))
+            continue
         head = "%s %s %s (%s 납부, %s)" % (t["kind"], period, amt, d2s(t["due"])[5:].replace("-", "/"), t["state"])
         if t["matched"] is None:
             items.append(head + (" → 일정에 넣음" if t["amount"] is None or t["amount"] > 0 else " → 환급 예상, 일정에 넣지 않음"))

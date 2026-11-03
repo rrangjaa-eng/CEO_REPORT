@@ -530,7 +530,7 @@ class TestConvertConfig(unittest.TestCase):
         "nonop_in_codes": ("90100", "92200", "93000"), "nonop_out_codes": ("93100", "96000"),
         "vat_payable_codes": ("25500",), "withholding_codes": ("25400",),
         "withholding_vendors": ("세무서", "구청", "시청", "군청"), "withholding_mode": "자동",
-        "insurance_vendors": ("국민연금", "건강보험", "근로복지", "고용보험")})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
+        "insurance_vendors": ("국민연금", "건강보험", "근로복지", "고용보험"), "salary_pay_day": 5})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
 
     def test_every_item_is_read_from_the_settings(self):
         convert = mod("convert")

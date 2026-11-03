@@ -11,6 +11,8 @@
        (납부가 1월·7월에만 있으면 반기납부: 1~6월분 7/10, 7~12월분 다음 해 1/10. 아니면 매월: 다음 달 10일).
 납부일이 토·일이면 월요일로 미룬다 (공휴일은 보지 않음). 모르는 금액은 None 이고 0으로 치지 않는다.
 """
+import calendar
+import os
 import datetime as dt
 import re
 
@@ -225,14 +227,195 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
     return rows
 
 
+# 공휴일 (대체공휴일 포함). 급여일을 앞당기고 카드 납부일을 미룰 때 쓴다. 해마다 달력을 보고 더한다 (주말은 따로 봄)
+KR_HOLIDAYS = frozenset(dt.date(*d) for d in (
+    (2026, 1, 1), (2026, 2, 16), (2026, 2, 17), (2026, 2, 18), (2026, 3, 2), (2026, 5, 5), (2026, 5, 25), (2026, 6, 3),
+    (2026, 8, 17), (2026, 9, 24), (2026, 9, 25), (2026, 9, 28), (2026, 10, 5), (2026, 10, 9), (2026, 12, 25),
+    (2027, 1, 1), (2027, 2, 8), (2027, 2, 9), (2027, 3, 1), (2027, 5, 5), (2027, 5, 13), (2027, 8, 16),
+    (2027, 9, 14), (2027, 9, 15), (2027, 9, 16), (2027, 10, 4), (2027, 10, 11), (2027, 12, 27)))
+
+
+def _off(d):
+    return d.weekday() >= 5 or d in KR_HOLIDAYS
+
+
+def _before(d):
+    """쉬는 날이면 그 전 영업일 (급여)."""
+    while _off(d):
+        d -= dt.timedelta(days=1)
+    return d
+
+
+def _after(d):
+    """쉬는 날이면 다음 영업일 (카드 결제일)."""
+    while _off(d):
+        d += dt.timedelta(days=1)
+    return d
+
+
+def _next_month(y, m, k=1):
+    m += k
+    return y + (m - 1) // 12, (m - 1) % 12 + 1
+
+
+def _day_in(y, m, day):
+    return dt.date(y, m, min(day, calendar.monthrange(y, m)[1]))
+
+
+def salary(journal, asof, salary_codes=("80200",), accrued_codes=("26200",), pay_day=5, months_ahead=2):
+    """급여 지급 예상 (사용자 2026-11-03: 급여일은 다음 달 5일, 공휴일·주말이면 그 전 영업일).
+
+    월말 급여 전표(급여 차변 / 예수금·미지급비용 대변)의 미지급비용 대변 = 통장으로 나가는 실지급액(세후). 원천세·4대보험은
+    따로 들어가므로 겹치지 않는다. 전표가 있는 달은 '확정(전표)', 아직 없는 달은 직전 달 실지급액으로 '예상'
+    (기준일이 속한 달부터 months_ahead 달 더). 그 금액이 미지급비용 차변·통장 출금으로 이미 나갔으면 넣지 않는다."""
+    salary_codes, accrued_codes = set(map(_sq, salary_codes)), set(map(_sq, accrued_codes))
+    slips = {}
+    for ln in journal:
+        if ln["date"] is not None:
+            slips.setdefault((ln["date"], ln.get("no")), []).append(ln)
+    accr = {}   # (연, 월) -> (전표일, 실지급액)
+    paid = []   # (일자, 금액): 미지급비용 차변 + 통장 출금
+    for (day, _), lines in slips.items():
+        codes = set(_sq(x["account_code"]) for x in lines)
+        if codes & salary_codes and any((x.get("debit") or 0) for x in lines if _sq(x["account_code"]) in salary_codes):
+            net = sum((x.get("credit") or 0) for x in lines if _sq(x["account_code"]) in accrued_codes)
+            if net:
+                k = (day.year, day.month)
+                accr[k] = (max(day, accr[k][0]) if k in accr else day, (accr[k][1] if k in accr else 0) + net)
+        elif _from_bank(lines):
+            for x in lines:
+                if _sq(x["account_code"]) in accrued_codes and (x.get("debit") or 0):
+                    paid.append((day, x["debit"]))
+    if not accr:
+        return []
+    rows = []
+    last_amt = accr[max(accr)][1]
+    months = sorted(set(list(accr) + [_next_month(asof.year, asof.month, k) for k in range(0, months_ahead + 1)]))
+    for (y, m) in months:
+        due = _before(_day_in(*_next_month(y, m), pay_day))
+        if due < asof:
+            continue
+        if (y, m) in accr:
+            day, amt = accr[(y, m)]
+            if any(day < d <= asof and a == amt for d, a in paid):
+                continue   # 이미 나감
+            rows.append(_row("급여", "%d년 %d월분" % (y, m), due, amt, "확정(전표)", "월말 급여 전표 미지급비용(실지급액, 세후)"))
+        elif (y, m) > max(accr):
+            rows.append(_row("급여", "%d년 %d월분" % (y, m), due, last_amt, "예상",
+                             "직전 급여 전표(%d-%02d) 실지급액으로 봄" % max(accr)))
+    return rows
+
+
+CARD_PREFIX = re.compile(r"^(신한|롯데|비씨|BC|삼성|현대|국민|KB|하나|우리|농협|NH|씨티)[_\s-]")
+
+
+CARD_FILE = "카드결제일.csv"
+CARD_COLUMNS = ["카드사", "납부일", "기산일"]
+# 사용자 2026-11-03: 신한 15일 · 롯데 14일 · 비씨 25일. 기산일(이용기간 시작일)은 모르니 1일(전월 1일~말일)로 두고 창에서 고친다
+DEFAULT_CARDS = (("신한", 15, 1), ("롯데", 14, 1), ("비씨", 25, 1))
+
+
+def _card_name(text):
+    text = str(text or "").strip().replace("카드", "")
+    return {"BC": "비씨", "KB": "국민", "NH": "농협"}.get(text.upper(), text)
+
+
+def read_card_days(input_dir):
+    """입력/카드결제일.csv -> ({카드사: (납부일, 기산일)}, 알림). 파일이 없으면 기본값. 틀린 줄은 빼고 알린다."""
+    path = os.path.join(input_dir, CARD_FILE)
+    if not os.path.exists(path):
+        return dict((c, (p, s)) for c, p, s in DEFAULT_CARDS), [
+            "%s 없음 → 기본값 %s (기산일 1일)" % (CARD_FILE, " · ".join("%s %d일" % (c, p) for c, p, _ in DEFAULT_CARDS))]
+    from .util import Issues, read_csv
+    info = {}
+    rows, ok = read_csv(path, CARD_COLUMNS, Issues(), info)
+    if not ok or info.get("missing"):
+        return {}, ["%s 를 읽지 못함 (머리글: 카드사,납부일,기산일) → 카드대금은 날짜 없이 알리기만 함" % CARD_FILE]
+    out, notes = {}, []
+    for r in rows:
+        co = _card_name(r.get("카드사"))
+        pay, start = str(r.get("납부일") or "").strip().rstrip("일"), str(r.get("기산일") or "1").strip().rstrip("일") or "1"
+        if not co:
+            continue
+        if not (pay.isdigit() and start.isdigit() and 1 <= int(pay) <= 31 and 1 <= int(start) <= 31):
+            notes.append("%s %s 줄 날짜를 읽지 못함 (납부일·기산일은 1~31)" % (CARD_FILE, co))
+            continue
+        out[co] = (int(pay), int(start))
+    return out, notes
+
+
+def card_due(day, pay, start):
+    """사용일 day 의 결제일. 이용기간은 기산일부터 다음 기산일 전날까지, 결제는 그 기간이 끝난 뒤 처음 오는 납부일
+    (쉬는 날이면 다음 영업일). 예: 기산일 1일·납부일 15일 → 10월 사용은 11월 15일. 기산일 12일·납부일 25일 → 10/12~11/11 사용은 11월 25일."""
+    nxt = _day_in(day.year, day.month, start)
+    if nxt <= day:
+        nxt = _day_in(*_next_month(day.year, day.month), start)
+    end = nxt - dt.timedelta(days=1)
+    due = _day_in(end.year, end.month, pay)
+    if due <= end:
+        due = _day_in(*_next_month(end.year, end.month), pay)
+    return _after(due)
+
+
+def cards(journal, asof, card_days, accrued_codes=("26200",)):
+    """카드대금 납부 예상 (사용자 2026-11-03: 카드별 납부일과 기산일을 넣어 계산).
+
+    미지급비용 중 거래처가 '카드사_끝번호'인 줄: 대변 = 사용, 차변 = 결제. 사용을 결제일별로 모으고 결제를 오래된 것부터 지운 뒤,
+    남은 금액은 그 결제일에 나간다고 본다 (결제일이 이미 지났으면 다음 결제일로). card_days = {카드사: (납부일, 기산일)}.
+    납부일을 모르는 카드사는 '납부일 확인 필요'(날짜 없음)로 돌려준다."""
+    accrued_codes = set(map(_sq, accrued_codes))
+    use, pay = {}, {}
+    for ln in journal:
+        if ln["date"] is None or _sq(ln["account_code"]) not in accrued_codes:
+            continue
+        m = CARD_PREFIX.match(str(ln.get("vendor") or ""))
+        if not m:
+            continue
+        co = _card_name(m.group(1))
+        if ln.get("credit"):
+            use.setdefault(co, []).append((ln["date"], ln["credit"]))
+        if ln.get("debit"):
+            pay[co] = pay.get(co, 0) + ln["debit"]
+    rows = []
+    for co in sorted(use):
+        days = card_days.get(co)
+        if not days:
+            bal = sum(a for _, a in use[co]) - pay.get(co, 0)
+            if bal > 0:
+                rows.append(_row("카드대금", "%s카드 미결제 잔액" % co, None, bal, "납부일 확인 필요",
+                                 "창의 '카드 납부일'에 %s 납부일·기산일을 넣으면 자금 일정에 들어감" % co))
+            continue
+        p, s = days
+        by_bill = {}
+        for d, a in use[co]:
+            k = card_due(d, p, s)
+            by_bill[k] = by_bill.get(k, 0) + a
+        left = pay.get(co, 0)
+        by_due = {}
+        for k in sorted(by_bill):
+            take = min(by_bill[k], left)
+            left -= take
+            if by_bill[k] - take <= 0:
+                continue
+            due = k
+            while due < asof:   # 결제일이 지났는데 남은 금액: 다음 납부일로
+                due = _after(_day_in(*_next_month(due.year, due.month), p))
+            by_due[due] = by_due.get(due, 0) + by_bill[k] - take
+        for due in sorted(by_due):
+            rows.append(_row("카드대금", "%s카드 %d월 %d일 결제" % (co, due.month, due.day), due, by_due[due], "예상",
+                             "미지급비용 %s카드 사용 − 결제 (납부일 %d일, 기산일 %d일)" % (co, p, s)))
+    return rows
+
+
 def _row(kind, period, due, amount, state, basis):
-    return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat(), "금액": "" if amount is None else str(amount),
+    return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
             "상태": state, "근거": basis}
 
 
 # ───────────── 보고서 쪽: 자금 일정에 넣기 ─────────────
 KEYWORDS = {"부가세": ("부가",), "원천세": ("원천", "소득세", "지방소득"),
-            "4대보험": ("4대보험", "사대보험", "국민연금", "건강보험", "고용보험", "산재", "근로복지", "공단")}
+            "4대보험": ("4대보험", "사대보험", "국민연금", "건강보험", "고용보험", "산재", "근로복지", "공단"),
+            "급여": ("급여", "월급", "임금", "인건비"), "카드대금": ("카드",)}
 OFFICE = {"부가세": ("세무서",), "원천세": ("세무서", "구청", "시청", "군청")}
 NEAR_DAYS = 7
 
@@ -249,6 +432,8 @@ def merge(events, taxes):
     taken = set()
 
     def near(ev, t):
+        if t["due"] is None:
+            return False
         return ev["io"] == "out" and ev["date"] is not None and abs((ev["date"] - t["due"]).days) <= NEAR_DAYS
 
     def text(ev):
@@ -269,7 +454,7 @@ def merge(events, taxes):
     for t, match in zip(taxes, found):
         diff = None if match is None or match["amount"] is None or t["amount"] is None else match["amount"] - t["amount"]
         info.append(dict(t, matched=match, diff=diff))
-        if match is None and (t["amount"] is None or t["amount"] > 0):
+        if match is None and t["due"] is not None and (t["amount"] is None or t["amount"] > 0):
             out.append({"date": t["due"], "io": "out", "amount": t["amount"], "firm": t["state"].startswith("확정"),
                         "cat": "세금·4대보험 예상 (장부 계산)", "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],
                         "project": "", "source": "세금예상"})

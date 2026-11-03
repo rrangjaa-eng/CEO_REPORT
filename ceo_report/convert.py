@@ -43,6 +43,7 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("withholding_codes", ("25400",)),                 # 예수금
     ("withholding_vendors", ("세무서", "구청", "시청", "군청")),   # 원천세(소득세·지방소득세) 거래처 낱말
     ("insurance_vendors", ("국민연금", "건강보험", "근로복지", "고용보험")),   # 4대보험 거래처 낱말 (사용자 2026-11-03)
+    ("salary_pay_day", 5),                             # 급여일: 다음 달 이 날, 쉬는 날이면 그 전 영업일
     ("withholding_mode", "자동"),                      # 원천세 납부: 자동 | 반기 | 매월   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
 ])
 
@@ -135,6 +136,7 @@ CONFIG_ITEMS = (
     ("변환_원천세거래처", "withholding_vendors", "낱말목록"),
     ("변환_원천세납부", "withholding_mode", "낱말"),
     ("변환_4대보험거래처", "insurance_vendors", "낱말목록"),
+    ("변환_급여일", "salary_pay_day", "정수"),
 )
 
 
@@ -780,22 +782,26 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
-    tables.append(build_tax(books, cfg, asof))
+    tables.append(build_tax(books, cfg, asof, input_dir))
     return tables, states
 
 
-def build_tax(books, cfg, asof):
+def build_tax(books, cfg, asof, input_dir=None):
     """세금예상.csv 표 (사용자 2026-11-03): 분개장으로 부가세(분기)·원천세·4대보험(회사분 포함) 납부 예상. 계산할 줄이 없으면 빈 표를 쓴다."""
     from . import tax
     mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
+    card_days, card_notes = tax.read_card_days(input_dir) if input_dir else ({}, [])
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
         tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode) + \
-        tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"])
-    rows.sort(key=lambda r: r["납부예정일"])
-    notes = ["%s %s → %s 납부 %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"],
+        tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
+        tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
+        tax.cards(books.journal, asof, card_days)
+    rows.sort(key=lambda r: r["납부예정일"] or "9999")
+    notes = ["%s %s → %s 납부 %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
                                        "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
+    notes.extend(card_notes)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
     return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
 

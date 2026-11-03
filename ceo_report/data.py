@@ -212,8 +212,9 @@ def load(folder):
         if ok and not info["missing"]:
             d.tax = []
             for r in rows:
-                due = date(r.get("납부예정일"), iss, r, "납부예정일")
-                if due is None:
+                blank = not (r.get("납부예정일") or "").strip()   # 카드 결제일 모름 등: 날짜 없이 알리기만 한다
+                due = None if blank else date(r.get("납부예정일"), iss, r, "납부예정일")
+                if due is None and not blank:
                     continue
                 d.tax.append({"kind": r.get("세목", ""), "period": r.get("대상기간", ""), "due": due,
                               "amount": num(r.get("금액"), iss, r, "금액"), "state": r.get("상태", "") or "예상",

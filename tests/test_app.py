@@ -133,6 +133,27 @@ class TestArchiveOld(unittest.TestCase):
         self.assertIn("옮길 예전 파일이 없습니다", lines[0])
 
 
+class TestCardDays(unittest.TestCase):
+    """창에서 카드별 납부일·기산일을 넣는다 (사용자 2026-11-03)."""
+
+    def test_save_adds_and_updates(self):
+        P = program(self)
+        rows = app.save_card(P.input, "비씨카드", "25", "12")
+        self.assertIn(("비씨", 25, 12), rows)
+        rows = app.save_card(P.input, "신한", "10일", "")
+        self.assertIn(("신한", 10, 1), rows)
+        self.assertEqual(len([r for r in rows if r[0] == "신한"]), 1)
+        self.assertIn("비씨 25일(기산 12일)", app.card_list(P.input))
+
+    def test_bad_values_are_refused(self):
+        P = program(self)
+        for args, word in ((("", "15", "1"), "카드사"), (("신한", "32", "1"), "납부일"), (("신한", "15", "x"), "기산일")):
+            with self.subTest(word):
+                with self.assertRaises(ValueError) as cm:
+                    app.save_card(P.input, *args)
+                self.assertIn(word, str(cm.exception))
+
+
 class TestOneWindow(unittest.TestCase):
     """실행 파일은 하나 (사용자 2026-11-03): 예전 실행_*.bat 넷 대신 대표보고.pyw / 대표보고.exe."""
 

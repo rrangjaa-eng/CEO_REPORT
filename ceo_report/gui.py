@@ -110,6 +110,22 @@ class Window(object):
         self._btn(row2, "넣기", self.add_schedule)
         self._btn(row2, "자금일정 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
 
+        # ⑤ 카드 납부일
+        f5 = ttk.LabelFrame(outer, text="⑤ 카드 납부일 — 카드사별 납부일·기산일(이용기간 시작일). 저장 후 '자료 변환'부터 반영",
+                            style="Sec.TLabelframe", padding=8)
+        f5.pack(fill="x", pady=4)
+        self.c_co, self.c_pay, self.c_start = tk.StringVar(), tk.StringVar(), tk.StringVar(value="1")
+        ttk.Label(f5, text="카드사").pack(side="left")
+        ttk.Combobox(f5, textvariable=self.c_co, values=("신한", "롯데", "비씨", "삼성", "현대", "국민", "하나", "우리", "농협"),
+                     width=6).pack(side="left", padx=(4, 10))
+        ttk.Label(f5, text="납부일").pack(side="left")
+        ttk.Entry(f5, textvariable=self.c_pay, width=4).pack(side="left", padx=(4, 10))
+        ttk.Label(f5, text="기산일").pack(side="left")
+        ttk.Entry(f5, textvariable=self.c_start, width=4).pack(side="left", padx=(4, 10))
+        self._btn(f5, "저장", self.save_card)
+        self.cards_now = tk.StringVar(value="지금: " + app.card_list(self.paths.input))
+        ttk.Label(f5, textvariable=self.cards_now, style="S.TLabel").pack(side="left")
+
         # 진행
         ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
         box = ttk.Frame(outer)
@@ -211,6 +227,16 @@ class Window(object):
                  % (row["예정일"], row["입출금"], row["금액"], row["확정여부"], row["거래처"]))
         for v in (self.s_amt, self.s_vendor, self.s_note):
             v.set("")
+
+    def save_card(self):
+        try:
+            rows = app.save_card(self.paths.input, self.c_co.get(), self.c_pay.get(), self.c_start.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.cards_now.set("지금: " + app.card_list(self.paths.input))
+        self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
+                 % " · ".join("%s %d일(기산 %d일)" % r for r in rows))
 
     def open_dir(self, path):
         if not open_path(path):

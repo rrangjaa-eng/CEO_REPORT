@@ -170,3 +170,61 @@ class TestMergeMatching(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSalary(unittest.TestCase):
+    """급여일은 다음 달 5일, 쉬는 날이면 그 전 영업일 (사용자 2026-11-03)."""
+
+    def accrual(self):
+        return [ln(D(2026, 9, 30), "1", "80200", debit=100), ln(D(2026, 9, 30), "1", "25400", credit=10),
+                ln(D(2026, 9, 30), "1", "26200", credit=90, vendor="가상직원")]
+
+    def test_accrued_month_is_firm_and_holiday_moves_earlier(self):
+        rows = tax.salary(self.accrual(), D(2026, 10, 1))
+        got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got[0], ("2026년 9월분", "2026-10-02", "90", "확정(전표)"))   # 10/5 대체공휴일 → 10/2 금
+        self.assertEqual(got[1:], [("2026년 10월분", "2026-11-05", "90", "예상"), ("2026년 11월분", "2026-12-04", "90", "예상"),
+                                   ("2026년 12월분", "2027-01-05", "90", "예상")])   # 12/5 토 → 12/4
+
+    def test_paid_salary_is_not_counted_again(self):
+        j = self.accrual() + [ln(D(2026, 10, 2), "2", "26200", debit=90), ln(D(2026, 10, 2), "2", "10300", credit=90)]
+        rows = tax.salary(j, D(2026, 10, 3))
+        self.assertNotIn("2026년 9월분", [r["대상기간"] for r in rows])
+
+    def test_no_salary_slip_no_rows(self):
+        self.assertEqual(tax.salary([ln(D(2026, 9, 1), "1", "10300", debit=5)], D(2026, 10, 1)), [])
+
+
+class TestCards(unittest.TestCase):
+    """카드별 납부일·기산일로 결제일 계산 (사용자 2026-11-03)."""
+
+    def test_due_from_pay_day_and_start_day(self):
+        self.assertEqual(tax.card_due(D(2026, 10, 20), 15, 1), D(2026, 11, 16))    # 10월 사용 → 11/15 일요일 → 11/16
+        self.assertEqual(tax.card_due(D(2026, 10, 20), 25, 12), D(2026, 11, 25))   # 10/12~11/11 사용 → 11/25
+        self.assertEqual(tax.card_due(D(2026, 10, 5), 25, 12), D(2026, 10, 26))    # 9/12~10/11 사용 → 10/25 일 → 10/26
+        self.assertEqual(tax.card_due(D(2026, 10, 31), 14, 31), D(2026, 12, 14))   # 10/31~11/29 사용 → 12/14
+
+    def test_payments_clear_oldest_and_unknown_card_has_no_date(self):
+        j = [ln(D(2026, 9, 10), "1", "26200", credit=100, vendor="신한_0001"),
+             ln(D(2026, 10, 10), "2", "26200", credit=200, vendor="신한_0001"),
+             ln(D(2026, 10, 15), "3", "26200", debit=100, vendor="신한_0001"),
+             ln(D(2026, 9, 20), "4", "26200", credit=30, vendor="롯데_0002"),
+             ln(D(2026, 10, 1), "5", "26200", credit=50, vendor="삼성_0003")]
+        rows = tax.cards(j, D(2026, 11, 3), {"신한": (15, 1), "롯데": (14, 1)})
+        got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got, [("롯데카드 11월 16일 결제", "2026-11-16", "30", "예상"),   # 10/14 지났는데 남음 → 다음 납부일
+                               ("삼성카드 미결제 잔액", "", "50", "납부일 확인 필요"),
+                               ("신한카드 11월 16일 결제", "2026-11-16", "200", "예상")])
+
+    def test_card_file_and_defaults(self):
+        import tempfile, shutil
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        days, notes = tax.read_card_days(tmp)
+        self.assertEqual(days, {"신한": (15, 1), "롯데": (14, 1), "비씨": (25, 1)})
+        self.assertIn("기본값", notes[0])
+        with open(os.path.join(tmp, tax.CARD_FILE), "w", encoding="utf-8-sig") as f:
+            f.write("카드사,납부일,기산일\nBC카드,25일,12\n신한,40,1\n")
+        days, notes = tax.read_card_days(tmp)
+        self.assertEqual(days, {"비씨": (25, 12)})
+        self.assertIn("신한", notes[0])

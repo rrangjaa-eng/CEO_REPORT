@@ -272,3 +272,40 @@ def archive_old(wehago_dir, asof, say):
         say("지난자료로 옮김: %s — %s" % (name, why))
     say("예전 파일 %d건을 %s 폴더로 옮겼습니다 (지우지 않음)" % (n, os.path.join("수집", "위하고", ARCHIVE)))
     return n
+
+
+# ───────────── 카드별 납부일·기산일 ─────────────
+def save_card(input_dir, company, pay_day, start_day=1):
+    """입력/카드결제일.csv 에 카드사 한 줄을 넣거나 고친다 (사용자 2026-11-03). -> [(카드사, 납부일, 기산일)] 전체.
+
+    납부일 = 카드대금이 통장에서 나가는 날, 기산일 = 이용기간 시작일. 다음 '자료 변환'부터 카드대금 예상에 쓰인다."""
+    from . import tax
+    co = tax._card_name(company)
+    if not co:
+        raise ValueError("카드사를 넣으세요 (예: 신한)")
+    days = []
+    for label, v in (("납부일", pay_day), ("기산일", start_day)):
+        t = str(v if v not in (None, "") else ("1" if label == "기산일" else "")).strip().rstrip("일")
+        if not t.isdigit() or not 1 <= int(t) <= 31:
+            raise ValueError("%s은 1~31 사이 숫자 (예: 15)" % label)
+        days.append(int(t))
+    if not os.path.isdir(input_dir):
+        raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    current, notes = tax.read_card_days(input_dir)
+    if notes and os.path.exists(os.path.join(input_dir, tax.CARD_FILE)) and not current:
+        raise ValueError("%s 머리글이 양식과 다릅니다 — 파일을 확인하세요" % tax.CARD_FILE)
+    current[co] = tuple(days)
+    rows = sorted((c, p, s) for c, (p, s) in current.items())
+    with open(os.path.join(input_dir, tax.CARD_FILE), "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, lineterminator="\r\n")
+        w.writerow(tax.CARD_COLUMNS)
+        for r in rows:
+            w.writerow(r)
+    return rows
+
+
+def card_list(input_dir):
+    """창에 보일 글: '신한 15일(기산 1일) · 롯데 …'."""
+    from . import tax
+    current, _ = tax.read_card_days(input_dir)
+    return " · ".join("%s %d일(기산 %d일)" % (c, p, s) for c, (p, s) in sorted(current.items())) or "없음"
