@@ -216,8 +216,6 @@ def render(R, mode):
                 esc("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"]))))
 
     h.append(_first_screen(R, mode, per))
-    if R["kind"] == "monthly":   # 3쪽: 계정과목별 연간표 (사용자 2026-11-03, 3쪽으로 따로)
-        h.append(_acct_year_page(R))
     if mode == "ceo":
         # 대표 보고는 문서로 1~2쪽: 요약 화면만 싣는다. 상세 장(1~8)은 경영관리 보고에만 (사용자 2026-11-03)
         h.append("</div></body></html>")
@@ -248,7 +246,7 @@ def render(R, mode):
 
 # ─────────── 대표 첫 화면 (2026-11-03 사용자: 한눈에, 원 단위, 업무 용어, 기간별 가용자금) ───────────
 FS_CSS = """
-.q{font-size:13px;font-weight:700;color:var(--sub);margin:20px 0 8px}
+.q{font-size:15px;font-weight:800;color:var(--ink);margin:18px 0 8px;padding-left:9px;border-left:4px solid var(--accent);line-height:1.25}.pgt{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.04em;border-bottom:2px solid var(--accent);padding:2px 0 4px;margin:14px 0 2px}.pgt span{background:var(--accent);color:#fff;border-radius:9px;padding:0 8px;font-size:11px}.pg.last{page-break-after:auto}.pg .sec:first-of-type .q{margin-top:10px}
 .fs .card{border-radius:10px;padding:12px 16px;background:#fff}
 .fs .big{font-size:24px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 .fs .lab{font-size:12.5px;color:var(--sub);font-weight:600}.fs .foot{font-size:12px;color:var(--sub);margin-top:4px}
@@ -259,7 +257,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -287,11 +285,11 @@ table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);pad
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.prow{padding:2px 0}table.pt.wn td,table.pt.wn th{padding:2px 6px}.fri b{font-size:22px}.fri{padding-bottom:3px}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
-.fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs:not(.mon) svg{max-height:80px}.fs:not(.mon) .prow{padding:1px 0}.fs:not(.mon) .bn{font-size:10px;margin-top:1px}.fs:not(.mon) .pr{font-size:13px}.fs:not(.mon) .pn small{font-size:10px}table.pt.wo{font-size:12px}table.pt.wo td,table.pt.wo th{padding:2px 5px}table.pt.xr{font-size:10.5px}.fs .wsub{margin:4px 0 1px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
+@media print{.q{break-after:avoid}.fs .big{font-size:20px}table.pt td{padding:4px 6px}table.pt.tm td,table.pt.tm th{padding:3px 4px}
+.fs svg{max-height:200px}.fs.mon svg{max-height:105px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
 """
 
-CIRCLED = "①②③④⑤⑥⑦⑧"
+CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 
 
 def _q(i, text):
@@ -678,8 +676,12 @@ def _excluded_box(R):
     h.append("<div class='wsub'>일정에 든 세금·카드대금·4대보험·이자·차입금 상환 (분기별)</div>")
     h.append(_regular_table(R))
     h.append("</div>")
-    h.append("<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in _check_items(R)))
     return "".join(h)
+
+
+def _check_box(R):
+    """위 숫자에 안 들어간 것 · 확인할 것 (D-04: 조용히 빼지 않음). 마지막 쪽 끝에."""
+    return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in _check_items(R))
 
 
 PAY_WEEKDAY = 4   # 금요일: 회사는 매주 금요일에 출금 (사용자 2026-11-03)
@@ -818,13 +820,18 @@ def _week_out_table(R):
     return "".join(h)
 
 
-def _acct_year_page(R):
-    """계정과목별 사용 금액 연간표. 보고월까지 칸을 채우고 뒤 달은 비운다. 월간 보고 때마다 한 달씩 늘어난다."""
+def _acct_year_block(R):
+    """(제목, 본문) — 계정과목별 사용 금액 연간표."""
     A = R.get("acct_year") or {"state": "자료 없음", "year": R["asof"].strftime("%Y"), "upto": R["asof"].month}
-    title = "계정과목별 사용 금액 (%s년 1월~%d월)" % (A["year"], A["upto"])
-    h = ["<div class='page ay'><div class='sec'><div class='q'>%s</div>" % esc(title)]
+    return ("계정과목별 사용 금액 (%s년 1월~%d월)" % (A["year"], A["upto"]), _acct_year_page(R))
+
+
+def _acct_year_page(R):
+    """계정과목별 사용 금액 연간표 본문. 보고월까지 칸을 채우고 뒤 달은 비운다. 월간 보고 때마다 한 달씩 늘어난다."""
+    A = R.get("acct_year") or {"state": "자료 없음", "year": R["asof"].strftime("%Y"), "upto": R["asof"].month}
+    h = ["<div class='card ay'>"]
     if A["state"] != "ok":
-        h.append("<div class='card'>%s</div></div></div>" % _na("%s (계정별비용.csv — 대표보고 창의 '자료 변환'으로 만듦)" % A["state"]))
+        h.append("%s</div>" % _na("%s (계정별비용.csv — 대표보고 창의 '자료 변환'으로 만듦)" % A["state"]))
         return "".join(h)
     up = A["upto"]
 
@@ -848,7 +855,7 @@ def _acct_year_page(R):
     note = "분개장 차변−대변 · 원가 = 프로젝트 직접비, 판매비와관리비 = 공통비, 영업외비용 = 설정 계정 · 월간 보고를 만들 때마다 그 달 칸이 채워짐"
     if A["partial"]:
         note += " · * 금액 미확인 칸 빼고 더함"
-    h.append("<div class='note'>%s</div></div></div>" % esc(note))
+    h.append("<div class='note'>%s</div></div>" % esc(note))
     return "".join(h)
 
 
@@ -964,53 +971,54 @@ def _team_notes(R, basis, dept, last, ym):
 
 
 def _first_screen(R, mode, per):
-    s1, s2, s7 = R["s1"], R["s2"], R["s7"]
+    """대표 보고 본문: 최대 3쪽, 쪽마다 한 주제 (사용자 2026-11-03: 가시성).
+
+    주간  1쪽 나갈 돈(금요일 출금·다음 주·지난 미수금/지급·정기 지출) · 2쪽 자금·실적 · 3쪽 프로젝트
+    월간  1쪽 자금(이번 달 흐름·앞으로·지난/정기) · 2쪽 실적(이번 달·누적·장부 대조) · 3쪽 프로젝트·계정과목별 연간표"""
+    s1, s2 = R["s1"], R["s2"]
     monthly = R["kind"] == "monthly"
-    h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]   # 월간은 인쇄에서 그래프를 낮춰 2쪽에 절이 끊기지 않게
-    i = 0
-    if not monthly:   # 주간은 이번 주 지급 목록이 맨 위 (사용자 2026-11-03)
-        wo = week_outflows(R)
-        h.append(_q(i, "금요일(%s) 출금 목록" % _md(wo["fri"])))
-        i += 1
-        h.append(_week_out_table(R))
-    if monthly:
-        h.append(_q(i, "이번 달 자금 흐름"))
-        h.append(_flow_card(s1, per))
-        i += 1
-    h.append(_q(i, "앞으로 자금은?" if monthly else "지금 자금은?"))
-    i += 1
-    h.append(_avail_table(R))
-    h.append("<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
-             % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))
     ymt = _ym_text(R["s4"]["ym"])
-    blocks = [("%s 실적" % ymt + (" (이번 달)" if monthly else ""), _results(R, cum=not monthly) + (_team_table(R) if monthly else ""))]
-    if monthly:   # 이번 달과 올해 누적을 따로 나눠 보인다 (사용자 2026-11-03)
-        blocks.append(("올해 누적 실적 (1월~%s)" % ymt, _team_table(R, "ytd")))
-    # 실적을 프로젝트 앞에: 월간은 자금 바로 아래(1쪽), 주간은 ③ (사용자 2026-11-03)
-    blocks.append(("프로젝트 예산은 남나?", _project_bars(R, per, flagged_only=monthly, active_only=not monthly)))
-    for title, body in blocks:
-        h.append(_q(i, title))
-        i += 1
-        h.append(body)
+    funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R) + "<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
+              % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))]
+    past = [("지난 미수금·지급 · 정기 지출 예상", _excluded_box(R))]
+    checks = ("위 숫자에 안 들어간 것 · 확인할 것", _check_box(R))
+    projects = [("프로젝트 예산은 남나?", _project_bars(R, per, flagged_only=monthly, active_only=not monthly))]
     if monthly:
-        h.append(_q(i, "장부와 맞춰 본 결과 (WEHAGO 기준)"))
-        i += 1
         X = R.get("xchk")
         if X is None or X["state"] == "자료 없음":
-            h.append("<div class='card'>%s</div>" % _na("자료 없음 (%s — 대표보고 창의 '자료 변환'으로 만듦)" % XCHK_FILE_NAME))
+            xk = "<div class='card'>%s</div>" % _na("자료 없음 (%s — 대표보고 창의 '자료 변환'으로 만듦)" % XCHK_FILE_NAME)
         elif X["state"] != "ok":
-            h.append("<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
+            xk = "<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"]))
         else:
-            h.append("<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X))
-    h.append(_q(i, "지난 미수금·지급 · 정기 지출 예상"))
-    h.append(_excluded_box(R))
-    if mode == "mgmt":
-        hi = sum(1 for r in R["risks"] if r["level"] == "높음")
-        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
-                 % (len(R["risks"]), hi))
-    # 절마다 제목과 표·내용을 한 덩어리로 묶어 쪽 사이에서 끊기지 않게 한다 (사용자 2026-11-03)
-    parts = "".join(h[1:]).split("<div class='q'>")
-    return h[0] + parts[0] + "".join("<div class='sec'><div class='q'>%s</div>" % p for p in parts[1:])
+            xk = "<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X)
+        pages = [
+            ("자금", [("이번 달 자금 흐름", _flow_card(s1, per))] + funds + past),
+            ("실적", [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + _team_table(R)),
+                     ("올해 누적 실적 (1월~%s)" % ymt, _team_table(R, "ytd")),
+                     ("장부와 맞춰 본 결과 (WEHAGO 기준)", xk)]),
+            ("프로젝트 · 계정과목", projects + [_acct_year_block(R), checks]),
+        ]
+    else:
+        wo = week_outflows(R)
+        pages = [
+            ("나갈 돈", [("금요일(%s) 출금 목록" % _md(wo["fri"]), _week_out_table(R))] + past),
+            ("자금 · 실적", funds + [("%s 실적" % ymt, _results(R, cum=True))]),
+            ("프로젝트 · 확인할 것", projects + [checks]),
+        ]
+    h = ["<div class='fs%s'>" % (" mon" if monthly else "")]
+    i = 0
+    for n, (ptitle, blocks) in enumerate(pages):
+        h.append("<div class='page pg%s'><div class='pgt'><span>%d / %d</span>%s</div>" % (" last" if n == len(pages) - 1 else "", n + 1, len(pages), esc(ptitle)))
+        for title, body in blocks:
+            h.append("<div class='sec'>%s%s</div>" % (_q(i, title), body))
+            i += 1
+        if mode == "mgmt" and n == len(pages) - 1:
+            hi = sum(1 for r in R["risks"] if r["level"] == "높음")
+            h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
+                     % (len(R["risks"]), hi))
+        h.append("</div>")
+    h.append("</div>")
+    return "".join(h)
 
 
 def _kpi(label, value, sub, unit=True, cls=""):
