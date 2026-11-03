@@ -418,6 +418,9 @@ def compute(d, kind, asof, start=None, pick=None):
                            "project": P["id"], "source": "남은 예산"})
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
                                            int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""))
+    # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
+    from .tax import merge as merge_tax
+    events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
     R["events"] = events
 
     week_ends = [asof + 7 * (i + 1) * DAY for i in range(4)]

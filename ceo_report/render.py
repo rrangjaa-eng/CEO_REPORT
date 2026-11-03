@@ -500,6 +500,16 @@ def _excluded_box(R):
         items.append("입금예정일 지난 미수금: 계산서 자료 없음 (%s)" % _inv_files(s5))
     else:
         items.append("입금예정일 지난 미수금 %d건 %s (일정에 넣지 않음)" % (len(s5["overdue"]), won(s5["overdue_total"])))
+    for t in R.get("tax") or []:   # 세금 납부 예상 (사용자 2026-11-03)
+        amt = "금액 미확인" if t["amount"] is None else won(t["amount"])
+        head = "%s %s %s (%s 납부, %s)" % (t["kind"], t["period"], amt, d2s(t["due"])[5:].replace("-", "/"), t["state"])
+        if t["matched"] is None:
+            items.append(head + (" → 일정에 넣음" if t["amount"] is None or t["amount"] > 0 else " → 환급 예상, 일정에 넣지 않음"))
+        else:
+            m = t["matched"]
+            gap = "" if t["diff"] is None else (" · 차이 %s" % won(t["diff"]) if t["diff"] else " · 같음")
+            items.append(head + " → 일정에 이미 있음 (%s %s)%s" % (m.get("desc") or m.get("cat") or "",
+                                                              "금액 미확인" if m["amount"] is None else won(m["amount"]), gap))
     if s2["out_unknown_n"]:
         items.append("금액 미확인 지급 예정 %d건" % s2["out_unknown_n"])
     if s2["vat_unknown_n"]:
@@ -656,14 +666,20 @@ def _team_table(R):
         per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
         out.append("<div class='lab'>%s</div>" % esc("올해 누적 (1월~%s)" % _ym_text(ym)))
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th>"
-                   "<th>급여·판관비</th><th>순수익</th><th>공통비 나눈 뒤 순수익</th></tr></thead><tbody>")
+                   "<th>급여·판관비</th><th>순수익</th><th>평균 인원</th><th>1인당 순수익</th><th>공통비 나눈 뒤 1인당</th>"
+                   "</tr></thead><tbody>")
         for r in [x for x in Y["rows"] if x["kind"] in ("team", "hq_total")] + [Y["company"]]:
             cls = {"company": " class='tot'", "hq_total": " class='hq'"}.get(r["kind"], "")
-            alloc = (lambda a: "미확인" if a is None else W(round(a)))(per_month.get(r["label"])) if r["kind"] == "team" else ""
+            h = r["heads"]
+            per = "미확인" if h is None or r["net"] is None or not h else W(round(r["net"] / h))
+            alloc = ""
+            if r["kind"] == "team":
+                a = per_month.get(r["label"])
+                alloc = "미확인" if a is None or not h else W(round(a / h))
             cells = [esc(r["label"]), W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
-                     W(_add(r["salary"], r["sga"])), W(r["net"]), alloc]
+                     W(_add(r["salary"], r["sga"])), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
-        out.append(_nonop_rows(Y["nonop"], 4, 1))
+        out.append(_nonop_rows(Y["nonop"], 4, 3))
         out.append("</tbody></table>")
     notes = ["순수익 = 매출총이익 − 그 팀 급여·판관비 (분개장 부서명 기준). 본부 비용은 본부 합계에서, 다른 부서 비용은 회사 전체에서 뺌",
              "공통비 나눈 뒤 = 본부·경영관리 등 비용을 팀 %s 비율로 나눠 뺀 값 (팀 합계 = 회사 영업이익)" % ("인원" if basis == "heads" else "매출"),

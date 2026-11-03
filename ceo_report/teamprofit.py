@@ -26,14 +26,18 @@ def _dept_costs(dept_rows, months):
     for r in dept_rows:
         if r["ym"] not in months:
             continue
-        c = out.setdefault(r["dept"], {"salary": 0, "sga": 0, "heads": None, "nonop_in": 0, "nonop_out": 0})
+        c = out.setdefault(r["dept"], {"salary": 0, "sga": 0, "heads": None, "nonop_in": 0, "nonop_out": 0, "head_sum": 0})
         c["salary"] = _add(c["salary"], r["salary"])
         c["sga"] = _add(c["sga"], r["sga"])
         ok = r.get("has_nonop", False)
         c["nonop_in"] = _add(c["nonop_in"], r.get("nonop_in") if ok else None)
         c["nonop_out"] = _add(c["nonop_out"], r.get("nonop_out") if ok else None)
+        c["head_sum"] = _add(c["head_sum"], r["heads"])
         if r["ym"] == months[-1]:
             c["heads"] = r["heads"]
+    if len(months) > 1:   # 누적: 평균 인원 = 달마다 인원 합 ÷ 달 수 (그 부서 줄이 없는 달은 0명). 모르는 달이 있으면 None
+        for c in out.values():
+            c["heads"] = None if c["head_sum"] is None else c["head_sum"] / len(months)
     return out
 
 

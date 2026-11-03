@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "세금예상.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -38,7 +38,11 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("snapshot_days", 7),
     ("salary_codes", ("80200",)),   # 급여 계정 (부서비용.csv 의 급여 칸, 사용자 2026-11-03)
     ("nonop_in_codes", ("90100", "92200", "93000")),   # 영업외 수익: 이자수익·정부지원금수익·잡이익 (부서비용.csv)
-    ("nonop_out_codes", ("93100", "96000")),           # 영업외 비용: 이자비용·잡손실   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
+    ("nonop_out_codes", ("93100", "96000")),           # 영업외 비용: 이자비용·잡손실
+    ("vat_payable_codes", ("25500",)),                 # 부가세예수금 (세금예상.csv, 사용자 2026-11-03)
+    ("withholding_codes", ("25400",)),                 # 예수금
+    ("withholding_vendors", ("세무서", "구청", "시청", "군청")),   # 원천세(소득세·지방소득세) 거래처 낱말
+    ("withholding_mode", "자동"),                      # 원천세 납부: 자동 | 반기 | 매월   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
 ])
 
 
@@ -125,6 +129,10 @@ CONFIG_ITEMS = (
     ("변환_급여계정", "salary_codes", "숫자목록"),
     ("변환_영업외수익계정", "nonop_in_codes", "숫자목록"),
     ("변환_영업외비용계정", "nonop_out_codes", "숫자목록"),
+    ("변환_부가세예수금계정", "vat_payable_codes", "숫자목록"),
+    ("변환_예수금계정", "withholding_codes", "숫자목록"),
+    ("변환_원천세거래처", "withholding_vendors", "낱말목록"),
+    ("변환_원천세납부", "withholding_mode", "낱말"),
 )
 
 
@@ -770,7 +778,23 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
+    tables.append(build_tax(books, cfg, asof))
     return tables, states
+
+
+def build_tax(books, cfg, asof):
+    """세금예상.csv 표 (사용자 2026-11-03): 분개장으로 부가세(분기)·원천세 납부 예상. 계산할 줄이 없으면 빈 표를 쓴다."""
+    from . import tax
+    mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
+    rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
+        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode)
+    rows.sort(key=lambda r: r["납부예정일"])
+    notes = ["%s %s → %s 납부 %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"],
+                                       "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
+    if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
+        notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
+    notes.append("확정된 세금이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀")
+    return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
 
 
 def _read_dept_prev(input_dir):

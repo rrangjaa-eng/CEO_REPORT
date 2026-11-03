@@ -31,6 +31,10 @@ DEPT_KEYS = ["연월", "부서", "급여", "판관비", "인원"]
 DEPT_OPTIONAL = ["영업외수익", "영업외비용"]   # 없는 예전 파일은 '미확인' (사용자 2026-11-03: 정부지원금 등은 팀에 넣지 않고 따로)
 NO_DEPT = "부서 없음"
 
+# 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
+TAX_FILE = "세금예상.csv"
+TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
+
 # 지급 일정의 출처 파일과, 없으면 지급 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
 # 지급예정이 빠진 채 최저 잔액이 계산되므로 계산하지 않는다 (지급을 줄이지 않음).
 OUTFLOW_KEYS = {
@@ -198,6 +202,22 @@ def load(folder):
                        "nonop_in": num(r.get("영업외수익"), iss, r, "영업외수익") if "영업외수익" in r else None,
                        "nonop_out": num(r.get("영업외비용"), iss, r, "영업외비용") if "영업외비용" in r else None,
                        "has_nonop": "영업외수익" in r and "영업외비용" in r} for r in rows]
+
+    # 세금 예상 (선택): 날짜를 못 읽은 줄은 넣지 않고 입력 확인에 남긴다
+    d.tax = None
+    path = os.path.join(folder, TAX_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, TAX_KEYS, iss, info)
+        if ok and not info["missing"]:
+            d.tax = []
+            for r in rows:
+                due = date(r.get("납부예정일"), iss, r, "납부예정일")
+                if due is None:
+                    continue
+                d.tax.append({"kind": r.get("세목", ""), "period": r.get("대상기간", ""), "due": due,
+                              "amount": num(r.get("금액"), iss, r, "금액"), "state": r.get("상태", "") or "예상",
+                              "basis": r.get("근거", "")})
 
     # 프로젝트
     d.projects = {}

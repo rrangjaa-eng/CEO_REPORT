@@ -486,7 +486,7 @@ class TestConvertSafety(unittest.TestCase):
             self.assertIn(name, text)
         self.assertIn("손대지 않은 파일: 없음", text)
         self.assertEqual(backup_dirs(input_dir), [])
-        self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "변환결과.txt", "손익.csv"])
+        self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "변환결과.txt", "세금예상.csv", "손익.csv"])
 
     def test_backup_and_log_paths_are_git_ignored(self):
         for rel in ("입력/이전/20261102_000000/손익.csv", "입력/변환결과.txt"):
@@ -527,7 +527,9 @@ class TestConvertConfig(unittest.TestCase):
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
             "closing_sorts": ("결차", "결대", "결산전표"), "link_days": 90, "card_words": ("카드",),
             "snapshot_days": 7, "salary_codes": ("80200",),
-        "nonop_in_codes": ("90100", "92200", "93000"), "nonop_out_codes": ("93100", "96000")})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
+        "nonop_in_codes": ("90100", "92200", "93000"), "nonop_out_codes": ("93100", "96000"),
+        "vat_payable_codes": ("25500",), "withholding_codes": ("25400",),
+        "withholding_vendors": ("세무서", "구청", "시청", "군청"), "withholding_mode": "자동"})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
 
     def test_every_item_is_read_from_the_settings(self):
         convert = mod("convert")
