@@ -259,7 +259,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -288,7 +288,7 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.prow{padding:2px 0}table.pt.wn td,table.pt.wn th{padding:2px 6px}.fri b{font-size:22px}.fri{padding-bottom:3px}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
-.fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs:not(.mon) svg{max-height:96px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
+.fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs:not(.mon) svg{max-height:80px}.fs:not(.mon) .prow{padding:1px 0}.fs:not(.mon) .bn{font-size:10px;margin-top:1px}.fs:not(.mon) .pr{font-size:13px}.fs:not(.mon) .pn small{font-size:10px}table.pt.wo{font-size:12px}table.pt.wo td,table.pt.wo th{padding:2px 5px}table.pt.xr{font-size:10.5px}.fs .wsub{margin:4px 0 1px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
@@ -511,8 +511,8 @@ def _ym_text(ym):
     return "%d월" % int(m.group(1)) if m else ym
 
 
-def _excluded_box(R):
-    """위 숫자(가용자금·일정)에 들어가지 않은 금액과 확인할 것 (D-04: 조용히 빼지 않음, 건수·금액을 첫 화면에)."""
+def _check_items(R):
+    """확인할 것 목록 (D-04: 조용히 빼지 않음). 지난 미수금·지급·세금은 _excluded_box 의 표로 옮겨 여기서는 뺀다."""
     s2, s3, s5, s7 = R["s2"], R["s3"], R["s5"], R["s7"]
     items = []
 
@@ -539,20 +539,10 @@ def _excluded_box(R):
         items.append("입금예정일 지난 미수금: 계산서 자료 없음 (%s)" % _inv_files(s5))
     else:
         items.append("입금예정일 지난 미수금 %d건 %s (일정에 넣지 않음)" % (len(s5["overdue"]), won(s5["overdue_total"])))
-    for t in R.get("tax") or []:   # 세금 납부 예상 (사용자 2026-11-03)
-        amt = "금액 미확인" if t["amount"] is None else won(t["amount"])
-        period = re.sub(r"^\d{4}년 ", "", t["period"]) if t["period"].startswith("%d년" % R["asof"].year) else t["period"]
+    for t in R.get("tax") or []:   # 세금 납부 예상: 날짜 있는 것은 위 정기 지출 표에 (사용자 2026-11-03)
         if t["due"] is None:
-            items.append("%s %s %s (%s) → 일정에 넣지 않음" % (t["kind"], period, amt, t["state"]))
-            continue
-        head = "%s %s %s (%s 납부, %s)" % (t["kind"], period, amt, d2s(t["due"])[5:].replace("-", "/"), t["state"])
-        if t["matched"] is None:
-            items.append(head + (" → 일정에 넣음" if t["amount"] is None or t["amount"] > 0 else " → 환급 예상, 일정에 넣지 않음"))
-        else:
-            m = t["matched"]
-            gap = "" if t["diff"] is None else (" · 차이 %s" % won(t["diff"]) if t["diff"] else " · 같음")
-            items.append(head + " → 일정에 있음 (%s %s)%s" % (m.get("desc") or m.get("cat") or "",
-                                                              "금액 미확인" if m["amount"] is None else won(m["amount"]), gap))
+            amt = "금액 미확인" if t["amount"] is None else won(t["amount"])
+            items.append("%s %s %s (%s) → 일정에 넣지 않음" % (t["kind"], t["period"], amt, t["state"]))
     if s2["out_unknown_n"]:
         items.append("금액 미확인 지급 예정 %d건" % s2["out_unknown_n"])
     if s2["vat_unknown_n"]:
@@ -569,7 +559,127 @@ def _excluded_box(R):
     if s5["event_unissued"]["unknown"]:
         items.append("행사 후 미발행 확인 필요 %d건 (사전견적·행사일 없음 등)" % len(s5["event_unissued"]["unknown"]))
     items.append("입력 자료 확인 필요 %d건" % len(s7["issues"]))
-    return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in items)
+    return items
+
+
+REGULAR_KINDS = (("부가세", ("부가",)), ("원천세", ("원천", "소득세", "지방소득")),
+                 ("4대보험", ("4대보험", "사대보험", "국민연금", "건강보험", "고용보험", "산재", "근로복지", "공단")),
+                 ("카드대금", ("카드",)), ("이자비용", ("이자",)), ("차입금 상환", ("차입금", "원금", "상환", "대출")),
+                 ("기타 세금", ("세금", "세무서", "법인세", "지방세")))
+
+
+def _pname(R, pid):
+    """프로젝트 번호 → '번호 이름' (사용자 2026-11-03: 프로젝트명 자동 표시). 모르면 번호 그대로."""
+    if not pid:
+        return ""
+    for P in R["s3"]["projects"]:
+        if P["id"] == pid:
+            name = (P["name"] or "").replace(pid, "").strip()
+            return name or pid
+    return pid
+
+
+def regular_kind(e, tax_of=None):
+    """일정 한 줄이 정기 지출(세금·카드·4대보험·이자·차입금 상환) 중 무엇인지. 아니면 None."""
+    if tax_of and id(e) in tax_of:
+        k = tax_of[id(e)]
+    else:
+        k = (e.get("cat") or "").replace(" (장부 계산)", "")
+    text = "%s %s %s" % (k, e.get("cat") or "", e.get("desc") or "")
+    for kind, words in REGULAR_KINDS:
+        if k == kind or any(w in text for w in words):
+            return kind
+    return None
+
+
+def _quarters(asof, n=3):
+    y, q = asof.year, (asof.month - 1) // 3
+    out = []
+    for i in range(n):
+        qq = q + i
+        yy, qq = y + qq // 4, qq % 4
+        out.append((yy, qq + 1, dt.date(yy, qq * 3 + 1, 1), dt.date(yy + (qq == 3), (qq * 3 + 3) % 12 + 1, 1)))
+    return out
+
+
+def _regular_table(R):
+    """일정에 들어 있는 정기 지출을 항목 × 분기로 (사용자 2026-11-03)."""
+    asof = R["asof"]
+    tax_of = {id(t["matched"]): t["kind"] for t in (R.get("tax") or []) if t.get("matched") is not None}
+    qs = _quarters(asof)
+    rows = OrderedDict((k, {"q": [0] * len(qs), "unk": [0] * len(qs), "next": None}) for k, _ in REGULAR_KINDS)
+    for e in R["events"]:
+        if e["io"] != "out" or e["date"] is None or e["date"] <= asof:
+            continue
+        k = regular_kind(e, tax_of)
+        if k is None:
+            continue
+        r = rows[k]
+        for i, (_, _, q0, q1) in enumerate(qs):
+            if q0 <= e["date"] < q1:
+                if e["amount"] is None:
+                    r["unk"][i] += 1
+                else:
+                    r["q"][i] += e["amount"]
+                if r["next"] is None or e["date"] < r["next"]["date"]:
+                    r["next"] = e
+    head = "".join("<th>%s</th>" % ("%d년 %d분기%s" % (y, q, " (남은 기간)" if i == 0 else "")) for i, (y, q, _, _) in enumerate(qs))
+    h = ["<table class='pt xr'><thead><tr><th>항목</th><th>다음 출금</th>%s</tr></thead><tbody>" % head]
+    for k, r in rows.items():
+        if r["next"] is None and not any(r["q"]) and not any(r["unk"]):
+            continue
+        n = r["next"]
+        nxt = "%s %s%s" % (_md(n["date"]), "금액 미확인" if n["amount"] is None else won(n["amount"]), "" if n["firm"] else " (예상)")
+        cells = "".join("<td>%s%s</td>" % (won(v) if v else "—", (" + 미확인 %d건" % u) if u else "") for v, u in zip(r["q"], r["unk"]))
+        h.append("<tr><td>%s</td><td>%s</td>%s</tr>" % (esc(k), esc(nxt), cells))
+    if len(h) == 1:
+        h.append("<tr><td colspan='%d'>일정에 정기 지출 없음</td></tr>" % (2 + len(qs)))
+    h.append("</tbody></table>")
+    return "".join(h)
+
+
+def _excluded_box(R):
+    """지난 미수금 · 지난 지급 · 일정에 든 정기 지출(분기별) + 확인할 것 (사용자 2026-11-03)."""
+    asof, s5 = R["asof"], R["s5"]
+    h = ["<div class='card'>"]
+    # 1) 입금일 지난 미수금
+    if s5["in_missing"]:
+        h.append("<div class='wsub'>입금일 지난 미수금</div><div class='note'>계산서 자료 없음</div>")
+    else:
+        od = s5["overdue"]
+        h.append("<div class='wsub'>입금일 지난 미수금</div>")
+        if not od:
+            h.append("<div class='note'>없음</div>")
+        else:
+            h.append("<table class='pt xr'><thead><tr><th>거래처</th><th>프로젝트</th><th>입금예정일</th><th>지난 날</th><th>미수금</th></tr></thead><tbody>")
+            for v in od[:6]:
+                h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%d일</td><td class='vin'>%s</td></tr>"
+                         % (esc(v["client"] or ""), esc(_pname(R, v["project"])), esc(_md(v["due"])), v["overdue_days"],
+                            esc(won(v["outstanding"]))))
+            if len(od) > 6:
+                h.append("<tr><td colspan='5'>외 %d건 %s</td></tr>" % (len(od) - 6, esc(won(sum(v["outstanding"] for v in od[6:])))))
+            h.append("</tbody></table>")
+    # 2) 지급일 지난 출금 (아직 처리 안 됨)
+    po = sorted([e for e in R["events"] if e["io"] == "out" and e["date"] is not None and e["date"] <= asof],
+                key=lambda e: e["date"])
+    h.append("<div class='wsub'>지급일 지난 출금 (아직 처리 안 됨)</div>")
+    if not po:
+        h.append("<div class='note'>없음</div>")
+    else:
+        h.append("<table class='pt xr'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th><th>금액</th></tr></thead><tbody>")
+        for e in po[:6]:
+            h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td></tr>"
+                     % (esc(_md(e["date"])), esc(e.get("desc") or ""), esc(_pname(R, e.get("project"))), esc(e.get("cat") or ""),
+                        _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))))
+        if len(po) > 6:
+            h.append("<tr><td colspan='5'>외 %d건</td></tr>" % (len(po) - 6))
+        h.append("</tbody></table>")
+    # 3) 일정에 든 정기 지출 (분기별)
+    h.append("<div class='wsub'>일정에 든 세금·카드대금·4대보험·이자·차입금 상환 (분기별)</div>")
+    h.append(_regular_table(R))
+    h.append("</div>")
+    h.append("<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in _check_items(R)))
+    return "".join(h)
 
 
 PAY_WEEKDAY = 4   # 금요일: 회사는 매주 금요일에 출금 (사용자 2026-11-03)
@@ -621,7 +731,7 @@ def _vs(c):
     return "%s%s (지난주 %s)" % ("+" if d > 0 else "", won(d), won(c["prev"]))
 
 
-def _out_rows_table(G, C, empty):
+def _out_rows_table(G, C, empty, R=None):
     h = ["<table class='pt wo'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
          "<th>금액</th><th>상태</th>%s</tr></thead><tbody>" % ("<th>지난주 대비</th>" if C else "")]
     if not G["rows"]:
@@ -632,7 +742,7 @@ def _out_rows_table(G, C, empty):
         extra = ("<td>%s</td>" % esc("—" if e["overdue"] else _vs(C["by_cur"].get(id(e))))) if C else ""
         h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td>%s</tr>"
                  % (" class='od'" if e["overdue"] else "", esc(_md(e["date"])), esc(e.get("desc") or ""),
-                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state), extra))
+                    esc(_pname(R, e.get("project")) if R else (e.get("project") or "")), esc(e.get("cat") or ""), amt, esc(state), extra))
     h.append("</tbody></table>")
     tail = "합계 %s · 확정 %s · 예상 %s" % (won(G["total"]), won(G["firm"]), won(G["est"]))
     if G["overdue"]:
@@ -681,7 +791,7 @@ def _week_out_table(R):
     head = "<div class='fri'><span>금요일 %s 출금 합계</span><b>%s원</b><small>%d건%s</small></div>" % (
         esc(md(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
         esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
-    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음"), "</div>",
+    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R), "</div>",
          "<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금) · 항목별 요약</div>" % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])),
          _next_week_summary(W_["next"])]
     if C is None:
@@ -888,7 +998,7 @@ def _first_screen(R, mode, per):
             h.append("<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
         else:
             h.append("<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X))
-    h.append(_q(i, "위 숫자에 안 들어간 것 · 확인할 것"))
+    h.append(_q(i, "지난 미수금·지급 · 정기 지출 예상"))
     h.append(_excluded_box(R))
     if mode == "mgmt":
         hi = sum(1 for r in R["risks"] if r["level"] == "높음")

@@ -72,3 +72,22 @@ class TestMonthlyPage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSection5(unittest.TestCase):
+    """5번: 지난 미수금 · 지난 지급 · 일정에 든 정기 지출 분기별 (사용자 2026-11-03)."""
+
+    def test_regular_kinds(self):
+        from ceo_report.render import regular_kind
+        k = lambda cat, desc: regular_kind({"cat": cat, "desc": desc})
+        self.assertEqual(k("차입금이자", "기업은행"), "이자비용")
+        self.assertEqual(k("차입금원금", "기업은행"), "차입금 상환")
+        self.assertEqual(k("회사부담금", "4대보험"), "4대보험")
+        self.assertEqual(k("세금", "원천세"), "원천세")
+        self.assertEqual(k("카드대금", "신한카드"), "카드대금")
+        self.assertIsNone(k("임차료", "건물관리"))
+
+    def test_weekly_section_has_three_parts_and_quarters(self):
+        html = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
+        for t in ("입금일 지난 미수금", "지급일 지난 출금", "2026년 4분기 (남은 기간)", "2027년 1분기", "차입금 상환", "이자비용"):
+            self.assertIn(t, html)
