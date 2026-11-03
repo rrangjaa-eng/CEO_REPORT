@@ -4,6 +4,7 @@
 급여·판관비는 분개장 관리항목 부서명 기준 (부서비용.csv). 'XX본부'는 이름이 'XX'로 시작하고 '팀'으로 끝나는 부서의 상위 부서다
 (기획본부 → 기획1팀·기획2팀·기획3팀). 본부 자체 비용은 팀에 나누지 않고 본부 합계 줄에서 뺀다.
 팀이 아닌 부서(경영관리·플랜트8·부서 없음)는 비용 줄로 두고, 맨 아래 회사 전체 = 매출총이익 − 모든 급여·판관비.
+회사 전체 인원은 팀·본부 인원만 센다 (매출 안 내는 부서는 1인당 계산에서 뺌).
 모르는 값은 None 이고 0으로 치지 않는다.
 """
 from collections import OrderedDict
@@ -106,13 +107,17 @@ def build(pl_table, dept_rows, ym, ytd=False):
         if d in used or d in names:
             continue
         s, g, h = cost(d)
-        rows.append(_row(d if d != NO_DEPT else "부서 없음 (분개장 부서명 빈칸)", "other", salary=s, sga=g, heads=h, has_rev=False))
+        r = _row(d if d != NO_DEPT else "부서 없음 (분개장 부서명 빈칸)", "other", salary=s, sga=g, heads=h, has_rev=False)
+        r["nonop_in"] = costs[d].get("nonop_in")   # 영업외 수익을 가져온 부서 (사용자 2026-11-03: 경영관리 실적으로 보이게)
+        rows.append(r)
     for name, v in special:
         rows.append(_row("프로젝트 %s" % name if name == "미연결" else name, "unlinked", v.get("revenue"), v.get("gp"), 0, 0))
     total_s = _add(*[c["salary"] for c in costs.values()]) if costs else None
     total_g = _add(*[c["sga"] for c in costs.values()]) if costs else None
+    # 인원은 매출 내는 팀과 그 본부만 센다. 경영관리·플랜트8·부서 없음은 빼고 1인당을 본다 (사용자 2026-11-03)
+    earners = [c["heads"] for d, c in costs.items() if d.endswith("팀") or d.endswith("본부")] if costs else []
     comp = _row("회사 전체 (영업이익)", "company", company and company.get("revenue"), company and company.get("gp"), total_s, total_g,
-                _add(*[c["heads"] for c in costs.values()]) if costs else None)
+                _add(*earners) if earners else None)
     if costs:   # 영업외 (정부지원금·이자 등): 팀에 넣지 않고 회사 영업이익 아래에서 더하고 뺀다 (사용자 2026-11-03)
         nin = _add(*[c["nonop_in"] for c in costs.values()])
         nout = _add(*[c["nonop_out"] for c in costs.values()])

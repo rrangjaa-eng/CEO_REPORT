@@ -174,21 +174,22 @@ class TestReportIsADocument(unittest.TestCase):
             rows = [re.findall(r"<td[^>]*>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tables[0].split("<tbody>")[1])]
             # 결산 (사용자 2026-11-03): 영업이익 − 영업외 비용 = 지원금 등 빼고 본 이익, + 영업외 수익 = 세전 이익
             self.assertEqual([[c for c in r if c] for r in rows[6:]], [
-                ["− 영업외 비용 (기획본부)", "500,000"], ["지원금 등 빼고 본 이익", "27,100,000"],
-                ["+ 영업외 수익 (경영관리)", "2,000,000"], ["세전 이익", "29,100,000"]])
+                ["− 영업외 비용 (기획본부 500,000)", "500,000"], ["지원금 등 빼고 본 이익", "27,100,000"],
+                ["+ 영업외 수익 (경영관리 2,000,000)", "2,000,000"], ["세전 이익", "29,100,000"]])
             self.assertEqual(rows[:6], [
                 ["기획1팀", "99,000,000", "31,680,000", "32.0%", "9,000,000", "2,000,000", "20,680,000", "3명", "6,893,333", "2.3배", "5,226,667"],
                 ["기획2팀", "81,000,000", "25,920,000", "32.0%", "7,500,000", "1,500,000", "16,920,000", "3명", "5,640,000", "2.3배", "3,973,333"],
                 ["기획본부 자체 비용", "", "", "", "4,000,000", "1,000,000", "−5,000,000", "1명", "", "", ""],
                 ["기획본부 합계", "180,000,000", "57,600,000", "32.0%", "20,500,000", "4,500,000", "32,600,000", "7명", "4,657,143", "1.6배", ""],
-                ["경영관리", "", "", "", "3,000,000", "2,000,000", "−5,000,000", "1명", "", "", ""],
-                ["회사 전체 (영업이익)", "180,000,000", "57,600,000", "32.0%", "23,500,000", "6,500,000", "27,600,000", "8명", "3,450,000", "1.2배", ""]])
+                ["경영관리<small class='nin'>영업외 수익 실적 +2,000,000</small>", "", "", "", "3,000,000", "2,000,000", "−5,000,000", "1명", "", "", ""],
+                ["회사 전체 (영업이익)", "180,000,000", "57,600,000", "32.0%", "23,500,000", "6,500,000", "27,600,000", "7명", "3,942,857", "1.2배", ""]])
             ytd = [re.findall(r"<td[^>]*>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tables[1].split("<tbody>")[1])]
             # 누적 1인당 = 누적 순수익 ÷ 1~10월 평균 인원 (사용자 2026-11-03)
             self.assertEqual(ytd[0], ["기획1팀", "742,500,000", "237,600,000", "32.0%", "110,000,000", "127,600,000", "3.0명",
                                       "42,533,333", "25,866,667"])
             self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)", "1,350,000,000"])
             self.assertEqual(ytd[3][5], "132,000,000")
+            self.assertEqual(ytd[3][6:8], ["7.0명", "18,857,143"])   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
             self.assertEqual([c for c in ytd[-1] if c], ["세전 이익", "147,000,000"])
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
@@ -348,6 +349,36 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
         self.assertEqual(ids, ["P26206", "P26203", "P26201", "P26207", "P26204", "P26208"])
         self.assertIn("행사일 순", html)
+
+
+class TestMonthlyMonthAndYearApart(unittest.TestCase):
+    """월간 (사용자 2026-11-03): 이번 달 실적과 올해 누적 실적을 따로 나누고, 경영관리의 영업외 수익을 그 부서 실적으로 보인다."""
+
+    def test_sections_and_management_income(self):
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly", dt.date(2026, 10, 31))
+        fs = first_screen(render(R, "ceo"))
+        heads = re.findall(r"<div class='q'>(.*?)</div>", fs)
+        month = next(i for i, h in enumerate(heads) if "10월 실적 (이번 달)" in h)
+        year = next(i for i, h in enumerate(heads) if "올해 누적 실적 (1월~10월)" in h)
+        self.assertEqual(year, month + 1)
+        part_month = fs.split(heads[month])[1].split(heads[year])[0]
+        self.assertNotIn("올해 누적", part_month)   # 이번 달 칸에는 누적 숫자를 섞지 않는다
+        part_year = fs.split(heads[year])[1]
+        self.assertIn("<div class='ystrip'>", part_year)
+        self.assertIn("<span>누적 세전 이익</span><b>147,000,000</b>", part_year)
+        self.assertIn("경영관리<small class='nin'>영업외 수익 실적 +2,000,000</small>", part_month)
+
+
+class TestSectionsDoNotSplit(unittest.TestCase):
+    """주간·월간 (사용자 2026-11-03): 표·내용이 쪽 사이에서 끊기지 않게 절(제목+내용)을 한 덩어리로 묶는다."""
+
+    def test_every_heading_is_in_an_unbreakable_section(self):
+        for kind in ("weekly", "monthly"):
+            html = render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), kind, dt.date(2026, 10, 31)), "ceo")
+            with self.subTest(kind):
+                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>"))
+                self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
+                self.assertNotIn("break-inside:auto", html)
 
 
 if __name__ == "__main__":
