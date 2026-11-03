@@ -94,7 +94,7 @@ class TestWeeklyReport(unittest.TestCase):
         R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 6), 45_000_000, "샘플 지급")]}
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
-            self.assertLess(fs.index("이번 주 지급 예정"), fs.index("지금 자금은?"))
+            self.assertLess(fs.index("출금 목록"), fs.index("지금 자금은?"))
             self.assertIn("지난주(10/24) 예상", fs)
             self.assertIn("45,000,000", fs)
 
@@ -103,8 +103,8 @@ class TestWeeklyReport(unittest.TestCase):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
         R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 7), 8_800_000, "샘플 빠진 지급")]}
         fs = first_screen(render(R, "ceo"))
-        part = fs[fs.index("이번 주 지급 예정"):fs.index("지금 자금은?")]
-        self.assertEqual(part.count("<table"), 1)
+        part = fs[fs.index("출금 목록"):fs.index("지금 자금은?")]
+        self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 지급 예정, 빠진 것 표는 없음
         line = part[part.index("지난주(10/24) 예상"):]
         line = line[:line.index("</div>")]
         self.assertIn("− 빠진 것 8,800,000 (11/07 샘플 빠진 지급 8,800,000: 일정에서 없어짐 (지급 완료 또는 취소))", line)

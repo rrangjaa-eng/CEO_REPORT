@@ -38,6 +38,7 @@ def numbers_of(html):
     html = re.sub(r"<div id='xchk-detail'>.*?<!-- /xchk-detail -->", "", html, flags=re.S)
     html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
     html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
+    html = re.sub(r"<table class='sign'>.*?</table>", "", html, flags=re.S)   # 결재란은 대표용 주간에만
     return re.findall(r"−?\d[\d,.]*", html)
 
 

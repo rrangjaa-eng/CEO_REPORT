@@ -143,25 +143,48 @@ class TestReportIsADocument(unittest.TestCase):
                     self.assertIn("@page{size:A4 portrait", html)
                     self.assertNotIn("landscape", html)
 
-    def test_weekly_lists_every_outflow_of_the_week(self):
-        """주간 대표 보고에 이번 주 지급 예정을 전부 보인다 (사용자 2026-11-03). 금액 미확인도 줄로, 0으로 치지 않는다."""
+    def test_weekly_lists_friday_payments_then_next_week(self):
+        """매주 금요일 출금 (사용자 2026-11-03): ① 금요일 출금 목록, 그 아래 다음 주(토~다음 금) 지급 예정. 금액 미확인도 줄로."""
         from ceo_report.render import week_outflows
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
         W = week_outflows(R)
-        self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["rows"]],
+        self.assertEqual(W["fri"], dt.date(2026, 11, 6))
+        self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]],
                          [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000)])
-        self.assertEqual(W["firm"] + W["est"], R["s2"]["periods"][0]["all"]["out"])   # 표의 1주 지급 예정과 같다
-        self.assertEqual(W["unknown_n"], 1)
+        self.assertTrue(all(dt.date(2026, 11, 7) <= e["date"] <= dt.date(2026, 11, 13) for e in W["next"]["rows"]))
+        self.assertTrue(W["next"]["rows"])
+        self.assertEqual(W["pay"]["unknown_n"], 1)
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
-            self.assertIn("이번 주 지급 예정 (11/01 ~ 11/07)", fs)
+            self.assertIn("금요일(11/06) 출금 목록", fs)
+            self.assertIn("다음 주 지급 예정 (11/07 토 ~ 11/13 금)", fs)
+            self.assertLess(fs.index("금요일(11/06) 출금 목록"), fs.index("다음 주 지급 예정"))
             table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
             self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 3)
             self.assertIn("전시제작사", table)
             self.assertIn("금액 미확인", table)
-            self.assertIn("3건 · 합계 확정 50,700,000 · 예상 0 · 금액 미확인 1건", fs)
-        self.assertNotIn("이번 주 지급 예정", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
-                                                             dt.date(2026, 10, 31)), "ceo"))
+            self.assertIn("3건 · 합계 50,700,000 · 확정 50,700,000 · 예상 0 · 금액 미확인 1건", fs)
+        self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
+                                                    dt.date(2026, 10, 31)), "ceo"))
+
+    def test_weekly_ceo_report_has_a_sign_box(self):
+        """결재란: 대표가 서명해 회신 (사용자 2026-11-03). 대표용 주간에만."""
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
+        html = render(R, "ceo")
+        box = html.split("<table class='sign'>")[1].split("</table>")[0]
+        self.assertIn("결<br>재", box)
+        self.assertIn("담당", box)
+        self.assertIn("대표이사", box)
+        self.assertNotIn("<table class='sign'>", render(R, "mgmt"))
+        self.assertNotIn("<table class='sign'>", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
+                                                                dt.date(2026, 10, 31)), "ceo"))
+
+    def test_friday_is_the_report_day_itself_when_asof_is_friday(self):
+        from ceo_report.render import week_outflows
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 11, 5))
+        self.assertEqual(week_outflows(R)["fri"], dt.date(2026, 11, 6))   # 목요일 보고 → 다음 날 금요일
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 11, 6))
+        self.assertEqual(week_outflows(R)["fri"], dt.date(2026, 11, 6))
 
     def test_monthly_shows_team_sales_and_margin(self):
         """월간 대표 보고 팀별 표 (사용자 2026-11-03): 매출·매출총이익·수익률은 상세 4번(s4)과 같고, 급여·판관비는 부서비용.csv

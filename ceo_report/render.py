@@ -19,7 +19,7 @@ CSS = """
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
 word-break:keep-all;overflow-wrap:break-word}
 .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
-h1{font-size:22px;margin:0}
+h1{font-size:22px;margin:0}table.sign{float:right;width:auto!important;border-collapse:collapse;margin:0 0 4px 12px;font-size:11px}table.sign th,table.sign td{border:1px solid #555;text-align:center;padding:2px 6px;width:64px}table.sign th.sv{width:18px;padding:2px}table.sign tr.sg td{height:44px}table.sign tr.sd td{height:14px;color:#888}
 h2{font-size:16px;margin:28px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--ink)}
 h3{font-size:13.5px;margin:16px 0 6px;color:var(--accent)}
 .meta{color:var(--sub);margin-top:4px}
@@ -206,6 +206,9 @@ def render(R, mode):
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
              "<body><div class='wrap'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS))
+    if mode == "ceo" and R["kind"] == "weekly":   # 결재란: 대표가 서명해 회신 (사용자 2026-11-03)
+        h.append("<table class='sign'><tr><th rowspan='3' class='sv'>결<br>재</th><th>담당</th><th>대표이사</th></tr>"
+                 "<tr class='sg'><td></td><td></td></tr><tr class='sd'><td>/</td><td>/</td></tr></table>")
     h.append("<h1>%s<span class='badge%s'>%s</span></h1>" % (esc(title), "" if mode == "ceo" else " m",
                                                              "대표용" if mode == "ceo" else "경영관리용"))
     h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원<br>%s</div>"
@@ -254,7 +257,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -279,7 +282,7 @@ small.nin{display:block;color:var(--in);font-size:10.5px}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.prow{padding:2px 0}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
-.fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
+.fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs:not(.mon) svg{max-height:96px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
@@ -563,69 +566,90 @@ def _excluded_box(R):
     return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in items)
 
 
-def week_outflows(R):
-    """주간 대표 보고의 '이번 주 지급 예정' 목록 (사용자 2026-11-03: 이번 주에 나가는 돈은 전부 보여야 함).
+PAY_WEEKDAY = 4   # 금요일: 회사는 매주 금요일에 출금 (사용자 2026-11-03)
 
-    기준일 다음 날부터 7일 안의 지급 예정 전부(금액 미확인 포함) + 예정일이 지났는데 아직 처리되지 않은 지급.
+
+def week_outflows(R):
+    """주간 대표 보고의 지급 목록 (사용자 2026-11-03: 매주 금요일 출금).
+
+    fri  = 기준일 뒤 첫 금요일(기준일이 금요일이면 그날)까지 나갈 것 + 예정일이 지났는데 아직 처리되지 않은 것 → 금요일 출금 목록
+    next = 그 금요일 다음 날(토)부터 다음 금요일까지 → 다음 주 지급 예정
     날짜 순, 같은 날은 금액 큰 순. 금액을 모르는 줄은 0으로 치지 않고 따로 센다."""
-    asof, end = R["asof"], R["asof"] + dt.timedelta(days=7)
+    asof = R["asof"]
+    fri = asof + dt.timedelta(days=(PAY_WEEKDAY - asof.weekday()) % 7)
+    end = fri + dt.timedelta(days=7)   # 다음 주 = 토요일부터 다음 금요일까지 (사용자 2026-11-03)
     rows = []
     for e in R["events"]:
         if e["io"] != "out" or e["date"] is None or e["date"] > end:
             continue
-        rows.append(dict(e, overdue=e["date"] <= asof))
+        rows.append(dict(e, overdue=e["date"] <= asof and e["date"] < fri))
     rows.sort(key=lambda e: (e["date"], -(e["amount"] or 0)))
-    known = [e for e in rows if e["amount"] is not None]
-    return {"start": asof + dt.timedelta(days=1), "end": end, "rows": rows,
-            "firm": sum(e["amount"] for e in known if e["firm"] and not e["overdue"]),
-            "est": sum(e["amount"] for e in known if not e["firm"] and not e["overdue"]),
-            "overdue": sum(e["amount"] for e in known if e["overdue"]),
-            "unknown_n": len(rows) - len(known)}
+
+    def sums(rs):
+        known = [e for e in rs if e["amount"] is not None]
+        return {"rows": rs, "firm": sum(e["amount"] for e in known if e["firm"] and not e["overdue"]),
+                "est": sum(e["amount"] for e in known if not e["firm"] and not e["overdue"]),
+                "overdue": sum(e["amount"] for e in known if e["overdue"]),
+                "total": sum(e["amount"] for e in known), "unknown_n": len(rs) - len(known)}
+    return {"fri": fri, "start": asof, "end": end, "rows": rows,
+            "pay": sums([e for e in rows if e["date"] <= fri]), "next": sums([e for e in rows if e["date"] > fri])}
+
+
+def _md(d):
+    return d2s(d)[5:].replace("-", "/")
+
+
+def _vs(c):
+    if c is None:
+        return ""
+    k = c["kind"]
+    if k == "같음":
+        return "같음"
+    if k == "새로 생김":
+        return "새로 생김"
+    if k == "날짜 바뀜":
+        return "날짜 %s에서 옮김" % _md(c["prev_date"])
+    if k in ("금액 확인됨", "금액 미확인"):
+        return "지난주 %s" % ("미확인" if c["prev"] is None else won(c["prev"]))
+    d = (c["cur"] or 0) - (c["prev"] or 0)
+    return "%s%s (지난주 %s)" % ("+" if d > 0 else "", won(d), won(c["prev"]))
+
+
+def _out_rows_table(G, C, empty):
+    h = ["<table class='pt wo'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
+         "<th>금액</th><th>상태</th>%s</tr></thead><tbody>" % ("<th>지난주 대비</th>" if C else "")]
+    if not G["rows"]:
+        h.append("<tr><td colspan='%d'>%s</td></tr>" % (7 if C else 6, empty))
+    for e in G["rows"]:
+        state = "예정일 지남" if e["overdue"] else ("확정" if e["firm"] else "예상")
+        amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
+        extra = ("<td>%s</td>" % esc("—" if e["overdue"] else _vs(C["by_cur"].get(id(e))))) if C else ""
+        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td>%s</tr>"
+                 % (" class='od'" if e["overdue"] else "", esc(_md(e["date"])), esc(e.get("desc") or ""),
+                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state), extra))
+    h.append("</tbody></table>")
+    tail = "합계 %s · 확정 %s · 예상 %s" % (won(G["total"]), won(G["firm"]), won(G["est"]))
+    if G["overdue"]:
+        tail += " · 이 중 예정일 지난 미처리 %s" % won(G["overdue"])
+    if G["unknown_n"]:
+        tail += " · 금액 미확인 %d건" % G["unknown_n"]
+    h.append("<div class='note'>%d건 · %s</div>" % (len(G["rows"]), esc(tail)))
+    return "".join(h)
 
 
 def _week_out_table(R):
-    """이번 주 지급 목록 + 지난주 예상 대비 (사용자 2026-11-03). 지난주 기록은 보고서.py 가 읽어 R['week_prev']에 둔다.
+    """금요일 출금 목록 + 다음 주 지급 예정 + 지난주 예상 대비 한 줄 (사용자 2026-11-03).
 
-    지난주 기록이 있으면 줄마다 '지난주 대비' 칸을 두고, 지난주엔 있었는데 지금 목록에 없는 지급은 '빠짐' 줄로 덧붙인다."""
+    지난주 기록(보고서.py 가 읽어 R['week_prev']에 둠)이 있으면 줄마다 '지난주 대비' 칸을 둔다. 지난주엔 있었는데 지금 없는
+    지급은 표에 넣지 않고 '지난주 예상 → 지금' 한 줄에 사유와 함께 합산한다."""
     from .weekdiff import compare
     W_ = week_outflows(R)
     prev = R.get("week_prev")
     C = compare(prev, [e for e in W_["rows"] if not e["overdue"]], W_["start"], W_["end"]) if prev else None
-    md = lambda d: d2s(d)[5:].replace("-", "/")
-    h = ["<div class='card'><table class='pt wo'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
-         "<th>금액</th><th>상태</th>%s</tr></thead><tbody>" % ("<th>지난주 대비</th>" if C else "")]
-    cols = 7 if C else 6
-    if not W_["rows"]:
-        h.append("<tr><td colspan='%d'>이번 주 지급 예정 없음</td></tr>" % cols)
-
-    def vs(c):
-        if c is None:
-            return ""
-        k = c["kind"]
-        if k == "같음":
-            return "같음"
-        if k == "새로 생김":
-            return "새로 생김"
-        if k == "날짜 바뀜":
-            return "날짜 %s에서 옮김" % md(c["prev_date"])
-        if k in ("금액 확인됨", "금액 미확인"):
-            return "지난주 %s" % ("미확인" if c["prev"] is None else won(c["prev"]))
-        d = (c["cur"] or 0) - (c["prev"] or 0)
-        return "%s%s (지난주 %s)" % ("+" if d > 0 else "", won(d), won(c["prev"]))
-    for e in W_["rows"]:
-        state = "예정일 지남" if e["overdue"] else ("확정" if e["firm"] else "예상")
-        amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
-        extra = ("<td>%s</td>" % esc("—" if e["overdue"] else vs(C["by_cur"].get(id(e))))) if C else ""
-        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td>%s</tr>"
-                 % (" class='od'" if e["overdue"] else "", esc(md(e["date"])), esc(e.get("desc") or ""),
-                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state), extra))
-    h.append("</tbody></table>")
-    tail = "확정 %s · 예상 %s" % (won(W_["firm"]), won(W_["est"]))
-    if W_["overdue"]:
-        tail += " · 예정일 지난 미처리 %s (위 1주 지급 예정에는 안 들어감)" % won(W_["overdue"])
-    if W_["unknown_n"]:
-        tail += " · 금액 미확인 %d건" % W_["unknown_n"]
-    h.append("<div class='note'>%s건 · 합계 %s</div>" % (len(W_["rows"]), esc(tail)))
+    md = _md
+    h = ["<div class='card'>", _out_rows_table(W_["pay"], C, "금요일 출금 없음"),
+         "<div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금)</div>" % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])),
+         _out_rows_table(W_["next"], C, "다음 주 지급 예정 없음")]
     if C is None:
         h.append("<div class='note'>지난주 예상 기록 없음 — 주간 보고를 만들 때마다 지급 예정을 기록해 두고 다음 주 보고부터 비교합니다</div>")
     else:
@@ -779,7 +803,7 @@ def _first_screen(R, mode, per):
     i = 0
     if not monthly:   # 주간은 이번 주 지급 목록이 맨 위 (사용자 2026-11-03)
         wo = week_outflows(R)
-        h.append(_q(i, "이번 주 지급 예정 (%s ~ %s)" % (d2s(wo["start"])[5:].replace("-", "/"), d2s(wo["end"])[5:].replace("-", "/"))))
+        h.append(_q(i, "금요일(%s) 출금 목록" % _md(wo["fri"])))
         i += 1
         h.append(_week_out_table(R))
     if monthly:
