@@ -493,6 +493,33 @@ class TestWehagoFolder(unittest.TestCase):
         self.assertEqual(books.files["분개장"]["name"], "분개장_20261031.xlsx")
         self.assertEqual(books.unused, ["분개장_20261024.xlsx"])
 
+    def test_prior_year_file_is_added_not_dropped(self):
+        """해를 넘는 프로젝트 (2026-11-03 사용자 "해를 넘어가는 것도 정리"): WEHAGO 는 기수(연도)마다 따로 내려받는다.
+        가장 새 파일과 날짜가 겹치지 않는 이전 파일(지난 기수)은 버리지 않고 앞에 붙인다. 겹치는 파일은 지금처럼 쓰지 않는다."""
+        folder = folder_with(self)
+        prior = [_jl(dt.date(2025, 12, 20), 7, "61101", "행사외주비(도)", 1000000, None, "가상부스", "[26203] 작년 계약금"),
+                 _jl(dt.date(2025, 12, 20), 7, "10300", "보통예금", None, 1000000, "가상부스", "[26203] 작년 계약금")]
+        write_xlsx(os.path.join(folder, "분개장_20251231.xlsx"), [KIND_FILES[0][1]] + prior)
+        write_fake_books(folder, stamp="20261024", drop=("매입매출장", "전자세금계산서(매입)"))
+        books = load(folder)
+        self.assertEqual(books.state, "ok")
+        self.assertEqual(books.files["분개장"]["name"], "분개장_20261031.xlsx")
+        self.assertEqual(books.files["분개장"]["prior"], ["분개장_20251231.xlsx"])
+        self.assertEqual(books.unused, ["분개장_20261024.xlsx"])
+        dates = [r["date"] for r in books.journal]
+        self.assertIn(dt.date(2025, 12, 20), dates)
+        self.assertEqual(len(books.journal), len(FAKE_JOURNAL) + 2)
+
+    def test_prior_file_with_overlapping_dates_is_unused(self):
+        folder = folder_with(self)
+        mixed = [_jl(dt.date(2025, 12, 20), 7, "81900", "임차료", 1000, None, "가상임대", "12월"),
+                 _jl(dt.date(2026, 10, 1), 8, "81900", "임차료", 1000, None, "가상임대", "10월")]
+        write_xlsx(os.path.join(folder, "분개장_20251231.xlsx"), [KIND_FILES[0][1]] + mixed)
+        books = load(folder)
+        self.assertEqual(books.files["분개장"]["prior"], [])
+        self.assertEqual(books.unused, ["분개장_20251231.xlsx"])
+        self.assertEqual(len(books.journal), len(FAKE_JOURNAL))
+
     def test_excel_owner_file_is_ignored_even_when_newest(self):
         folder = folder_with(self)
         junk = write_junk(os.path.join(folder, "~$분개장_20261031.xlsx"), b"\x00junk")
