@@ -259,7 +259,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -287,7 +287,7 @@ table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);pad
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.prow{padding:2px 0}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
+@media print{.prow{padding:2px 0}table.pt.wn td,table.pt.wn th{padding:2px 6px}.fri b{font-size:22px}.fri{padding-bottom:3px}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
 .fs svg{max-height:165px}.fs.mon svg{max-height:80px}.fs:not(.mon) svg{max-height:96px}.fs.mon .four .big{font-size:17px}.fs.mon .four .card{padding:4px 10px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
@@ -643,52 +643,65 @@ def _out_rows_table(G, C, empty):
     return "".join(h)
 
 
-def _week_out_table(R):
-    """금요일 출금 목록 + 다음 주 지급 예정 + 지난주 예상 대비 한 줄 (사용자 2026-11-03).
+def _next_week_summary(G):
+    """다음 주 지급 예정을 항목(구분)별로 줄여 보인다 (사용자 2026-11-03: 항목별로 축약해서 다른 표로)."""
+    groups = OrderedDict()
+    for e in G["rows"]:
+        cat = (e.get("cat") or "기타").replace(" (장부 계산)", "")
+        groups.setdefault(cat, []).append(e)
+    h = ["<table class='pt wn'><thead><tr><th>항목</th><th>건수</th><th>예정일</th><th>금액</th><th>상태</th></tr></thead><tbody>"]
+    if not groups:
+        h.append("<tr><td colspan='5'>다음 주 지급 예정 없음</td></tr>")
+    for cat, rs in sorted(groups.items(), key=lambda kv: -sum(e["amount"] or 0 for e in kv[1])):
+        ds = sorted(e["date"] for e in rs)
+        days = _md(ds[0]) if ds[0] == ds[-1] else "%s~%s" % (_md(ds[0]), _md(ds[-1]))
+        known = [e["amount"] for e in rs if e["amount"] is not None]
+        unk = len(rs) - len(known)
+        amt = esc(won(sum(known))) + (" " + _na("미확인 %d건" % unk) if unk else "")
+        firm = sum(1 for e in rs if e["firm"])
+        state = "확정" if firm == len(rs) else ("예상" if not firm else "확정 %d · 예상 %d" % (firm, len(rs) - firm))
+        h.append("<tr><td>%s</td><td>%d건</td><td>%s</td><td class='vout'>%s</td><td>%s</td></tr>"
+                 % (esc(cat), len(rs), esc(days), amt, esc(state)))
+    h.append("<tr class='tot'><td>합계</td><td>%d건</td><td></td><td class='vout'>%s</td><td></td></tr></tbody></table>"
+             % (len(G["rows"]), esc(won(G["total"]))))
+    return "".join(h)
 
-    지난주 기록(보고서.py 가 읽어 R['week_prev']에 둠)이 있으면 줄마다 '지난주 대비' 칸을 둔다. 지난주엔 있었는데 지금 없는
-    지급은 표에 넣지 않고 '지난주 예상 → 지금' 한 줄에 사유와 함께 합산한다."""
+
+def _week_out_table(R):
+    """금요일 출금 목록(가장 눈에 띄게) + 다음 주 지급 예정(항목별 요약 표) + 지난주 대비 한 줄 (사용자 2026-11-03).
+
+    지난주 기록(보고서.py 가 읽어 R['week_prev']에 둠)이 있으면 금요일 목록에 '지난주 대비' 칸을 두고,
+    아래 한 줄에는 빠진 것·추가된 것·변동된 것만 짧게 적는다."""
     from .weekdiff import compare
     W_ = week_outflows(R)
     prev = R.get("week_prev")
     C = compare(prev, [e for e in W_["rows"] if not e["overdue"]], W_["start"], W_["end"]) if prev else None
     md = _md
-    h = ["<div class='card'>", _out_rows_table(W_["pay"], C, "금요일 출금 없음"),
-         "<div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금)</div>" % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])),
-         _out_rows_table(W_["next"], C, "다음 주 지급 예정 없음")]
+    P = W_["pay"]
+    head = "<div class='fri'><span>금요일 %s 출금 합계</span><b>%s원</b><small>%d건%s</small></div>" % (
+        esc(md(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
+        esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
+    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음"), "</div>",
+         "<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금) · 항목별 요약</div>" % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])),
+         _next_week_summary(W_["next"])]
     if C is None:
-        h.append("<div class='note'>지난주 예상 기록 없음 — 주간 보고를 만들 때마다 지급 예정을 기록해 두고 다음 주 보고부터 비교합니다</div>")
+        h.append("<div class='note'>지난주 기록 없음 — 다음 주 보고부터 지난주 대비를 보임</div>")
     else:
-        def why(c):
-            """빠진 까닭: 지금 일정에서 같은 지급을 찾아 본다."""
-            from .weekdiff import _key
-            k = (c["desc"], c["project"], c["cat"])
-            same = [e for e in R["events"] if e["io"] == "out" and e["date"] is not None and _key(e) == k]
-            if any(e["date"] <= R["asof"] for e in same):
-                return "예정일 지남, 아직 처리 안 됨"
-            later = sorted(e["date"] for e in same if e["date"] > W_["end"])
-            if later:
-                return "예정일 %s로 옮김" % md(later[0])
-            return "일정에서 없어짐 (지급 완료 또는 취소)"
-        # 지난주 예상 → 지금을 한 줄로 합산 (사용자 2026-11-03: 빠진 것은 표가 아니라 사유와 함께 이 줄에)
+        # 빠진 것·추가된 것·변동된 것만 (사용자 2026-11-03: 구구절절 쓰지 말 것)
         gone = [c for c in C["changes"] if c["kind"] == "빠짐"]
         new = [c for c in C["changes"] if c["kind"] in ("새로 생김", "금액 확인됨")]
-        moved = [c for c in C["changes"] if c["kind"] in ("금액 바뀜", "금액 미확인")]
-        part = lambda cs, key: sum((c["cur"] or 0) - (c["prev"] or 0) for c in cs)
-        steps = ["지난주(%s) 예상 %s" % (md(C["asof"]), won(C["prev_total"]))]
+        moved = [c for c in C["changes"] if c["kind"] in ("금액 바뀜", "금액 미확인", "날짜 바뀜")]
+        diff = lambda cs: sum((c["cur"] or 0) - (c["prev"] or 0) for c in cs)
+        def sgn(v):
+            return ("+" if v > 0 else "−" if v < 0 else "") + won(abs(v))
+        parts = []
         if gone:
-            steps.append("− 빠진 것 %s (%s)" % (won(-part(gone, 0)), ", ".join(
-                "%s %s %s: %s" % (md(c["prev_date"]), c["desc"], "금액 미확인" if c["prev"] is None else won(c["prev"]), why(c))
-                for c in gone)))
+            parts.append("빠진 것 %d건 %s (%s)" % (len(gone), sgn(diff(gone)), ", ".join(c["desc"] for c in gone)))
         if new:
-            steps.append("+ 새로 생김 %s" % won(part(new, 0)))
-        if moved and part(moved, 0):
-            d = part(moved, 0)
-            steps.append("%s 금액 변동 %s" % ("+" if d > 0 else "−", won(abs(d))))
-        steps.append("= 지금 %s" % won(C["cur_total"]))
-        if C["prev_unknown"] or C["cur_unknown"]:
-            steps.append("(금액 미확인 %d건 제외)" % (C["prev_unknown"] + C["cur_unknown"]))
-        h.append("<div class='wchg'>%s</div><div class='note'>예정일 지난 미처리는 비교에서 뺌</div>" % esc(" ".join(steps)))
+            parts.append("추가된 것 %d건 %s" % (len(new), sgn(diff(new))))
+        if moved:
+            parts.append("변동된 것 %d건 %s" % (len(moved), sgn(diff(moved))))
+        h.append("<div class='wchg'>지난주 대비: %s</div>" % esc(" · ".join(parts) if parts else "변동 없음"))
     h.append("</div>")
     return "".join(h)
 

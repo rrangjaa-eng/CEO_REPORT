@@ -95,26 +95,38 @@ class TestWeeklyReport(unittest.TestCase):
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
             self.assertLess(fs.index("출금 목록"), fs.index("지금 자금은?"))
-            self.assertIn("지난주(10/24) 예상", fs)
+            self.assertIn("지난주 대비:", fs)
             self.assertIn("45,000,000", fs)
 
-    def test_dropped_rows_go_into_one_summing_line_with_reason(self):
-        """지급 예정 표에는 실제 나가는 것만. 빠진 것은 표 없이 '지난주 예상 → 지금' 한 줄에 사유와 함께 (사용자 2026-11-03)."""
+    def test_change_line_has_only_dropped_added_changed(self):
+        """금요일 목록 표 + 다음 주 항목별 요약 표. 아래 한 줄엔 빠진 것·추가된 것·변동된 것만 (사용자 2026-11-03)."""
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
         R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 7), 8_800_000, "샘플 빠진 지급")]}
         fs = first_screen(render(R, "ceo"))
         part = fs[fs.index("출금 목록"):fs.index("지금 자금은?")]
-        self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 지급 예정, 빠진 것 표는 없음
-        line = part[part.index("지난주(10/24) 예상"):]
+        self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 항목별 요약
+        self.assertIn("항목별 요약", part)
+        line = part[part.index("지난주 대비:"):]
         line = line[:line.index("</div>")]
-        self.assertIn("− 빠진 것 8,800,000 (11/07 샘플 빠진 지급 8,800,000: 일정에서 없어짐 (지급 완료 또는 취소))", line)
-        self.assertIn("= 지금", line)
+        self.assertIn("빠진 것 1건 −8,800,000 (샘플 빠진 지급)", line)
+        self.assertIn("추가된 것", line)
+        for wordy in ("일정에서 없어짐", "= 지금", "지난주(10/24) 예상"):
+            self.assertNotIn(wordy, line)
+
+    def test_next_week_is_summed_by_item(self):
+        from ceo_report.render import _next_week_summary
+        rows = [ev(D(2026, 11, 9), 1_000, "가"), ev(D(2026, 11, 12), 2_000, "나")]
+        for r in rows:
+            r["cat"] = "프로젝트 지급요청"
+        html = _next_week_summary({"rows": rows, "total": 3_000})
+        self.assertIn("<td>프로젝트 지급요청</td><td>2건</td><td>11/09~11/12</td>", html)
+        self.assertIn("3,000", html)
 
     def test_without_last_week_record_says_so(self):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
         fs = first_screen(render(R, "ceo"))
-        self.assertIn("지난주 예상 기록 없음", fs)
-        self.assertNotIn("지난주 예상", render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo"))
+        self.assertIn("지난주 기록 없음", fs)
+        self.assertNotIn("지난주 대비", render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo"))
 
 
 class TestCli(unittest.TestCase):
@@ -133,9 +145,9 @@ class TestCli(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(out, weekdiff.RECORD_DIR))),
                          ["지급예정_2026-10-26.csv", "지급예정_2026-11-02.csv"])
         with open(os.path.join(out, "2026-11-02_주간_대표보고.html"), encoding="utf-8") as f:
-            self.assertIn("지난주(10/26) 예상", f.read())
+            self.assertIn("지난주 대비:", f.read())
         with open(os.path.join(out, "2026-10-26_주간_대표보고.html"), encoding="utf-8") as f:
-            self.assertIn("지난주 예상 기록 없음", f.read())
+            self.assertIn("지난주 기록 없음", f.read())
 
 
 if __name__ == "__main__":
