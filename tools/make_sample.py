@@ -177,6 +177,9 @@ for m in range(1, 11):
                                  ("영업외비용", "93100", "이자비용", 500_000)):
         ACCOUNTS.append([ym, grp, code, name, "{:,}".format(amt)])
 S[ACCOUNT_FILE] = ACCOUNTS
+# 출금 상세 내역 (가상, 사용자 2026-11-03: 금요일 출금 목록). 창 '⑦ 출금 상세 내역'으로 넣음
+DETAIL_ROWS = [["전시제작사", "49500000", "C사 전시 부스 목공·도장 잔금", "수기"],
+               ["소프트웨어", "1200000", "디자인 툴 월 구독", "수기"]]
 # 카드사별 납부일·기산일 (사용자 2026-11-03). 창의 '⑤ 카드 납부일'로 고친다
 CARD_ROWS = [["롯데", "14", "1"], ["비씨", "25", "1"], ["신한", "15", "1"]]
 S["지급계획.csv"] = [
@@ -225,6 +228,8 @@ def write_sample(folder, data=None):
         write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
     if ACCOUNT_FILE in data:
         write(folder, ACCOUNT_FILE, data[ACCOUNT_FILE], ACCOUNT_KEYS)
+    from ceo_report.paydetail import DETAIL_COLUMNS, DETAIL_FILE
+    write(folder, DETAIL_FILE, DETAIL_ROWS, DETAIL_COLUMNS)
     write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
 
 

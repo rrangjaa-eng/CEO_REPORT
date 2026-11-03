@@ -297,7 +297,7 @@ class TestInputFolderSafety(unittest.TestCase):
         target = os.path.join(new_tmp(self), "샘플")
         r = subprocess.run([sys.executable, MAKE_SAMPLE, target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(sorted(os.listdir(target)), sorted(list(SCHEMA) + ["계정별비용.csv", "부서비용.csv", "세금예상.csv", "카드결제일.csv"]))   # 선택 파일 샘플 (사용자 2026-11-03)
+        self.assertEqual(sorted(os.listdir(target)), sorted(list(SCHEMA) + ["계정별비용.csv", "부서비용.csv", "세금예상.csv", "출금상세.csv", "카드결제일.csv"]))   # 선택 파일 샘플 (사용자 2026-11-03)
         d = load(target)
         self.assertEqual(len(d.projects), 8)
 

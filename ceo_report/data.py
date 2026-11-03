@@ -218,6 +218,10 @@ def load(folder):
                            "code": (r.get("계정코드") or "").strip(), "name": (r.get("계정과목") or "").strip(),
                            "amount": num(r.get("금액"), iss, r, "금액")} for r in rows]
 
+    # 출금 상세 내역 (선택, 사용자 2026-11-03): 창에서 손으로 넣거나 인트라넷 지출결의서에서 가져옴
+    from .paydetail import read as read_details
+    d.pay_details = read_details(folder)
+
     # 세금 예상 (선택): 날짜를 못 읽은 줄은 넣지 않고 입력 확인에 남긴다
     d.tax = None
     path = os.path.join(folder, TAX_FILE)

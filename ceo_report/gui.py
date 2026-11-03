@@ -36,7 +36,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(820, 820)
+        root.minsize(820, 900)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -138,6 +138,19 @@ class Window(object):
         ttk.Label(f6, text="~").pack(side="left")
         ttk.Entry(f6, textvariable=self.t_to, width=12).pack(side="left", padx=(4, 10))
         self._btn(f6, "이체 파일 만들기", self.make_transfer)
+
+        # ⑦ 출금 상세 내역 (사용자 2026-11-03: 금요일 출금 목록에 무엇에 쓰는 돈인지)
+        f7 = ttk.LabelFrame(outer, text="⑦ 출금 상세 내역 — 같은 거래처·금액의 금요일 출금 줄에 붙음 (내용을 비우고 저장하면 지움)",
+                            style="Sec.TLabelframe", padding=8)
+        f7.pack(fill="x", pady=4)
+        self.d_vendor, self.d_amt, self.d_text = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        ttk.Label(f7, text="거래처").pack(side="left")
+        ttk.Entry(f7, textvariable=self.d_vendor, width=14).pack(side="left", padx=(4, 8))
+        ttk.Label(f7, text="금액(원)").pack(side="left")
+        ttk.Entry(f7, textvariable=self.d_amt, width=12).pack(side="left", padx=(4, 8))
+        ttk.Label(f7, text="상세 내역").pack(side="left")
+        ttk.Entry(f7, textvariable=self.d_text, width=30).pack(side="left", padx=(4, 8))
+        self._btn(f7, "저장", self.save_detail)
 
         # 진행
         ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
@@ -250,6 +263,16 @@ class Window(object):
         self.cards_now.set("지금: " + app.card_list(self.paths.input))
         self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
                  % " · ".join("%s %d일(기산 %d일)" % r for r in rows))
+
+    def save_detail(self):
+        try:
+            n = app.save_pay_detail(self.paths.input, self.d_vendor.get(), self.d_amt.get(), self.d_text.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.say("출금 상세 내역 저장 (%s %s원) — 전체 %d줄. 다음 보고서부터 금요일 출금 목록에 보입니다"
+                 % (self.d_vendor.get().strip(), self.d_amt.get().strip(), n))
+        self.d_text.set("")
 
     def make_transfer(self):
         from . import transfer

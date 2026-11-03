@@ -304,6 +304,12 @@ def save_card(input_dir, company, pay_day, start_day=1):
     return rows
 
 
+def save_pay_detail(input_dir, vendor, amount, text):
+    """금요일 출금 목록 상세 내역 한 줄 저장 (사용자 2026-11-03). 같은 거래처·금액 지급 줄에 붙는다. 내용을 비우면 지운다."""
+    from . import paydetail
+    return paydetail.save(input_dir, vendor, amount, text)
+
+
 def card_list(input_dir):
     """창에 보일 글: '신한 15일(기산 1일) · 롯데 …'."""
     from . import tax
