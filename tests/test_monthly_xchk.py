@@ -31,7 +31,8 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-BASELINE = "cbc5497"
+# D-54(남은 예산 지급 예정)가 주간 보고와 calc.py 를 일부러 바꾼 커밋. 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+BASELINE = "b2f0edf"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
@@ -804,12 +805,12 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
 
-# ───────────── 주간 보고는 바뀌지 않는다 (cbc5497 코드와 같은 HTML) ─────────────
+# ───────────── 주간 보고는 바뀌지 않는다 (BASELINE 코드와 같은 HTML) ─────────────
 _BASELINE_TREE = []
 
 
 def baseline_tree(test):
-    """git archive cbc5497 을 임시 폴더에 풀어 경로를 돌려준다 (한 번만). git 이나 커밋이 없으면 시험을 건너뛴다."""
+    """git archive BASELINE 을 임시 폴더에 풀어 경로를 돌려준다 (한 번만). git 이나 커밋이 없으면 시험을 건너뛴다."""
     if _BASELINE_TREE:
         return _BASELINE_TREE[0]
     try:
@@ -832,7 +833,7 @@ def baseline_tree(test):
 
 
 def weekly_baseline(test, input_dir, asof=WEEKLY_ASOF):
-    """cbc5497 코드로 주간 보고를 만든다 (하위 프로세스, PDF 안함) -> {'ceo': html, 'mgmt': html}."""
+    """BASELINE 코드로 주간 보고를 만든다 (하위 프로세스, PDF 안함) -> {'ceo': html, 'mgmt': html}."""
     tree = baseline_tree(test)
     out_dir = tempfile.mkdtemp()
     test.addCleanup(shutil.rmtree, out_dir, True)

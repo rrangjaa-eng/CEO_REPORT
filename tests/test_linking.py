@@ -863,7 +863,10 @@ class TestLinkingScope(unittest.TestCase):
         if self._git("rev-parse", "--verify", "-q", "cbc5497^{commit}").returncode != 0:
             self.skipTest("cbc5497 없음")
         # approval.py 는 계획 02-08(D-47: 승인 화면도 D-38 연결)이 일부러 바꾼다: 02-02 때의 "approval.py 그대로" 확인에서 뺀다
-        diff = self._git("diff", "--quiet", "cbc5497", "--", "ceo_report/calc.py", "ceo_report/data.py")
+        # calc.py 는 D-54(남은 예산 지급 예정, b2f0edf)가 일부러 바꾼다: 그 커밋 뒤로 바뀌지 않았는지 본다
+        if self._git("rev-parse", "--verify", "-q", "b2f0edf^{commit}").returncode != 0:
+            self.skipTest("b2f0edf 없음")
+        diff = self._git("diff", "--quiet", "b2f0edf", "--", "ceo_report/calc.py", "ceo_report/data.py")
         self.assertEqual(diff.returncode, 0)
         log = self._git("log", "--format=%s", "cbc5497..HEAD", "--", "ceo_report/wehago.py").stdout
         self.assertNotIn("02-02", log)
