@@ -95,7 +95,8 @@ class TestRrnMasked(unittest.TestCase):
                 h = render(R, mode)
                 self.assertNotIn(FAKE_RRN, h, (kind, mode))
                 self.assertNotIn("1234567", h, (kind, mode))
-                self.assertIn(MASK, h, (kind, mode))
+                if mode == "mgmt":   # 입력 확인 목록(상세 7번)은 경영관리 보고에만 있다 (대표 보고는 요약만, 2026-11-03)
+                    self.assertIn(MASK, h, (kind, mode))
 
     def test_approval_screen_masks_issue_lines(self):
         folder = sample_folder(self, _rrn_edit)
@@ -237,7 +238,7 @@ class TestCancelNetting(unittest.TestCase):
         self.assertEqual(self.ar_of(R, "P26201"), 8800000)
         self.assertEqual(R["s2"]["in4_firm"], 8800000)
         import test_report as tr
-        s5 = tr.section(render(R, "ceo"), 5)
+        s5 = tr.section(render(R, "mgmt"), 5)
         self.assertIn("미수 상계", s5)
         self.assertIn("2,200,000", s5)  # 상계한 금액이 5번 묶음에 보인다
 
@@ -250,7 +251,7 @@ class TestCancelNetting(unittest.TestCase):
         self.assertEqual(self.inflows(R), [(dt.date(2026, 11, 25), 5500000)])
         self.assertEqual(R["s5"]["ar"], 5500000)
         import test_report as tr
-        self.assertIn("뺄 미수 없음 5,500,000", tr.section(render(R, "ceo"), 5))
+        self.assertIn("뺄 미수 없음 5,500,000", tr.section(render(R, "mgmt"), 5))
 
     def test_known_different_client_is_not_netted(self):
         R = self.run_invoices([_inv("발행", "10,000,000", "1,000,000", "2026-11-20"),
@@ -391,7 +392,7 @@ class TestPaidCashReason(unittest.TestCase):
             for e in edits:
                 e(S)
         R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
-        return R, _s3_rows(render(R, "ceo"))
+        return R, _s3_rows(render(R, "mgmt"))
 
     def test_unknown_supply_says_amount_unknown(self):
         R, rows = self.rows(_blank_exec("영상", 4))        # P26203 지급완료 공급가액 빈칸
@@ -431,12 +432,12 @@ class TestAllUnknownTotals(unittest.TestCase):
         R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
         self.assertIsNone(R["s3"]["total"]["estimate"])
         self.assertEqual(R["s3"]["total"]["estimate_missing"], 8)
-        rows = _s3_rows(render(R, "ceo"))
+        rows = _s3_rows(render(R, "mgmt"))
         self.assertEqual(rows["전체"][COL_ESTIMATE], "미등록 8건")
 
     def test_partial_estimate_total_shows_missing_count(self):
         R = compute(load(sample_folder(self)), "weekly", ASOF)
-        rows = _s3_rows(render(R, "ceo"))
+        rows = _s3_rows(render(R, "mgmt"))
         self.assertEqual(rows["전체"][COL_ESTIMATE], "665,000,000 외 미등록 1건")
 
     def test_no_budget_contract_all_blank_is_not_zero(self):
@@ -447,14 +448,14 @@ class TestAllUnknownTotals(unittest.TestCase):
         R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
         self.assertIsNone(R["s7"]["no_budget_contract"])
         import test_report as tr
-        val = _kv(tr.section(render(R, "ceo"), 7), "예산 미지정 프로젝트")
+        val = _kv(tr.section(render(R, "mgmt"), 7), "예산 미지정 프로젝트")
         self.assertNotIn("계약 0원", val)
         self.assertIn("계약 미등록 1건", val)
 
     def test_no_budget_contract_known_unchanged(self):
         R = compute(load(sample_folder(self)), "weekly", ASOF)
         import test_report as tr
-        val = _kv(tr.section(render(R, "ceo"), 7), "예산 미지정 프로젝트")
+        val = _kv(tr.section(render(R, "mgmt"), 7), "예산 미지정 프로젝트")
         self.assertEqual(val, "1건 · 계약 50,000,000원 · 예상 총집행 18,000,000원")
 
 
@@ -472,7 +473,7 @@ class TestDatedUnknownPayments(unittest.TestCase):
     def screen(self, edit=None):
         import test_report as tr
         R = compute(load(sample_folder(self, edit)), "weekly", ASOF)
-        h = render(R, "ceo")
+        h = render(R, "mgmt")
         return R, tr.first_screen(h), tr.section(h, 2)
 
     def test_sample_unknown_request_is_counted(self):

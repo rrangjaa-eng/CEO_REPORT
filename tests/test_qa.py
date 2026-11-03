@@ -253,6 +253,9 @@ class TestInvoiceFileUnusable(unittest.TestCase):
             for prefix in ("날짜 없는 입금 예정", "예정일 지난 미처리"):
                 inflow_side = tr_box_item(fs, prefix).split(" / ")[0]
                 self.assertIn("계산서 자료 없음", inflow_side, prefix)  # 입금 쪽 '0건 0'만 보이지 않는다
+            if html is ceo:   # 대표 보고는 요약만 (문서 1~2쪽, 사용자 2026-11-03). 상세 5번은 경영관리 보고에서 본다
+                self.assertNotIn("<h2 id='s5'>", ceo)
+                continue
             s5_html = section(html, 5)
             first = R["s3"]["projects"][0]["id"]
             row = re.search(r"<tr class=\"\"><td>%s</td>.*?</tr>" % re.escape(first), s5_html, re.S).group(0)
@@ -263,7 +266,7 @@ class TestInvoiceFileUnusable(unittest.TestCase):
         # 대표용과 경영관리용은 같은 사실을 보인다
         self.assertEqual(tr_box_items(fs_of(ceo)), tr_box_items(fs_of(mgmt)))
         self.assertEqual(tr_avail_rows(fs_of(ceo)), tr_avail_rows(fs_of(mgmt)))
-        self.assertEqual(section(ceo, 5), section(mgmt, 5))
+        self.assertNotIn("<h2 id='s5'>", ceo)   # 대표 보고는 요약만 (문서 1~2쪽, 사용자 2026-11-03)
         return R
 
     def test_missing_file(self):

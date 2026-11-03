@@ -30,7 +30,10 @@ FORBIDDEN = ("위험", "해결방안", "권고", "우려", "추천")
 
 
 def numbers_of(html):
-    """HTML 속 숫자 나열. 위험 분석 묶음, 월간 8번 상세 묶음(경영관리용에만 있음)과 작성 시각은 뺀다."""
+    """HTML 속 숫자 나열. 위험 분석 묶음, 월간 8번 상세 묶음(경영관리용에만 있음)과 작성 시각은 뺀다.
+
+    대표 보고는 요약 화면만 싣는다 (문서 1~2쪽, 사용자 2026-11-03). 그래서 상세 목차부터 끝까지(경영관리용에만 있음)도 뺀다."""
+    html = html.split("<div class='toc'>")[0]
     html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
     html = re.sub(r"<div id='xchk-detail'>.*?<!-- /xchk-detail -->", "", html, flags=re.S)
     html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
@@ -278,7 +281,7 @@ class TestChecksAndOutput(Base):
             self.assertTrue(c[3], c[0])
 
     def test_scope_shows_shown_and_total(self):
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         self.assertIn("표시 6건 / 전체 8건", html)
 
     def test_ceo_has_no_interpretation(self):
@@ -287,7 +290,7 @@ class TestChecksAndOutput(Base):
             self.assertNotIn(word, html, word)
 
     def test_same_numbers_in_both_versions(self):
-        self.assertEqual(numbers_of(render(self.R, "ceo")), numbers_of(render(self.R, "mgmt")))
+        self.assertEqual(numbers_of(render(self.R, "mgmt")), numbers_of(render(self.R, "mgmt")))
 
     def test_mgmt_has_risks(self):
         self.assertIn("위험 분석·해결방안", render(self.R, "mgmt"))
@@ -303,7 +306,7 @@ class TestChecksAndOutput(Base):
         shutil.copy(os.path.join(SAMPLE, "프로젝트.csv"), tmp)
         d = load(tmp)
         R = compute(d, "weekly", ASOF)
-        render(R, "ceo")
+        render(R, "mgmt")
         self.assertTrue(any("파일 없음" in m for _, _, m in R["s7"]["issues"]))
 
     def test_cli_writes_files(self):
@@ -329,7 +332,7 @@ class TestUnknownBalance(unittest.TestCase):
 
     def run_probe(self, account):
         R = compute(load(self.blank_balance(account)), "weekly", ASOF)
-        return R, render(R, "ceo")
+        return R, render(R, "mgmt")
 
     def test_blank_balance_excluded_and_shown(self):
         R, html = self.run_probe("운영계좌")
@@ -399,7 +402,7 @@ class TestUnknownAmountsAndPastDue(Base):
 
     def probe(self, folder):
         R = compute(load(folder), "weekly", ASOF)
-        return R, render(R, "ceo")
+        return R, render(R, "mgmt")
 
     def vendor_row(self, html, name):
         m = re.search(r"<tr[^>]*><td>" + re.escape(name) + r"</td>.*?</tr>", section(html, 6), re.S)
@@ -410,7 +413,7 @@ class TestUnknownAmountsAndPastDue(Base):
         v = dict(self.R["s6"]["vendors"])["진행팀"]
         self.assertIsNone(v["total"])
         self.assertEqual((v["unknown"], v["n"]), (1, 1))
-        row = self.vendor_row(render(self.R, "ceo"), "진행팀")
+        row = self.vendor_row(render(self.R, "mgmt"), "진행팀")
         self.assertIn("미확인 1건", row)
         self.assertNotIn('<td class="n">0</td>', row)
 
@@ -437,7 +440,7 @@ class TestUnknownAmountsAndPastDue(Base):
         s2 = self.R["s2"]
         self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
         self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (0, 0, 0))
-        fs = first_screen(render(self.R, "ceo"))
+        fs = first_screen(render(self.R, "mgmt"))
         self.assertEqual(box_item(fs, "예정일 지난 미처리"), "예정일 지난 미처리 입금 1건 110,000,000 / 지급 0건 0 (일정에 넣지 않음)")
 
     def test_past_due_payment_not_in_schedule(self):
@@ -453,7 +456,7 @@ class TestUnknownAmountsAndPastDue(Base):
     def test_nonproject_scope_and_undated_on_first_screen(self):
         s6 = self.R["s6"]
         self.assertEqual((s6["undated_n"], s6["unknown_n"]), (2, 0))
-        fs = first_screen(render(self.R, "ceo"))
+        fs = first_screen(render(self.R, "mgmt"))
         self.assertEqual(box_item(fs, "프로젝트 밖 지급 예정"), "프로젝트 밖 지급 예정 (등록분 전체) 584,100,000 · 날짜 없음 2건")
 
     def test_past_due_unknown_amount_counted_not_zero(self):
@@ -506,7 +509,7 @@ class TestUnknownAmountsAndPastDue(Base):
         for c in R["s7"]["checks"]:
             self.assertTrue(c[3], c[0])
         self.assertEqual(self.R["s2"]["vat_unknown_n"], 0)
-        self.assertNotIn("부가세 미확인", first_screen(render(self.R, "ceo")))
+        self.assertNotIn("부가세 미확인", first_screen(render(self.R, "mgmt")))
 
 
 def _risk_part(html):
@@ -538,7 +541,7 @@ class TestSettingsAndKpi(Base):
                     r[1] = "abc"
         R = compute(load(probe_folder(self, "설정.csv", mutate)), "weekly", ASOF)
         mgmt = render(R, "mgmt")
-        render(R, "ceo")
+        render(R, "mgmt")
         self.assertEqual(R["settings_num"]["위험_최소보유현금"], 50_000_000)
         self.assertEqual(R["settings_num"]["위험_예산초과율"], 100)
         self.assertEqual(R["settings_default"], {"위험_예산초과율": "숫자 아님"})
@@ -563,20 +566,20 @@ class TestSettingsAndKpi(Base):
                               R["s7"]["issues"])
                 self.assertIn("최소 보유현금 50,000,000원 · 기본값 사용(설정 비어 있음)",
                               _risk_part(render(R, "mgmt")))
-                self.assertIn("최소 보유현금 설정 비어 있음", section(render(R, "ceo"), 7))
+                self.assertIn("최소 보유현금 설정 비어 있음", section(render(R, "mgmt"), 7))
                 check_editions(self, R)
 
     def test_project_show_count_setting(self):
         R = compute(load(self.set_value("첫화면_프로젝트_표시수", "4")), "weekly", ASOF)
-        self.assertIn("표시 4건 / 전체 8건", render(R, "ceo"))
+        self.assertIn("표시 4건 / 전체 8건", render(R, "mgmt"))
         R = compute(load(self.set_value("첫화면_프로젝트_표시수", "-1")), "weekly", ASOF)
-        self.assertIn("표시 8건 / 전체 8건", render(R, "ceo"))
+        self.assertIn("표시 8건 / 전체 8건", render(R, "mgmt"))
         self.assertEqual(R["settings_default"]["첫화면_프로젝트_표시수"], "0 이상 정수 아님")
         self.assertTrue(any("첫화면_프로젝트_표시수 값은 0 이상 정수여야 함" in m for _, _, m in R["s7"]["issues"]))
 
     def test_amounts_in_won_not_million(self):
         # 사용자 2026-11-03: 금액 단위는 백만원이 아니라 원 (첫 화면·그래프 포함)
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         self.assertNotIn("백만원", html)
         self.assertIn("금액 단위: 원", html)
         self.assertIn("{:,}".format(self.R["s1"]["available"]), first_screen(html))
@@ -675,13 +678,13 @@ class TestProjectBudget(Base):
         self.assertEqual(q["budget_reason"], "사전견적 없음")
         self.assertEqual(s3["total"]["budget"], 465_500_000)
         self.assertEqual(s3["total"]["budget_missing"], 1)
-        fs = first_screen(render(self.R, "ceo"))
+        fs = first_screen(render(self.R, "mgmt"))
         self.assertIn("원가 예산 = 사전견적 × 원가율 70%", fs)
         self.assertIn("표시 6건 / 전체 8건", fs)
 
     def test_no_budget_reason_blank_estimate(self):
         self.assertEqual(dict(self.R["s3"]["no_budget_reasons"]), {"사전견적 없음": 1})
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         self.assertIn("예산 미책정 1건 (사전견적 없음 1건)", first_screen(html))
         r3 = self.row(section(html, 3), "P26204")[0]
         for needle in ("예산 미지정", "판단 불가", "사전견적 없음"):
@@ -696,7 +699,7 @@ class TestProjectBudget(Base):
             self.assertIsNone(P["remain"], pid)
             self.assertEqual(P["budget_reason"], "사전견적 0원 또는 음수", pid)
             self.assertEqual(pct(P["paid_total"], P["budget"]), "판단 불가", pid)
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         for pid in ("P26208", "P26207"):
             r3 = self.row(section(html, 3), pid)[0]
             for needle in ("예산 미지정", "판단 불가", "사전견적 0원 또는 음수"):
@@ -711,7 +714,7 @@ class TestProjectBudget(Base):
         self.assertIsNone(P["remain"])
         self.assertEqual(P["budget_reason"], "사전견적 금액 해석 불가")
         self.assertEqual(pct(P["paid_total"], P["budget"]), "판단 불가")
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         self.assertIn("사전견적 금액 해석 불가", self.row(section(html, 3), "P26205")[0])
         self.assertTrue(any(f == "프로젝트.csv" and "사전견적예산 값이 숫자가 아님" in m for f, _, m in R["s7"]["issues"]))
         self.assertIn("예산 미책정 2건 (사전견적 없음 1건, 사전견적 금액 해석 불가 1건)", first_screen(html))
@@ -733,7 +736,7 @@ class TestProjectBudget(Base):
                 self.assertTrue(any(f == "설정.csv" and str(l) == "9" and "예산_원가율 값 오류" in m and bad in m
                                     for f, l, m in R["s7"]["issues"]), R["s7"]["issues"])
                 self.assertNotIn("예산_원가율", R["settings_default"])
-                fs = first_screen(render(R, "ceo"))
+                fs = first_screen(render(R, "mgmt"))
                 self.assertIn("예산 미책정 8건 (사전견적 없음 1건, 원가율 설정 오류 7건)", fs)
                 self.assertIn("예산 미지정 (원가율 설정 오류)", fs)
                 for ed in ("ceo", "mgmt"):
@@ -756,7 +759,7 @@ class TestProjectBudget(Base):
             self.assertFalse(any("예산_원가율" in m for _, _, m in R["s7"]["issues"]))
 
     def test_project_table_columns(self):
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         s3 = section(html, 3)
         for col in ("사전견적", "원가 예산", "예산 사유", "예산 수정일", "이번 주 지급", "누적 지급", "요청 미지급",
                     "카드 미결제", "미요청 계획", "지급률", "예상 잔여예산"):
@@ -764,7 +767,7 @@ class TestProjectBudget(Base):
         self.assertIn("원가 예산 210,000,000", project_block(html, "P26201"))
 
     def test_no_budget_row_labels(self):
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         r3 = self.row(section(html, 3), "P26204")[0]
         self.assertIn("예산 미지정", r3)
         self.assertIn("판단 불가", r3)
@@ -884,7 +887,7 @@ class TestUserRulesLocked(Base):
         mn = self.R["s2"]["min"]
         self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
         self.assertEqual(mn["all"], (125_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
-        fs = first_screen(render(self.R, "ceo"))
+        fs = first_screen(render(self.R, "mgmt"))
         self.assertIn("기간 중 최저 잔액", fs)
         self.assertIn("확정분만", fs)
         self.assertIn("예상분 포함", fs)
@@ -900,7 +903,7 @@ class TestUserRulesLocked(Base):
         team = rows["기획1팀"]
         self.assertEqual(team["cur"]["gp"], 5_280_000)
         self.assertIsNone(team["cur"]["np"])
-        fs = first_screen(render(self.R, "ceo"))
+        fs = first_screen(render(self.R, "mgmt"))
         cash = fs.split("<div class='card avail'>")[1].split("</table>")[0]
         self.assertIn("계좌 합계", cash)
         self.assertNotIn("이익", cash)   # 이익은 자금 칸에 섞지 않고 실적 칸에 따로
@@ -909,7 +912,7 @@ class TestUserRulesLocked(Base):
 
     def test_pl_sources_separate(self):
         self.assertEqual(list(self.R["s4"]["sources"]), ["WEHAGO", "인트라넷완료보고"])
-        s4 = section(render(self.R, "ceo"), 4)
+        s4 = section(render(self.R, "mgmt"), 4)
         self.assertIn("WEHAGO 손익 (최근 반영월 2026-11)", s4)
         self.assertIn("인트라넷완료보고 손익 (최근 반영월 2026-10)", s4)
 
@@ -919,7 +922,7 @@ class TestUserRulesLocked(Base):
         self.assertEqual(self.R["s4"]["unrecognized"], 618_000_000)
         self.assertEqual(self.R["s4"]["unrecognized_missing"], 1)
         self.assertIsNone(projects["P26206"]["profit_end"])
-        row = re.findall(r"<tr[^>]*><td>P26206</td>.*?</tr>", section(render(self.R, "ceo"), 4), re.S)[0]
+        row = re.findall(r"<tr[^>]*><td>P26206</td>.*?</tr>", section(render(self.R, "mgmt"), 4), re.S)[0]
         self.assertIn("판단 불가", row)
         self.assertIn("미확인 원가 1건", row)
         intra = {x["target"].split(" ")[0]: x for x in self.R["s4"]["sources"]["인트라넷완료보고"]["table"]}
@@ -934,7 +937,7 @@ class TestUserRulesLocked(Base):
 
     def test_specials_listed_separately(self):
         self.assertEqual(sorted(v["kind"] for v in self.R["s5"]["specials"]), ["선수금", "선수금", "수정", "취소"])
-        self.assertIn("선수금·취소·환불·수정 (4건)", section(render(self.R, "ceo"), 5))
+        self.assertIn("선수금·취소·환불·수정 (4건)", section(render(self.R, "mgmt"), 5))
 
     def test_nonproject_obligations_by_category(self):
         by_cat = self.R["s6"]["by_cat"]
@@ -976,7 +979,7 @@ class TestUserRulesLocked(Base):
         self.assertEqual((s5["ar"], s5["ar_unknown_n"]), (132_000_000, 2))
         self.assertEqual((s5["issued"], s5["issued_unknown_n"]), (350_000_000, 1))
         self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (428_000_000, 2))
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         sec5 = section(html, 5)
         row_a = re.findall(r"<tr[^>]*><td>P26203</td>.*?</tr>", sec5, re.S)[0]
         self.assertIn("미확인 1건", row_a)
@@ -1006,7 +1009,7 @@ class TestUserRulesLocked(Base):
         self.assertFalse(item["unplanned"])
         self.assertEqual(R["s7"]["plan_total"], 36_900_000)
         self.assertEqual(R["s7"]["plan_unknown_n"], 1)
-        s7 = section(render(R, "ceo"), 7)
+        s7 = section(render(R, "mgmt"), 7)
         row = re.findall(r"<tr[^>]*><td>P26203</td><td>전시제작사</td>.*?</tr>", s7, re.S)[0]
         self.assertIn("미확인", row)
         self.assertNotIn("계획 없음", row)
@@ -1020,7 +1023,7 @@ class TestUserRulesLocked(Base):
         R = self.edit("프로젝트.csv", mutate)
         self.assertIsNone(R["s7"]["no_budget_contract"])  # 검토 6: 전부 미등록이면 0이 아니라 None
         self.assertEqual(R["s7"]["no_budget_contract_missing"], 1)
-        self.assertIn("계약 미등록 1건", re.sub(r"<[^>]+>", "", section(render(R, "ceo"), 7)))
+        self.assertIn("계약 미등록 1건", re.sub(r"<[^>]+>", "", section(render(R, "mgmt"), 7)))
 
 
 _BASE_R = None
@@ -1092,7 +1095,7 @@ class TestNoBalanceKnown(unittest.TestCase):
         for name, folder in self.cases():
             with self.subTest(name):
                 R = compute(load(folder), "weekly", ASOF)
-                html = render(R, "ceo")
+                html = render(R, "mgmt")
                 fs = first_screen(html)
                 self.assertIn("오늘 가용액 잔액 미확인", fs)
                 self.assertIn("잔액 미확인", fs)
@@ -1139,7 +1142,7 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
 
     def test_unknown_request_line_marked_on_first_screen(self):
         R = sample_result()
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         P = next(p for p in R["s3"]["projects"] if p["id"] == "P26206")
         self.assertEqual(P["unknown_cost"], 1)
         self.assertEqual(P["line_unknown"]["요청미지급"], 1)
@@ -1153,7 +1156,7 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
 
     def test_total_row_and_card_carry_unknown_count(self):
         R = sample_result()
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         tot = first_screen(html).split("<div class='ptot'>")[1].split("</div>")[0]
         self.assertIn('집행 예정액 253,550,000<span class="na"> 외 미확인 1건</span>', tot)
         self.assertIn("미확인 원가 1개 프로젝트 제외", tot)
@@ -1174,7 +1177,7 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
                 if r[3] == "요청미지급":
                     r[4] = ""
         R = compute(load(probe_folder(self, "프로젝트집행.csv", mutate)), "weekly", ASOF)
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         tot = first_screen(html).split("<div class='ptot'>")[1].split("</div>")[0]
         self.assertIn("외 미확인 4건", tot)
         self.assertIn("미확인 1건", project_block(html, "P26203"))
@@ -1186,7 +1189,7 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
                 if r[0] == "P26208":
                     r[4] = ""
         R = compute(load(probe_folder(self, "프로젝트집행.csv", mutate)), "weekly", ASOF)
-        html = render(R, "ceo")
+        html = render(R, "mgmt")
         P = next(p for p in R["s3"]["projects"] if p["id"] == "P26208")
         self.assertEqual(P["line_unknown"]["카드사용미결제"], 1)
         self.assertIsNone(P["remain"])
@@ -1209,7 +1212,7 @@ class TestAllUnknownTotals(unittest.TestCase):
 
     def edit(self, filename, mutate):
         R = compute(load(probe_folder(self, filename, mutate)), "weekly", ASOF)
-        return R, render(R, "ceo")
+        return R, render(R, "mgmt")
 
     def tot_row(self, html, n):
         return table_cells(re.findall(r'<tr class="tot">.*?</tr>', section(html, n), re.S)[0])
@@ -1260,7 +1263,7 @@ class TestAllUnknownTotals(unittest.TestCase):
     def test_partial_unknown_counts_beside_first_screen_totals(self):
         R = sample_result()
         self.assertEqual(R["s4"]["unrecognized_missing"], 1)
-        self.assertIn("미확인 1건", self.tot_row(render(R, "ceo"), 4)[4])
+        self.assertIn("미확인 1건", self.tot_row(render(R, "mgmt"), 4)[4])
 
     def test_category_total_unknown_when_every_row_unknown(self):
         def mutate(rows):
@@ -1296,11 +1299,11 @@ class TestFirstScreenCountsD04(unittest.TestCase):
     OVERDUE = "입금예정일 지난 미수금"
 
     def test_undated_line_has_counts_and_amounts(self):
-        fs = first_screen(render(sample_result(), "ceo"))
+        fs = first_screen(render(sample_result(), "mgmt"))
         self.assertEqual(box_item(fs, self.UNDATED), "날짜 없는 입금 예정 1건 30,000,000 / 지급 예정 4건 105,000,000")  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
 
     def test_overdue_receivable_line_has_count(self):
-        fs = first_screen(render(sample_result(), "ceo"))
+        fs = first_screen(render(sample_result(), "mgmt"))
         self.assertEqual(box_item(fs, self.OVERDUE), "입금예정일 지난 미수금 1건 110,000,000 (일정에 넣지 않음)")
 
     def add_rows(self, *new_rows):
@@ -1313,7 +1316,7 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             s2 = R["s2"]
             self.assertEqual((s2["undated_out"], s2["undated_out_n"], s2["undated_out_unknown"]), (105_000_000, 5, 1))
             self.assertEqual((s2["undated_in"], s2["undated_in_n"], s2["undated_in_unknown"]), (30_000_000, 1, 0))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
-            html = render(R, "ceo")
+            html = render(R, "mgmt")
             val = box_item(first_screen(html), self.UNDATED)
             self.assertEqual(val, "날짜 없는 입금 예정 1건 30,000,000 / 지급 예정 5건 105,000,000 (금액 미확인 1건)")
             self.assertEqual(R["s7"]["undated_out_n"], 5)
@@ -1334,7 +1337,7 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             s2 = R["s2"]
             self.assertIsNone(s2["undated_in"])
             self.assertEqual((s2["undated_in_n"], s2["undated_in_unknown"]), (1, 1))
-            val = box_item(first_screen(render(R, "ceo")), self.UNDATED)
+            val = box_item(first_screen(render(R, "mgmt")), self.UNDATED)
             self.assertTrue(val.startswith("날짜 없는 입금 예정 1건 금액 미확인 /"), val)
             self.assertNotIn("1건 0.0", val)
             self.assertIn("지급 예정 4건 105,000,000", val)
@@ -1489,7 +1492,7 @@ class TestPaidDateWithoutAmount(unittest.TestCase):
                 if r[0] == "P26202":
                     r[8], r[9] = paid_date, paid_amount
         R = compute(load(probe_folder(self, "계산서.csv", mutate)), "weekly", ASOF)
-        return R, render(R, "ceo")
+        return R, render(R, "mgmt")
 
     def test_paid_date_without_amount_is_unknown_outstanding(self):
         R, html = self.compute_with("2026-10-20", "")
@@ -1648,7 +1651,7 @@ class TestComputeIsPure(unittest.TestCase):
         row = [v for v in r2["s5"]["ar_rows"] if v["project"] == "P26202"][0]
         self.assertNotIn("overdue_days", row)
         self.assertEqual(r2["s5"]["overdue"], [])
-        html = render(r2, "ceo")
+        html = render(r2, "mgmt")
         cells = table_cells(re.findall(r"<tr[^>]*><td>P26202</td><td>B사</td>.*?</tr>", section(html, 5), re.S)[0])
         self.assertEqual(cells[-1], "")
 

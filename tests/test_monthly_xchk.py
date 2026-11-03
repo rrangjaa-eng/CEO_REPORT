@@ -120,6 +120,11 @@ def summary_rows(page):
     return dict((base_label(plain(k)), plain(v)) for k, v in re.findall(r"<tr><th>(.*?)</th><td[^>]*>(.*?)</td></tr>", body, re.S))
 
 
+def detail(pages):
+    """상세 장(8번 포함)이 있는 판만: 대표 보고는 요약만 싣는다 (문서 1~2쪽, 사용자 2026-11-03)."""
+    return {"mgmt": pages["mgmt"]}
+
+
 def section8(page):
     return page[page.index("<h2 id='s8'>"):]
 
@@ -202,17 +207,17 @@ class TestMonthlySection(unittest.TestCase):
         self.assertNotIn("위하고 대조 자료 없음", self.stdout)
 
     def test_heading_and_table_of_contents_link_in_both_editions(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
                 self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
 
     def test_section_8_comes_after_section_7(self):
-        for page in self.pages.values():
+        for page in detail(self.pages).values():
             self.assertLess(page.index("<h2 id='s7'>"), page.index("<h2 id='s8'>"))
 
     def test_meta_line_has_book_date_snapshot_and_conversion_time(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():
             with self.subTest(mode):
                 # 02-REVIEW WR-05: 분개장 기간이 메타 줄에 들어간다
                 self.assertEqual(meta_line(page), "장부 기준일 2026-10-31 · 분개장 기간 2026-09-15~2026-10-31"
@@ -260,8 +265,9 @@ class TestMonthlySection(unittest.TestCase):
                 self.assertTrue(value.startswith("증감 45,000,000 · 장부 잔액 판단 불가 (기초 잔액 줄 없음)"), value)
 
     def test_summary_is_identical_in_both_editions(self):
-        self.assertEqual(summary_rows(self.pages["ceo"]), summary_rows(self.pages["mgmt"]))
-        self.assertEqual(meta_line(self.pages["ceo"]), meta_line(self.pages["mgmt"]))
+        # 대표 보고는 요약만 싣는다 (문서 1~2쪽, 사용자 2026-11-03): 8번 상세는 경영관리 보고에만. 대표 첫 화면에는 대조 요약이 있다
+        self.assertNotIn("<h2 id='s8'>", self.pages["ceo"])
+        self.assertIn("장부와 맞춰 본 결과", self.pages["ceo"])
 
     def test_ceo_edition_has_no_detail_block_and_no_forbidden_word(self):
         ceo = self.pages["ceo"]
@@ -666,7 +672,7 @@ class TestMonthlyMissing(unittest.TestCase):
         folder = sample_folder(self)
         rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
         self.assertEqual(rc, 0)
-        for mode, page in pages.items():
+        for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
                 self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
@@ -682,7 +688,7 @@ class TestMonthlyMissing(unittest.TestCase):
         write_text(folder, "구분,대상,이름\n기준,,x\n")
         rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
         self.assertEqual(rc, 0)
-        for mode, page in pages.items():
+        for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertIn("읽을 수 없음 (위하고대조.csv 머리글 다름)", section8_text(page))
                 self.assertNotIn("xchk-summary", page)
@@ -701,7 +707,8 @@ class TestMonthlyMissing(unittest.TestCase):
         folder = sample_folder(self, table, raw=True)
         rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
         self.assertEqual(rc, 0)
-        for page in pages.values():
+        self.assertNotIn("900101", pages["ceo"])
+        for page in detail(pages).values():
             text = section8_text(page)
             self.assertIn("읽을 수 없음 (위하고대조.csv ", text)
             self.assertIn("금액 값이 숫자가 아님", text)
@@ -714,7 +721,7 @@ class TestMonthlyMissing(unittest.TestCase):
         write_text(folder, "구분,대상,이름,항목,금액,건수,비고\n")
         rc, out, pages, _ = run_cli(self, folder, "월간", BASE_ASOF)
         self.assertEqual(rc, 0)
-        for mode, page in pages.items():
+        for mode, page in detail(pages).items():
             with self.subTest(mode):
                 rows = summary_rows(page)
                 self.assertEqual(len(rows), 6)
@@ -727,14 +734,14 @@ class TestMonthlyMissing(unittest.TestCase):
 
     def test_render_without_attached_facts_reads_no_data(self):
         R = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
-        for mode in ("ceo", "mgmt"):
+        for mode in ("mgmt",):
             self.assertIn(NO_FILE_TEXT, plain(section8(render(R, mode))))
 
     def test_stale_book_date_is_stated_in_days_in_both_editions(self):
         folder = sample_folder(self, xchk_table(shared_inputs()))
         rc, out, pages, _ = run_cli(self, folder, "월간", "2026-11-30")
         self.assertEqual(rc, 0)
-        for mode, page in pages.items():
+        for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertTrue(meta_line(page).startswith("장부 기준일 2026-10-31 (보고 기준일보다 30일 이전) · 분개장 기간 "),
                                 meta_line(page))
@@ -743,7 +750,7 @@ class TestMonthlyMissing(unittest.TestCase):
     def test_book_date_after_the_report_date_and_unreadable_book_date(self):
         folder = sample_folder(self, xchk_table(shared_inputs()))
         rc, out, pages, _ = run_cli(self, folder, "월간", "2026-10-30")
-        self.assertTrue(meta_line(pages["ceo"]).startswith("장부 기준일 2026-10-31 (보고 기준일보다 1일 이후)"))
+        self.assertTrue(meta_line(pages["mgmt"]).startswith("장부 기준일 2026-10-31 (보고 기준일보다 1일 이후)"))
 
         def edit(rows):
             for r in rows:
@@ -790,7 +797,8 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
                     R["xchk"] = load_xchk(copy)
                     check_editions(self, R)
                     ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
-                    self.assertIn("<h2 id='s8'>", ceo)
+                    self.assertNotIn("<h2 id='s8'>", ceo)   # 대표 보고는 요약만 (2026-11-03)
+                    self.assertIn("<h2 id='s8'>", mgmt)
                     self.assertNotIn("xchk-detail", ceo)
                     self.assertEqual(("xchk-detail" in mgmt), vname in ("ok", "hostile"))
 

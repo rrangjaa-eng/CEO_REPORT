@@ -83,7 +83,8 @@ class TestConvertedReports(unittest.TestCase):
             self.assertFalse(real == ROOT or real.startswith(ROOT + os.sep), path)
 
     def test_monthly_section_8_has_the_project_cost_in_both_editions(self):
-        for mode in ("ceo", "mgmt"):
+        self.assertNotIn("id='s8'", self.monthly["ceo"])   # 대표 보고는 요약만 (2026-11-03): 8번 상세는 경영관리 보고에
+        for mode in ("mgmt",):
             with self.subTest(mode):
                 self.assertIn("id='s8'", self.monthly[mode])
                 rows = summary_rows(self.monthly[mode])
@@ -103,7 +104,7 @@ class TestConvertedReports(unittest.TestCase):
         R["xchk"] = load_xchk(self.input_dir)
         self.assertEqual(R["xchk"]["state"], "ok")
         check_editions(self, R)
-        self.assertIn("258,400,000", render(R, "ceo"))
+        self.assertIn("258,400,000", render(R, "mgmt"))
 
     def test_weekly_html_equals_the_baseline_code_for_both_editions(self):
         old = weekly_baseline(self, self.input_dir)
@@ -308,8 +309,7 @@ class TestConvertedApprovalEqual(unittest.TestCase):
 
     def test_default_settings_per_project_cost_and_request_total_equal(self):
         pages, screen_page, A = self.dflt
-        for mode in ("ceo", "mgmt"):
-            self.assertIn("258,400,000", plain(section8(pages[mode])))
+        self.assertIn("258,400,000", plain(section8(pages["mgmt"])))
         assert_equal_surfaces(self, pages["mgmt"], screen_page, A, "default")
 
     def test_default_known_numbers(self):

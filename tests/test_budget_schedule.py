@@ -132,7 +132,7 @@ class TestTeamBudget(unittest.TestCase):
 
     def test_rendered_in_section_3(self):
         from ceo_report.render import render
-        html = render(self.R, "ceo")
+        html = render(self.R, "mgmt")
         self.assertIn("팀별 예산·집행", html)
         self.assertIn("기획1팀", html)
 

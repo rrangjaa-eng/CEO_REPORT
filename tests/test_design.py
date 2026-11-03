@@ -130,6 +130,19 @@ class TestReportIsADocument(unittest.TestCase):
                     for tag in ("<script", "<button", "<input"):
                         self.assertNotIn(tag, html)
 
+    def test_ceo_edition_is_summary_only_and_prints_portrait(self):
+        """대표 보고는 1~2쪽: 요약 화면만, 상세 장(1~8)·목차는 경영관리 보고에만. A4 세로 (사용자 2026-11-03)."""
+        for kind in ("weekly", "monthly"):
+            R = compute(load(SAMPLE), kind, ASOF)
+            ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+            with self.subTest(kind):
+                self.assertNotIn("<h2 id='s", ceo)
+                self.assertNotIn("class='toc'", ceo)
+                self.assertIn("<h2 id='s1'>", mgmt)
+                for html in (ceo, mgmt):
+                    self.assertIn("@page{size:A4 portrait", html)
+                    self.assertNotIn("landscape", html)
+
     def test_pick_date_row_is_fixed_when_report_is_made(self):
         import test_report
         pick = ASOF + dt.timedelta(days=40)

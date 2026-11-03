@@ -65,7 +65,7 @@ tr.sub td{color:var(--sub)}
 .kpi.lowbal{grid-column:1/-1;order:-1}
 .tw table:not(.risk):not(#requests){width:max-content;min-width:100%}
 .tw table:not(.risk):not(#requests) td{white-space:nowrap}}
-@media print{@page{size:A4 landscape;margin:10mm}.wrap{max-width:none;padding:0}h2{break-after:avoid}
+@media print{@page{size:A4 portrait;margin:10mm}.wrap{max-width:none;padding:0}h2{break-after:avoid}
 tr{break-inside:avoid}.toc{display:none}body{font-size:10.5px}table{font-size:10.5px}.kpi .v{font-size:18px}h2{margin-top:16px}.kpis{margin:8px 0}.kpi{padding:6px 10px}.mid svg{max-height:185px}.low{margin-top:8px}.kv{padding:1px 0}.wrap>.meta{margin-bottom:0}
 .kpi,.card{break-inside:avoid}.mid svg{max-height:165px}.note{font-size:9.5px;margin:2px 0}.scope{margin:2px 0 4px}
 .card{padding:6px 10px}.card h4{margin-bottom:3px}h3{margin:8px 0 4px}.kpi .s{font-size:10px}
@@ -211,6 +211,10 @@ def render(R, mode):
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
 
     h.append(_first_screen(R, mode, per))
+    if mode == "ceo":
+        # 대표 보고는 문서로 1~2쪽: 요약 화면만 싣는다. 상세 장(1~8)은 경영관리 보고에만 (사용자 2026-11-03)
+        h.append("</div></body></html>")
+        return "".join(h)
 
     toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
     if R["kind"] == "monthly":
