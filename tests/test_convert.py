@@ -709,55 +709,5 @@ class TestConvertProvisional(unittest.TestCase):
         self.assertIn("대조 불일치 1건", lines)
 
 
-class TestConvertLauncher(unittest.TestCase):
-    NAME = "실행_변환.bat"
-
-    def raw(self, name=None):
-        with open(os.path.join(ROOT, name or self.NAME), "rb") as f:
-            return f.read()
-
-    def lines(self, name=None):
-        return self.raw(name).decode("utf-8").split("\r\n")
-
-    def test_bytes_are_utf8_crlf_without_bom_and_chcp_comes_first(self):
-        raw = self.raw()
-        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "BOM")
-        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "모든 줄이 CRLF")
-        text = raw.decode("utf-8")
-        first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
-        self.assertLess(text.index("chcp 65001"), first_non_ascii)
-
-    def test_same_shape_as_the_monthly_launcher_except_three_lines(self):
-        # 보고서 실행 파일만 가용일 질문 4줄이 있다 (문서로 전달, 사용자 2026-11-03). 그 줄을 빼고 모양을 비교한다
-        month = [ln for ln in self.lines("실행_월간.bat") if "PICK" not in ln or ln.startswith("%PY%")]
-        month = [ln.replace(" %PICKARG%", "") for ln in month]
-        mine = self.lines()
-        self.assertEqual(len(month), len(mine))
-        diff = [i for i, (a, b) in enumerate(zip(month, mine)) if a != b]
-        self.assertEqual(len(diff), 3, diff)
-        echo, run, ok = diff
-        self.assertTrue(mine[echo].lower().startswith("echo ") and "입력" in mine[echo] and "입력양식" in mine[echo])
-        self.assertEqual(mine[run], "%PY% 변환.py %*")
-        self.assertEqual(mine[ok], "echo 변환을 마쳤습니다. 입력\\변환결과.txt에 원본 합계 대조가 있습니다.")
-        self.assertLess(echo, run)
-
-    def test_one_pushd_one_note_exit_code_flow(self):
-        lines = self.lines()
-        self.assertEqual(len([i for i, ln in enumerate(lines) if ln.strip() == 'pushd "%~dp0"']), 1)
-        run = next(i for i, ln in enumerate(lines) if ln.startswith("%PY% "))
-        notes = [ln for ln in lines[:run] if ln.lower().startswith("echo") and "입력" in ln and "입력양식" in ln]
-        self.assertEqual(len(notes), 1)
-        rc = next(i for i, ln in enumerate(lines) if ln == 'set "RC=%ERRORLEVEL%"')
-        ok = next(i for i, ln in enumerate(lines) if "변환을 마쳤습니다" in ln)
-        fail = next(i for i, ln in enumerate(lines) if "오류가 발생했습니다" in ln)
-        self.assertLess(run, rc)
-        self.assertLess(rc, fail)
-        self.assertLess(fail, ok)
-        self.assertEqual(lines[-2], "exit /b %RC%")
-        self.assertEqual(sum(1 for ln in lines if ln.strip().lower().startswith("exit /b")), 2)
-        checks = [ln for ln in lines if "version_info" in ln and "(3, 8)" in ln]
-        self.assertEqual(len(checks), 2)
-
-
 if __name__ == "__main__":
     unittest.main()

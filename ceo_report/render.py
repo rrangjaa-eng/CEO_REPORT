@@ -707,7 +707,7 @@ def _team_table(R):
              "공통비 나눈 뒤 = 본부·경영관리 등 비용을 팀 %s 비율로 나눠 뺀 값 (팀 합계 = 회사 영업이익)" % ("인원" if basis == "heads" else "매출"),
              "급여 대비 = 순수익 ÷ 급여"]
     if dept is None:
-        notes.append("급여·판관비 미확인: %s (실행_변환.bat이 분개장 부서명으로 만듦)" % (
+        notes.append("급여·판관비 미확인: %s (대표보고 창의 '자료 변환'이 분개장 부서명으로 만듦)" % (
             "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
     elif last and not last["dept_ok"]:
         notes.append("급여·판관비 미확인: 부서비용.csv에 %s 자료가 없음" % _ym_text(ym))
@@ -749,7 +749,7 @@ def _first_screen(R, mode, per):
         i += 1
         X = R.get("xchk")
         if X is None or X["state"] == "자료 없음":
-            h.append("<div class='card'>%s</div>" % _na("자료 없음 (%s — 실행_변환.bat으로 만듦)" % XCHK_FILE_NAME))
+            h.append("<div class='card'>%s</div>" % _na("자료 없음 (%s — 대표보고 창의 '자료 변환'으로 만듦)" % XCHK_FILE_NAME))
         elif X["state"] != "ok":
             h.append("<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
         else:
@@ -1731,7 +1731,7 @@ def _s8(R, mode):
     X = R.get("xchk")
     h = [_h2(8, XCHK_TITLE)]
     if X is None or X["state"] == "자료 없음":
-        h.append("<div class='note'>%s</div>" % _na("자료 없음 (%s — 실행_변환.bat으로 만듦)" % XCHK_FILE_NAME))
+        h.append("<div class='note'>%s</div>" % _na("자료 없음 (%s — 대표보고 창의 '자료 변환'으로 만듦)" % XCHK_FILE_NAME))
         return "".join(h)
     if X["state"] != "ok":
         h.append("<div class='note'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))

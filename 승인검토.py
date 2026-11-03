@@ -4,7 +4,7 @@
     python 승인검토.py                                  ← 마지막 인트라넷 스냅숏으로 오늘 기준 화면 만들기
     python 승인검토.py --기준일 2026-11-02 --열기 안함
     python 승인검토.py --수집폴더 수집 --출력 출력
-    python 승인검토.py --수집 함                         ← 인트라넷에서 새로 읽어 화면 만들기 (실행_승인검토.bat)
+    python 승인검토.py --수집 함                         ← 인트라넷에서 새로 읽어 화면 만들기 (대표보고 창의 '새로 읽고 검토')
 
 기본(--수집 안함)은 수집 폴더의 가장 최근 인트라넷 스냅숏과 입력 폴더의 CSV를 읽어, 앞으로 8주 잔액을 보는
 HTML 한 장을 출력 폴더에 만든다. 네트워크를 쓰지 않는다. 주간·월간 보고서는 바꾸지 않는다.
@@ -87,11 +87,17 @@ def make_collector_opener(delay=0.3):
 
 
 NO_FILE = "파일을 만들지 않았습니다"
-NO_HIDE_MESSAGE = "비밀번호를 가리고 입력할 수 없는 창입니다 — 실행_승인검토.bat을 더블클릭하거나 명령 프롬프트에서 실행하세요"
+NO_HIDE_MESSAGE = "비밀번호를 가리고 입력할 수 없는 창입니다 — 대표보고 창에서 실행하거나 명령 프롬프트에서 실행하세요"
+
+
+CREDENTIALS = None   # 한 화면 프로그램이 넣는다: () -> (ID, 비밀번호). 창의 가린 입력칸에서 받음 (사용자 2026-11-03)
 
 
 def ask_credentials():
     """(ID, 비밀번호, 종료코드). 종료코드가 None이 아니면 멈춘다. 비밀번호는 화면에 나타나지 않는다."""
+    if CREDENTIALS is not None:
+        user_id, password = CREDENTIALS()
+        return (user_id or "").strip(), password or "", None
     try:
         user_id = input("인트라넷 ID: ").strip()
         with warnings.catch_warnings():
