@@ -7,6 +7,7 @@ import re
 import unicodedata
 import zipfile
 import zlib
+from collections import OrderedDict
 import xml.etree.ElementTree as ET
 
 from .approval import parse_registered, project_code  # noqa: F401  (parse_registered: 지급 확인 단계에서 쓴다)
@@ -239,6 +240,10 @@ class Books:
         self.einvoice = []
         # 매입매출장 '프로젝트명' 칸의 코드: {(전표일자 ISO, 번호 글자): 프로젝트 코드} (D-53). 칸이 없거나 비면 빈 dict
         self.slip_projects = {}
+        # D-57: 분개장 매입전표·매출전표로 만든 계산서 단위 자료 (인쇄 분개장에 '유형' 칸이 있을 때). sales 는 load_sales 가 쓴다
+        self.from_journal = False
+        self.journal_sales = []
+        self.notes = []   # 변환결과.txt 에 쓰는 장부 알림 (매입매출장 대조 등)
 
 
 _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
@@ -323,7 +328,10 @@ def read_journal_xls(path):
         raise HeaderMismatch(name, "분개장", missing, [])
     col = dict((h, names.index(h)) for h in _PRINT_JOURNAL)
     sort_col = names.index("유형") if "유형" in names else None
-    out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요"]])
+    proj_col = names.index("프로젝트명") if "프로젝트명" in names else None
+    out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요"]
+                + (["프로젝트명"] if proj_col is not None else [])])
+    out.known_extra = ("프로젝트명",)
     for row in grid[hdr + 1:]:
         row = list(row) + [""] * (len(names) - len(row))
         a = row[col["일자"]]
@@ -338,7 +346,8 @@ def read_journal_xls(path):
             day = a
         g = lambda h: _xls_text(row[col[h]])
         out.append([day, g("전표번호"), _xls_text(row[sort_col]) if sort_col is not None else "", g("계정코드"),
-                    g("계정과목"), g("차변"), g("대변"), g("거래처명"), g("거래처코드"), g("적요")])
+                    g("계정과목"), g("차변"), g("대변"), g("거래처명"), g("거래처코드"), g("적요")]
+                   + ([_xls_text(row[proj_col])] if proj_col is not None else []))
     return out
 
 
@@ -351,6 +360,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     name = os.path.basename(path)
     rows = read_journal_xls(path) if kind == "분개장" and path.lower().endswith(".xls") else read_xlsx(path)
     cols, extra = _check_header(rows, kind, name)
+    extra = [h for h in extra if h not in getattr(rows, "known_extra", ())]
     year_ref = (file_date or asof) if kind == "전자세금계산서(매입)" else None  # 'MM-DD'는 전자세금계산서만 (W-12)
     d1904 = rows.date1904
     date_col = {"분개장": "전표일자", "매입매출장": "전표일자", "전자세금계산서(매입)": "일자"}[kind]
@@ -386,6 +396,12 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
                     "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요"),
                     "sort": txt(row, "구분")}
             item["code"] = project_code(item["memo"])
+            if "프로젝트명" in cols:   # 인쇄 분개장의 프로젝트 칸 (D-57): 전표별 코드는 D-53 과 같은 규칙
+                item["project_name"] = txt(row, "프로젝트명")
+                pcode = project_code(item["project_name"])
+                if pcode and date is not None:
+                    k = (date.isoformat(), item["no"])
+                    slips[k] = pcode if slips.get(k, pcode) == pcode else None
         elif kind == "매입매출장":
             sort = row[cols["구분"][0]].strip()
             if "프로젝트명" in cols and date is not None:   # 추가 열 (D-53): 매입·매출 줄 모두 전표별 코드로 남긴다
@@ -463,6 +479,70 @@ def _mtime(path):
         return 0
 
 
+# ───────────── 분개장 매입·매출 전표 -> 계산서 단위 (D-57) ─────────────
+INVOICE_SORTS = {"매입전표": "매입", "매출전표": "매출"}
+VAT_IN_CODES = ("13500",)    # 부가세대급금
+VAT_OUT_CODES = ("25500",)   # 부가세예수금
+
+
+def invoices_from_journal(journal):
+    """분개장 '유형'이 매입전표·매출전표인 전표를 (전표일자, 전표번호)로 묶어 계산서 한 장씩 -> (매입 행, 매출 행).
+
+    매입: 합계 = 차변 합(공제받지 못한 부가세는 비용 쪽에 들어 있어 실제 지급액과 같다), 부가세 = 부가세대급금 차변,
+    공급가액 = 합계 − 부가세, 거래처 = 대변 줄 거래처. 매출: 합계 = 대변 합, 부가세 = 부가세예수금 대변, 거래처 = 차변 줄 거래처.
+    품명은 첫 비용·매출 줄 적요, 코드는 프로젝트 칸 → 적요 [코드] 순. 매입매출장(매입·매출) 행과 같은 열을 쓴다.
+    """
+    groups = OrderedDict()
+    for line in journal:
+        kind = INVOICE_SORTS.get((line.get("sort") or "").strip())
+        if kind is None or line["date"] is None:
+            continue
+        groups.setdefault((kind, line["date"], line["no"]), []).append(line)
+    buys, sales = [], []
+    for (kind, date, no), lines in groups.items():
+        side, other = ("debit", "credit") if kind == "매입" else ("credit", "debit")
+        vat_codes = VAT_IN_CODES if kind == "매입" else VAT_OUT_CODES
+        total = sum(ln[side] or 0 for ln in lines)
+        vat = sum(ln[side] or 0 for ln in lines if _squash(ln["account_code"]) in vat_codes)
+        main = [ln for ln in lines if ln[side] and _squash(ln["account_code"]) not in vat_codes]
+        party = [ln for ln in lines if ln[other] and ln["vendor"]]
+        vendor = (party or [ln for ln in lines if ln["vendor"]] or [{"vendor": ""}])[0]["vendor"]
+        item = main[0]["memo"] if main else (lines[0]["memo"] or "")
+        code = next((project_code(ln.get("project_name", "")) for ln in lines if project_code(ln.get("project_name", ""))),
+                    None) or project_code(item)
+        row = {"date": date, "no": no, "vendor": vendor, "item": item, "supply": total - vat, "vat": vat, "total": total,
+               "code": code, "vendor_norm": norm_vendor(vendor)}
+        if kind == "매출":
+            row["type"] = ""
+            sales.append(row)
+        else:
+            buys.append(row)
+    return buys, sales
+
+
+def compare_invoices(derived, ledger_rows, label):
+    """분개장으로 만든 계산서와 매입매출장 행을 (전표일자, 번호)별 합계로 대조 -> 알림 줄 목록 (차이는 앞 10건)."""
+    def by_key(rows):
+        out = OrderedDict()
+        for r in rows:
+            k = (r["date"], str(r.get("no", "")).lstrip("0"))
+            out[k] = out.get(k, 0) + (r["total"] or 0)
+        return out
+    a, b = by_key(derived), by_key(ledger_rows)
+    diffs = [(k, b.get(k), a.get(k)) for k in sorted(set(a) | set(b), key=lambda x: (x[0] or dt.date.min, x[1]))
+             if a.get(k) != b.get(k)]
+    head = "매입매출장 대조(%s): 분개장 %d건 · 매입매출장 %d건 · 같음 %d건 · 다름 %d건" % (
+        label, len(a), len(b), len(set(a) & set(b)) - sum(1 for k, x, y in diffs if x is not None and y is not None),
+        len(diffs))
+    lines = [head]
+    for (d, no), x, y in diffs[:10]:
+        lines.append("  %s %s 전표 %s: 매입매출장 %s · 분개장 %s" % (label, d.isoformat() if d else "날짜 없음", no,
+                                                             "없음" if x is None else won(x) + "원", "없음" if y is None else won(y) + "원"))
+    if len(diffs) > 10:
+        lines.append("  … 그 밖에 %d건" % (len(diffs) - 10))
+    return lines
+
+
 def _years(rows):
     return set(r["date"].year for r in rows if r.get("date") is not None)
 
@@ -527,6 +607,7 @@ def load_books(folder, asof, stale_days):
             others[kind] = ranked[-2::-1]   # 새 것부터: 지난 기수 파일 후보
 
     staged, mismatches, failures, slip_projects = {}, [], [], {}
+    journal_slips, ledger_sales, side = {}, [], {}   # side: 분개장 기준일 때 매입매출장·전자세금계산서 문제 (멈추지 않음)
     for kind in KINDS:
         name = chosen.get(kind)
         if name is None:
@@ -536,16 +617,19 @@ def load_books(folder, asof, stale_days):
                  "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": "", "prior": []}
         books.files[kind] = entry
         try:
-            rows, info = read_book(os.path.join(folder, name), kind, fdate, asof)
+            rows, info = read_book(os.path.join(folder, name), kind, fdate, asof, keep_sales=kind == "매입매출장")
         except HeaderMismatch as e:
             entry["error"] = str(e)
             mismatches.append(e)
+            side[kind] = str(e)
         except WehagoError as e:
             entry["error"] = str(e)
             failures.append("%s 읽기 실패 — %s" % (name, e))
+            side[kind] = failures[-1]
         except Exception:  # 깨진 파일이 어떤 모양이든 화면을 멈추지 않는다
             entry["error"] = "엑셀 내용을 읽을 수 없음"
             failures.append("%s 읽기 실패 — 엑셀 내용을 읽을 수 없음" % name)
+            side[kind] = failures[-1]
         else:
             entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
                                                      "after_ref", "extra_columns", "extra_note")))
@@ -555,15 +639,30 @@ def load_books(folder, asof, stale_days):
             staged[kind] = prior_rows + rows
             if kind == "매입매출장":
                 slip_projects = info["slip_projects"]
+                ledger_sales = info["sales_rows"]
+            elif kind == "분개장":
+                journal_slips = info["slip_projects"]
+    # D-57: 인쇄 분개장에 매입전표·매출전표가 있으면 분개장 하나로 충분하다. 매입매출장·전자세금계산서(매입)는 있으면 대조만 한다
+    derived = invoices_from_journal(staged["분개장"]) if "분개장" in staged else ([], [])
+    from_journal = bool(derived[0] or derived[1])
+    if from_journal:
+        basis = ("분개장",)
+        mismatches = [e for e in mismatches if e.kind == "분개장"]
+        failures = [f for f in failures if f not in [v for k, v in side.items() if k != "분개장"]]
+        for k, v in side.items():
+            if k != "분개장":
+                books.notes.append("%s 대조 못함 — %s" % (k, v))
+    else:
+        basis = KINDS
     for kind in KINDS:   # 읽지 못한 종류의 다른 파일도 쓰지 않은 파일이다
         if kind not in staged:
             unused.extend(others.get(kind, []))
     books.unused = sorted(unused)
-    refs = [books.files[k]["ref_date"] for k in KINDS if k in books.files and books.files[k]["ref_date"]]
+    refs = [books.files[k]["ref_date"] for k in basis if k in books.files and books.files[k]["ref_date"]]
     books.book_date = min(refs) if refs else None
     books.after_ref = sum(e["after_ref"] for e in books.files.values())
 
-    missing = [k for k in KINDS if k not in chosen]
+    missing = [k for k in basis if k not in chosen]
     if mismatches:
         books.state = "머리글 다름"
         books.reason = "; ".join(str(e) for e in mismatches)
@@ -580,19 +679,31 @@ def load_books(folder, asof, stale_days):
         if not folder_ok:
             books.reason += " (폴더를 찾을 수 없음)"
     else:
-        ref_all = [books.files[k]["ref_date"] for k in KINDS]
+        ref_all = [books.files[k]["ref_date"] for k in basis]
         if None in ref_all:
             books.state = "경과"
             books.reason = "장부 기준일을 알 수 없음 (파일 이름에 날짜가 없고 전표일자도 없음)"
         else:
             late = (asof - books.book_date).days
             if stale_days is not None and late > stale_days:  # None: 나이로는 멈추지 않는다 (변환, 02-01)
-                oldest = [k for k in KINDS if books.files[k]["ref_date"] == books.book_date][0]
+                oldest = [k for k in basis if books.files[k]["ref_date"] == books.book_date][0]
                 books.state = "경과"
                 books.reason = "장부 기준일 %s, 기준일보다 %d일 이전 (%s)" % (books.book_date.isoformat(), late, oldest)
             else:
                 books.state = "ok"
-    if books.state == "ok":  # 부분 사용 없음: ok 일 때만 행을 준다 (D-35a)
+    if books.state == "ok" and from_journal:
+        books.journal, books.ledger, books.einvoice = staged["분개장"], derived[0], []
+        books.journal_sales, books.from_journal = derived[1], True
+        books.slip_projects = journal_slips
+        books.notes.insert(0, "계산서 자료: 분개장 매입전표 %d건 · 매출전표 %d건 (분개장 기준, 매입매출장·전자세금계산서는 있으면 대조만)"
+                           % (len(derived[0]), len(derived[1])))
+        if "매입매출장" in staged:
+            books.notes.extend(compare_invoices(derived[0], staged["매입매출장"], "매입"))
+            books.notes.extend(compare_invoices(derived[1], ledger_sales, "매출"))
+        if "전자세금계산서(매입)" in staged:
+            books.notes.append("전자세금계산서(매입) %s 은(는) 쓰지 않음 (분개장 매입전표 기준)"
+                               % books.files["전자세금계산서(매입)"]["name"])
+    elif books.state == "ok":  # 부분 사용 없음: ok 일 때만 행을 준다 (D-35a)
         books.journal, books.ledger, books.einvoice = staged["분개장"], staged["매입매출장"], staged["전자세금계산서(매입)"]
         books.slip_projects = slip_projects
     return books
@@ -618,6 +729,16 @@ def load_sales(folder, asof, books):
     """
     res = {"state": "자료 없음", "reason": _SALES_NONE, "source": "", "file": "", "file_date": None, "rows": [],
            "notes": []}
+    if books is not None and getattr(books, "from_journal", False):
+        # D-57: 분개장 매출전표가 계산서 원천이다 (매출 계산서 엑셀은 받지 않는다)
+        name = books.files["분개장"]["name"]
+        res.update({"source": "분개장 매출전표", "file": name, "file_date": _file_date(name)})
+        if not books.journal_sales:
+            res["reason"] = "%s — %s에 매출전표가 없음" % (_SALES_NONE, name)
+            return res
+        res["rows"] = [_sales_row(r) for r in books.journal_sales]
+        res["state"], res["reason"] = "ok", ""
+        return res
     try:
         names = sorted(os.listdir(folder))
     except OSError:

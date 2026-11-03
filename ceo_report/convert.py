@@ -563,8 +563,9 @@ def result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept,
                  snap_line="인트라넷 스냅숏: 없음 — 자동 연결 안 함", links=None, cross=(), listings=(), snap_warning=None):
     """변환결과.txt 한 줄씩 (PATTERNS §6)."""
     out = ["변환 시각 %s · 기준일 %s" % (now.strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat()),
-           _books_line(books, asof),
-           snap_line]
+           _books_line(books, asof)]
+    out.extend(n if n.startswith("  ") else "  알림 " + n for n in getattr(books, "notes", []))
+    out.append(snap_line)
     if snap_warning:
         out.append(snap_warning)
     warning = status_warning(links)
