@@ -54,10 +54,16 @@ class TestSave(unittest.TestCase):
 
 
 class TestFridayList(unittest.TestCase):
-    def test_detail_shows_under_vendor(self):
+    def test_project_request_shows_detail_in_category_column(self):
+        """프로젝트 지급요청은 구분 자리에 상세 내역, 그 밖은 구분 + 아래 줄 상세 (사용자 2026-11-03). 지난주 대비·상태 칸 없음."""
         html = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
-        self.assertIn("<b class='vn'>전시제작사</b><small class='dt'>C사 전시 부스 목공·도장 잔금</small>", html)
+        self.assertIn("<td><b class='vn'>전시제작사</b></td><td>C사 전시 부스</td><td>C사 전시 부스 목공·도장 잔금</td>", html)
+        self.assertIn("<td>구독료<small class='dt'>디자인 툴 월 구독</small></td>", html)
         self.assertIn("상세 미입력", html)
+        table = html[html.index("<table class='pt wo'>"):]
+        table = table[:table.index("</thead>")]
+        self.assertNotIn("상태", table)
+        self.assertNotIn("지난주", table)
 
 
 if __name__ == "__main__":

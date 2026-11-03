@@ -216,10 +216,13 @@ class TestReportIsADocument(unittest.TestCase):
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
             self.assertEqual(round((25_866_667 + 18_133_333) * 3, -2), 132_000_000)
-            self.assertIn("부서별 급여+판관비 30,000,000 = 장부 공통비 30,000,000", fs)
+            if edition == "mgmt":   # 표 설명(근거)은 경영관리용에만 (사용자 2026-11-03)
+                self.assertIn("부서별 급여+판관비 30,000,000 = 장부 공통비 30,000,000", fs)
+            else:
+                self.assertNotIn("부서별 급여+판관비", fs)
             self.assertIn("27,600,000", fs.split("10월 실적")[1].split("<table")[0])   # 회사 순수익 = 실적 카드의 10월 이익
-            self.assertNotIn("프로젝트 예산은 남나?", fs)   # 월간 첫 화면엔 프로젝트 칸 없음, 건수 한 줄만 (사용자 2026-11-03)
-            self.assertIn("프로젝트 예산 초과 ", fs)
+            self.assertNotIn("프로젝트 예산은 남나?", fs)   # 대표용 첫 화면엔 프로젝트 막대 없음, 예산 초과만 한 줄 (사용자 2026-11-03)
+            self.assertIn("<div class='overl'><b class='neg'>예산 초과 2건</b>", fs)
         self.assertNotIn("pt tm", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo"))
 
     def test_team_profit_unknown_without_dept_file(self):
@@ -231,7 +234,7 @@ class TestReportIsADocument(unittest.TestCase):
         folder = os.path.join(tmp, "in")
         shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), folder)
         os.remove(os.path.join(folder, "부서비용.csv"))
-        fs = first_screen(render(compute(load(folder), "monthly", dt.date(2026, 10, 31)), "ceo"))
+        fs = first_screen(render(compute(load(folder), "monthly", dt.date(2026, 10, 31)), "mgmt"))
         table = fs.split("<table class='pt tm'>")[1].split("</table>")[0]
         first = re.findall(r"<td>(.*?)</td>", re.findall(r"<tr[^>]*>(.*?)</tr>", table.split("<tbody>")[1])[0])
         self.assertEqual(first[:4], ["기획1팀", "99,000,000", "31,680,000", "32.0%"])
@@ -359,20 +362,24 @@ class TestReportPhoneTables(unittest.TestCase):
 
 
 class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
-    """주간 대표 보고 (사용자 2026-11-03): 실적이 ③, 프로젝트 예산은 지금 지급이 진행 중인 프로젝트만 행사일 순."""
+    """주간 대표 보고 (사용자 2026-11-03): ① 금요일 출금 ② 실적 ③ 자금. 프로젝트 예산 막대는 경영관리용 근거에만,
+    지금 지급이 진행 중인 프로젝트만 행사일 순. 대표용은 예산 초과 프로젝트 한 줄."""
 
-    def test_results_come_before_projects_and_projects_are_active_by_event_date(self):
-        html = render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo")
-        heads = re.findall(r"<div class='q'>.*?</div>", html)
-        idx = lambda word: next(i for i, h in enumerate(heads) if word in h)
-        self.assertLess(idx("지금 자금은"), idx("실적"))
-        self.assertLess(idx("실적"), idx("프로젝트 예산"))
-        ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", html)
+    def test_ceo_order_and_projects_only_in_management_evidence(self):
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
+        ceo = render(R, "ceo")
+        heads = [re.sub("<[^>]+>", "", h) for h in re.findall(r"<div class='q'>.*?</div>", ceo)]
+        self.assertEqual([h[1:].strip().split(" ")[0] for h in heads], ["금요일(11/06)", "10월", "지금"])
+        self.assertNotIn("class='prow'", ceo)
+        self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", ceo)
+        mgmt = render(R, "mgmt")
+        fs = mgmt.split("<div class='toc'>")[0]
+        ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", fs)
         # 완료 P26202·05는 남은 지급이 없어 빠진다. 완료 P26206은 금액 모르는 요청 줄이 남아 들어가고,
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
         self.assertEqual(ids, ["P26206", "P26203", "P26201", "P26207", "P26204", "P26208"])
-        self.assertIn("행사일 순", html)
-
+        self.assertIn("행사일 순", fs)
+        self.assertLess(fs.index("지금 자금은"), fs.index("프로젝트별 원가 예산·집행 (근거)"))
 
 class TestMonthlyMonthAndYearApart(unittest.TestCase):
     """월간 (사용자 2026-11-03): 이번 달 실적과 올해 누적 실적을 따로 나누고, 경영관리의 영업외 수익을 그 부서 실적으로 보인다."""

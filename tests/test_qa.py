@@ -247,12 +247,18 @@ class TestInvoiceFileUnusable(unittest.TestCase):
                 self.assertIn("계산서 자료 없음", cells[1])
                 self.assertNotIn("확인 필요", cells[5])
             self.assertIn("계산서 입금 예정 미반영 (자료 없음: 계산서.csv)", fs)
-            for card in ("미수금 (세금계산서 발행 후)", "행사 후 세금계산서 미발행"):
-                self.assertIn(self.LABEL, text(fs.split(card + "</div><div class='big'>")[1].split("</div>")[0]), card)
-            self.assertIn("입금예정일 지난 미수금: 계산서 자료 없음 (계산서.csv)", fs)
-            for prefix in ("날짜 없는 입금 예정", "예정일 지난 미처리"):
-                inflow_side = tr_box_item(fs, prefix).split(" / ")[0]
-                self.assertIn("계산서 자료 없음", inflow_side, prefix)  # 입금 쪽 '0건 0'만 보이지 않는다
+            self.assertIn(self.LABEL, text(fs.split("행사 후 세금계산서 미발행</div><div class='big'>")[1].split("</div>")[0]))
+            self.assertNotIn("미수금 (세금계산서 발행 후)", fs)   # 주간엔 미수금 없음, 월간에만 (사용자 2026-11-03)
+        # 월간: 미수금 칸, 경영관리용 근거 묶음의 확인 목록
+        RM = compute(load(folder), "monthly", ASOF)
+        mfs = fs_of(render(RM, "mgmt"))
+        for card in ("미수금 (세금계산서 발행 후)", "행사 후 세금계산서 미발행"):
+            self.assertIn(self.LABEL, text(mfs.split(card + "</div><div class='big'>")[1].split("</div>")[0]), card)
+        self.assertIn("입금예정일 지난 미수금: 계산서 자료 없음 (계산서.csv)", mfs)
+        for prefix in ("날짜 없는 입금 예정", "예정일 지난 미처리"):
+            inflow_side = tr_box_item(mfs, prefix).split(" / ")[0]
+            self.assertIn("계산서 자료 없음", inflow_side, prefix)  # 입금 쪽 '0건 0'만 보이지 않는다
+        for html in (ceo, mgmt):
             if html is ceo:   # 대표 보고는 요약만 (문서 1~2쪽, 사용자 2026-11-03). 상세 5번은 경영관리 보고에서 본다
                 self.assertNotIn("<h2 id='s5'>", ceo)
                 continue
@@ -263,8 +269,8 @@ class TestInvoiceFileUnusable(unittest.TestCase):
             total = re.search(r'<tr class="tot">.*?</tr>', s5_html, re.S).group(0)
             self.assertEqual(text(total).count(self.LABEL), 3, text(total))
             self.assertIn("계산서.csv (%s)" % why, text(s5_html))
-        # 대표용과 경영관리용은 같은 사실을 보인다
-        self.assertEqual(tr_box_items(fs_of(ceo)), tr_box_items(fs_of(mgmt)))
+        # 대표용과 경영관리용은 같은 숫자를 보인다. 확인 목록(근거)은 경영관리용에만 (사용자 2026-11-03)
+        self.assertNotIn("<div class='xbox'>", fs_of(ceo))
         self.assertEqual(tr_avail_rows(fs_of(ceo)), tr_avail_rows(fs_of(mgmt)))
         self.assertNotIn("<h2 id='s5'>", ceo)   # 대표 보고는 요약만 (문서 1~2쪽, 사용자 2026-11-03)
         return R

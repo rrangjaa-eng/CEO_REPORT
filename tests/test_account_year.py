@@ -97,5 +97,5 @@ class TestSection5(unittest.TestCase):
         for t in ("<td>카드대금</td>", "<td>4대보험</td>", "<td>이자비용</td>", "<td>차입금 상환</td>"):   # 월 비용은 주간 지급 목록에 (사용자 2026-11-03)
             self.assertNotIn(t, part)
         W = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
-        self.assertIn("입금일 지난 미수금", W)
-        self.assertNotIn("2027년 1분기", W)
+        for t in ("입금일 지난 미수금", "지급일 지난 출금", "미수금 (세금계산서 발행 후)", "2027년 1분기"):   # 미수금·예정 지난 미지급은 월간에만 (사용자 2026-11-03)
+            self.assertNotIn(t, W)

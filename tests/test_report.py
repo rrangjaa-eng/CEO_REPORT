@@ -39,6 +39,7 @@ def numbers_of(html):
     html = re.sub(r"<div class='note' style='margin-top:10px'>위험 항목.*?</div>", "", html, flags=re.S)
     html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
     html = re.sub(r"<table class='sign'>.*?</table>", "", html, flags=re.S)   # 결재란은 대표용 주간에만
+    html = re.sub(r"<div class='mgonly'>.*?<!-- /mgonly -->", "", html, flags=re.S)   # 근거 묶음은 경영관리용에만 (2026-11-03)
     return re.findall(r"−?\d[\d,.]*", html)
 
 
@@ -966,7 +967,9 @@ class TestUserRulesLocked(Base):
         tot = re.findall(r'<tr class="tot">.*?</tr>', sec5, re.S)[0]
         for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 2건"):
             self.assertIn(needle, tot, needle)
-        value = first_screen(html).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0]
+        self.assertNotIn("미수금 (세금계산서 발행 후)", first_screen(html))   # 주간엔 미수금 칸 없음 (사용자 2026-11-03)
+        RM = compute(load(probe_folder(self, "계산서.csv", mutate)), "monthly", ASOF)
+        value = first_screen(render(RM, "mgmt")).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0]
         self.assertIn("132,000,000", value)
         self.assertIn("미확인 2건", value)
         check_editions(self, R)
@@ -1481,7 +1484,8 @@ class TestPaidDateWithoutAmount(unittest.TestCase):
         self.assertEqual(R["s5"]["overdue_total"], 0)
         self.assertFalse(any(e["project"] == "P26202" and e["io"] == "in" for e in R["events"]))
         self.assertEqual(R["s2"]["past_in_n"], 0)
-        self.assertIn("미확인 1건", first_screen(html).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0])
+        RM = compute(load(probe_folder(self, "계산서.csv", lambda rows: [r.__setitem__(slice(8, 10), ["2026-10-20", ""]) for r in rows[1:] if r[0] == "P26202"])), "monthly", ASOF)
+        self.assertIn("미확인 1건", first_screen(render(RM, "mgmt")).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0])
         row = re.findall(r"<tr[^>]*><td>P26202</td>.*?</tr>", section(html, 5), re.S)[0]
         self.assertIn("미확인 1건", row)
         check_editions(self, R)
