@@ -90,8 +90,12 @@ class TestSection5(unittest.TestCase):
     def test_quarterly_table_is_monthly_only(self):
         """분기별 세금·정기 지출 표는 월간에만, 주간은 그 주에 나가는 세금이 금요일 목록에 (사용자 2026-11-03)."""
         M = render(compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31)), "ceo")
-        for t in ("입금일 지난 미수금", "지급일 지난 출금", "2026년 4분기 (남은 기간)", "2027년 1분기", "차입금 상환", "이자비용"):
+        for t in ("입금일 지난 미수금", "지급일 지난 출금", "2026년 4분기 (남은 기간)", "2027년 1분기", "<td>부가세</td>", "<td>원천세</td>"):
             self.assertIn(t, M)
+        part = M[M.index("부가세·원천세 (분기·반기별)"):]
+        part = part[:part.index("</table>")]
+        for t in ("<td>카드대금</td>", "<td>4대보험</td>", "<td>이자비용</td>", "<td>차입금 상환</td>"):   # 월 비용은 주간 지급 목록에 (사용자 2026-11-03)
+            self.assertNotIn(t, part)
         W = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
         self.assertIn("입금일 지난 미수금", W)
         self.assertNotIn("2027년 1분기", W)

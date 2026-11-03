@@ -606,12 +606,13 @@ def _regular_table(R):
     asof = R["asof"]
     tax_of = {id(t["matched"]): t["kind"] for t in (R.get("tax") or []) if t.get("matched") is not None}
     qs = _quarters(asof)
-    rows = OrderedDict((k, {"q": [0] * len(qs), "unk": [0] * len(qs), "next": None}) for k, _ in REGULAR_KINDS)
+    # 분기·반기로 내는 세금만 (사용자 2026-11-03: 카드·4대보험·이자 등 월 비용은 주간 지급 목록에 그 주에 나옴)
+    rows = OrderedDict((k, {"q": [0] * len(qs), "unk": [0] * len(qs), "next": None}) for k in ("부가세", "원천세"))
     for e in R["events"]:
         if e["io"] != "out" or e["date"] is None or e["date"] <= asof:
             continue
         k = regular_kind(e, tax_of)
-        if k is None:
+        if k not in rows:
             continue
         r = rows[k]
         for i, (_, _, q0, q1) in enumerate(qs):
@@ -632,7 +633,7 @@ def _regular_table(R):
         cells = "".join("<td>%s%s</td>" % (won(v) if v else "—", (" + 미확인 %d건" % u) if u else "") for v, u in zip(r["q"], r["unk"]))
         h.append("<tr><td>%s</td><td>%s</td>%s</tr>" % (esc(k), esc(nxt), cells))
     if len(h) == 1:
-        h.append("<tr><td colspan='%d'>일정에 정기 지출 없음</td></tr>" % (2 + len(qs)))
+        h.append("<tr><td colspan='%d'>일정에 부가세·원천세 없음</td></tr>" % (2 + len(qs)))
     h.append("</tbody></table>")
     return "".join(h)
 
@@ -1046,7 +1047,7 @@ def _first_screen(R, mode, per):
     funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R) + "<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
               % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
-    regular = [("세금·카드대금·4대보험·이자·차입금 상환 (분기별)", _regular_box(R))]
+    regular = [("부가세·원천세 (분기·반기별)", _regular_box(R))]
     checks = ("위 숫자에 안 들어간 것 · 확인할 것", _check_box(R, project_line=monthly))
     projects = [("프로젝트 예산은 남나?", _project_bars(R, per, flagged_only=monthly, active_only=not monthly))]
     if monthly:
