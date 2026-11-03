@@ -32,7 +32,7 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("payable_codes", ("25300", "26200")),
     ("cash_codes", ("10300",)),
     ("vat_codes", ("13500",)),
-    ("closing_sorts", ("결차", "결대")),
+    ("closing_sorts", ("결차", "결대", "결산전표")),   # 결산전표: 인쇄 분개장의 유형 (2025 분개장 12/31, D-57)
     ("link_days", 90),
     ("card_words", ("카드",)),
     ("snapshot_days", 7),   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)

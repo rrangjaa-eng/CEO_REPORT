@@ -525,7 +525,7 @@ class TestConvertConfig(unittest.TestCase):
             "revenue_codes": ("41200",), "receivable_codes": ("10800",), "direct_prefixes": ("6",),
             "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
-            "closing_sorts": ("결차", "결대"), "link_days": 90, "card_words": ("카드",),
+            "closing_sorts": ("결차", "결대", "결산전표"), "link_days": 90, "card_words": ("카드",),
             "snapshot_days": 7})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
 
     def test_every_item_is_read_from_the_settings(self):
@@ -560,13 +560,13 @@ class TestConvertConfig(unittest.TestCase):
         self.assertEqual(cfg["link_days"], 90)
         self.assertEqual(cfg["cash_codes"], ("10300",))
         self.assertEqual(cfg["direct_mark"], "(도)")
-        self.assertEqual(cfg["closing_sorts"], ("결차", "결대"))
+        self.assertEqual(cfg["closing_sorts"], ("결차", "결대", "결산전표"))
         self.assertEqual(cfg["common_prefixes"], ("8",))
         self.assertIn("설정 변환_매출계정 값 'abc' 사용할 수 없음 → 기본값 41200", notes)
         self.assertIn("설정 변환_자동연결일수 값 '-3' 사용할 수 없음 → 기본값 90", notes)
         self.assertIn("설정 변환_현금계정 값 '10300,x1' 사용할 수 없음 → 기본값 10300", notes)
         self.assertIn("설정 변환_직접비표시 비어 있음 → 기본값 (도)", notes)
-        self.assertIn("설정 변환_결산구분 비어 있음 → 기본값 결차,결대", notes)
+        self.assertIn("설정 변환_결산구분 비어 있음 → 기본값 결차,결대,결산전표", notes)
         self.assertIn("설정 변환_공통비코드 값 '8.5' 사용할 수 없음 → 기본값 8", notes)
 
     def test_zero_link_days_is_raised_to_one_and_unknown_items_are_reported(self):

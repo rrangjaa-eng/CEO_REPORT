@@ -452,6 +452,17 @@ def _file_date(name):
     return None
 
 
+def _rank_date(name):
+    """파일 고르기용 날짜. 이름에 내려받은 날보다 앞선 해(예: '261103 분개장_2025.xls')가 따로 있으면 그 해의 12월 31일로 본다
+    (작년 기수 파일을 올해 파일보다 새것으로 고르지 않는다, 2026-11-03 실제 파일)."""
+    fd = _file_date(name)
+    if fd is None:
+        return None
+    base = re.sub(r"^\d{6}\s", "", os.path.basename(name))
+    years = [int(y) for y in re.findall(r"(?<!\d)(20\d\d)(?!\d)", base) if int(y) < fd.year]
+    return dt.date(max(years), 12, 31) if years else fd
+
+
 def _sales_kind_of(name):
     """매출 계산서 원천 파일 이름의 종류 (SALES_KINDS 중 하나) 또는 None. '매입매출장' 글자를 빼고도 '매출'이 남아야 한다."""
     if "매입매출장" in name and "매출" in name.replace("매입매출장", ""):
@@ -601,7 +612,7 @@ def load_books(folder, asof, stale_days):
     chosen, others = {}, {}
     for kind in KINDS:
         if candidates[kind]:
-            ranked = sorted(candidates[kind], key=lambda n: (_file_date(n) or dt.date.min,
+            ranked = sorted(candidates[kind], key=lambda n: (_rank_date(n) or dt.date.min,
                                                              _mtime(os.path.join(folder, n)), n))
             chosen[kind] = ranked[-1]
             others[kind] = ranked[-2::-1]   # 새 것부터: 지난 기수 파일 후보
