@@ -105,11 +105,13 @@ class TestOutflowFileUnusable(unittest.TestCase):
             self.assertIsNone(b["bal_firm"])
             self.assertIsNone(b["bal_all"])
         for html in (ceo, mgmt):
-            v, s = kpi(html, "최저 계산 잔액 (확정 일정만)")
-            self.assertIn("판단 불가", text(v))
-            self.assertIn(name, text(s))
-            v, s = kpi(html, "향후 4주 지급예정")
-            self.assertIn(name, text(s))
+            fs = fs_of(html)
+            for cells in tr_avail_rows(fs, "all") + tr_avail_rows(fs, "firm"):
+                self.assertIn("지급 자료 없음", cells[2])
+                for val in cells[3:]:
+                    self.assertIn("확인 필요", val)       # 잔액·최저·가용자금은 계산하지 않음
+            self.assertIn("지급 자료 없음: ", fs)
+            self.assertIn(name, fs.split("지급 자료 없음: ")[1].split("—")[0])
             self.assertNotIn("시작 잔액을 몰라", html)
         # 시작 잔액(사용 가능액)은 그대로 알린다: 모르는 것은 지급 쪽이다
         self.assertEqual(R["s1"]["available"], compute(load(SAMPLE), "weekly", ASOF)["s1"]["available"])
@@ -173,6 +175,25 @@ class TestOutflowFileUnusable(unittest.TestCase):
         self.assertIn("542.4", T(page, "start-line"))
 
 
+def fs_of(html):
+    return html.split("<div class='toc'>")[0]
+
+
+def tr_avail_rows(html, mode="all"):
+    import test_report
+    return test_report.avail_rows(html, mode)
+
+
+def tr_box_items(html):
+    import test_report
+    return test_report.box_items(html)
+
+
+def tr_box_item(html, prefix):
+    import test_report
+    return test_report.box_item(html, prefix)
+
+
 def kv_value(html, label):
     """첫 화면·상세의 '이름 / 값' 줄에서 첫 번째로 나오는 값 글자."""
     m = re.search(r'<div class="kv"><span>' + re.escape(label) + r"</span><span>(.*?)</span></div>", html, re.S)
@@ -220,18 +241,18 @@ class TestInvoiceFileUnusable(unittest.TestCase):
         # 발행금액 0으로 만든 미발행·미수 위험을 만들지 않는다
         self.assertFalse([r for r in R["risks"] if r["area"] == "수금"])
         for html in (ceo, mgmt):
-            v, s = kpi(html, "향후 4주 입금예정")
-            self.assertIn("자료 없음", text(v))
-            self.assertIn("계산서.csv", text(s))
-            v, s = kpi(html, "최저 계산 잔액 (확정 일정만)")
-            self.assertNotIn("판단 불가", text(v))
-            self.assertIn("계산서.csv", text(s))
-            for label in ("발행 후 미수", "그중 입금예정일 경과", "발행금액", "미발행금액", "완료 후 미발행 프로젝트",
-                          "입금예정일 경과 미수 (일정 미포함)"):
-                self.assertIn(self.LABEL, kv_value(html, label), label)
-            for label in ("날짜 없는 입금예정 / 지급예정", "예정일 지난 미처리 입금 / 지급 (일정 미포함)"):
-                inflow_side = kv_value(html, label).split(" / ")[0]
-                self.assertIn("계산서 자료 없음", inflow_side, label)  # 입금 쪽 '0건 0.0'만 보이지 않는다
+            fs = fs_of(html)
+            # 첫 화면(2026-11-03 개편): 가용자금 표의 입금 칸마다 '계산서 자료 없음', 표 아래에 파일 이름. 잔액은 계산한다 (보수적)
+            for cells in tr_avail_rows(fs, "all") + tr_avail_rows(fs, "firm"):
+                self.assertIn("계산서 자료 없음", cells[1])
+                self.assertNotIn("확인 필요", cells[5])
+            self.assertIn("계산서 입금 예정 미반영 (자료 없음: 계산서.csv)", fs)
+            for card in ("미수금 (세금계산서 발행 후)", "행사 후 세금계산서 미발행"):
+                self.assertIn(self.LABEL, text(fs.split(card + "</div><div class='big'>")[1].split("</div>")[0]), card)
+            self.assertIn("입금예정일 지난 미수금: 계산서 자료 없음 (계산서.csv)", fs)
+            for prefix in ("날짜 없는 입금 예정", "예정일 지난 미처리"):
+                inflow_side = tr_box_item(fs, prefix).split(" / ")[0]
+                self.assertIn("계산서 자료 없음", inflow_side, prefix)  # 입금 쪽 '0건 0'만 보이지 않는다
             s5_html = section(html, 5)
             first = R["s3"]["projects"][0]["id"]
             row = re.search(r"<tr class=\"\"><td>%s</td>.*?</tr>" % re.escape(first), s5_html, re.S).group(0)
@@ -240,9 +261,8 @@ class TestInvoiceFileUnusable(unittest.TestCase):
             self.assertEqual(text(total).count(self.LABEL), 3, text(total))
             self.assertIn("계산서.csv (%s)" % why, text(s5_html))
         # 대표용과 경영관리용은 같은 사실을 보인다
-        for label in ("발행 후 미수", "발행금액", "미발행금액", "입금예정일 경과 미수 (일정 미포함)"):
-            self.assertEqual(kv_value(ceo, label), kv_value(mgmt, label))
-        self.assertEqual(kpi(ceo, "향후 4주 입금예정"), kpi(mgmt, "향후 4주 입금예정"))
+        self.assertEqual(tr_box_items(fs_of(ceo)), tr_box_items(fs_of(mgmt)))
+        self.assertEqual(tr_avail_rows(fs_of(ceo)), tr_avail_rows(fs_of(mgmt)))
         self.assertEqual(section(ceo, 5), section(mgmt, 5))
         return R
 

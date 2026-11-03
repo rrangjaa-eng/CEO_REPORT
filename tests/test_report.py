@@ -74,6 +74,29 @@ def setUpModule():
     refresh_sample()  # 샘플은 임시 폴더에 쓴다 (실제 입력 폴더를 건드리지 않음)
 
 
+def box_items(html):
+    """첫 화면 '위 숫자에 안 들어간 것 · 확인할 것' 상자의 줄 글자들."""
+    part = html.split("<div class='xbox'>")[1].split("</div>")[0]
+    return re.findall(r"<li>(.*?)</li>", part, re.S)
+
+
+def box_item(html, prefix):
+    """상자에서 prefix 로 시작하는 줄. 없으면 None."""
+    return next((t for t in box_items(html) if t.startswith(prefix)), None)
+
+
+def avail_rows(html, mode="all"):
+    """첫 화면 기간별 가용자금 표(확정분만 'firm' / 예상분 포함 'all')의 줄마다 칸 HTML 목록."""
+    body = html.split("<tbody class='pm-%s'>" % mode)[1].split("</tbody>")[0]
+    return [re.findall(r"<td[^>]*>(.*?)</td>", r, re.S) for r in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+
+
+def project_block(html, pid):
+    """첫 화면 프로젝트 예산 막대 한 줄 HTML."""
+    return re.search(r"<div class='prow' id='pj-%s'>.*?</div></div>(?=<div class='prow|<div class='ptot')" % re.escape(pid),
+                     first_screen(html), re.S).group(0)
+
+
 def kv_value(html, label):
     """render.kv()가 쓰는 '이름 / 값' 줄에서 값 부분만 꺼낸다. 없으면 None."""
     m = re.search('<div class="kv"><span>' + re.escape(label) + '</span><span>(.*?)</span></div>', html, re.S)
@@ -341,7 +364,9 @@ class TestUnknownBalance(unittest.TestCase):
         self.assertEqual(s1["available"], s1["total"] - s1["restricted"])
         self.assertEqual(s1["bal_unknown_restricted"], 30_000_000)
         self.assertEqual(R["s2"]["start"], 356_100_000)
-        self.assertIn("사용제한 30.0 · 제한금액 미확인 1계좌 · " + self.NOTE, first_screen(html))
+        self.assertIn("사용제한 30,000,000 · 제한금액 미확인 1계좌 · ", first_screen(html))
+        self.assertIn(self.NOTE, first_screen(html))
+        self.assertEqual(box_item(first_screen(html), "사용제한 금액 미확인"), "사용제한 금액 미확인 1계좌")
         self.assertIn("사용제한 30,000,000원은 사용 가능액에서 차감", section(html, 1))
         for c in R["s7"]["checks"]:
             self.assertTrue(c[3], c[0])
@@ -408,7 +433,7 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
         self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (0, 0, 0))
         fs = first_screen(render(self.R, "ceo"))
-        self.assertEqual(kv_value(fs, "예정일 지난 미처리 입금 / 지급 (일정 미포함)"), "1건 110.0 / 0건 0.0")
+        self.assertEqual(box_item(fs, "예정일 지난 미처리"), "예정일 지난 미처리 입금 1건 110,000,000 / 지급 0건 0 (일정에 넣지 않음)")
 
     def test_past_due_payment_not_in_schedule(self):
         R, html = self.probe(self.add_schedule_rows(self.PAST_ROW))
@@ -418,24 +443,23 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual(s2["min"], self.R["s2"]["min"])
         for c in R["s7"]["checks"]:
             self.assertTrue(c[3], c[0])
-        self.assertIn("/ 1건 5.0", first_screen(html))
+        self.assertIn("/ 지급 1건 5,000,000 (일정에", first_screen(html))
 
     def test_nonproject_scope_and_undated_on_first_screen(self):
         s6 = self.R["s6"]
         self.assertEqual((s6["undated_n"], s6["unknown_n"]), (2, 0))
         fs = first_screen(render(self.R, "ceo"))
-        self.assertIn("프로젝트 밖 지급예정 (등록분 전체)", fs)
-        self.assertIn("584.1 · 날짜 없음 2건", fs)
+        self.assertEqual(box_item(fs, "프로젝트 밖 지급 예정"), "프로젝트 밖 지급 예정 (등록분 전체) 584,100,000 · 날짜 없음 2건")
 
     def test_past_due_unknown_amount_counted_not_zero(self):
-        label = "예정일 지난 미처리 입금 / 지급 (일정 미포함)"
+        label = "예정일 지난 미처리"
         with self.subTest("A: known + blank"):
             R, html = self.probe(self.add_schedule_rows(self.PAST_ROW, self.BLANK_PAST_ROW))
             s2 = R["s2"]
             self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (5_000_000, 2, 1))
             self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
-            val = kv_value(first_screen(html), label)
-            self.assertTrue(val.startswith("1건 110.0 / 2건 5.0"), val)
+            val = box_item(first_screen(html), label)
+            self.assertIn("입금 1건 110,000,000 / 지급 2건 5,000,000 (금액 미확인 1건)", val)
             self.assertIn("금액 미확인 1건", val)
             self.assertEqual([b["out_firm"] for b in s2["buckets"]], [b["out_firm"] for b in self.R["s2"]["buckets"]])
             self.assertEqual(s2["min"], self.R["s2"]["min"])
@@ -446,9 +470,9 @@ class TestUnknownAmountsAndPastDue(Base):
             s2 = R["s2"]
             self.assertIsNone(s2["past_out"])
             self.assertEqual((s2["past_out_n"], s2["past_out_unknown"]), (1, 1))
-            val = kv_value(first_screen(html), label)
-            self.assertIn("금액 미확인 1건", val)
-            self.assertNotIn("1건 0.0", val)
+            val = box_item(first_screen(html), label)
+            self.assertIn("지급 1건 금액 미확인", val)
+            self.assertNotIn("1건 0 ", val)
 
     def test_blank_vat_on_scheduled_outflow_marked(self):
         def mutate(rows):
@@ -462,9 +486,8 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual(s2["min"]["firm"], (23_800_000, dt.date(2027, 4, 25)))
         self.assertEqual(s2["min"]["all"], (129_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
         fs = first_screen(html)
-        self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)
-        for lab in ("최저 계산 잔액 · 확정 일정만", "최저 계산 잔액 · 확정+추정"):
-            self.assertIn("부가세 미확인 1건", kv_value(fs, lab), lab)
+        self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)  # 가용자금 표 아래
+        self.assertEqual(box_item(fs, "부가세 미확인"), "부가세 미확인 지급 예정 1건 (공급가액만 반영)")
         s2h = section(html, 2)
         self.assertIn("부가세 미확인 1건은 공급가액만 반영", s2h)
         for lab in ("기간 중 최저 계산 잔액 · 확정 일정만", "기간 중 최저 계산 잔액 · 확정+추정"):
@@ -546,11 +569,12 @@ class TestSettingsAndKpi(Base):
         self.assertEqual(R["settings_default"]["첫화면_프로젝트_표시수"], "0 이상 정수 아님")
         self.assertTrue(any("첫화면_프로젝트_표시수 값은 0 이상 정수여야 함" in m for _, _, m in R["s7"]["issues"]))
 
-    def test_kpi_values_show_unit(self):
-        vals = re.findall(r"<div class='v'>(.*?)</div>", first_screen(render(self.R, "ceo")))
-        self.assertEqual(len(vals), 5)  # 4개 + 최저 계산 잔액 (tests/test_design.py)
-        for v in vals:
-            self.assertIn("백만원", v)
+    def test_amounts_in_won_not_million(self):
+        # 사용자 2026-11-03: 금액 단위는 백만원이 아니라 원 (첫 화면·그래프 포함)
+        html = render(self.R, "ceo")
+        self.assertNotIn("백만원", html)
+        self.assertIn("금액 단위: 원", html)
+        self.assertIn("{:,}".format(self.R["s1"]["available"]), first_screen(html))
 
 
 def rep02_probes(test):
@@ -732,7 +756,7 @@ class TestProjectBudget(Base):
         for col in ("사전견적", "원가 예산", "예산 사유", "예산 수정일", "이번 주 지급", "누적 지급", "요청 미지급",
                     "카드 미결제", "미요청 계획", "지급률", "예상 잔여예산"):
             self.assertIn(col, s3, col)
-        self.assertIn('<th class="n">원가 예산</th>', first_screen(html))
+        self.assertIn("원가 예산 210,000,000", project_block(html, "P26201"))
 
     def test_no_budget_row_labels(self):
         html = render(self.R, "ceo")
@@ -852,8 +876,9 @@ class TestUserRulesLocked(Base):
         self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
         self.assertEqual(mn["all"], (125_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
         fs = first_screen(render(self.R, "ceo"))
-        self.assertIn("최저 계산 잔액 · 확정 일정만", fs)
-        self.assertIn("최저 계산 잔액 · 확정+추정", fs)
+        self.assertIn("기간 중 최저 잔액", fs)
+        self.assertIn("확정분만", fs)
+        self.assertIn("예상분 포함", fs)
 
     def test_profit_and_cash_kept_apart(self):
         rows = {x["target"]: x for x in self.R["s4"]["sources"]["WEHAGO"]["table"]}
@@ -867,10 +892,11 @@ class TestUserRulesLocked(Base):
         self.assertEqual(team["cur"]["gp"], 5_280_000)
         self.assertIsNone(team["cur"]["np"])
         fs = first_screen(render(self.R, "ceo"))
-        kpis = fs.split("<div class='kpis'>")[1].split("<div class='mid'>")[0]
-        self.assertIn("현재 현금 (계좌 합계)", kpis)
-        self.assertNotIn("이익", kpis)
-        self.assertIn("매출·이익 (2026-11)", fs)
+        cash = fs.split("<div class='card avail'>")[1].split("<script>")[0]
+        self.assertIn("계좌 합계", cash)
+        self.assertNotIn("이익", cash)   # 이익은 자금 칸에 섞지 않고 실적 칸에 따로
+        self.assertIn("11월 실적", fs)
+        self.assertIn("11월 이익", fs)
 
     def test_pl_sources_separate(self):
         self.assertEqual(list(self.R["s4"]["sources"]), ["WEHAGO", "인트라넷완료보고"])
@@ -952,8 +978,8 @@ class TestUserRulesLocked(Base):
         tot = re.findall(r'<tr class="tot">.*?</tr>', sec5, re.S)[0]
         for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 2건"):
             self.assertIn(needle, tot, needle)
-        value = kv_value(first_screen(html), "발행 후 미수")
-        self.assertIn("132.0", value)
+        value = first_screen(html).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0]
+        self.assertIn("132,000,000", value)
         self.assertIn("미확인 2건", value)
         check_editions(self, R)
         self.assertEqual((self.R["s5"]["ar_unknown_n"], self.R["s5"]["issued_unknown_n"],
@@ -1059,16 +1085,14 @@ class TestNoBalanceKnown(unittest.TestCase):
                 R = compute(load(folder), "weekly", ASOF)
                 html = render(R, "ceo")
                 fs = first_screen(html)
-                cash = kpi_value(fs, "현재 현금 (계좌 합계)")
-                self.assertIn("미확인", cash)
-                self.assertNotIn("0.0", cash)
-                self.assertIn("미확인", kpi_value(fs, "사용 가능액"))
+                self.assertIn("오늘 가용액 잔액 미확인", fs)
                 self.assertIn("잔액 미확인", fs)
                 self.assertNotIn("<polyline", fs)
-                for lab in ("최저 계산 잔액 · 확정 일정만", "최저 계산 잔액 · 확정+추정"):
-                    val = kv_value(fs, lab)
-                    self.assertIn("잔액 미확인", val, lab)
-                    self.assertNotRegex(val, r"\d")
+                for mode in ("all", "firm"):
+                    for cells in avail_rows(fs, mode):
+                        for val in cells[3:]:   # 예상 잔액 · 기간 중 최저 잔액 · 가용자금: 0에서 시작하지 않는다
+                            self.assertIn("확인 필요", val)
+                            self.assertNotRegex(val, r"\d")
                 s2h = section(html, 2)
                 self.assertIn("잔액 미확인", s2h)
                 self.assertNotIn("미확인원", s2h)
@@ -1102,7 +1126,7 @@ def first_screen_total_row(html):
 
 class TestProjectUnknownOnFirstScreen(unittest.TestCase):
     """CR-02 + 검증 gap: 금액 미확인 프로젝트 집행 줄이 첫 화면에서 0으로 보이면 안 된다. 건수를 함께 보인다 (D-02)."""
-    COL_PAID_RATE, COL_UNPAID, COL_REMAIN = 7, 5, 8
+    COL_REQ, COL_CARD = 11, 12   # 상세 3번 표의 '요청 미지급' · '카드 미결제' 칸
 
     def test_unknown_request_line_marked_on_first_screen(self):
         R = sample_result()
@@ -1111,28 +1135,20 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
         self.assertEqual(P["unknown_cost"], 1)
         self.assertEqual(P["line_unknown"]["요청미지급"], 1)
         self.assertIsNone(P["remain"])
-        cells = first_screen_project_row(html, "P26206")
-        self.assertIn("미확인 1건", cells[self.COL_UNPAID])
-        self.assertNotIn("0.0", cells[self.COL_UNPAID])
-        self.assertIn("판단 불가", cells[self.COL_REMAIN])
-        self.assertIn("미확인 원가 1건", cells[self.COL_REMAIN])
-        self.assertNotIn("2.0", cells[self.COL_REMAIN])
-        self.assertIn("미확인 원가 1건", cells[self.COL_PAID_RATE])
+        block = project_block(html, "P26206")
+        self.assertIn('집행 예정액 <span class="na">미확인 1건</span>', block)
+        self.assertIn("확인 필요 (미확인 원가 1건)", block)
+        self.assertIn("c-q'>확인 필요", block)
         # 미확인 줄이 없는 프로젝트는 표시가 바뀌지 않는다
-        other = first_screen_project_row(html, "P26201")
-        self.assertNotIn("미확인", other[self.COL_UNPAID])
-        self.assertNotIn("미확인", other[self.COL_REMAIN])
+        self.assertNotIn("미확인", project_block(html, "P26201"))
 
     def test_total_row_and_card_carry_unknown_count(self):
         R = sample_result()
         html = render(R, "ceo")
-        tot = first_screen_total_row(html)
-        self.assertIn("98.5", tot[self.COL_UNPAID])
-        self.assertIn("외 미확인 1건", tot[self.COL_UNPAID])
-        self.assertIn("미확인 원가", tot[self.COL_REMAIN])
-        card = kv_value(first_screen(html), "프로젝트 요청 미지급")
-        self.assertIn("95.0", card)
-        self.assertIn("미확인 1건", card)
+        tot = first_screen(html).split("<div class='ptot'>")[1].split("</div>")[0]
+        self.assertIn('집행 예정액 253,550,000<span class="na"> 외 미확인 1건</span>', tot)
+        self.assertIn("미확인 원가 1개 프로젝트 제외", tot)
+        self.assertIn("95,000,000", table_cells(re.findall(r'<tr class="tot">.*?</tr>', section(html, 3), re.S)[0])[self.COL_REQ])
         self.assertEqual(R["s3"]["total"]["line_unknown"]["요청미지급"], 1)
         check_editions(self, R)
 
@@ -1150,12 +1166,9 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
                     r[4] = ""
         R = compute(load(probe_folder(self, "프로젝트집행.csv", mutate)), "weekly", ASOF)
         html = render(R, "ceo")
-        card = kv_value(first_screen(html), "프로젝트 요청 미지급")
-        self.assertIn("미확인 4건", card)
-        self.assertNotIn("0.0", card)
-        cells = first_screen_project_row(html, "P26203")
-        self.assertIn("미확인 1건", cells[self.COL_UNPAID])
-        self.assertNotIn("0.0", cells[self.COL_UNPAID])
+        tot = first_screen(html).split("<div class='ptot'>")[1].split("</div>")[0]
+        self.assertIn("외 미확인 4건", tot)
+        self.assertIn("미확인 1건", project_block(html, "P26203"))
         check_editions(self, R)
 
     def test_unknown_card_unpaid_marked(self):
@@ -1168,8 +1181,7 @@ class TestProjectUnknownOnFirstScreen(unittest.TestCase):
         P = next(p for p in R["s3"]["projects"] if p["id"] == "P26208")
         self.assertEqual(P["line_unknown"]["카드사용미결제"], 1)
         self.assertIsNone(P["remain"])
-        card = kv_value(first_screen(html), "카드 미결제 (프로젝트)")
-        self.assertIn("미확인 1건", card)
+        self.assertIn("외 미확인 2건", first_screen(html).split("<div class='ptot'>")[1].split("</div>")[0])  # 표본의 미확인 요청 1건 + 카드 1건
         self.assertEqual(sample_result()["s3"]["total"]["line_unknown"]["카드사용미결제"], 0)
         check_editions(self, R)
 
@@ -1230,12 +1242,7 @@ class TestAllUnknownTotals(unittest.TestCase):
         self.assertEqual(s5["unissued_unknown_n"], 8)
         self.assertIsNone(s4["unrecognized"])
         self.assertEqual(s4["unrecognized_missing"], 8)
-        fs = first_screen(html)
-        self.assertIn("미등록 8건", kv_value(fs, "계약금액"))
-        self.assertIn("판단 불가 8건", kv_value(fs, "미발행금액"))
-        self.assertIn("미확인 8건", kv_value(fs, "계약 중 매출 미반영"))
-        for lab in ("계약금액", "미발행금액", "계약 중 매출 미반영"):
-            self.assertNotIn("0.0", kv_value(fs, lab), lab)
+        # 첫 화면은 2026-11-03부터 계약금액 대신 '행사 후 세금계산서 미발행'(사전견적 기준)을 보인다. 계약금액 칸은 상세 4·5번에.
         self.assertIn("미확인 8건", self.tot_row(html, 4)[4])
         self.assertIn("미등록 8건", self.tot_row(html, 4)[2])
         self.assertNotIn(">0<", self.tot_row(html, 4)[4])
@@ -1243,12 +1250,7 @@ class TestAllUnknownTotals(unittest.TestCase):
 
     def test_partial_unknown_counts_beside_first_screen_totals(self):
         R = sample_result()
-        fs = first_screen(render(R, "ceo"))
         self.assertEqual(R["s4"]["unrecognized_missing"], 1)
-        self.assertIn("618.0", kv_value(fs, "계약 중 매출 미반영"))
-        self.assertIn("미확인 1건", kv_value(fs, "계약 중 매출 미반영"))
-        self.assertIn("판단 불가 1건", kv_value(fs, "미발행금액"))
-        self.assertIn("미등록 1건", kv_value(fs, "계약금액"))
         self.assertIn("미확인 1건", self.tot_row(render(R, "ceo"), 4)[4])
 
     def test_category_total_unknown_when_every_row_unknown(self):
@@ -1274,23 +1276,23 @@ class TestAllUnknownTotals(unittest.TestCase):
                     r[2] = ""
         R, html = self.edit("자금일정.csv", mutate)
         self.assertIsNone(R["s6"]["total"])
-        val = kv_value(first_screen(html), "프로젝트 밖 지급예정 (등록분 전체)")
-        self.assertTrue(val.startswith('<span class="na">미확인</span>'), val)
-        self.assertIn("금액 미확인", val)
+        val = box_item(first_screen(html), "프로젝트 밖 지급 예정")
+        self.assertTrue(val.startswith("프로젝트 밖 지급 예정 (등록분 전체) 금액 미확인"), val)
+        self.assertIn("· 금액 미확인", val)
 
 
 class TestFirstScreenCountsD04(unittest.TestCase):
     """D-04: 날짜 없는 예정금액과 입금예정일이 지난 미수는 첫 화면에도 건수와 금액이 함께 보인다."""
-    UNDATED = "날짜 없는 입금예정 / 지급예정"
-    OVERDUE = "입금예정일 경과 미수 (일정 미포함)"
+    UNDATED = "날짜 없는 입금 예정"
+    OVERDUE = "입금예정일 지난 미수금"
 
     def test_undated_line_has_counts_and_amounts(self):
         fs = first_screen(render(sample_result(), "ceo"))
-        self.assertEqual(kv_value(fs, self.UNDATED), "1건 30.0 / 4건 105.0")  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
+        self.assertEqual(box_item(fs, self.UNDATED), "날짜 없는 입금 예정 1건 30,000,000 / 지급 예정 4건 105,000,000")  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
 
     def test_overdue_receivable_line_has_count(self):
         fs = first_screen(render(sample_result(), "ceo"))
-        self.assertEqual(kv_value(fs, self.OVERDUE), "1건 110.0")
+        self.assertEqual(box_item(fs, self.OVERDUE), "입금예정일 지난 미수금 1건 110,000,000 (일정에 넣지 않음)")
 
     def add_rows(self, *new_rows):
         return probe_folder(self, "자금일정.csv", lambda rows: rows.extend([list(r) for r in new_rows]))
@@ -1303,9 +1305,8 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             self.assertEqual((s2["undated_out"], s2["undated_out_n"], s2["undated_out_unknown"]), (105_000_000, 5, 1))
             self.assertEqual((s2["undated_in"], s2["undated_in_n"], s2["undated_in_unknown"]), (30_000_000, 1, 0))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
             html = render(R, "ceo")
-            val = kv_value(first_screen(html), self.UNDATED)
-            self.assertTrue(val.startswith("1건 30.0 / 5건 105.0"), val)
-            self.assertIn("금액 미확인 1건", val)
+            val = box_item(first_screen(html), self.UNDATED)
+            self.assertEqual(val, "날짜 없는 입금 예정 1건 30,000,000 / 지급 예정 5건 105,000,000 (금액 미확인 1건)")
             self.assertEqual(R["s7"]["undated_out_n"], 5)
             check_editions(self, R)
         with self.subTest("B: only blank on the incoming side"):
@@ -1324,10 +1325,10 @@ class TestFirstScreenCountsD04(unittest.TestCase):
             s2 = R["s2"]
             self.assertIsNone(s2["undated_in"])
             self.assertEqual((s2["undated_in_n"], s2["undated_in_unknown"]), (1, 1))
-            val = kv_value(first_screen(render(R, "ceo")), self.UNDATED)
-            self.assertTrue(val.startswith('1건 <span class="na">미확인</span>'), val)
+            val = box_item(first_screen(render(R, "ceo")), self.UNDATED)
+            self.assertTrue(val.startswith("날짜 없는 입금 예정 1건 금액 미확인 /"), val)
             self.assertNotIn("1건 0.0", val)
-            self.assertIn("4건 105.0", val)
+            self.assertIn("지급 예정 4건 105,000,000", val)
             check_editions(self, R)
 
 
@@ -1478,7 +1479,7 @@ class TestPaidDateWithoutAmount(unittest.TestCase):
         self.assertEqual(R["s5"]["overdue_total"], 0)
         self.assertFalse(any(e["project"] == "P26202" and e["io"] == "in" for e in R["events"]))
         self.assertEqual(R["s2"]["past_in_n"], 0)
-        self.assertIn("미확인 1건", kv_value(first_screen(html), "발행 후 미수"))
+        self.assertIn("미확인 1건", first_screen(html).split("미수금 (세금계산서 발행 후)</div><div class='big'>")[1].split("</div>")[0])
         row = re.findall(r"<tr[^>]*><td>P26202</td>.*?</tr>", section(html, 5), re.S)[0]
         self.assertIn("미확인 1건", row)
         check_editions(self, R)

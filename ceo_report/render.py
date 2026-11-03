@@ -121,7 +121,7 @@ def chart(s2):
     bs = s2["buckets"]
     if not bs:
         return ""
-    Wd, H, pl, pr, pt, pb = 470, 250, 54, 10, 14, 52
+    Wd, H, pl, pr, pt, pb = 900, 260, 90, 10, 14, 44
     n = len(bs)
     gw = (Wd - pl - pr) / n
     has_bal = s2["start"] is not None and not s2["out_missing"]  # 시작 잔액·지급 자료를 모르면 계산 잔액 선을 그리지 않는다 (0에서 시작하지 않음)
@@ -140,12 +140,12 @@ def chart(s2):
     def y(v):
         return pt + (hi - v) * (H - pt - pb) / span
 
-    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="기간별 입금·지급 예정과 계산 잔액">' % (Wd, H)]
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="기간별 입금·지급 예정과 예상 잔액">' % (Wd, H)]
     for k in range(int(round(span / step)) + 1):
         v = lo + step * k
         out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#e6e9ef"/>' % (pl, Wd - pr, y(v), y(v)))
         out.append('<text x="%d" y="%.1f" font-size="9.5" text-anchor="end" fill="#5b6475">%s</text>'
-                   % (pl - 4, y(v) + 3, "{:,.0f}".format(v / 1e6)))
+                   % (pl - 4, y(v) + 3, "{:,.0f}".format(v)))
     out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#1d2433"/>' % (pl, Wd - pr, y(0), y(0)))
     bw = gw * 0.34
     pts_f, pts_a = [], []
@@ -178,17 +178,17 @@ def chart(s2):
             x_, y_ = p.split(",")
             out.append('<circle cx="%s" cy="%s" r="2.5" fill="#1f4e8c"/>' % (x_, y_))
     else:
-        out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">%s — 계산 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
+        out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">%s — 예상 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
                    % (pl + 6, pt + 12, "지급 자료 없음" if s2["out_missing"] else "잔액 미확인"))
-    out.append('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">단위: 백만원 · 4주는 주별, 이후는 월별 (* 일부 기간)</text>'
+    out.append('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">단위: 원 · 4주는 주별, 이후는 월별 (* 일부 기간)</text>'
                % (pl, H - 8))
     out.append("</svg>")
-    legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정</span>'
-              '<span><i style="background:#9cc9b3"></i>입금 추정</span><span><i style="background:#b5523b"></i>지급 확정</span>'
-              '<span><i style="background:#e2aa9b"></i>지급 추정</span>')
+    legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정분</span>'
+              '<span><i style="background:#9cc9b3"></i>입금 예상분</span><span><i style="background:#b5523b"></i>지급 확정분</span>'
+              '<span><i style="background:#e2aa9b"></i>지급 예상분</span>')
     if has_bal:
-        legend += ('<span><i style="background:#1f4e8c"></i>계산 잔액(확정)</span>'
-                   '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>계산 잔액(확정+추정)</span>')
+        legend += ('<span><i style="background:#1f4e8c"></i>예상 잔액(확정분만)</span>'
+                   '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>예상 잔액(예상분 포함)</span>')
     legend += "</div>"
     return "".join(out) + legend
 
@@ -204,124 +204,13 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap'>" % (esc(title), d2s(R["asof"]), CSS))
+             "<body><div class='wrap'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS))
     h.append("<h1>%s<span class='badge%s'>%s</span></h1>" % (esc(title), "" if mode == "ceo" else " m",
                                                              "대표용" if mode == "ceo" else "경영관리용"))
-    h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원 (첫 화면은 백만원)</div>"
+    h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원</div>"
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
 
-    # ─────────── 첫 화면 ───────────
-    h.append("<div class='page'>")
-    restr_note = "사용제한 %s" % man(s1["restricted"])
-    if s1["restr_unknown"]:
-        restr_note += " · 제한금액 미확인 %d계좌" % s1["restr_unknown"]
-    h.append("<div class='kpis'>")
-    h.append(_kpi("현재 현금 (계좌 합계)", M(s1["total"]), esc("%d개 계좌 · 은행 기준일 %s" % (
-        len(s1["accounts"]), _bank_dates(s1)) + _bal_note(s1)), unit=s1["total"] is not None))
-    h.append(_kpi("사용 가능액", M(s1["available"]), esc(restr_note + _bal_note(s1)), unit=s1["available"] is not None))
-    if s2["in_missing"]:
-        # 계산서 입금예정을 모르므로 합계를 숫자로 보이지 않는다. 자금일정의 입금(확인된 부분)은 보조 줄에 둔다.
-        h.append(_kpi("향후 4주 입금예정", _na("자료 없음"),
-                      esc("계산서 입금예정 자료 없음: %s · 자금일정 입금만 확정 %s · 추정 %s"
-                          % (", ".join(s2["in_missing"]), man(s2["in4_firm"]), man(s2["in4_est"]))), unit=False))
-    else:
-        h.append(_kpi("향후 4주 입금예정", M(s2["in4_firm"] + s2["in4_est"]),
-                      esc("확정 %s · 추정 %s" % (man(s2["in4_firm"]), man(s2["in4_est"])))))
-    out4_sub = "확정 %s · 추정 %s" % (man(s2["out4_firm"]), man(s2["out4_est"]))
-    if s2["out_missing"]:
-        out4_sub += " · 자료 없음: %s (합계에 없음)" % ", ".join(s2["out_missing"])
-    if s2["vat_unknown_n4"]:
-        out4_sub += " · 부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n4"]
-    if s2["out_unknown_n4"]:
-        out4_sub += " · 금액 미확인 %d건 (합계 제외)" % s2["out_unknown_n4"]
-    h.append(_kpi("향후 4주 지급예정", M(s2["out4_firm"] + s2["out4_est"]), esc(out4_sub)))
-    h.append(_low_kpi(R))
-    h.append("</div>")
-    # 중앙: 프로젝트 요약 + 자금 그래프
-    h.append("<div class='mid'><div>")
-    h.append("<h3 style='margin-top:0'>프로젝트 원가 예산·지급 (공급가액 기준, 카드는 총액)</h3>")
-    tot = s3["total"]
-    h.append("<div class='scope'>%s</div>"
-             % esc("표시 %d건 / 전체 %d건 (원가 예산 큰 순) · 원가 예산 = 사전견적 × 원가율 %s · 전체 원가 예산 %s · 단위 백만원"
-                   % (len(s3["shown"]), len(s3["projects"]), _rate_text(s3), man(tot["budget"], "판단 불가"))))
-    rows = []
-    for P in s3["shown"]:
-        unk = _unknown_cost_note(P["unknown_cost"]) if P["budget"] is not None else ""
-        rows.append([esc(P["id"]), esc(_short(P["name"], 22)),
-                     M(P["budget"], "예산 미지정 (%s)" % P["budget_reason"] if P["budget_reason"] else "예산 미지정"),
-                     M(P["paid_period"]),
-                     _amt_lines(M, P["paid_total"], P, *PAID_STATES),
-                     _amt_lines(M, P["requested"] + P["card_unpaid"], P, *UNPAID_STATES),
-                     _amt_lines(M, P["planned"], P, *PLAN_STATES),
-                     esc(pct(P["paid_total"], P["budget"])) + unk,
-                     M(P["remain"], "판단 불가") if not (P["budget"] is not None and P["unknown_cost"]) else
-                     _na("판단 불가" + _unknown_cost_text(P["unknown_cost"]))])
-    if s3["rest"]:
-        r = s3["rest"]
-        ra = _agg_lines(r)
-        rows.append(([esc("외 %d건" % len(r)), "", M(_sum_opt(x["budget"] for x in r)),
-                      M(sum(x["paid_period"] for x in r)),
-                      _amt_lines(M, sum(x["paid_total"] for x in r), ra, *PAID_STATES),
-                      _amt_lines(M, sum(x["requested"] + x["card_unpaid"] for x in r), ra, *UNPAID_STATES),
-                      _amt_lines(M, sum(x["planned"] for x in r), ra, *PLAN_STATES), "", ""], "sub"))
-    note_nb = _no_budget_note(s3)
-    total_row = ["전체", esc("%d건" % len(s3["projects"]) + (" · " + note_nb if note_nb else "")),
-                 M(tot["budget"], "판단 불가"), M(tot["paid_period"]),
-                 _amt_lines(M, tot["paid_total"], tot, *PAID_STATES),
-                 _amt_lines(M, tot["requested"] + tot["card_unpaid"], tot, *UNPAID_STATES),
-                 _amt_lines(M, tot["planned"], tot, *PLAN_STATES),
-                 esc(pct(tot["paid_budgeted"], tot["budget"])) + (_unknown_cost_note(tot["unknown_cost"]) if tot["budget"] is not None else "") + "<sup>①</sup>",
-                 M(tot["remain"], "판단 불가") + _na(_remain_excluded_text(tot)) + "<sup>①</sup>"]
-    h.append(table(["번호", "프로젝트", "원가 예산", per + " 지급", "누적 지급", "요청·카드 미결제", "미요청 계획", "지급률",
-                    "예상 잔여예산"], rows, num_cols=(2, 3, 4, 5, 6, 7, 8), total=total_row))
-    h.append("<div class='note'>① 예산이 지정된 프로젝트만 계산. 예상 잔여예산 = 원가 예산 − (누적 지급 + 요청 미지급 + 카드 미결제 + 미요청 계획). "
-             "금액 미확인 원가 줄이 있는 프로젝트는 잔여예산을 ‘판단 불가’로 두고 합계에서 뺌. 표의 금액은 확인된 것만의 합계이며 ‘미확인 N건’은 금액을 알 수 없는 줄 수. "
-             "남은 예산(진행 중 프로젝트)은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음(그 날이 지났으면 기준일 다음 금요일, 행사일 없으면 날짜 없는 지급 예정). 완료 프로젝트는 넣지 않음.</div>")
-    h.append("</div><div>")
-    h.append("<h3 style='margin-top:0'>%s</h3>" % esc("기간별 자금 (시작: 사용 가능액 %s%s)" % (man(s2["start"]), _bal_note(s1))))
-    h.append(chart(s2))
-    lf, lfd = s2["min"]["firm"]
-    la, lad = s2["min"]["all"]
-    h.append(kv([("최저 계산 잔액 · 확정 일정만", _min_cell(lf, lfd, s2["vat_unknown_firm_n"], s2["out_unknown_firm_n"], _no_low(s2))),
-                 ("최저 계산 잔액 · 확정+추정", _min_cell(la, lad, s2["vat_unknown_n"], s2["out_unknown_n"], _no_low(s2))),
-                 ("날짜 없는 입금예정 / 지급예정",
-                  _past_side(s2["undated_in_n"], s2["undated_in"], s2["undated_in_unknown"]) + _in_side_note(s2) + " / " +
-                  _past_side(s2["undated_out_n"], s2["undated_out"], s2["undated_out_unknown"])),
-                 ("입금예정일 경과 미수 (일정 미포함)",
-                  _inv_na(s5) if s5["in_missing"] else "%d건 " % len(s5["overdue"]) + M(s5["overdue_total"])),
-                 ("예정일 지난 미처리 입금 / 지급 (일정 미포함)",
-                  _past_side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]) + _in_side_note(s2) + " / " +
-                  _past_side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"]))]))
-    h.append("</div></div>")
-    # 하단 4칸
-    h.append("<div class='low'>")
-    h.append("<div class='card'><h4>매출·이익 (%s)</h4>%s</div>" % (esc(s4["ym"]), _pl_card(s4)))
-    h.append("<div class='card'><h4>미수·미지급</h4>%s</div>" % kv([
-        ("발행 후 미수", _inv_na(s5) if s5["in_missing"] else _na("미확인 %d건" % s5["ar_unknown_n"]) if s5["ar"] is None else
-         M(s5["ar"]) + (_na(" · 미확인 %d건" % s5["ar_unknown_n"]) if s5["ar_unknown_n"] else "")),
-        ("그중 입금예정일 경과", _inv_na(s5) if s5["in_missing"] else M(s5["overdue_total"])),
-        ("프로젝트 요청 미지급", _amt_lines(M, tot["requested"], tot, "요청미지급")),
-        ("카드 미결제 (프로젝트)", _amt_lines(M, tot["card_unpaid"], tot, "카드사용미결제")),
-        ("프로젝트 밖 지급예정 (등록분 전체)", M(s6["total"]) + esc(" · 날짜 없음 %d건" % s6["undated_n"]) +
-         (esc(" · 금액 미확인 %d건" % s6["unknown_n"]) if s6["unknown_n"] else ""))]))
-    h.append("<div class='card'><h4>계산서 미발행</h4>%s</div>" % kv([
-        ("계약금액", _amt_unk(s5["contract"], s5["contract_missing"], "미등록", M)),
-        ("발행금액", _inv_na(s5) if s5["in_missing"] else _amt_unk(s5["issued"], s5["issued_unknown_n"], "미확인", M)),
-        ("미발행금액", _inv_na(s5) if s5["in_missing"] else _amt_unk(s5["unissued"], s5["unissued_unknown_n"], "판단 불가", M)),
-        ("완료 후 미발행 프로젝트", _inv_na(s5) if s5["in_missing"] else
-         "%d건" % len([x for x in s5["unissued_aged"] if x["unissued"] > 0])),
-        ("계약금액 미등록 프로젝트", "%d건" % s5["contract_missing"])]))
-    h.append("<div class='card'><h4>자료 기준일·미반영</h4>%s</div>" % kv(
-        [(a["name"], esc(d2s(a["date"]))) for a in s7["asof"]] +
-        [("예산 미지정 프로젝트", "%d건" % len(s7["no_budget"])),
-         ("프로젝트 미연결 지급", M(s7["unlinked_txn_total"] + s3["unlinked_total"])),
-         ("입력 자료 확인 필요", "%d건" % len(s7["issues"]))]))
-    h.append("</div>")
-    if mode == "mgmt":
-        hi = sum(1 for r in R["risks"] if r["level"] == "높음")
-        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
-                 % (len(R["risks"]), hi))
-    h.append("</div>")  # page
+    h.append(_first_screen(R, mode, per))
 
     toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
     if R["kind"] == "monthly":
@@ -343,6 +232,347 @@ def render(R, mode):
     if R["kind"] == "monthly":
         h.append(_s8(R, mode))
     h.append("</div></body></html>")
+    return "".join(h)
+
+
+# ─────────── 대표 첫 화면 (2026-11-03 사용자: 한눈에, 원 단위, 업무 용어, 기간별 가용자금) ───────────
+FS_CSS = """
+.q{font-size:13px;font-weight:700;color:var(--sub);margin:20px 0 8px}
+.fs .card{border-radius:10px;padding:12px 16px;background:#fff}
+.fs .big{font-size:24px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.fs .lab{font-size:12.5px;color:var(--sub);font-weight:600}.fs .foot{font-size:12px;color:var(--sub);margin-top:4px}
+.flow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.flow .op{font-size:22px;color:var(--sub)}
+.vin{color:var(--in)}.vout{color:var(--out)}.neg{color:var(--out)!important}
+.avail{border:2px solid var(--accent)!important}
+.ah{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.pm{display:flex;gap:4px}.pm button{font:inherit;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:14px;padding:2px 10px;cursor:pointer}
+.pm button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom:1.5px solid var(--ink);text-align:right;white-space:normal}
+table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
+table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
+table.pt[data-pm=all] tbody.pm-firm,table.pt[data-pm=firm] tbody.pm-all{display:none}
+table.pt input{font:inherit;font-size:11.5px;border:1px solid var(--line);border-radius:5px}
+.prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
+.prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
+.bar{position:relative;height:12px;background:#eef0f3;border-radius:6px;display:flex}.bar i{display:block;height:100%}
+.bar .b1{background:var(--accent);border-radius:6px 0 0 6px}.bar .b2{background:#9db6e3}
+.bar s{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}
+.bn{font-size:11.5px;color:var(--sub);margin-top:3px;font-variant-numeric:tabular-nums}
+.pr{text-align:right;font-variant-numeric:tabular-nums;font-size:15px;font-weight:700}.pr small{display:block;font-size:11px;color:var(--sub);font-weight:400}
+.chip{display:inline-block;font-size:11px;font-weight:700;border-radius:10px;padding:0 7px;margin-left:6px;vertical-align:1px}
+.c-ok{background:#e7f3ec;color:var(--in)}.c-over{background:#fbe9e7;color:var(--out)}.c-q{background:#fff3d6;color:var(--warn)}.c-n{background:var(--soft);color:var(--sub)}
+.keys{font-size:11.5px;color:var(--sub);display:flex;gap:12px;flex-wrap:wrap}.keys i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:3px}
+.ptot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:2px solid var(--ink);padding-top:8px;margin-top:4px;font-size:12px}
+.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
+.xbox{background:#fff8e6;border:1px solid #f0dca8;border-radius:10px;padding:10px 16px}
+.xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
+@media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
+.xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
+@media print{.pm,.pickrow{display:none}.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px}}
+"""
+
+CIRCLED = "①②③④⑤⑥⑦⑧"
+
+
+def _q(i, text):
+    return "<div class='q'>%s %s</div>" % (CIRCLED[i], esc(text))
+
+
+def _flow_card(s1, per):
+    """월간: 기간 시작 잔액 + 입금 − 지급 = 기간 말 잔액 (계좌 간 이체 제외)."""
+    cells = [("월초 잔액", W(s1["start_calc"]), ""), ("+", None, ""), ("입금", W(s1["in"]), " vin"), ("−", None, ""),
+             ("지급", W(s1["out"]), " vout"), ("=", None, ""), ("월말 잔액", W(s1["end"]), "")]
+    h = ["<div class='card flow'>"]
+    for lab, v, cls in cells:
+        h.append("<div class='op'>%s</div>" % lab if v is None else
+                 "<div><div class='lab'>%s</div><div class='big%s'>%s</div></div>" % (esc(lab), cls, v))
+    h.append("</div><div class='note'>%s</div>" % esc("계좌 간 이체 입금 %s / 출금 %s 제외 · 은행 기준일 %s%s"
+                                                  % (won(s1["transfer_in"]), won(s1["transfer_out"]), _bank_dates(s1), _bal_note(s1))))
+    return "".join(h)
+
+
+def _avail_cell(r):
+    if r["avail"] is None:
+        return "<td class='av'>%s</td>" % _na("확인 필요")
+    return "<td class='av'><b class='%s'>%s</b></td>" % ("neg" if r["avail"] < 0 else "", esc(won(r["avail"])))
+
+
+def _avail_rows(periods, mode, s2=None):
+    """in_missing·out_missing 이면 입금·지급 칸 숫자 옆에 자료 없음을 적는다 (빠진 채 0처럼 보이지 않게)."""
+    in_tag = "<small class='na'>계산서 자료 없음</small>" if s2 and s2["in_missing"] else ""
+    out_tag = "<small class='na'>지급 자료 없음</small>" if s2 and s2["out_missing"] else ""
+    rows = []
+    for p in periods:
+        r = p[mode]
+        low = _na("확인 필요") if r["low"] is None else "%s<small>(%s)</small>" % (
+            esc(won(r["low"])), esc("오늘" if r["low_date"] == p.get("asof") else d2s(r["low_date"])[5:].replace("-", "/")))
+        rows.append("<tr><td><b>%s</b><small>~ %s</small></td><td class='vin'>%s</td><td class='vout'>%s</td>"
+                    "<td><b>%s</b></td><td>%s</td>%s</tr>"
+                    % (esc(p["label"]), esc(d2s(p["end"])), esc(won(r["in"])) + in_tag, esc(won(r["out"])) + out_tag,
+                       W(r["bal"], "확인 필요"), low, _avail_cell(r)))
+    return "".join(rows)
+
+
+def _avail_table(R):
+    """기간별 가용자금 표: 주간 1~4주, 월간 1~3개월 + 날짜 지정 줄 (사용자 2026-11-03).
+
+    가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 확정분만 / 예상분 포함 둘 다 HTML 에 싣고 단추로 바꾼다 (인쇄는 예상분 포함)."""
+    s1, s2 = R["s1"], R["s2"]
+    periods = [dict(p, asof=R["asof"]) for p in s2["periods"]]
+    mc = s2["min_cash"]
+    h = ["<div class='card avail'><div class='ah'><div class='lab'>기간별 가용자금 <span style='font-weight:400'>%s</span></div>"
+         % esc("시작: 오늘 가용액 %s = 계좌 합계 %s − 사용제한 %s%s · 은행 기준일 %s%s" % (
+             _won_or_unknown(s2["start"]), _won_or_unknown(s1["total"]), won(s1["restricted"]),
+             " · 제한금액 미확인 %d계좌" % s1["restr_unknown"] if s1["restr_unknown"] else "", _bank_dates(s1), _bal_note(s1))),
+         "<div class='pm'><button type='button' data-m='all' class='on'>예상분 포함</button>"
+         "<button type='button' data-m='firm'>확정분만</button></div></div>"]
+    head = ("<thead><tr><th>기간</th><th>입금 예정</th><th>지급 예정</th><th>예상 잔액</th><th>기간 중 최저 잔액</th>"
+            "<th class='av'>가용자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % esc(won(mc) if mc is not None else "설정 오류"))
+    body = "".join("<tbody class='pm-%s'>%s</tbody>" % (m, _avail_rows(periods, m, s2)) for m in ("all", "firm"))
+    last = s2["periods"][-1]["end"] if s2["periods"] else R["asof"]
+    pick = ("<tbody class='pickrow'><tr><td><b>날짜 지정</b><small>~ <input type='date' id='pickd' value='%s' min='%s' max='%s'></small></td>"
+            "<td class='vin' id='pk-in'></td><td class='vout' id='pk-out'></td><td><b id='pk-bal'></b></td><td id='pk-low'></td>"
+            "<td class='av'><b id='pk-av'></b></td></tr></tbody>"
+            % (last.isoformat(), (R["asof"] + dt.timedelta(days=1)).isoformat(), s2["horizon"].isoformat()))
+    h.append("<div class='tw'><table class='pt' id='avail' data-pm='all'>%s%s%s</table></div>" % (head, body, pick))
+    notes = ["가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 예상 잔액이 넉넉해도 기간 중 최저 잔액을 넘겨 쓰면 그 사이에 자금이 모자람."]
+    if s2["out_missing"]:
+        notes.append("지급 자료 없음: %s — 잔액·가용자금은 계산하지 않음" % ", ".join(s2["out_missing"]))
+    if s2["in_missing"]:
+        notes.append("계산서 입금 예정 미반영 (자료 없음: %s)" % _inv_files(s2))
+    if s2["vat_unknown_n"]:
+        notes.append("부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n"])
+    if s2["out_unknown_n"]:
+        notes.append("금액 미확인 지급 예정 %d건 (미반영)" % s2["out_unknown_n"])
+    h.append("<div class='note'>%s</div></div>" % esc(" · ".join(notes)))
+    ev = [[e["date"].isoformat(), e["amount"] if e["io"] == "in" else -e["amount"], 1 if e["firm"] else 0] for e in s2["dated"]]
+    h.append("<script>(function(){var EV=%s,S=%s,MC=%s,A='%s',mode='all';"
+             "function f(v){return (v<0?'\\u2212':'')+Math.abs(v).toLocaleString('ko-KR');}"
+             "function run(){var d=document.getElementById('pickd').value,b=S,lo=S,ld='오늘',i=0,o=0,day={};"
+             "EV.forEach(function(e){if(e[0]>d||(mode==='firm'&&!e[2]))return;day[e[0]]=(day[e[0]]||0)+e[1];e[1]>0?i+=e[1]:o-=e[1];});"
+             "Object.keys(day).sort().forEach(function(k){b+=day[k];if(b<lo){lo=b;ld=k.slice(5).replace('-','/');}});"
+             "document.getElementById('pk-in').textContent=f(i);document.getElementById('pk-out').textContent=f(o);"
+             "var q=function(id,t){document.getElementById(id).innerHTML=t;};"
+             "if(S===null){q('pk-bal','확인 필요');q('pk-low','확인 필요');q('pk-av','확인 필요');return;}"
+             "q('pk-bal',f(b));q('pk-low',f(lo)+'<small>('+ld+')</small>');"
+             "var av=document.getElementById('pk-av');if(MC===null){av.textContent='확인 필요';av.className='';}"
+             "else{av.textContent=f(lo-MC);av.className=lo-MC<0?'neg':'';}}"
+             "document.getElementById('pickd').addEventListener('change',run);"
+             "document.querySelectorAll('.pm button').forEach(function(x){x.addEventListener('click',function(){mode=x.getAttribute('data-m');"
+             "document.getElementById('avail').setAttribute('data-pm',mode);"
+             "document.querySelectorAll('.pm button').forEach(function(y){y.className=y===x?'on':'';});run();});});run();})();</script>"
+             % (_json_list(ev), "null" if s2["start"] is None or s2["out_missing"] else int(s2["start"]),
+                "null" if mc is None else int(mc), R["asof"].isoformat()))
+    return "".join(h)
+
+
+def _json_list(v):
+    import json
+    return json.dumps(v)
+
+
+def _proj_chip(P):
+    if P["budget"] is None:
+        return "<span class='chip c-n'>예산 미지정</span>"
+    if P["unknown_cost"]:
+        return "<span class='chip c-q'>확인 필요</span>"
+    if P["remain"] is not None and P["remain"] < 0:
+        return "<span class='chip c-over'>예산 초과</span>"
+    return "<span class='chip c-ok'>예산 내</span>"
+
+
+def _proj_right(P):
+    if P["budget"] is None:
+        return "<small>잔여 예산</small>" + _na("예산 미지정" + (" (%s)" % P["budget_reason"] if P["budget_reason"] else ""))
+    if P["unknown_cost"]:
+        return "<small>잔여 예산</small>" + _na("확인 필요" + _unknown_cost_text(P["unknown_cost"]))
+    if P["remain"] is None:
+        return "<small>잔여 예산</small>" + _na("확인 필요")
+    if P["remain"] < 0:
+        return "<small>예산 초과</small><span class='neg'>%s</span>" % esc(won(-P["remain"]))
+    return "<small>잔여 예산</small>%s" % esc(won(P["remain"]))
+
+
+def _project_bars(R, per):
+    """프로젝트 원가 예산 막대: 집행액(지급 완료) · 집행 예정액(요청·카드 미결제·미요청 계획) · 예산선."""
+    s3 = R["s3"]
+    tot = s3["total"]
+    shown = s3["shown"]
+    scale = max([max(P["budget"] or 0, P["paid_total"] + P["requested"] + P["card_unpaid"] + P["planned"]) for P in shown] or [0]) or 1
+    h = ["<div class='card'><div class='keys'><span><i style='background:var(--accent)'></i>집행액 (지급 완료)</span>"
+         "<span><i style='background:#9db6e3'></i>집행 예정액 (지급요청·카드 미결제·미요청 계획)</span>"
+         "<span><i style='background:var(--ink);width:2px'></i>원가 예산</span><span>%s</span></div>"
+         % esc("원가 예산 = 사전견적 × 원가율 %s · 공급가액 기준(카드는 총액)" % _rate_text(s3))]
+    for P in shown:
+        due = P["requested"] + P["card_unpaid"] + P["planned"]
+        w1, w2 = P["paid_total"] / scale * 100, due / scale * 100
+        mark = "" if P["budget"] is None else "<s style='left:%.1f%%'></s>" % (P["budget"] / scale * 100)
+        h.append("<div class='prow' id='pj-%s'><div class='pn'>%s%s<small>%s</small></div>"
+                 "<div class='bw'><div class='bar'><i class='b1' style='width:%.1f%%'></i><i class='b2' style='width:%.1f%%'></i>%s</div>"
+                 "<div class='bn'>원가 예산 %s · 집행액 %s · 집행 예정액 %s · %s 지급 %s</div></div>"
+                 "<div class='pr'>%s</div></div>"
+                 % (esc(P["id"]), esc(_short(P["name"], 20)), _proj_chip(P), esc(P["id"]), w1, w2, mark,
+                    W(P["budget"], "예산 미지정"), _amt_lines(W, P["paid_total"], P, *PAID_STATES),
+                    _amt_lines(W, due, P, *(UNPAID_STATES + PLAN_STATES)), esc(per), W(P["paid_period"]), _proj_right(P)))
+    if s3["rest"]:
+        r = s3["rest"]
+        ra = _agg_lines(r)
+        h.append("<div class='prow sub'><div class='pn'>%s</div><div class='bn'>원가 예산 %s · 집행액 %s · 집행 예정액 %s</div><div></div></div>"
+                 % (esc("외 %d건" % len(r)), W(_sum_opt(x["budget"] for x in r)),
+                    _amt_lines(W, sum(x["paid_total"] for x in r), ra, *PAID_STATES),
+                    _amt_lines(W, sum(x["requested"] + x["card_unpaid"] + x["planned"] for x in r), ra, *(UNPAID_STATES + PLAN_STATES))))
+    nb = _no_budget_note(s3)
+    rem = tot["remain"]
+    rem_txt = _na("확인 필요") if rem is None else (
+        "<b class='neg'>%s 초과</b>" % esc(won(-rem)) if rem < 0 else "<b>%s</b>" % esc(won(rem)))
+    h.append("<div class='ptot'><span>%s%s</span><span>전체 원가 예산 %s · 집행액 %s · 집행 예정액 %s · 잔여 예산 %s%s</span></div>"
+             % (esc("표시 %d건 / 전체 %d건 (원가 예산 큰 순)" % (len(shown), len(s3["projects"]))), esc(" · " + nb) if nb else "",
+                W(tot["budget"], "확인 필요"), _amt_lines(W, tot["paid_total"], tot, *PAID_STATES),
+                _amt_lines(W, tot["requested"] + tot["card_unpaid"] + tot["planned"], tot, *(UNPAID_STATES + PLAN_STATES)),
+                rem_txt, _na(_remain_excluded_text(tot))))
+    h.append("<div class='note'>잔여 예산 = 원가 예산 − (집행액 + 집행 예정액). 예산이 지정된 프로젝트만 합계. 미확인 원가가 있는 프로젝트는 ‘확인 필요’로 두고 합계에서 뺌. "
+             "진행 중 프로젝트의 잔여 예산은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음 "
+             "(그 날이 지났으면 기준일 다음 금요일, 행사일 없으면 날짜 없는 지급 예정). 완료 프로젝트는 넣지 않음.</div></div>")
+    return "".join(h)
+
+
+def _results(R):
+    """실적 칸 4개: 매출 · 이익(마감 전) · 미수금 · 행사 후 세금계산서 미발행."""
+    s4, s5 = R["s4"], R["s5"]
+    cards = []
+    src = s4["sources"].get("WEHAGO")
+    co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
+    c, y = (co[0]["cur"], co[0]["ytd"]) if co else (None, None)
+    ym = _ym_text(s4["ym"])
+    if c:
+        cards.append(("%s 매출" % ym, W(c["revenue"]), "올해 누적 %s" % (W(y["revenue"]) if y else _na("자료 없음"))))
+        tag = " <span class='chip c-q'>마감 전</span>" if c["provisional"] else ""
+        cards.append(("%s 이익%s" % (esc(ym), tag), W(c["np"], "확인 필요"),
+                      "이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"))))
+    else:
+        why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
+        cards.append(("%s 매출" % ym, _na(why), ""))
+        cards.append(("%s 이익" % ym, _na(why), ""))
+    na = s5["in_missing"]
+    if na:
+        cards.append(("미수금 (세금계산서 발행 후)", _inv_na(s5), ""))
+    else:
+        ar = _na("미확인 %d건" % s5["ar_unknown_n"]) if s5["ar"] is None else W(s5["ar"]) + (
+            _na(" 외 미확인 %d건" % s5["ar_unknown_n"]) if s5["ar_unknown_n"] else "")
+        cards.append(("미수금 (세금계산서 발행 후)", ar,
+                      "그중 입금예정일 지남 <span class='neg'>%s</span> (%d건)" % (esc(won(s5["overdue_total"])), len(s5["overdue"]))))
+    E = s5["event_unissued"]
+    if E["missing"]:
+        cards.append(("행사 후 세금계산서 미발행", _inv_na(s5), ""))
+    else:
+        foot = "%d건" % len(E["rows"])
+        if E["rows"]:
+            o = E["rows"][0]
+            foot += " · 가장 오래된 것 %s (행사 후 %d일)" % (_short(o["P"]["name"], 14), o["days"])
+        foot = esc(foot) + (_na(" · 확인 필요 %d건" % len(E["unknown"])) if E["unknown"] else "")
+        cards.append(("행사 후 세금계산서 미발행", W(E["total"]), foot))
+    h = ["<div class='four'>"]
+    for lab, v, foot in cards:
+        lab_html = lab if "<span" in lab else esc(lab)
+        h.append("<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
+                 % (lab_html, v, foot))
+    h.append("</div>")
+    return "".join(h)
+
+
+def _ym_text(ym):
+    """'2026-10' → '10월' (첫 화면 실적 제목)."""
+    m = re.match(r"^\d{4}-(\d{2})$", ym or "")
+    return "%d월" % int(m.group(1)) if m else ym
+
+
+def _excluded_box(R):
+    """위 숫자(가용자금·일정)에 들어가지 않은 금액과 확인할 것 (D-04: 조용히 빼지 않음, 건수·금액을 첫 화면에)."""
+    s2, s3, s5, s7 = R["s2"], R["s3"], R["s5"], R["s7"]
+    items = []
+
+    def side(n, amt, unk):
+        if amt is None:
+            return "%d건 금액 미확인" % n
+        return "%d건 %s" % (n, won(amt)) + (" (금액 미확인 %d건)" % unk if unk else "")
+
+    s1, s6 = R["s1"], R["s6"]
+    if s1["bal_unknown"]:
+        items.append("잔액 미확인 %d계좌 (합계 제외)" % s1["bal_unknown"])
+    elif s1["total"] is None:
+        items.append("계좌 잔액 미확인 (계좌 자료 없음)")
+    if s1["restr_unknown"]:
+        items.append("사용제한 금액 미확인 %d계좌" % s1["restr_unknown"])
+    inv_na = " (계산서 자료 없음: %s)" % _inv_files(s2) if s2["in_missing"] else ""
+    items.append("예정일 지난 미처리 입금 %s%s / 지급 %s (일정에 넣지 않음)" % (
+        side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]), inv_na,
+        side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"])))
+    items.append("날짜 없는 입금 예정 %s%s / 지급 예정 %s" % (
+        side(s2["undated_in_n"], s2["undated_in"], s2["undated_in_unknown"]), inv_na,
+        side(s2["undated_out_n"], s2["undated_out"], s2["undated_out_unknown"])))
+    if s5["in_missing"]:
+        items.append("입금예정일 지난 미수금: 계산서 자료 없음 (%s)" % _inv_files(s5))
+    else:
+        items.append("입금예정일 지난 미수금 %d건 %s (일정에 넣지 않음)" % (len(s5["overdue"]), won(s5["overdue_total"])))
+    if s2["out_unknown_n"]:
+        items.append("금액 미확인 지급 예정 %d건" % s2["out_unknown_n"])
+    if s2["vat_unknown_n"]:
+        items.append("부가세 미확인 지급 예정 %d건 (공급가액만 반영)" % s2["vat_unknown_n"])
+    if s3.get("remain_unknown"):
+        items.append("잔여 예산 확인 필요 프로젝트 %d건 (지급 예정에 넣지 않음)" % len(s3["remain_unknown"]))
+    s6_txt = "프로젝트 밖 지급 예정 (등록분 전체) %s · 날짜 없음 %d건" % (
+        won(s6["total"]) if s6["total"] is not None else "금액 미확인", s6["undated_n"])
+    if s6["unknown_n"]:
+        s6_txt += " · 금액 미확인 %d건" % s6["unknown_n"]
+    items.append(s6_txt)
+    items.append("예산 미지정 프로젝트 %d건" % len(s7["no_budget"]))
+    items.append("프로젝트 미연결 지급 %s" % won(s7["unlinked_txn_total"] + s3["unlinked_total"]))
+    if s5["event_unissued"]["unknown"]:
+        items.append("행사 후 미발행 확인 필요 %d건 (사전견적·행사일 없음 등)" % len(s5["event_unissued"]["unknown"]))
+    items.append("입력 자료 확인 필요 %d건" % len(s7["issues"]))
+    return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in items)
+
+
+def _first_screen(R, mode, per):
+    s1, s2, s7 = R["s1"], R["s2"], R["s7"]
+    monthly = R["kind"] == "monthly"
+    h = ["<div class='page fs'>"]
+    i = 0
+    if monthly:
+        h.append(_q(i, "이번 달 자금 흐름"))
+        h.append(_flow_card(s1, per))
+        i += 1
+    h.append(_q(i, "앞으로 자금은?" if monthly else "지금 자금은?"))
+    i += 1
+    h.append(_avail_table(R))
+    h.append("<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
+             % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))
+    h.append(_q(i, "프로젝트 예산은 남나?"))
+    i += 1
+    h.append(_project_bars(R, per))
+    h.append(_q(i, "%s 실적" % _ym_text(R["s4"]["ym"])))
+    i += 1
+    h.append(_results(R))
+    if monthly:
+        h.append(_q(i, "장부와 맞춰 본 결과 (WEHAGO 기준)"))
+        i += 1
+        X = R.get("xchk")
+        if X is None or X["state"] == "자료 없음":
+            h.append("<div class='card'>%s</div>" % _na("자료 없음 (%s — 실행_변환.bat으로 만듦)" % XCHK_FILE_NAME))
+        elif X["state"] != "ok":
+            h.append("<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
+        else:
+            h.append("<div class='card'>%s<div class='note'>자세한 내용은 8번</div></div>" % _xk_summary(X))
+    h.append(_q(i, "위 숫자에 안 들어간 것 · 확인할 것"))
+    h.append(_excluded_box(R))
+    h.append("<div class='note' style='margin-top:10px'>%s</div>" % esc(
+        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in s7["asof"])))
+    if mode == "mgmt":
+        hi = sum(1 for r in R["risks"] if r["level"] == "높음")
+        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
+                 % (len(R["risks"]), hi))
+    h.append("</div>")
     return "".join(h)
 
 

@@ -478,9 +478,9 @@ class TestDatedUnknownPayments(unittest.TestCase):
     def test_sample_unknown_request_is_counted(self):
         # 샘플: P26206 프로그램 진행비 요청미지급, 2026-11-05 확정, 금액 빈칸
         R, fs, s2 = self.screen()
-        self.assertIn("금액 미확인 1건", _kpi_sub(fs, "향후 4주 지급예정"))
-        self.assertIn("금액 미확인 1건", _kv(fs, FIRM_MIN))
-        self.assertIn("금액 미확인 1건", _kv(fs, ALL_MIN))
+        # 첫 화면(2026-11-03 개편): 가용자금 표 아래와 확인 상자에 일정 기간 안 건수
+        self.assertIn("금액 미확인 지급 예정 1건 (미반영)", fs)
+        self.assertIn("<li>금액 미확인 지급 예정 1건</li>", fs)
         self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + FIRM_MIN))
         self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + ALL_MIN))
 
@@ -496,9 +496,9 @@ class TestDatedUnknownPayments(unittest.TestCase):
             ]
         R, fs, s2 = self.screen(edit)
         self.assertEqual((R["s2"]["out_unknown_n4"], R["s2"]["out_unknown_firm_n"], R["s2"]["out_unknown_n"]), (3, 3, 4))
-        self.assertIn("금액 미확인 3건", _kpi_sub(fs, "향후 4주 지급예정"))
-        self.assertIn("금액 미확인 3건", _kv(fs, FIRM_MIN))
-        self.assertIn("금액 미확인 4건", _kv(fs, ALL_MIN))
+        self.assertIn("금액 미확인 지급 예정 4건 (미반영)", fs)
+        self.assertIn("금액 미확인 3건", _kv(s2, "기간 중 " + FIRM_MIN))
+        self.assertIn("금액 미확인 4건", _kv(s2, "기간 중 " + ALL_MIN))
 
     def test_no_unknown_no_note(self):
         def edit(S):
@@ -506,8 +506,8 @@ class TestDatedUnknownPayments(unittest.TestCase):
                 if r[1] == "프로그램 진행비":
                     r[4], r[5] = "1,000,000", "100,000"
         R, fs, s2 = self.screen(edit)
-        self.assertNotIn("금액 미확인", _kpi_sub(fs, "향후 4주 지급예정"))
-        self.assertNotIn("금액 미확인", _kv(fs, FIRM_MIN))
+        self.assertNotIn("금액 미확인 지급 예정", fs)
+        self.assertNotIn("금액 미확인", _kv(s2, "기간 중 " + FIRM_MIN))
 
 
 # ───────────── 8. 실행 파일은 UNC 경로(\\서버\공유)에서도 프로그램 폴더로 옮겨 간다 ─────────────

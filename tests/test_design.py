@@ -29,10 +29,10 @@ def setUpModule():
 FIRST_TABLE = """
 (function(){
   var b=document.body;
-  var tw=document.querySelector('.mid .tw');
+  var tw=document.getElementById('avail').parentNode;
   b.setAttribute('data-twsw',String(tw.scrollWidth));
   b.setAttribute('data-twcw',String(tw.clientWidth));
-  var tot=tw.querySelector('tr.tot');
+  var tot=document.querySelector('.ptot');
   b.setAttribute('data-toth',String(tot.getBoundingClientRect().height));
   var hmax=0;[].forEach.call(document.querySelectorAll('table'),function(t){
     [].forEach.call(t.querySelectorAll('tbody tr:not(.tot)'),function(r){var h=r.getBoundingClientRect().height;if(h>hmax)hmax=h;});});
@@ -63,42 +63,45 @@ class TestReportFirstScreenLayout(unittest.TestCase):
         self.assertLess(float(body_attr(dom, "data-rowmax")), 80)
 
 
-LOW_LABEL = "최저 계산 잔액 (확정 일정만)"
-
-
-def kpi_parts(html, label):
-    """첫 화면 KPI 칸 (값 HTML, 아래 줄 HTML, 칸 class). 없으면 None."""
-    m = re.search(r"<div class='(kpi[^']*)'><div class='l'>" + re.escape(label) +
-                  r"</div><div class='v'>(.*?)</div><div class='s'>(.*?)</div></div>", html, re.S)
-    return (m.group(2), m.group(3), m.group(1)) if m else None
-
-
 def first_screen(html):
     return html.split("<div class='toc'>")[0]
 
 
-class TestLowestBalanceCard(unittest.TestCase):
-    """첫 화면의 질문 '앞으로 잔액이 가장 낮을 때 얼마인가'를 첫 줄 카드가 답한다 (값은 기존 계산 그대로)."""
+class TestAvailableFundsTable(unittest.TestCase):
+    """첫 화면 맨 위 질문 '이 기간까지 쓸 수 있는 돈은?'을 기간별 가용자금 표가 답한다 (사용자 2026-11-03).
+
+    주간 1~4주, 월간 1~3개월. 값은 calc 의 s2['periods'] 그대로 (확정분만 / 예상분 포함 둘 다 싣는다)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.R = compute(load(SAMPLE), "weekly", ASOF)
+        cls.R = {k: compute(load(SAMPLE), k, ASOF) for k in ("weekly", "monthly")}
 
-    def test_card_shows_lowest_firm_balance_date_and_reserve(self):
-        for mode in ("ceo", "mgmt"):
-            with self.subTest(mode=mode):
-                v, s, cls_ = kpi_parts(first_screen(render(self.R, mode)), LOW_LABEL)
-                self.assertIn("19.8", v)
-                self.assertIn("백만원", v)
-                self.assertIn("2027-04-25", s)
-                self.assertIn("최소 보유현금 100.0 미만", s)
-                self.assertIn("금액 미확인 1건 (미반영)", s)
-                self.assertIn("lv-reserve", cls_)
+    def rows(self, html, mode):
+        import test_report
+        return [[re.sub(r"<[^>]+>", " ", c).split() for c in r] for r in test_report.avail_rows(first_screen(html), mode)]
 
-    def test_card_is_in_the_kpi_row(self):
-        fs = first_screen(render(self.R, "ceo"))
-        kpis = fs.split("<div class='kpis'>")[1].split("<div class='mid'>")[0]
-        self.assertIn(LOW_LABEL, kpis)
+    def test_rows_follow_calc_for_both_editions_and_modes(self):
+        for kind, R in self.R.items():
+            labels = [p["label"] for p in R["s2"]["periods"]]
+            self.assertEqual(labels, ["1주", "2주", "3주", "4주"] if kind == "weekly" else ["1개월", "2개월", "3개월"])
+            for edition in ("ceo", "mgmt"):
+                html = render(R, edition)
+                for mode in ("all", "firm"):
+                    with self.subTest(kind=kind, edition=edition, mode=mode):
+                        got = self.rows(html, mode)
+                        for p, cells in zip(R["s2"]["periods"], got):
+                            r = p[mode]
+                            self.assertEqual(cells[0][0], p["label"])
+                            self.assertEqual(cells[3][0], "{:,}".format(r["bal"]))
+                            self.assertEqual(cells[4][0], "{:,}".format(r["low"]))
+                            self.assertEqual(cells[5][0], "{:,}".format(r["avail"]))
+
+    def test_negative_available_is_red(self):
+        import copy
+        R = copy.deepcopy(self.R["weekly"])
+        R["s2"]["periods"][0]["all"]["avail"] = -5_000_000
+        html = first_screen(render(R, "ceo"))
+        self.assertRegex(html, r"<b class='neg'>[^<0-9]?5,000,000</b>")
 
     def test_unknown_balance_says_so(self):
         import shutil
@@ -108,10 +111,10 @@ class TestLowestBalanceCard(unittest.TestCase):
         folder = os.path.join(tmp, "입력")
         shutil.copytree(SAMPLE, folder)
         os.remove(os.path.join(folder, "계좌잔액.csv"))
-        v, s, cls_ = kpi_parts(first_screen(render(compute(load(folder), "weekly", ASOF), "ceo")), LOW_LABEL)
-        self.assertIn("잔액 미확인", v)
-        self.assertNotIn("백만원", v)
-        self.assertNotIn("lv-", cls_)
+        html = render(compute(load(folder), "weekly", ASOF), "ceo")
+        for cells in self.rows(html, "all"):
+            self.assertEqual(cells[5], ["확인", "필요"])
+        self.assertNotIn("class='neg'", first_screen(html).split("<tbody class='pm-all'>")[1].split("</tbody>")[0])
 
 
 REQ_MEASURE = """
