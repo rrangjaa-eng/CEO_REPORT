@@ -334,5 +334,20 @@ class TestReportPhoneTables(unittest.TestCase):
                 self.assertLess(float(body_attr(dom, "data-rowmax")), 80, body_attr(dom, "data-who"))
 
 
+class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
+    """주간 대표 보고 (사용자 2026-11-03): 실적이 ③, 프로젝트 예산은 지금 지급이 진행 중인 프로젝트만 행사일 순."""
+
+    def test_results_come_before_projects_and_projects_are_active_by_event_date(self):
+        html = render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo")
+        heads = re.findall(r"<div class='q'>.*?</div>", html)
+        idx = lambda word: next(i for i, h in enumerate(heads) if word in h)
+        self.assertLess(idx("지금 자금은"), idx("실적"))
+        self.assertLess(idx("실적"), idx("프로젝트 예산"))
+        ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", html)
+        # 완료(P26202·05·06)는 남은 지급이 없어 빠지고, 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
+        self.assertEqual(ids, ["P26203", "P26201", "P26207", "P26204", "P26208"])
+        self.assertIn("행사일 순", html)
+
+
 if __name__ == "__main__":
     unittest.main()
