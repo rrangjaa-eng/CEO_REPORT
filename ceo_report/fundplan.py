@@ -189,8 +189,8 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     """자금계획 줄마다 상태를 정한다 (2026-11-03 사용자 질문: 예정일보다 빠르거나 늦게 지급·입금된 건).
 
     분개장에서 실제로 움직인 돈을 찾는다. 지급: 미지급 계정(payable) 차변 또는 예금(cash) 대변, 입금: 매출채권(receivable)
-    대변 또는 예금 차변이 같은 금액(채무·채권 줄은 같은 거래처)이고 전표일자가 예정일 EARLY_DAYS(지급 14일, 입금 45일) 전부터 장부 기준일까지면
-    '이미 지급'/'이미 입금' (분개장 한 줄은 한 번만 쓴다, 거래처가 맞는 줄 먼저). 못 찾았고 예정일이 기준일 이전·당일이면
+    대변 또는 예금 차변이 같은 금액·같은 거래처이고 전표일자가 예정일 EARLY_DAYS(지급 14일, 입금 45일) 전부터 장부 기준일까지면
+    '이미 지급'/'이미 입금' (분개장 한 줄은 한 번만 쓴다, 채무·채권 줄 먼저). 못 찾았고 예정일이 기준일 이전·당일이면
     '예정일 지남', 아니면 '예정'. 분개장이 없으면 확인하지 못했다고 근거에 적는다 (지급을 빼지 않는다).
     rows 를 고쳐 쓰고 상태별 건수를 돌려준다.
     """
@@ -228,10 +228,10 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 amount, named = kind(line, r["입출금"])
                 if amount != r["금액"]:
                     continue
-                same = norm_vendor(line["vendor"]) == key
-                if named and not same:
+                # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인)
+                if not key or norm_vendor(line["vendor"]) != key:
                     continue
-                rank = (0 if same else 1, abs((line["date"] - due).days))
+                rank = (0 if named else 1, abs((line["date"] - due).days))
                 if best is None or rank < best[0]:
                     best = (rank, i)
             found = best[1] if best else None
