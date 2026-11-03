@@ -98,6 +98,18 @@ class TestWeeklyReport(unittest.TestCase):
             self.assertIn("지난주(10/24) 예상", fs)
             self.assertIn("45,000,000", fs)
 
+    def test_dropped_rows_are_listed_apart_from_real_outflows(self):
+        """지급 예정 표에는 실제 나가는 것만, 지난주 대비 빠진 것은 아래 따로 (사용자 2026-11-03)."""
+        R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
+        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 7), 8_800_000, "샘플 빠진 지급")]}
+        fs = first_screen(render(R, "ceo"))
+        main = fs[fs.index("이번 주 지급 예정"):fs.index("이번 주 지급에서 빠진 것")]
+        self.assertNotIn("샘플 빠진 지급", main)
+        self.assertNotIn("목록에서 빠짐", fs)
+        rest = fs[fs.index("이번 주 지급에서 빠진 것"):fs.index("지금 자금은?")]
+        self.assertIn("샘플 빠진 지급", rest)
+        self.assertIn("8,800,000", rest)
+
     def test_without_last_week_record_says_so(self):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
         fs = first_screen(render(R, "ceo"))

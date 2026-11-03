@@ -254,7 +254,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}table.pt.wo tr.gone td{color:var(--sub);text-decoration:line-through}table.pt.wo tr.gone td:last-child,table.pt.wo tr.gone td:nth-child(6){text-decoration:none}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.wgone{margin-top:8px;font-weight:700;color:var(--sub)}table.pt.wo.gone td{color:var(--sub)}table.pt.wo.gone th:nth-child(5),table.pt.wo.gone td:nth-child(5){text-align:right}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -619,11 +619,6 @@ def _week_out_table(R):
         h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td>%s</tr>"
                  % (" class='od'" if e["overdue"] else "", esc(md(e["date"])), esc(e.get("desc") or ""),
                     esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state), extra))
-    for c in (C["changes"] if C else []):
-        if c["kind"] == "빠짐":
-            h.append("<tr class='gone'><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td></td><td>목록에서 빠짐</td><td>%s</td></tr>"
-                     % (esc(md(c["prev_date"])), esc(c["desc"]), esc(c["project"]), esc(c["cat"]),
-                        esc("지난주 미확인" if c["prev"] is None else "−%s (지난주 %s)" % (won(c["prev"]), won(c["prev"])))))
     h.append("</tbody></table>")
     tail = "확정 %s · 예상 %s" % (won(W_["firm"]), won(W_["est"]))
     if W_["overdue"]:
@@ -638,7 +633,17 @@ def _week_out_table(R):
             return won(t) + (" (금액 미확인 %d건 제외)" % unknown if unknown else "")
         diff = "미확인 (금액 미확인 줄이 있음)" if C["diff"] is None else (
             "%s%s" % ("+" if C["diff"] > 0 else "", won(C["diff"])) if C["diff"] else "변동 없음")
-        h.append("<div class='wchg'>%s</div><div class='note'>빠짐 = 이미 지급됐거나 날짜가 이번 주 밖으로 옮겨진 것. "
+        gone = [c for c in C["changes"] if c["kind"] == "빠짐"]
+        if gone:   # 실제로 나가지 않는 줄은 위 표에 섞지 않고 따로 (사용자 2026-11-03)
+            h.append("<div class='wgone'>지난주 예상에는 있었지만 이번 주 지급에서 빠진 것 %d건</div>"
+                     "<table class='pt wo gone'><thead><tr><th>지난주 예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
+                     "<th>지난주 금액</th></tr></thead><tbody>" % len(gone))
+            for c in gone:
+                h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td></tr>"
+                         % (esc(md(c["prev_date"])), esc(c["desc"]), esc(c["project"]), esc(c["cat"]),
+                            esc("미확인" if c["prev"] is None else won(c["prev"]))))
+            h.append("</tbody></table>")
+        h.append("<div class='wchg'>%s</div><div class='note'>빠진 것 = 이미 지급됐거나 날짜가 이번 주 밖으로 옮겨진 것. "
                  "예정일 지난 미처리는 비교에서 뺌</div>" % esc("지난주(%s) 예상 %s → 지금 %s · 변동 %s" % (
                      md(C["asof"]), total(C["prev_total"], C["prev_unknown"]), total(C["cur_total"], C["cur_unknown"]), diff)))
     h.append("</div>")
