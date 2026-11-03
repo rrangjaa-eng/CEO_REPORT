@@ -224,7 +224,7 @@ class TestMonthlySection(unittest.TestCase):
                                  " · 인트라넷 스냅숏 20261102_000000 (수집 2026-11-02 00:00:00) · 변환 시각 2026-11-02 00:00:00")
 
     def test_summary_rows_have_the_known_labels_in_order(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertEqual(list(summary_rows(page)), ["지급요청 대조", "프로젝트 (도)원가", "프로젝트 미연결 원가", "거래처 미지급",
                                                             "매출 (분개장)", "보통예금 (WEHAGO 10300)"])
@@ -233,41 +233,41 @@ class TestMonthlySection(unittest.TestCase):
                 self.assertEqual(raw_summary_labels(page)[4], "매출 (분개장, 2026-09~2026-10 장부 기준)")
 
     def test_payment_request_row_counts_by_status(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertEqual(summary_rows(page)["지급요청 대조"], "9건 (%s) · %s" % (STATUS_TEXT, STATUS_CHECK_TEXT))
 
     def test_project_cost_row(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertEqual(summary_rows(page)["프로젝트 (도)원가"], PROJECT_TEXT)
 
     def test_unlinked_cost_row(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertEqual(summary_rows(page)["프로젝트 미연결 원가"], "2줄 1,100,000")
 
     def test_vendor_row(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertTrue(summary_rows(page)["거래처 미지급"].startswith("비교 9곳 · 차이 5곳 13,176,000 · 판단 불가 2곳"),
                                 summary_rows(page)["거래처 미지급"])
 
     def test_revenue_row_with_manual_contract_label_and_unregistered_count(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 self.assertEqual(summary_rows(page)["매출 (분개장)"], REVENUE_TEXT)
 
     def test_cash_row_without_opening_line_is_unknown_not_zero(self):
-        for mode, page in self.pages.items():
+        for mode, page in detail(self.pages).items():   # 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
             with self.subTest(mode):
                 value = summary_rows(page)["보통예금 (WEHAGO 10300)"]
                 self.assertTrue(value.startswith("증감 45,000,000 · 장부 잔액 판단 불가 (기초 잔액 줄 없음)"), value)
 
     def test_summary_is_identical_in_both_editions(self):
-        # 대표 보고는 요약만 싣는다 (문서 1~2쪽, 사용자 2026-11-03): 8번 상세는 경영관리 보고에만. 대표 첫 화면에는 대조 요약이 있다
+        # 장부 대조는 대표에게 필요 없어 대표 보고에서 뺌 (사용자 2026-11-03): 경영관리 보고 8번에만
         self.assertNotIn("<h2 id='s8'>", self.pages["ceo"])
-        self.assertIn("장부와 맞춰 본 결과", self.pages["ceo"])
+        self.assertNotIn("장부와 맞춰 본 결과", self.pages["ceo"])
 
     def test_ceo_edition_has_no_detail_block_and_no_forbidden_word(self):
         ceo = self.pages["ceo"]
@@ -360,7 +360,7 @@ class TestMonthlyDetail(unittest.TestCase):
         self.assertNotIn("xchk-detail", ceo)
         for tid in DETAIL_IDS + ("xchk-cash-months",):
             self.assertNotIn(tid, ceo)
-        self.assertIn('<table id="xchk-summary"', ceo)
+        self.assertNotIn('<table id="xchk-summary"', ceo)
 
     def test_the_summary_sits_outside_the_detail_block(self):
         page = self.pages["mgmt"]
@@ -586,7 +586,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
 
     def test_cash_summary_with_opening_balance_and_bank_balances(self):
         bank = {"balances": BANK_BALANCES, "transactions": BANK_TX}
-        for mode, page in cash_pages(self, journal=OPENING_CASH, bank=bank).items():
+        for mode, page in detail(cash_pages(self, journal=OPENING_CASH, bank=bank)).items():
             with self.subTest(mode):
                 self.assertEqual(summary_rows(page)["보통예금 (WEHAGO 10300)"],
                                  "증감 45,000,000 · 장부 잔액 345,000,000 · 계좌잔액.csv 합계 345,000,000 · 차이 0")
@@ -603,12 +603,12 @@ class TestMonthlyUnknowns(unittest.TestCase):
     def test_cash_summary_shows_a_real_difference_with_its_sign(self):
         bank = {"balances": [dict(BANK_BALANCES[0]), dict(BANK_BALANCES[1], 잔액="100,000,000")], "transactions": None}
         pages = cash_pages(self, journal=OPENING_CASH, bank=bank)
-        self.assertEqual(summary_rows(pages["ceo"])["보통예금 (WEHAGO 10300)"],
+        self.assertEqual(summary_rows(pages["mgmt"])["보통예금 (WEHAGO 10300)"],
                          "증감 45,000,000 · 장부 잔액 345,000,000 · 계좌잔액.csv 합계 300,000,000 · 차이 45,000,000")
 
     def test_cash_summary_with_bank_balance_but_no_opening_line_has_no_difference(self):
         bank = {"balances": BANK_BALANCES, "transactions": None}
-        value = summary_rows(cash_pages(self, bank=bank)["ceo"])["보통예금 (WEHAGO 10300)"]
+        value = summary_rows(cash_pages(self, bank=bank)["mgmt"])["보통예금 (WEHAGO 10300)"]
         self.assertEqual(value, "증감 45,000,000 · 장부 잔액 판단 불가 (기초 잔액 줄 없음) · 계좌잔액.csv 합계 345,000,000 · 차이 판단 불가")
 
     def test_no_registered_contract_amount_is_not_a_zero_total(self):
@@ -617,7 +617,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
                 if r["구분"] == "매출계약" and r["항목"] == "계약금액 (수동 입력)":
                     r["금액"], r["비고"] = "", "미등록"
         table = with_rows(xchk_table(shared_inputs()), edit)
-        value = summary_rows(pages_for(self, table)["ceo"])["매출 (분개장)"]
+        value = summary_rows(pages_for(self, table)["mgmt"])["매출 (분개장)"]
         self.assertIn("계약금액 (수동 입력) 등록된 값 없음 (미등록 4건)", value)
         self.assertNotIn("합계 0", value)
 
@@ -628,13 +628,13 @@ class TestMonthlyUnknowns(unittest.TestCase):
                     r["금액"], r["비고"] = "", "금액 미확인 1줄"
         table = with_rows(xchk_table(shared_inputs()), edit)
         pages = pages_for(self, table)
-        value = summary_rows(pages["ceo"])["프로젝트 (도)원가"]
+        value = summary_rows(pages["mgmt"])["프로젝트 (도)원가"]
         self.assertTrue(value.startswith("판단 불가 (금액 미확인 1개 프로젝트) 확인된 합계 213,400,000"), value)
         self.assertIn("원가 판단 불가 1개 프로젝트는 제외", value)
         rows = dict((r["번호"], r) for r in table_cells(pages["mgmt"], "xchk-projects"))
         self.assertEqual(rows["26203"]["WEHAGO 원가"], "판단 불가 (미확인 1줄)")
         self.assertEqual(rows["26203"]["원가−실행가"], "판단 불가")
-        self.assertEqual(summary_rows(pages["ceo"]), summary_rows(pages["mgmt"]))
+        self.assertEqual(summary_rows(pages["mgmt"]), summary_rows(pages["mgmt"]))
 
     def test_unlinked_total_with_an_unknown_line_is_unknown_with_the_count(self):
         def edit(rows):
@@ -642,7 +642,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
                 if r["구분"] == "미연결원가" and r["항목"] == "WEHAGO 원가":
                     r["금액"], r["비고"] = "", "금액 미확인 1줄"
         pages = pages_for(self, with_rows(xchk_table(shared_inputs()), edit))
-        self.assertEqual(summary_rows(pages["ceo"])["프로젝트 미연결 원가"], "2줄 금액 판단 불가 (미확인 1줄)")
+        self.assertEqual(summary_rows(pages["mgmt"])["프로젝트 미연결 원가"], "2줄 금액 판단 불가 (미확인 1줄)")
 
     def test_both_editions_stay_equal_for_every_variant(self):
         bank = {"balances": BANK_BALANCES, "transactions": BANK_TX}

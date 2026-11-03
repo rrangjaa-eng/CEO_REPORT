@@ -92,7 +92,9 @@ class TestConvertedReports(unittest.TestCase):
                 self.assertIn("258,400,000", plain(section8(self.monthly[mode])))
 
     def test_summary_rows_of_the_two_editions_are_the_same(self):
-        self.assertEqual(summary_rows(self.monthly["ceo"]), summary_rows(self.monthly["mgmt"]))
+        # 장부 대조 요약은 경영관리 보고에만 (사용자 2026-11-03)
+        self.assertNotIn('<table id="xchk-summary"', self.monthly["ceo"])
+        self.assertTrue(summary_rows(self.monthly["mgmt"]))
 
     def test_ceo_edition_has_no_forbidden_word_and_the_same_numbers(self):
         editions_ok(self, self.monthly["ceo"], self.monthly["mgmt"])
@@ -345,7 +347,7 @@ class TestConvertedApprovalEqual(unittest.TestCase):
     def test_the_total_project_cost_is_the_same_in_the_summary_and_on_the_screen(self):
         for pages, screen_page, A in (self.dflt, self.linked):
             total = sum(r["cost"] for r in A["xchk"]["projects"])
-            self.assertTrue(summary_rows(pages["ceo"])["프로젝트 (도)원가"].startswith("{:,} (".format(total)))
+            self.assertTrue(summary_rows(pages["mgmt"])["프로젝트 (도)원가"].startswith("{:,} (".format(total)))
 
 
 # ───────────── Task 2: 회사 자료가 git 에 들어가지 않음 (D-45, T-02-31) ─────────────

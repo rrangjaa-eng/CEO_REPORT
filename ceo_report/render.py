@@ -1066,13 +1066,15 @@ def _first_screen(R, mode, per):
         ]
         # 프로젝트 예산은 월간 첫 화면에서 빼고 경영관리 보고 3장(프로젝트 예산·집행)에만 (사용자 2026-11-03 선택: 대표용 3쪽).
         # 두 판의 첫 화면 숫자는 같아야 하므로(D-04) 경영관리 판 첫 화면도 같게 둔다.
-        pages = [pages[0], pages[1], ("지난 미수금·지급 · 계정과목", past + [_acct_year_block(R), ("장부와 맞춰 본 결과 (WEHAGO 기준)", xk), checks])]
+        # 장부 대조(WEHAGO 기준)는 대표에게 필요 없어 첫 화면에서 뺌 — 경영관리 보고 8장에만 (사용자 2026-11-03)
+        pages = [pages[0], pages[1], ("지난 미수금·지급 · 계정과목", past + [_acct_year_block(R), checks])]
     else:
         wo = week_outflows(R)
         pages = [
             ("나갈 돈", [("금요일(%s) 출금 목록" % _md(wo["fri"]), _week_out_table(R))] + past),
+            # 분기별 세금·정기 지출 표는 월간에만. 주간은 그 주에 나가는 세금이 금요일 출금 목록에 나옴 (사용자 2026-11-03)
             ("자금 · 실적", funds + [("%s 실적" % ymt, _results(R, cum=True)), checks]),
-            ("정기 지출 · 프로젝트", regular + projects),
+            ("프로젝트", projects),
         ]
     # 쪽을 억지로 나누지 않는다: 절은 쪽 사이에서 끊기지 않게만 하고 차례대로 흘려 3쪽 안에 넣는다 (자료 양이 주마다 달라서)
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]

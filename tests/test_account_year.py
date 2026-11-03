@@ -87,7 +87,11 @@ class TestSection5(unittest.TestCase):
         self.assertEqual(k("카드대금", "신한카드"), "카드대금")
         self.assertIsNone(k("임차료", "건물관리"))
 
-    def test_weekly_section_has_three_parts_and_quarters(self):
-        html = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
+    def test_quarterly_table_is_monthly_only(self):
+        """분기별 세금·정기 지출 표는 월간에만, 주간은 그 주에 나가는 세금이 금요일 목록에 (사용자 2026-11-03)."""
+        M = render(compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31)), "ceo")
         for t in ("입금일 지난 미수금", "지급일 지난 출금", "2026년 4분기 (남은 기간)", "2027년 1분기", "차입금 상환", "이자비용"):
-            self.assertIn(t, html)
+            self.assertIn(t, M)
+        W = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
+        self.assertIn("입금일 지난 미수금", W)
+        self.assertNotIn("2027년 1분기", W)
