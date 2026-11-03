@@ -323,6 +323,61 @@ def _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, dupl
     return lines
 
 
+def _match_plan(req_all, events, F, norm_vendor):
+    """지급요청 ↔ 자금계획서 줄 (D-55). -> (일정에서 뺄 자금계획서 일정 id 집합, 날짜를 바꾼 요청, 자금계획서에 없는 요청).
+
+    같은 금액이고 (거래처가 같거나 프로젝트 번호가 같거나 날짜가 7일 안)이면 같은 지급으로 본다 (거래처 먼저, 한 줄은 한 요청에만).
+    맞으면 요청의 예상 지급일을 자금계획서 날짜로 바꾼다. 자금계획서가 다루는 달에 예상 지급일이 있는데 맞는 줄이 없는 요청은
+    'WEHAGO 자금계획서에 없음'으로 표시한다 (일정에서는 빼지 않는다).
+    """
+    if not F or not F.get("used"):
+        return set(), [], []
+    plan = [ev for ev in events if ev.get("source") == "자금계획서" and ev["io"] == "out"]
+    taken, moved, absent = set(), [], []
+    for rq in req_all:
+        if rq["status"] == "status_unknown" or rq["amount"] is None:
+            continue
+        amounts = set(a for a in (rq["amount"], rq["schedule_amount"]) if a is not None)
+        key = norm_vendor(rq["vendor"])
+        best = None
+        for ev in plan:
+            if id(ev) in taken or ev["amount"] not in amounts:
+                continue
+            same = bool(key) and norm_vendor(ev["desc"]) == key
+            proj = bool(rq["code"]) and "".join(ch for ch in (ev.get("project") or "") if ch.isdigit()) == rq["code"]
+            near = rq["date"] is not None and abs((ev["date"] - rq["date"]).days) <= 7
+            if not (same or proj or near):
+                continue
+            rank = (0 if same else 1 if proj else 2, abs((ev["date"] - rq["date"]).days) if rq["date"] else 999)
+            if best is None or rank < best[0]:
+                best = (rank, ev)
+        if best is not None:
+            ev = best[1]
+            taken.add(id(ev))
+            rq["plan_date"] = ev["date"]
+            if rq["xstatus"] != "이미 지급":
+                rq["date"], rq["rule"] = ev["date"], "WEHAGO 자금계획서 지급예정일" + (
+                    " (예정일 지남 → 다음 금요일)" if ev.get("plan_state") == "예정일 지남" else "")
+                moved.append(rq)
+        elif rq["xstatus"] != "이미 지급" and rq["date"] is not None and rq["date"].strftime("%Y-%m") in F["months"]:
+            rq["plan_note"] = "WEHAGO 자금계획서에 없음"
+            absent.append(rq)
+    return taken, moved, absent
+
+
+def _plan_notes(F, moved, absent):
+    if not F:
+        return []
+    if not F.get("used"):
+        return ["자금계획서 쓰지 않음: " + F["reason"]]
+    lines = ["일정 기준: WEHAGO 자금계획서 (자료일 %s, %s). 지급요청 %d건은 자금계획서 지급예정일로 날짜를 맞춤"
+             % (F["stamp"].isoformat(), ", ".join(F["months"]), len(moved))]
+    if absent:
+        lines.append("WEHAGO 자금계획서에 없는 지급요청 %s — 요청 날짜 그대로 일정에 둠 (WEHAGO 지급예정일 등록 확인)"
+                     % _count_text(absent))
+    return lines
+
+
 def _budget_note(budget_sched):
     """D-54: 남은 예산(원가 예산 − 예상총집행)을 지급 예정으로 넣은 건수·금액."""
     return ("프로젝트 남은 예산 지급 예정 %s (원가 예산 − 예상집행, 부가세 10%% 더함, 행사일 다음 달 말 금요일)"
@@ -476,6 +531,9 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
             # D-30a: 계산서가 더 크면 계산서 합계로. D-30b: 더 적으면 요청 금액 그대로 (지급을 줄이지 않는다)
             rq["schedule_amount"], rq["amount_source"] = row["schedule_amount"], "WEHAGO 계산서"
 
+    # D-55 자금계획서 기준: 요청과 같은 자금계획서 줄이 있으면 그 지급예정일을 쓰고, 그 줄은 일정에 두 번 넣지 않는다
+    plan_taken, plan_reqs, plan_absent = _match_plan(req_all, R["events"], R.get("fundplan"), wehago.norm_vendor)
+
     # 요청 분류를 입력 일정 맞추기보다 먼저 한다: 일정에 실제로 들어간 요청만 입력 일정 줄을 대신할 수 있다 (WR-06)
     undated, past, beyond, amount_unknown_events, rolled, vat_unknown_sched = [], [], [], [], [], []
     budget_sched = []
@@ -553,7 +611,11 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
                    and (rq["request_date"] or rq["date"]) == ev["date"] for rq in pool)
 
     replaced, unmatched_exec, duplicates, possible_duplicates, kept, number_kept = [], [], [], [], [], []
+    plan_dup = []
     for ev0 in R["events"]:
+        if id(ev0) in plan_taken:
+            plan_dup.append(ev0)
+            continue
         ev = dict(ev0)
         m = _NO_RE.search(ev["basis"] or "")
         by_number = bool(m and m.group(1) in numbers)
@@ -629,7 +691,9 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
             "xchk": _xchk_full(books, match, req_all, projects, wehago, approved_paid, links),
             "notes": _notes(cutoff, monday, approved_paid, rolled, replaced, unmatched_exec, duplicates,
                             possible_duplicates, _paid_note(cutoff, paid_after) if books.state == "ok" else None,
-                            _account_notes(accounts, cutoff, newest, stale_in), number_kept) + [_budget_note(budget_sched)],
+                            _account_notes(accounts, cutoff, newest, stale_in), number_kept) + [_budget_note(budget_sched)]
+                     + _plan_notes(R.get("fundplan"), plan_reqs, plan_absent),
             "number_kept": number_kept, "budget_sched": budget_sched,
+            "plan_requests": plan_reqs, "plan_absent": plan_absent, "plan_dup": plan_dup,
             "newest_balance_date": newest, "stale_in": stale_in,
             "issues": list(issues.items)}

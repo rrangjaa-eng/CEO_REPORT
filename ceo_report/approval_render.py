@@ -405,7 +405,8 @@ def _req_row(rq, S):
     first = '<td class="c1"><label class="chk">%s<span class="sr">%s</span><span class="no">%s</span></label></td>' % (
         box, esc(sr), esc(rq["번호"]))
     date = esc(rq["date"].isoformat()) if rq["date"] else _na("미확인")
-    rule = esc(rq["rule"] if rq["toggle"] else " · ".join(x for x in (rq["reason"], rq["rule"]) if x))
+    rule = esc(" · ".join(x for x in ((rq["rule"],) if rq["toggle"] else (rq["reason"], rq["rule"])) + (rq.get("plan_note", ""),)
+                          if x))
     stage = "".join('<td class="%s">%s</td>' % (c, esc(v)) for c, v in zip(("s-team", "s-mgmt", "s-boss"), rq["stages"]))
     if rq["toggle"]:
         t = S["toggle"][rq["id"]]
