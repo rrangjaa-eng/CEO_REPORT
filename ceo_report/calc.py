@@ -285,8 +285,28 @@ def compute(d, kind, asof, start=None):
             P["remain_due"] = budget_due(_event_date(P.get("event_date")), asof)
     remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None
                       and (P.get("state") or "").strip() not in DONE_STATES]
+    by_team = OrderedDict()
+    for P in sorted(plist, key=lambda P: P["team"]):
+        t = by_team.setdefault(P["team"], {"team": P["team"], "n": 0, "budget": 0, "no_budget": 0, "expected": 0,
+                                           "remain": 0, "remain_unknown": 0, "planned_pay": 0})
+        t["n"] += 1
+        t["expected"] += P["expected"]
+        if P["budget"] is None:
+            t["no_budget"] += 1
+            continue
+        t["budget"] += P["budget"]
+        if P["remain"] is None:
+            t["remain_unknown"] += 1
+        else:
+            t["remain"] += P["remain"]
+        t["planned_pay"] += P["remain_cash"] or 0
+    for t in by_team.values():
+        if t["n"] == t["no_budget"]:
+            t["budget"] = t["remain"] = None   # 예산 지정 프로젝트가 없으면 0이 아니라 판단 불가 (D-02)
+        elif t["remain_unknown"] == t["n"] - t["no_budget"]:
+            t["remain"] = None
     R["s3"] = {"projects": plist, "ranked": ranked, "shown": shown, "rest": rest, "total": tot,
-               "remain_unknown": remain_unknown,
+               "remain_unknown": remain_unknown, "by_team": list(by_team.values()),
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
                "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
     linked_lines = sum(len(P["lines"]) for P in plist)

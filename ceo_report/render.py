@@ -678,6 +678,16 @@ def _s3(R, per):
              "지급·요청·계획은 공급가액. 카드 사용액은 총액. ‘지급 실출금’은 지급완료분 공급가액+부가세. "
              "누적 지급 = 지급완료 + 카드결제완료. "
              "남은 예산(진행 중 프로젝트)은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음(그 날이 지났으면 기준일 다음 금요일, 행사일 없으면 날짜 없는 지급 예정). 완료 프로젝트는 넣지 않음. 합계의 지급률·잔여예산은 예산 지정 프로젝트만.</div>")
+    h.append("<h3>팀별 예산·집행</h3>")
+    trows = [[esc(t["team"]), esc("%d건" % t["n"]), W(t["budget"], "판단 불가"),
+              esc("%d건" % t["no_budget"]) if t["no_budget"] else "", W(t["expected"]),
+              W(t["remain"], "판단 불가") + (_na(" (판단 불가 %d건 제외)" % t["remain_unknown"])
+                                         if t["remain_unknown"] and t["remain"] is not None else ""),
+              W(t["planned_pay"])] for t in s3["by_team"]]
+    h.append(table(["팀", "프로젝트", "원가 예산", "예산 미지정", "예상 총집행", "예상 잔여예산", "남은 예산 지급 예정(VAT포함)"],
+                   trows, num_cols=(2, 4, 5, 6)))
+    h.append("<div class='note'>팀 = 프로젝트.csv 팀(담당 부서). 원가 예산·잔여예산은 예산 지정 프로젝트만 더함. "
+             "예상 총집행은 팀의 모든 프로젝트. 남은 예산 지급 예정은 완료 프로젝트 제외.</div>")
     if s3["unlinked"]:
         h.append("<h3>프로젝트 미연결 집행 (%d건, %s원)</h3>" % (len(s3["unlinked"]), won(s3["unlinked_total"])))
         h.append(_exec_table(s3["unlinked"]))
