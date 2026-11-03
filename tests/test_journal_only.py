@@ -122,3 +122,32 @@ class TestJournalOnly(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPriorYearPrint(unittest.TestCase):
+    """2026-11-03 실제: '261103 분개장_2025.xls'(작년 기수)와 '261103 분개장.xls'가 이름 앞 날짜가 같다."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+
+    def test_year_in_name_marks_prior_file(self):
+        write_journal(self.dir)   # 2026
+        old = [("12/31", "00019", "17000", "진행중행사", "결산", 500.0, "", "", "", "결산전표"),
+               ("12/31", "00019", "63300", "행사외주비(도)", "결산", "", 500.0, "", "", "결산전표")]
+        strings = []
+        rows = print_rows(old)
+        rows[1][1] = "기 간  : 2025년 01월 01일 ~ 2025년 12월 31일"
+        path = os.path.join(self.dir, "261103 분개장_2025.xls")
+        X.write_xls(path, X.grid_records(rows, strings), strings)
+        os.utime(path, None)   # 작년 파일을 나중에 저장해도
+        b = wehago.load_books(self.dir, ASOF, None)
+        self.assertEqual(b.state, "ok", b.reason)
+        self.assertEqual(b.files["분개장"]["name"], "261031 분개장.xls")
+        self.assertEqual(b.files["분개장"]["prior"], ["261103 분개장_2025.xls"])
+        self.assertEqual(min(x["date"] for x in b.journal), dt.date(2025, 12, 31))
+        self.assertEqual(b.book_date, dt.date(2026, 10, 31))
+
+    def test_closing_slip_type_counts_as_closing(self):
+        from ceo_report import convert
+        self.assertIn("결산전표", convert.DEFAULT_CONFIG["closing_sorts"])
