@@ -704,7 +704,9 @@ class TestApprovalLauncher(unittest.TestCase):
         self.assertEqual(len(notes), 1, notes)
 
     def test_only_three_lines_differ_from_the_weekly_launcher(self):
-        weekly, mine = self.lines("실행_주간.bat"), self.lines()
+        # 보고서 실행 파일만 가용일 질문 4줄이 있다 (문서로 전달, 사용자 2026-11-03). 그 줄을 빼고 비교한다
+        weekly = [ln.replace(" %PICKARG%", "") for ln in self.lines("실행_주간.bat") if "PICK" not in ln or ln.startswith("%PY%")]
+        mine = self.lines()
         added = [ln for ln in mine if ln not in weekly]
         removed = [ln for ln in weekly if ln not in mine]
         self.assertEqual(len(added), 3, added)

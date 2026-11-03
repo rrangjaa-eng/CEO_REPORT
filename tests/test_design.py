@@ -70,15 +70,16 @@ def first_screen(html):
 class TestAvailableFundsTable(unittest.TestCase):
     """첫 화면 맨 위 질문 '이 기간까지 쓸 수 있는 돈은?'을 기간별 가용자금 표가 답한다 (사용자 2026-11-03).
 
-    주간 1~4주, 월간 1~3개월. 값은 calc 의 s2['periods'] 그대로 (확정분만 / 예상분 포함 둘 다 싣는다)."""
+    주간 1~4주, 월간 1~3개월. 값은 calc 의 s2['periods'] 그대로. 문서(PDF)로 전달하므로 단추 없이
+    줄은 예상분 포함, 가용자금 칸 아래에 확정분만을 함께 적는다 (사용자 2026-11-03)."""
 
     @classmethod
     def setUpClass(cls):
         cls.R = {k: compute(load(SAMPLE), k, ASOF) for k in ("weekly", "monthly")}
 
-    def rows(self, html, mode):
+    def rows(self, html):
         import test_report
-        return [[re.sub(r"<[^>]+>", " ", c).split() for c in r] for r in test_report.avail_rows(first_screen(html), mode)]
+        return [[re.sub(r"<[^>]+>", " ", c).split() for c in r] for r in test_report.avail_rows(first_screen(html))]
 
     def test_rows_follow_calc_for_both_editions_and_modes(self):
         for kind, R in self.R.items():
@@ -86,15 +87,15 @@ class TestAvailableFundsTable(unittest.TestCase):
             self.assertEqual(labels, ["1주", "2주", "3주", "4주"] if kind == "weekly" else ["1개월", "2개월", "3개월"])
             for edition in ("ceo", "mgmt"):
                 html = render(R, edition)
-                for mode in ("all", "firm"):
-                    with self.subTest(kind=kind, edition=edition, mode=mode):
-                        got = self.rows(html, mode)
-                        for p, cells in zip(R["s2"]["periods"], got):
-                            r = p[mode]
-                            self.assertEqual(cells[0][0], p["label"])
-                            self.assertEqual(cells[3][0], "{:,}".format(r["bal"]))
-                            self.assertEqual(cells[4][0], "{:,}".format(r["low"]))
-                            self.assertEqual(cells[5][0], "{:,}".format(r["avail"]))
+                with self.subTest(kind=kind, edition=edition):
+                    got = self.rows(html)
+                    self.assertEqual(len(got), len(R["s2"]["periods"]))
+                    for p, cells in zip(R["s2"]["periods"], got):
+                        r = p["all"]
+                        self.assertEqual(cells[0][0], p["label"])
+                        self.assertEqual(cells[3][0], "{:,}".format(r["bal"]))
+                        self.assertEqual(cells[4][0], "{:,}".format(r["low"]))
+                        self.assertEqual(cells[5], ["{:,}".format(r["avail"]), "확정분만", "{:,}".format(p["firm"]["avail"])])
 
     def test_negative_available_is_red(self):
         import copy
@@ -112,9 +113,45 @@ class TestAvailableFundsTable(unittest.TestCase):
         shutil.copytree(SAMPLE, folder)
         os.remove(os.path.join(folder, "계좌잔액.csv"))
         html = render(compute(load(folder), "weekly", ASOF), "ceo")
-        for cells in self.rows(html, "all"):
-            self.assertEqual(cells[5], ["확인", "필요"])
-        self.assertNotIn("class='neg'", first_screen(html).split("<tbody class='pm-all'>")[1].split("</tbody>")[0])
+        for cells in self.rows(html):
+            self.assertEqual(cells[5], ["확인", "필요", "확정분만", "확인", "필요"])
+        self.assertNotIn("neg", first_screen(html).split("id='avail'>")[1].split("</table>")[0])
+
+
+class TestReportIsADocument(unittest.TestCase):
+    """보고서는 프로그램이 아니라 문서(PDF)로 전달한다 (사용자 2026-11-03): 누르거나 입력하는 것이 없고 모든 값이 그대로 보인다."""
+
+    def test_no_buttons_inputs_or_scripts(self):
+        for kind in ("weekly", "monthly"):
+            R = compute(load(SAMPLE), kind, ASOF)
+            for edition in ("ceo", "mgmt"):
+                with self.subTest(kind=kind, edition=edition):
+                    html = render(R, edition)
+                    for tag in ("<script", "<button", "<input"):
+                        self.assertNotIn(tag, html)
+
+    def test_pick_date_row_is_fixed_when_report_is_made(self):
+        import test_report
+        pick = ASOF + dt.timedelta(days=40)
+        R = compute(load(SAMPLE), "weekly", ASOF, pick=pick)
+        last = R["s2"]["periods"][-1]
+        self.assertEqual((last["label"], last["end"]), ("지정일", pick))
+        same = [p for p in compute(load(SAMPLE), "monthly", ASOF)["s2"]["periods"]]
+        self.assertEqual(len(R["s2"]["periods"]), 5)
+        rows = test_report.avail_rows(first_screen(render(R, "ceo")))
+        self.assertEqual(len(rows), 5)
+        self.assertIn("지정일", rows[-1][0])
+        self.assertIn(pick.isoformat(), rows[-1][0])
+        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][5])
+        self.assertEqual(len(same), 3)
+
+    def test_no_pick_date_no_row(self):
+        R = compute(load(SAMPLE), "weekly", ASOF)
+        self.assertNotIn("지정일", first_screen(render(R, "ceo")))
+
+    def test_pick_date_beyond_schedule_says_so(self):
+        R = compute(load(SAMPLE), "weekly", ASOF, pick=ASOF + dt.timedelta(days=400))
+        self.assertIn("지정일이 일정 자료 범위", first_screen(render(R, "ceo")))
 
 
 REQ_MEASURE = """

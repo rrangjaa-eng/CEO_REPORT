@@ -32,7 +32,11 @@ popd
 exit /b 1
 :RUN
 echo 입력 CSV는 이 폴더 안의 '입력' 폴더에서 읽습니다 (빈 양식: 입력양식 폴더, 예시 자료: 입력양식\샘플 폴더).
-%PY% 보고서.py 월간 %*
+set "PICK="
+set "PICKARG="
+set /p "PICK=가용자금을 따로 볼 날짜 (예: 2026-12-31, 없으면 Enter): "
+if defined PICK set "PICKARG=--가용일 %PICK%"
+%PY% 보고서.py 월간 %PICKARG% %*
 set "RC=%ERRORLEVEL%"
 echo.
 if "%RC%"=="0" goto OK

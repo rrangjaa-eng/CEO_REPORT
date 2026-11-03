@@ -106,7 +106,7 @@ class TestOutflowFileUnusable(unittest.TestCase):
             self.assertIsNone(b["bal_all"])
         for html in (ceo, mgmt):
             fs = fs_of(html)
-            for cells in tr_avail_rows(fs, "all") + tr_avail_rows(fs, "firm"):
+            for cells in tr_avail_rows(fs):
                 self.assertIn("지급 자료 없음", cells[2])
                 for val in cells[3:]:
                     self.assertIn("확인 필요", val)       # 잔액·최저·가용자금은 계산하지 않음
@@ -179,9 +179,9 @@ def fs_of(html):
     return html.split("<div class='toc'>")[0]
 
 
-def tr_avail_rows(html, mode="all"):
+def tr_avail_rows(html):
     import test_report
-    return test_report.avail_rows(html, mode)
+    return test_report.avail_rows(html)
 
 
 def tr_box_items(html):
@@ -243,7 +243,7 @@ class TestInvoiceFileUnusable(unittest.TestCase):
         for html in (ceo, mgmt):
             fs = fs_of(html)
             # 첫 화면(2026-11-03 개편): 가용자금 표의 입금 칸마다 '계산서 자료 없음', 표 아래에 파일 이름. 잔액은 계산한다 (보수적)
-            for cells in tr_avail_rows(fs, "all") + tr_avail_rows(fs, "firm"):
+            for cells in tr_avail_rows(fs):
                 self.assertIn("계산서 자료 없음", cells[1])
                 self.assertNotIn("확인 필요", cells[5])
             self.assertIn("계산서 입금 예정 미반영 (자료 없음: 계산서.csv)", fs)

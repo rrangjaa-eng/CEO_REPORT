@@ -244,15 +244,11 @@ FS_CSS = """
 .flow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.flow .op{font-size:22px;color:var(--sub)}
 .vin{color:var(--in)}.vout{color:var(--out)}.neg{color:var(--out)!important}
 .avail{border:2px solid var(--accent)!important}
-.ah{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-.pm{display:flex;gap:4px}.pm button{font:inherit;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:14px;padding:2px 10px;cursor:pointer}
-.pm button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom:1.5px solid var(--ink);text-align:right;white-space:normal}
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt[data-pm=all] tbody.pm-firm,table.pt[data-pm=firm] tbody.pm-all{display:none}
-table.pt input{font:inherit;font-size:11.5px;border:1px solid var(--line);border-radius:5px}
+table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
 .prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
 .bar{position:relative;height:12px;background:#eef0f3;border-radius:6px;display:flex}.bar i{display:block;height:100%}
@@ -269,7 +265,7 @@ table.pt input{font:inherit;font-size:11.5px;border:1px solid var(--line);border
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.pm,.pickrow{display:none}.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px}}
+@media print{.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
@@ -292,51 +288,49 @@ def _flow_card(s1, per):
     return "".join(h)
 
 
-def _avail_cell(r):
-    if r["avail"] is None:
-        return "<td class='av'>%s</td>" % _na("확인 필요")
-    return "<td class='av'><b class='%s'>%s</b></td>" % ("neg" if r["avail"] < 0 else "", esc(won(r["avail"])))
+def _avail_cell(p):
+    """가용자금 칸: 예상분 포함을 크게, 그 아래 확정분만을 작게 (문서로 전달하므로 단추 없이 둘 다 보인다)."""
+    a, f = p["all"]["avail"], p["firm"]["avail"]
+    big = _na("확인 필요") if a is None else "<b class='%s'>%s</b>" % ("neg" if a < 0 else "", esc(won(a)))
+    small = "확인 필요" if f is None else won(f)
+    return "<td class='av'>%s<small class='firm%s'>확정분만 %s</small></td>" % (big, " neg" if f is not None and f < 0 else "", esc(small))
 
 
-def _avail_rows(periods, mode, s2=None):
-    """in_missing·out_missing 이면 입금·지급 칸 숫자 옆에 자료 없음을 적는다 (빠진 채 0처럼 보이지 않게)."""
+def _avail_rows(periods, s2=None):
+    """예상분 포함 기준 한 줄씩. in_missing·out_missing 이면 입금·지급 칸 숫자 옆에 자료 없음을 적는다 (빠진 채 0처럼 보이지 않게)."""
     in_tag = "<small class='na'>계산서 자료 없음</small>" if s2 and s2["in_missing"] else ""
     out_tag = "<small class='na'>지급 자료 없음</small>" if s2 and s2["out_missing"] else ""
     rows = []
     for p in periods:
-        r = p[mode]
+        r = p["all"]
         low = _na("확인 필요") if r["low"] is None else "%s<small>(%s)</small>" % (
             esc(won(r["low"])), esc("오늘" if r["low_date"] == p.get("asof") else d2s(r["low_date"])[5:].replace("-", "/")))
-        rows.append("<tr><td><b>%s</b><small>~ %s</small></td><td class='vin'>%s</td><td class='vout'>%s</td>"
+        rows.append("<tr%s><td><b>%s</b><small>~ %s</small></td><td class='vin'>%s</td><td class='vout'>%s</td>"
                     "<td><b>%s</b></td><td>%s</td>%s</tr>"
-                    % (esc(p["label"]), esc(d2s(p["end"])), esc(won(r["in"])) + in_tag, esc(won(r["out"])) + out_tag,
-                       W(r["bal"], "확인 필요"), low, _avail_cell(r)))
+                    % (" class='pick'" if p.get("pick") else "", esc(p["label"]), esc(d2s(p["end"])),
+                       esc(won(r["in"])) + in_tag, esc(won(r["out"])) + out_tag, W(r["bal"], "확인 필요"), low, _avail_cell(p)))
     return "".join(rows)
 
 
 def _avail_table(R):
-    """기간별 가용자금 표: 주간 1~4주, 월간 1~3개월 + 날짜 지정 줄 (사용자 2026-11-03).
+    """기간별 가용자금 표: 주간 1~4주, 월간 1~3개월 + 지정일 줄(보고서를 만들 때 --가용일 로 넣은 날짜) (사용자 2026-11-03).
 
-    가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 확정분만 / 예상분 포함 둘 다 HTML 에 싣고 단추로 바꾼다 (인쇄는 예상분 포함)."""
+    보고서는 문서(PDF)로 전달하므로 단추·날짜 입력 칸 없이 모든 값이 그대로 보인다 (사용자 2026-11-03).
+    가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 줄은 예상분 포함 기준이고, 가용자금 칸 아래에 확정분만을 함께 적는다."""
     s1, s2 = R["s1"], R["s2"]
     periods = [dict(p, asof=R["asof"]) for p in s2["periods"]]
     mc = s2["min_cash"]
-    h = ["<div class='card avail'><div class='ah'><div class='lab'>기간별 가용자금 <span style='font-weight:400'>%s</span></div>"
+    h = ["<div class='card avail'><div class='lab'>기간별 가용자금 <span style='font-weight:400'>%s</span></div>"
          % esc("시작: 오늘 가용액 %s = 계좌 합계 %s − 사용제한 %s%s · 은행 기준일 %s%s" % (
              _won_or_unknown(s2["start"]), _won_or_unknown(s1["total"]), won(s1["restricted"]),
-             " · 제한금액 미확인 %d계좌" % s1["restr_unknown"] if s1["restr_unknown"] else "", _bank_dates(s1), _bal_note(s1))),
-         "<div class='pm'><button type='button' data-m='all' class='on'>예상분 포함</button>"
-         "<button type='button' data-m='firm'>확정분만</button></div></div>"]
+             " · 제한금액 미확인 %d계좌" % s1["restr_unknown"] if s1["restr_unknown"] else "", _bank_dates(s1), _bal_note(s1)))]
     head = ("<thead><tr><th>기간</th><th>입금 예정</th><th>지급 예정</th><th>예상 잔액</th><th>기간 중 최저 잔액</th>"
             "<th class='av'>가용자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % esc(won(mc) if mc is not None else "설정 오류"))
-    body = "".join("<tbody class='pm-%s'>%s</tbody>" % (m, _avail_rows(periods, m, s2)) for m in ("all", "firm"))
-    last = s2["periods"][-1]["end"] if s2["periods"] else R["asof"]
-    pick = ("<tbody class='pickrow'><tr><td><b>날짜 지정</b><small>~ <input type='date' id='pickd' value='%s' min='%s' max='%s'></small></td>"
-            "<td class='vin' id='pk-in'></td><td class='vout' id='pk-out'></td><td><b id='pk-bal'></b></td><td id='pk-low'></td>"
-            "<td class='av'><b id='pk-av'></b></td></tr></tbody>"
-            % (last.isoformat(), (R["asof"] + dt.timedelta(days=1)).isoformat(), s2["horizon"].isoformat()))
-    h.append("<div class='tw'><table class='pt' id='avail' data-pm='all'>%s%s%s</table></div>" % (head, body, pick))
-    notes = ["가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 예상 잔액이 넉넉해도 기간 중 최저 잔액을 넘겨 쓰면 그 사이에 자금이 모자람."]
+    h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows(periods, s2)))
+    notes = ["가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 예상 잔액이 넉넉해도 기간 중 최저 잔액을 넘겨 쓰면 그 사이에 자금이 모자람.",
+             "금액은 예상분 포함 기준 (확정분만은 가용자금 칸 아래)"]
+    if s2.get("pick_beyond"):
+        notes.append("지정일이 일정 자료 범위(%s)보다 뒤라 그 뒤 일정은 반영 안 됨" % d2s(s2["horizon"]))
     if s2["out_missing"]:
         notes.append("지급 자료 없음: %s — 잔액·가용자금은 계산하지 않음" % ", ".join(s2["out_missing"]))
     if s2["in_missing"]:
@@ -346,30 +340,7 @@ def _avail_table(R):
     if s2["out_unknown_n"]:
         notes.append("금액 미확인 지급 예정 %d건 (미반영)" % s2["out_unknown_n"])
     h.append("<div class='note'>%s</div></div>" % esc(" · ".join(notes)))
-    ev = [[e["date"].isoformat(), e["amount"] if e["io"] == "in" else -e["amount"], 1 if e["firm"] else 0] for e in s2["dated"]]
-    h.append("<script>(function(){var EV=%s,S=%s,MC=%s,A='%s',mode='all';"
-             "function f(v){return (v<0?'\\u2212':'')+Math.abs(v).toLocaleString('ko-KR');}"
-             "function run(){var d=document.getElementById('pickd').value,b=S,lo=S,ld='오늘',i=0,o=0,day={};"
-             "EV.forEach(function(e){if(e[0]>d||(mode==='firm'&&!e[2]))return;day[e[0]]=(day[e[0]]||0)+e[1];e[1]>0?i+=e[1]:o-=e[1];});"
-             "Object.keys(day).sort().forEach(function(k){b+=day[k];if(b<lo){lo=b;ld=k.slice(5).replace('-','/');}});"
-             "document.getElementById('pk-in').textContent=f(i);document.getElementById('pk-out').textContent=f(o);"
-             "var q=function(id,t){document.getElementById(id).innerHTML=t;};"
-             "if(S===null){q('pk-bal','확인 필요');q('pk-low','확인 필요');q('pk-av','확인 필요');return;}"
-             "q('pk-bal',f(b));q('pk-low',f(lo)+'<small>('+ld+')</small>');"
-             "var av=document.getElementById('pk-av');if(MC===null){av.textContent='확인 필요';av.className='';}"
-             "else{av.textContent=f(lo-MC);av.className=lo-MC<0?'neg':'';}}"
-             "document.getElementById('pickd').addEventListener('change',run);"
-             "document.querySelectorAll('.pm button').forEach(function(x){x.addEventListener('click',function(){mode=x.getAttribute('data-m');"
-             "document.getElementById('avail').setAttribute('data-pm',mode);"
-             "document.querySelectorAll('.pm button').forEach(function(y){y.className=y===x?'on':'';});run();});});run();})();</script>"
-             % (_json_list(ev), "null" if s2["start"] is None or s2["out_missing"] else int(s2["start"]),
-                "null" if mc is None else int(mc), R["asof"].isoformat()))
     return "".join(h)
-
-
-def _json_list(v):
-    import json
-    return json.dumps(v)
 
 
 def _proj_chip(P):

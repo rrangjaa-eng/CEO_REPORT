@@ -85,10 +85,15 @@ def box_item(html, prefix):
     return next((t for t in box_items(html) if t.startswith(prefix)), None)
 
 
-def avail_rows(html, mode="all"):
-    """첫 화면 기간별 가용자금 표(확정분만 'firm' / 예상분 포함 'all')의 줄마다 칸 HTML 목록."""
-    body = html.split("<tbody class='pm-%s'>" % mode)[1].split("</tbody>")[0]
-    return [re.findall(r"<td[^>]*>(.*?)</td>", r, re.S) for r in re.findall(r"<tr>(.*?)</tr>", body, re.S)]
+def avail_rows(html):
+    """첫 화면 기간별 가용자금 표(예상분 포함 기준, 가용자금 칸 아래 확정분만)의 줄마다 칸 HTML 목록."""
+    body = html.split("<table class='pt' id='avail'>")[1].split("<tbody>")[1].split("</tbody>")[0]
+    return [re.findall(r"<td[^>]*>(.*?)</td>", r, re.S) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)]
+
+
+def firm_avail(cell):
+    """가용자금 칸 아래 '확정분만 …' 글자."""
+    return re.search(r"<small class='firm[^']*'>(.*?)</small>", cell).group(1)
 
 
 def project_block(html, pid):
@@ -858,6 +863,10 @@ class TestLaunchers(unittest.TestCase):
                     self.assertIn(needle, text, needle)
                 first_non_ascii = min(i for i, ch in enumerate(text) if ord(ch) > 127)
                 self.assertLess(text.index("chcp 65001"), first_non_ascii)
+                # 가용일은 실행할 때 묻는다 (문서라 읽는 사람이 날짜를 바꿀 수 없음, 사용자 2026-11-03). Enter 면 넘기지 않는다
+                self.assertIn('set /p "PICK=', text)
+                self.assertIn('if defined PICK set "PICKARG=--가용일 %PICK%"', text)
+                self.assertIn("%PY% 보고서.py " + kind + " %PICKARG% %*", text)
 
 
 class TestUserRulesLocked(Base):
@@ -892,7 +901,7 @@ class TestUserRulesLocked(Base):
         self.assertEqual(team["cur"]["gp"], 5_280_000)
         self.assertIsNone(team["cur"]["np"])
         fs = first_screen(render(self.R, "ceo"))
-        cash = fs.split("<div class='card avail'>")[1].split("<script>")[0]
+        cash = fs.split("<div class='card avail'>")[1].split("</table>")[0]
         self.assertIn("계좌 합계", cash)
         self.assertNotIn("이익", cash)   # 이익은 자금 칸에 섞지 않고 실적 칸에 따로
         self.assertIn("11월 실적", fs)
@@ -1088,11 +1097,11 @@ class TestNoBalanceKnown(unittest.TestCase):
                 self.assertIn("오늘 가용액 잔액 미확인", fs)
                 self.assertIn("잔액 미확인", fs)
                 self.assertNotIn("<polyline", fs)
-                for mode in ("all", "firm"):
-                    for cells in avail_rows(fs, mode):
-                        for val in cells[3:]:   # 예상 잔액 · 기간 중 최저 잔액 · 가용자금: 0에서 시작하지 않는다
-                            self.assertIn("확인 필요", val)
-                            self.assertNotRegex(val, r"\d")
+                for cells in avail_rows(fs):
+                    for val in cells[3:]:   # 예상 잔액 · 기간 중 최저 잔액 · 가용자금(확정분만 포함): 0에서 시작하지 않는다
+                        self.assertIn("확인 필요", val)
+                        self.assertNotRegex(val, r"\d")
+                    self.assertEqual(firm_avail(cells[5]), "확정분만 확인 필요")
                 s2h = section(html, 2)
                 self.assertIn("잔액 미확인", s2h)
                 self.assertNotIn("미확인원", s2h)
@@ -1356,6 +1365,20 @@ class TestCliArguments(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("시작일", text)
         self.assertEqual(files, [])
+
+    def test_pick_date_option_adds_row(self):
+        rc, text, files = self.run_cli("--가용일", "2026-12-15")
+        self.assertEqual(rc, 0, text)
+        out = [f for f in files if f.endswith("대표보고.html")][0]
+        self.assertTrue(out)
+
+    def test_bad_pick_date_is_an_error(self):
+        for bad in ("2026-13-45", "2026-11-02", "2026-10-01"):
+            with self.subTest(bad):
+                rc, text, files = self.run_cli("--가용일", bad)
+                self.assertEqual(rc, 2)
+                self.assertIn("가용일", text)
+                self.assertEqual(files, [])
 
     def test_valid_start_date_sets_period(self):
         rc, text, files = self.run_cli("--시작일", "2026-10-20")

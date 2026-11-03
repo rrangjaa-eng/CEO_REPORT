@@ -724,7 +724,9 @@ class TestConvertLauncher(unittest.TestCase):
         self.assertLess(text.index("chcp 65001"), first_non_ascii)
 
     def test_same_shape_as_the_monthly_launcher_except_three_lines(self):
-        month = self.lines("실행_월간.bat")
+        # 보고서 실행 파일만 가용일 질문 4줄이 있다 (문서로 전달, 사용자 2026-11-03). 그 줄을 빼고 모양을 비교한다
+        month = [ln for ln in self.lines("실행_월간.bat") if "PICK" not in ln or ln.startswith("%PY%")]
+        month = [ln.replace(" %PICKARG%", "") for ln in month]
         mine = self.lines()
         self.assertEqual(len(month), len(mine))
         diff = [i for i, (a, b) in enumerate(zip(month, mine)) if a != b]

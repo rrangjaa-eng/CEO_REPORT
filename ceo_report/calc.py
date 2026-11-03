@@ -74,7 +74,7 @@ def _add(a, b):
     return None if a is None or b is None else a + b
 
 
-def compute(d, kind, asof, start=None):
+def compute(d, kind, asof, start=None, pick=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
     issues.items = list(d.issues.items)
@@ -487,7 +487,12 @@ def compute(d, kind, asof, start=None):
         mins[mode] = (low, low_d)
     four = buckets[:4]
     min_cash = R["settings_num"].get("위험_최소보유현금")
-    periods = available_periods(start_cash, dated, period_ends(R["kind"], asof), min_cash, asof)
+    ends = period_ends(R["kind"], asof)
+    if pick is not None:   # 보고서를 만들 때 정한 날짜 (--가용일): 문서라 읽는 사람이 날짜를 바꿀 수 없다 (사용자 2026-11-03)
+        ends.append(("지정일", pick))
+    periods = available_periods(start_cash, dated, ends, min_cash, asof)
+    if pick is not None:
+        periods[-1]["pick"] = True
     # 예정일이 지난 미처리: 확인된 금액만 합산하고, 건수는 금액 미확인 건도 센다. 일정·최저 잔액에는 넣지 않는다.
     past_all = past + [ev for ev in amount_unknown if ev["date"] is not None and ev["date"] <= asof]
     past_sum = {}
@@ -508,7 +513,7 @@ def compute(d, kind, asof, start=None):
     out_unk = [ev for ev in amount_unknown if ev["io"] == "out" and ev["date"] is not None and asof < ev["date"] <= horizon]
     R["s2"] = {
         "start": R["s1"]["available"], "out_missing": out_missing, "in_missing": in_missing, "start_unknown": R["s1"]["bal_unknown"], "buckets": buckets, "undated": undated, "past": past, "beyond": beyond,
-        "amount_unknown": amount_unknown, "min": mins, "horizon": horizon,
+        "amount_unknown": amount_unknown, "min": mins, "horizon": horizon, "pick_beyond": pick is not None and pick > horizon,
         "periods": periods, "min_cash": min_cash, "dated": dated,
         "in4_firm": sum(b["in_firm"] for b in four), "in4_est": sum(b["in_est"] for b in four),
         "out4_firm": sum(b["out_firm"] for b in four), "out4_est": sum(b["out_est"] for b in four),
