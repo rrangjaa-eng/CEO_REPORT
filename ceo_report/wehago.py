@@ -398,6 +398,36 @@ def _mtime(path):
         return 0
 
 
+def _years(rows):
+    return set(r["date"].year for r in rows if r.get("date") is not None)
+
+
+def _prior_years(folder, kind, names, rows, asof):
+    """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
+
+    names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일만 앞에 붙인다. 같은 해가 섞인
+    파일(같은 기수의 이전 내려받기)이나 읽을 수 없는 파일은 쓰지 않는다 -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름).
+    매입매출장 프로젝트명 칸(D-53)은 가장 새 파일 것만 쓴다.
+    """
+    years = _years(rows)
+    floor = min(years) if years else None
+    added, used, skipped = [], [], []
+    for n in names:
+        try:
+            more, _ = read_book(os.path.join(folder, n), kind, _file_date(n), asof)
+        except Exception:  # 지난 파일이 깨졌으면 쓰지 않을 뿐 장부 전체를 멈추지 않는다
+            skipped.append(n)
+            continue
+        ys = _years(more)
+        if floor is None or not ys or max(ys) >= floor:
+            skipped.append(n)
+            continue
+        added = more + added
+        used.append(n)
+        floor = min(ys)
+    return added, sorted(used), skipped
+
+
 def load_books(folder, asof, stale_days):
     """폴더의 세 종류 파일을 골라 읽는다. 없음·오래됨·머리글 다름·읽기 실패는 state 로 알리고 예외를 내지 않는다 (W-1~W-4).
 
@@ -423,14 +453,13 @@ def load_books(folder, asof, stale_days):
             (candidates[kind] if readable else unused).append(n)
         elif readable and ext in (".xls", ".csv"):
             lookalikes[kind].append(n)
-    chosen = {}
+    chosen, others = {}, {}
     for kind in KINDS:
         if candidates[kind]:
             ranked = sorted(candidates[kind], key=lambda n: (_file_date(n) or dt.date.min,
                                                              _mtime(os.path.join(folder, n)), n))
             chosen[kind] = ranked[-1]
-            unused.extend(ranked[:-1])
-    books.unused = sorted(unused)
+            others[kind] = ranked[-2::-1]   # 새 것부터: 지난 기수 파일 후보
 
     staged, mismatches, failures, slip_projects = {}, [], [], {}
     for kind in KINDS:
@@ -439,7 +468,7 @@ def load_books(folder, asof, stale_days):
             continue
         fdate = _file_date(name)
         entry = {"name": name, "file_date": fdate, "last_date": None, "ref_date": fdate, "rows": 0, "skipped": 0,
-                 "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": ""}
+                 "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": "", "prior": []}
         books.files[kind] = entry
         try:
             rows, info = read_book(os.path.join(folder, name), kind, fdate, asof)
@@ -456,9 +485,15 @@ def load_books(folder, asof, stale_days):
             entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
-            staged[kind] = rows
+            prior_rows, entry["prior"], skipped = _prior_years(folder, kind, others.get(kind, []), rows, asof)
+            unused.extend(skipped)
+            staged[kind] = prior_rows + rows
             if kind == "매입매출장":
                 slip_projects = info["slip_projects"]
+    for kind in KINDS:   # 읽지 못한 종류의 다른 파일도 쓰지 않은 파일이다
+        if kind not in staged:
+            unused.extend(others.get(kind, []))
+    books.unused = sorted(unused)
     refs = [books.files[k]["ref_date"] for k in KINDS if k in books.files and books.files[k]["ref_date"]]
     books.book_date = min(refs) if refs else None
     books.after_ref = sum(e["after_ref"] for e in books.files.values())
