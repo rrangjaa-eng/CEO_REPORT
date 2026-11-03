@@ -67,7 +67,7 @@ tr.sub td{color:var(--sub)}
 .tw table:not(.risk):not(#requests) td{white-space:nowrap}}
 @media print{@page{size:A4 portrait;margin:10mm}.wrap{max-width:none;padding:0}h2{break-after:avoid}
 tr{break-inside:avoid}.toc{display:none}body{font-size:10.5px}table{font-size:10.5px}.kpi .v{font-size:18px}h2{margin-top:16px}.kpis{margin:8px 0}.kpi{padding:6px 10px}.mid svg{max-height:185px}.low{margin-top:8px}.kv{padding:1px 0}.wrap>.meta{margin-bottom:0}
-.kpi,.card{break-inside:avoid}.mid svg{max-height:165px}.note{font-size:9.5px;margin:2px 0}.scope{margin:2px 0 4px}
+.kpi,.card{break-inside:avoid}.card.brk{break-inside:auto}.prow{break-inside:avoid}.mid svg{max-height:165px}.note{font-size:9.5px;margin:2px 0}.scope{margin:2px 0 4px}
 .card{padding:6px 10px}.card h4{margin-bottom:3px}h3{margin:8px 0 4px}.kpi .s{font-size:10px}
 a{color:inherit;text-decoration:none}}
 """
@@ -253,7 +253,7 @@ table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
 table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}table.pt.wo tr.gone td{color:var(--sub);text-decoration:line-through}table.pt.wo tr.gone td:last-child,table.pt.wo tr.gone td:nth-child(6){text-decoration:none}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
-table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}
+table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
 .prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
@@ -271,8 +271,8 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px;break-after:avoid}
-.fs svg{max-height:210px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
+@media print{.prow{padding:2px 0}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
+.fs svg{max-height:180px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
@@ -372,13 +372,20 @@ def _proj_right(P):
     return "<small>잔여 예산</small>%s" % esc(won(P["remain"]))
 
 
-def _project_bars(R, per):
-    """프로젝트 원가 예산 막대: 집행액(지급 완료) · 집행 예정액(요청·카드 미결제·미요청 계획) · 예산선."""
+def _project_bars(R, per, flagged_only=False):
+    """프로젝트 원가 예산 막대: 집행액(지급 완료) · 집행 예정액(요청·카드 미결제·미요청 계획) · 예산선.
+
+    flagged_only: 월간 대표 보고는 '예산 내'가 아닌 프로젝트만 막대로 보이고 나머지는 '외 n건' 한 줄로 묶는다 (A4 세로 2쪽)."""
     s3 = R["s3"]
     tot = s3["total"]
     shown = s3["shown"]
+    rest = s3["rest"]
+    if flagged_only:
+        ok = [P for P in shown if "c-ok" in _proj_chip(P)]
+        shown = [P for P in shown if P not in ok]
+        rest = ok + list(rest)
     scale = max([max(P["budget"] or 0, P["paid_total"] + P["requested"] + P["card_unpaid"] + P["planned"]) for P in shown] or [0]) or 1
-    h = ["<div class='card'><div class='keys'><span><i style='background:var(--accent)'></i>집행액 (지급 완료)</span>"
+    h = ["<div class='card brk'><div class='keys'><span><i style='background:var(--accent)'></i>집행액 (지급 완료)</span>"
          "<span><i style='background:#9db6e3'></i>집행 예정액 (지급요청·카드 미결제·미요청 계획)</span>"
          "<span><i style='background:var(--ink);width:2px'></i>원가 예산</span><span>%s</span></div>"
          % esc("원가 예산 = 사전견적 × 원가율 %s · 공급가액 기준(카드는 총액)" % _rate_text(s3))]
@@ -393,11 +400,11 @@ def _project_bars(R, per):
                  % (esc(P["id"]), esc(_short(P["name"], 20)), _proj_chip(P), esc(P["id"]), w1, w2, mark,
                     W(P["budget"], "예산 미지정"), _amt_lines(W, P["paid_total"], P, *PAID_STATES),
                     _amt_lines(W, due, P, *(UNPAID_STATES + PLAN_STATES)), esc(per), W(P["paid_period"]), _proj_right(P)))
-    if s3["rest"]:
-        r = s3["rest"]
+    if rest:
+        r = rest
         ra = _agg_lines(r)
         h.append("<div class='prow sub'><div class='pn'>%s</div><div class='bn'>원가 예산 %s · 집행액 %s · 집행 예정액 %s</div><div></div></div>"
-                 % (esc("외 %d건" % len(r)), W(_sum_opt(x["budget"] for x in r)),
+                 % (esc(("예산 내 등 외 %d건" if flagged_only else "외 %d건") % len(r)), W(_sum_opt(x["budget"] for x in r)),
                     _amt_lines(W, sum(x["paid_total"] for x in r), ra, *PAID_STATES),
                     _amt_lines(W, sum(x["requested"] + x["card_unpaid"] + x["planned"] for x in r), ra, *(UNPAID_STATES + PLAN_STATES))))
     nb = _no_budget_note(s3)
@@ -594,26 +601,83 @@ def _week_out_table(R):
     return "".join(h)
 
 
-def _team_table(R):
-    """월간 대표 보고: 팀별 매출 · 매출총이익 · 수익률 (이번 달, 올해 누적). 사용자 2026-11-03.
+def _nonop_rows(N, before, after):
+    """회사 영업이익 아래 결산 (사용자 2026-11-03): − 영업외 비용 = 지원금 등 빼고 본 이익, + 영업외 수익 = 세전 이익.
+    어느 부서에서 났는지 이름을 붙인다. before/after = 금액 칸 앞뒤의 빈 칸 수."""
+    def who(i):
+        parts = [d for d, a, b in N["by_dept"] if (a if i == 1 else b)]
+        return " (%s)" % "·".join(parts) if parts else ""
+    rows = [("− 영업외 비용%s" % who(2), N["out"], "mut"), ("지원금 등 빼고 본 이익", N["before_in"], "hq"),
+            ("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("세전 이익", N["pretax"], "tot")]
+    return "".join("<tr class='%s'><td>%s</td><td colspan='%d'></td><td>%s</td>%s</tr>"
+                   % (c, esc(label), before, W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
 
-    WEHAGO 분개장 매출·(도)원가를 인트라넷 프로젝트의 팀으로 묶은 값(상세 4번과 같은 숫자). 모르는 칸은 0이 아니라 미확인."""
+
+def _team_table(R):
+    """월간 대표 보고: 팀별 매출 · 매출총이익 · 급여 · 판관비 · 순수익 (이번 달, 올해 누적). 사용자 2026-11-03.
+
+    매출총이익은 WEHAGO 분개장 매출·(도)원가를 인트라넷 프로젝트의 팀으로 묶은 값(상세 4번과 같은 숫자).
+    급여·판관비는 분개장 관리항목 부서명 기준(부서비용.csv). 본부 비용은 팀에 나누지 않고 본부 합계에서 뺀다 (사용자 결정).
+    모르는 칸은 0이 아니라 미확인."""
+    from .teamprofit import _add, allocate, build, build_ytd_alloc
     src = R["s4"]["sources"].get("WEHAGO")
-    rows = [r for r in src["table"] if r["unit"] != "회사"] if src else []
-    co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
-    if not rows:
+    if not src or not [r for r in src["table"] if r["unit"] != "회사"]:
         return "<div class='card'>%s</div>" % _na("팀별 자료 없음 (인트라넷 프로젝트 목록이 있어야 팀으로 묶음)")
-    h = ["<div class='card'><table class='pt tm'><thead><tr><th>팀</th><th>%s 매출</th><th>매출총이익</th><th>수익률</th>"
-         "<th>올해 누적 매출</th><th>누적 매출총이익</th><th>누적 수익률</th></tr></thead><tbody>" % esc(_ym_text(R["s4"]["ym"]))]
-    for r in rows + co:
-        c, y = r["cur"] or {"revenue": None, "gp": None}, r["ytd"] or {"revenue": None, "gp": None}   # 그 달 줄이 없으면 미확인
-        name = "합계 (회사 전체)" if r["unit"] == "회사" else r["target"]
-        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
-                 % (" class='tot'" if r["unit"] == "회사" else "", esc(name), W(c["revenue"]), W(c["gp"]), esc(pct(c["gp"], c["revenue"])),
-                    W(y["revenue"]), W(y["gp"]), esc(pct(y["gp"], y["revenue"]))))
-    h.append("</tbody></table><div class='note'>매출총이익 = 매출 − 직접비((도)원가). 수익률 = 매출총이익 ÷ 매출. "
-             "급여·임차료 같은 공통비는 팀에 나누지 않음</div></div>")
-    return "".join(h)
+    ym, dept = R["s4"]["ym"], R["s4"].get("dept")
+    basis = "heads"   # 본부·공통 비용을 기획팀에 나누는 기준: 인원 비율 (사용자 2026-11-03 제안안)
+    out, last = ["<div class='card brk'>"], None   # 쪽이 넘어가면 표 사이·줄 사이에서 나뉜다 (A4 세로 2쪽)
+    T = build(src["table"], dept, ym, False)
+    if T is not None:
+        last = allocate(T, basis)
+        out.append("<div class='lab'>%s</div>" % esc(_ym_text(ym)))
+        out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th><th>급여</th>"
+                   "<th>판관비</th><th>순수익</th><th>인원</th><th>1인당 순수익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
+                   "</tr></thead><tbody>")
+        for r in T["rows"] + [T["company"]]:
+            cls = {"company": " class='tot'", "hq_total": " class='hq'", "hq_self": " class='mut'", "other": " class='mut'",
+                   "unlinked": " class='mut'"}.get(r["kind"], "")
+            costly = r["kind"] != "unlinked"
+            rev = (W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"]))) if r["has_rev"] else ("", "", "")
+            ratio = "" if not costly or not r["has_rev"] else (
+                "미확인" if r["net"] is None or not r["salary"] else "%.1f배" % (r["net"] / r["salary"]))
+            h = r["heads"]
+            per = "" if not costly or not r["has_rev"] else ("미확인" if h is None or r["net"] is None or not h else W(round(r["net"] / h)))
+            alloc = ""
+            if r["kind"] == "team":
+                alloc = "미확인" if r.get("alloc") is None or not h else W(round(r["alloc"] / h))
+            cells = [esc(r["label"])] + list(rev) + [W(r["salary"]) if costly else "", W(r["sga"]) if costly else "", W(r["net"]),
+                                                     ("미확인" if h is None else "%d명" % h) if costly else "", per, esc(ratio), alloc]
+            out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
+        out.append(_nonop_rows(T["nonop"], 5, 4))
+        out.append("</tbody></table>")
+    Y = build(src["table"], dept, ym, True)
+    if Y is not None:   # 누적은 줄인 표: 팀 · 본부 합계 · 회사 · 세전 이익. 공통비 나눈 뒤는 달마다 나눠 더한 값
+        allocate(Y, basis)
+        per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
+        out.append("<div class='lab'>%s</div>" % esc("올해 누적 (1월~%s)" % _ym_text(ym)))
+        out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th>"
+                   "<th>급여·판관비</th><th>순수익</th><th>공통비 나눈 뒤 순수익</th></tr></thead><tbody>")
+        for r in [x for x in Y["rows"] if x["kind"] in ("team", "hq_total")] + [Y["company"]]:
+            cls = {"company": " class='tot'", "hq_total": " class='hq'"}.get(r["kind"], "")
+            alloc = (lambda a: "미확인" if a is None else W(round(a)))(per_month.get(r["label"])) if r["kind"] == "team" else ""
+            cells = [esc(r["label"]), W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
+                     W(_add(r["salary"], r["sga"])), W(r["net"]), alloc]
+            out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
+        out.append(_nonop_rows(Y["nonop"], 4, 1))
+        out.append("</tbody></table>")
+    notes = ["순수익 = 매출총이익 − 그 팀 급여·판관비 (분개장 부서명 기준). 본부 비용은 본부 합계에서, 다른 부서 비용은 회사 전체에서 뺌",
+             "공통비 나눈 뒤 = 본부·경영관리 등 비용을 팀 %s 비율로 나눠 뺀 값 (팀 합계 = 회사 영업이익)" % ("인원" if basis == "heads" else "매출"),
+             "급여 대비 = 순수익 ÷ 급여"]
+    if dept is None:
+        notes.append("급여·판관비 미확인: %s (실행_변환.bat이 분개장 부서명으로 만듦)" % (
+            "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
+    elif last and not last["dept_ok"]:
+        notes.append("급여·판관비 미확인: 부서비용.csv에 %s 자료가 없음" % _ym_text(ym))
+    if last and last["check"]:
+        got, want = last["check"]
+        notes.append("부서별 급여+판관비 %s %s 장부 공통비 %s" % (won(got), "=" if got == want else "≠ (확인 필요)", won(want)))
+    out.append("<div class='note'>%s</div></div>" % esc(" · ".join(notes)))
+    return "".join(out)
 
 
 def _first_screen(R, mode, per):
@@ -635,7 +699,7 @@ def _first_screen(R, mode, per):
     h.append(_avail_table(R))
     h.append("<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
              % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))
-    blocks = [("프로젝트 예산은 남나?", _project_bars(R, per)),
+    blocks = [("프로젝트 예산은 남나?", _project_bars(R, per, flagged_only=monthly)),
               ("%s 실적" % _ym_text(R["s4"]["ym"]), _results(R) + (_team_table(R) if monthly else ""))]
     if monthly:   # 월간은 실적·팀별 표를 자금 바로 아래(1쪽)에 둔다: A4 세로 2쪽 (사용자 2026-11-03)
         blocks.reverse()

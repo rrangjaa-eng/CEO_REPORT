@@ -13,14 +13,14 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from ceo_report.data import SCHEMA  # noqa: E402
+from ceo_report.data import DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA  # noqa: E402
 
 
-def write(folder, name, rows):
+def write(folder, name, rows, header=None):
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, name), "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
-        w.writerow(SCHEMA[name])
+        w.writerow(header or SCHEMA[name])
         for r in rows:
             w.writerow(r)
 
@@ -144,6 +144,16 @@ pl += [
     ["인트라넷완료보고", "2026-10", "프로젝트", "P26206 F사 임직원 워크숍", "50,000,000", "", "", "Y"],
 ]
 S["손익.csv"] = pl
+# 부서별 급여·판관비 (변환.py 가 분개장 관리항목 부서명으로 만드는 선택 파일, 사용자 2026-11-03). 달마다 합계 = 공통비 30,000,000
+DEPT = []
+for m in range(1, 12):
+    # 영업외: 경영관리 정부지원금·이자수익 2,000,000, 기획본부 이자비용 500,000 (팀 순수익에는 넣지 않음)
+    for dept, sal, sga, heads, nin, nout in (("기획1팀", 9_000_000, 2_000_000, 3, 0, 0), ("기획2팀", 7_500_000, 1_500_000, 3, 0, 0),
+                                             ("기획본부", 4_000_000, 1_000_000, 1, 0, 500_000),
+                                             ("경영관리", 3_000_000, 2_000_000, 1, 2_000_000, 0)):
+        DEPT.append(["2026-%02d" % m, dept, "{:,}".format(sal), "{:,}".format(sga), str(heads), "{:,}".format(nin),
+                     "{:,}".format(nout)])
+S[DEPT_FILE] = DEPT
 S["지급계획.csv"] = [
     ["2026-10-26", "P26201", "무대제작사", "11,000,000"],
     ["2026-10-26", "", "건물관리", "8,000,000"],
@@ -178,12 +188,14 @@ def is_real_input(folder):
 
 
 def write_sample(folder, data=None):
-    """샘플 CSV 12개를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
+    """샘플 CSV 12개(+ 선택 파일 부서비용.csv)를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
     if is_real_input(folder):
         raise ValueError("실제 입력 폴더에는 샘플을 쓰지 않습니다: %s" % folder)
     data = S if data is None else data
     for name in SCHEMA:
         write(folder, name, data.get(name, []))
+    if DEPT_FILE in data:   # 선택 파일: 빈 입력양식은 만들지 않는다 (변환.py 가 만듦)
+        write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
 
 
 def write_templates(folder=TEMPLATES):

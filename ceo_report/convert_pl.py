@@ -367,3 +367,95 @@ def build_pl(books, cfg, prev_rows, links=None):
         notes.append("이전 손익.csv의 WEHAGO 외 출처 줄 %d건 그대로 옮김" % len(carried))
         rows.extend(dict((c, r.get(c, "")) for c in columns) for r in carried)
     return Table("손익.csv", columns, rows, checks=checks, notes=notes)
+
+
+# ───────────── 부서별 급여·판관비 (사용자 2026-11-03) ─────────────
+DEPT_FILE = data.DEPT_FILE
+DEPT_COLUMNS = data.DEPT_KEYS + data.DEPT_OPTIONAL
+NO_DEPT = data.NO_DEPT
+
+
+def build_dept(books, cfg, prev_rows=()):
+    """부서비용.csv Table: 달·부서(분개장 관리항목 부서명)마다 급여·판관비(급여 뺀 나머지)·인원.
+
+    공통비(판) 줄만 쓴다 (손익.csv 공통비와 같은 줄). 급여 = 계정코드가 cfg['salary_codes'] 인 줄. 부서명이 빈 줄은 '부서 없음'.
+    인원 = 그 달 그 부서 급여 줄의 사원명 수. 사원명이 빈 급여 줄이 하나라도 있으면 인원 칸을 비운다 (모름).
+    금액 없는 줄이 있는 칸도 비운다 (0으로 치지 않음). 분개장에 부서명 칸이 없으면 만들지 않고 기존 파일을 그대로 둔다.
+    새 분개장에 없는 달의 이전 줄은 그대로 잇는다.
+    """
+    lines = [ln for ln in books.journal if _classify(ln, cfg) in ("common", "common_unmarked")]
+    nin, nout = set(_squash(c) for c in cfg["nonop_in_codes"]), set(_squash(c) for c in cfg["nonop_out_codes"])
+    nonop = [ln for ln in books.journal if _squash(ln["account_code"]) in nin | nout]
+    if not any("dept" in ln for ln in books.journal):
+        return Table(DEPT_FILE, DEPT_COLUMNS, [], written=False,
+                     reason="분개장에 부서명(관리항목) 칸 없음 (기존 파일 그대로)")
+    salary = set(_squash(c) for c in cfg["salary_codes"])
+    cells = OrderedDict()
+    source, undated, unknown_lines = 0, 0, 0
+    for ln in lines:
+        if ln["date"] is None:
+            undated += 1
+            continue
+        key = (ln["date"].strftime("%Y-%m"), ln.get("dept") or NO_DEPT)
+        c = cells.setdefault(key, _dept_cell())
+        is_salary = _squash(ln["account_code"]) in salary
+        amount = _net(ln, "common")
+        cell = c["salary" if is_salary else "sga"]
+        if amount is None:
+            cell[1] += 1
+            unknown_lines += 1
+        else:
+            cell[0] += amount
+            source += amount
+        if is_salary:
+            if ln.get("employee"):
+                c["names"].add(ln["employee"])
+            else:
+                c["nameless"] += 1
+    for ln in nonop:   # 영업외: 수익 = 대변−차변, 비용 = 차변−대변. 팀 순수익에는 넣지 않는다 (사용자 2026-11-03)
+        if ln["date"] is None:
+            undated += 1
+            continue
+        c = cells.setdefault((ln["date"].strftime("%Y-%m"), ln.get("dept") or NO_DEPT), _dept_cell())
+        is_in = _squash(ln["account_code"]) in nin
+        amount = _net(ln, "revenue" if is_in else "common")
+        cell = c["nonop_in" if is_in else "nonop_out"]
+        if amount is None:
+            cell[1] += 1
+            unknown_lines += 1
+        else:
+            cell[0] += amount
+    months = set(k[0] for k in cells)
+    rows = [r for r in prev_rows if r.get("연월") not in months]
+    for (ym, dept), c in sorted(cells.items()):
+        heads = "" if c["nameless"] or not c["names"] else str(len(c["names"]))
+        rows.append(dict(zip(DEPT_COLUMNS, [ym, dept, cell_amount(_cell(c["salary"])), cell_amount(_cell(c["sga"])), heads,
+                                            cell_amount(_cell(c["nonop_in"])), cell_amount(_cell(c["nonop_out"]))])))
+    csv_sum = 0
+    for (ym, _), c in cells.items():
+        csv_sum += c["salary"][0] + c["sga"][0]
+    notes = ["급여 = 계정 %s · 판관비 = 그 밖의 공통비(판) · 영업외 수익 = 계정 %s · 영업외 비용 = 계정 %s · 부서는 분개장 관리항목 부서명"
+             % (",".join(cfg["salary_codes"]), ",".join(cfg["nonop_in_codes"]), ",".join(cfg["nonop_out_codes"]))]
+    other9 = OrderedDict()
+    for ln in books.journal:
+        code = _squash(ln["account_code"])
+        if re.match(r"^9[0-9]{4}$", code) and code not in nin | nout:
+            other9[(code, ln["account"])] = other9.get((code, ln["account"]), 0) + 1
+    if other9:
+        notes.append("영업외로 넣지 않은 9로 시작하는 계정: " + " · ".join("%s %s %d줄" % (k[0], k[1], n) for k, n in other9.items()))
+    nodept = sum(1 for ln in lines if ln["date"] is not None and not ln.get("dept"))
+    if nodept:
+        notes.append("부서명 없는 공통비 줄 %d건 → '%s'" % (nodept, NO_DEPT))
+    nameless = sum(c["nameless"] for c in cells.values())
+    if nameless:
+        notes.append("사원명 없는 급여 줄 %d건 → 그 부서·달 인원 칸 비움" % nameless)
+    if undated:
+        notes.append("날짜 없는 공통비 줄 %d건 → 넣지 않음" % undated)
+    if unknown_lines:
+        notes.append("금액 없는 공통비 줄 %d건 → 그 칸 비움" % unknown_lines)
+    checks = [Check("부서별 급여+판관비 합계 = 분개장 공통비 합계 (날짜 있는 줄)", source, csv_sum)]
+    return Table(DEPT_FILE, DEPT_COLUMNS, rows, checks=checks, notes=notes)
+
+
+def _dept_cell():
+    return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": set(), "nameless": 0}

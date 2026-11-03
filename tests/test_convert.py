@@ -526,7 +526,8 @@ class TestConvertConfig(unittest.TestCase):
             "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
             "closing_sorts": ("결차", "결대", "결산전표"), "link_days": 90, "card_words": ("카드",),
-            "snapshot_days": 7})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
+            "snapshot_days": 7, "salary_codes": ("80200",),
+        "nonop_in_codes": ("90100", "92200", "93000"), "nonop_out_codes": ("93100", "96000")})   # 02-REVIEW WR-06: 변환_스냅숏경과일 기본 7일
 
     def test_every_item_is_read_from_the_settings(self):
         convert = mod("convert")

@@ -25,6 +25,12 @@ SCHEMA = {
 FUNDPLAN_FILE = "자금계획.csv"
 FUNDPLAN_KEYS = ["예정일", "입출금", "거래처", "금액", "대상월", "자료일", "상태"]
 
+# 변환.py 가 분개장 관리항목(부서명·사원명)에서 만드는 선택 파일 (사용자 2026-11-03). 없으면 팀 순수익은 '미확인'.
+DEPT_FILE = "부서비용.csv"
+DEPT_KEYS = ["연월", "부서", "급여", "판관비", "인원"]
+DEPT_OPTIONAL = ["영업외수익", "영업외비용"]   # 없는 예전 파일은 '미확인' (사용자 2026-11-03: 정부지원금 등은 팀에 넣지 않고 따로)
+NO_DEPT = "부서 없음"
+
 # 지급 일정의 출처 파일과, 없으면 지급 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
 # 지급예정이 빠진 채 최저 잔액이 계산되므로 계산하지 않는다 (지급을 줄이지 않음).
 OUTFLOW_KEYS = {
@@ -176,6 +182,22 @@ def load(folder):
                 d.fundplan.append(f)
             if bad:
                 d.fundplan, d.fundplan_problem = None, "확인 못한 줄 %d개" % bad
+
+    # 부서비용 (선택, 사용자 2026-11-03): 읽지 못하면 통째로 쓰지 않는다. 금액·인원 빈칸은 None (모름)
+    d.dept, d.dept_problem = None, ""
+    path = os.path.join(folder, DEPT_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, DEPT_KEYS, iss, info)
+        if not ok or info["missing"]:
+            d.dept_problem = "읽지 못함" if not ok else "필수 열 없음: " + ", ".join(info["missing"])
+        else:
+            d.dept = [{"ym": (r.get("연월") or "").strip(), "dept": (r.get("부서") or "").strip(),
+                       "salary": num(r.get("급여"), iss, r, "급여"), "sga": num(r.get("판관비"), iss, r, "판관비"),
+                       "heads": num(r.get("인원"), iss, r, "인원"),
+                       "nonop_in": num(r.get("영업외수익"), iss, r, "영업외수익") if "영업외수익" in r else None,
+                       "nonop_out": num(r.get("영업외비용"), iss, r, "영업외비용") if "영업외비용" in r else None,
+                       "has_nonop": "영업외수익" in r and "영업외비용" in r} for r in rows]
 
     # 프로젝트
     d.projects = {}

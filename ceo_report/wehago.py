@@ -329,9 +329,11 @@ def read_journal_xls(path):
     col = dict((h, names.index(h)) for h in _PRINT_JOURNAL)
     sort_col = names.index("유형") if "유형" in names else None
     proj_col = names.index("프로젝트명") if "프로젝트명" in names else None
+    # 관리항목 (사용자 2026-11-03): 급여·판관비를 부서명으로 팀에 나누고, 급여 줄 사원명으로 팀 인원을 센다
+    opt = [h for h in ("부서명", "사원명") if h in names]
     out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요"]
-                + (["프로젝트명"] if proj_col is not None else [])])
-    out.known_extra = ("프로젝트명",)
+                + (["프로젝트명"] if proj_col is not None else []) + opt])
+    out.known_extra = ("프로젝트명", "부서명", "사원명")
     for row in grid[hdr + 1:]:
         row = list(row) + [""] * (len(names) - len(row))
         a = row[col["일자"]]
@@ -347,7 +349,8 @@ def read_journal_xls(path):
         g = lambda h: _xls_text(row[col[h]])
         out.append([day, g("전표번호"), _xls_text(row[sort_col]) if sort_col is not None else "", g("계정코드"),
                     g("계정과목"), g("차변"), g("대변"), g("거래처명"), g("거래처코드"), g("적요")]
-                   + ([_xls_text(row[proj_col])] if proj_col is not None else []))
+                   + ([_xls_text(row[proj_col])] if proj_col is not None else [])
+                   + [_xls_text(row[names.index(h)]) for h in opt])
     return out
 
 
@@ -360,7 +363,8 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     name = os.path.basename(path)
     rows = read_journal_xls(path) if kind == "분개장" and path.lower().endswith(".xls") else read_xlsx(path)
     cols, extra = _check_header(rows, kind, name)
-    extra = [h for h in extra if h not in getattr(rows, "known_extra", ())]
+    known = tuple(getattr(rows, "known_extra", ())) + (("부서명", "사원명") if kind == "분개장" else ())
+    extra = [h for h in extra if h not in known]
     year_ref = (file_date or asof) if kind == "전자세금계산서(매입)" else None  # 'MM-DD'는 전자세금계산서만 (W-12)
     d1904 = rows.date1904
     date_col = {"분개장": "전표일자", "매입매출장": "전표일자", "전자세금계산서(매입)": "일자"}[kind]
@@ -396,6 +400,10 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
                     "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요"),
                     "sort": txt(row, "구분")}
             item["code"] = project_code(item["memo"])
+            if "부서명" in cols:   # 관리항목 (사용자 2026-11-03). 칸이 없는 파일은 키도 없다 (부서별 비용을 만들지 않음)
+                item["dept"] = txt(row, "부서명").strip()
+            if "사원명" in cols:
+                item["employee"] = txt(row, "사원명").strip()
             if "프로젝트명" in cols:   # 인쇄 분개장의 프로젝트 칸 (D-57): 전표별 코드는 D-53 과 같은 규칙
                 item["project_name"] = txt(row, "프로젝트명")
                 pcode = project_code(item["project_name"])

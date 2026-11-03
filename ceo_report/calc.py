@@ -548,10 +548,16 @@ def compute(d, kind, asof, start=None, pick=None):
             cur = [p for p in ps if p["ym"] == ym]
             ytd = [p for p in ps if p["ym"][:4] == year and p["ym"] <= ym]
             table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd)})
-        pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months}
+        # 올해 달마다의 표 (팀 순수익의 '비용 나눈 뒤' 누적: 달마다 인원이 달라 달마다 나눠 더함, 사용자 2026-11-03)
+        by_month = [(m, [{"unit": unit, "target": target, "cur": _pl_sum([p for p in ps if p["ym"] == m]), "ytd": None}
+                         for (unit, target), ps in units.items()])
+                    for m in months if m[:4] == year and m <= ym]
+        pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months, "by_month": by_month}
     R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
                "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
-               "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None)}
+               "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None),
+               # 부서별 급여·판관비 (선택 파일 부서비용.csv, 사용자 2026-11-03). None = 파일 없음, 팀 순수익은 미확인
+               "dept": getattr(d, "dept", None), "dept_problem": getattr(d, "dept_problem", "")}
 
     # ───────────── 6. 프로젝트 밖 지급과 지급의무 ─────────────
     nonproj = [s for s in d.schedule if s["io"] == "지급"]

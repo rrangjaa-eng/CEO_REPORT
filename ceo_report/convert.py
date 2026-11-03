@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -35,7 +35,10 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("closing_sorts", ("결차", "결대", "결산전표")),   # 결산전표: 인쇄 분개장의 유형 (2025 분개장 12/31, D-57)
     ("link_days", 90),
     ("card_words", ("카드",)),
-    ("snapshot_days", 7),   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
+    ("snapshot_days", 7),
+    ("salary_codes", ("80200",)),   # 급여 계정 (부서비용.csv 의 급여 칸, 사용자 2026-11-03)
+    ("nonop_in_codes", ("90100", "92200", "93000")),   # 영업외 수익: 이자수익·정부지원금수익·잡이익 (부서비용.csv)
+    ("nonop_out_codes", ("93100", "96000")),           # 영업외 비용: 이자비용·잡손실   # 스냅숏이 기준일보다 이만큼 넘게 오래되면 경고 (02-REVIEW WR-06)
 ])
 
 
@@ -119,6 +122,9 @@ CONFIG_ITEMS = (
     ("변환_자동연결일수", "link_days", "일수"),
     ("변환_카드거래처", "card_words", "낱말목록"),
     ("변환_스냅숏경과일", "snapshot_days", "일수"),
+    ("변환_급여계정", "salary_codes", "숫자목록"),
+    ("변환_영업외수익계정", "nonop_in_codes", "숫자목록"),
+    ("변환_영업외비용계정", "nonop_out_codes", "숫자목록"),
 )
 
 
@@ -763,7 +769,20 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
                                        project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir))
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
+    tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
     return tables, states
+
+
+def _read_dept_prev(input_dir):
+    """이전 부서비용.csv 줄 (새 분개장에 없는 달을 잇는 데 씀). 없거나 읽지 못하면 빈 목록."""
+    path = os.path.join(input_dir, data.DEPT_FILE)
+    if not os.path.exists(path):
+        return []
+    info = {}
+    rows, ok = util.read_csv(path, data.DEPT_KEYS, util.Issues(), info)
+    if not ok or info.get("missing"):
+        return []
+    return [dict((k, r.get(k, "")) for k in data.DEPT_KEYS + data.DEPT_OPTIONAL) for r in rows]
 
 
 def build_fundplan(books, cfg, wehago_dir, asof):

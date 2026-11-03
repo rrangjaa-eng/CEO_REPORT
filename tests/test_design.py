@@ -164,18 +164,54 @@ class TestReportIsADocument(unittest.TestCase):
                                                              dt.date(2026, 10, 31)), "ceo"))
 
     def test_monthly_shows_team_sales_and_margin(self):
-        """월간 대표 보고에 팀별 매출 · 매출총이익 · 수익률 (사용자 2026-11-03). 값은 상세 4번(s4)과 같다."""
+        """월간 대표 보고 팀별 표 (사용자 2026-11-03): 매출·매출총이익·수익률은 상세 4번(s4)과 같고, 급여·판관비는 부서비용.csv
+        (분개장 관리항목 부서명). 팀 순수익 = 매출총이익 − 그 팀 급여·판관비. 기획본부 비용은 본부 합계에서만, 경영관리는 회사 전체에서 뺀다."""
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly", dt.date(2026, 10, 31))
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
-            table = fs.split("<table class='pt tm'>")[1].split("</table>")[0]
-            rows = [re.findall(r"<td>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", table.split("<tbody>")[1])]
-            self.assertEqual(rows, [
-                ["기획1팀", "99,000,000", "31,680,000", "32.0%", "742,500,000", "237,600,000", "32.0%"],
-                ["기획2팀", "81,000,000", "25,920,000", "32.0%", "607,500,000", "194,400,000", "32.0%"],
-                ["합계 (회사 전체)", "180,000,000", "57,600,000", "32.0%", "1,350,000,000", "432,000,000", "32.0%"]])
+            tables = [t.split("</table>")[0] for t in fs.split("<table class='pt tm'>")[1:]]
+            self.assertEqual(len(tables), 2)   # 이번 달, 올해 누적
+            rows = [re.findall(r"<td[^>]*>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tables[0].split("<tbody>")[1])]
+            # 결산 (사용자 2026-11-03): 영업이익 − 영업외 비용 = 지원금 등 빼고 본 이익, + 영업외 수익 = 세전 이익
+            self.assertEqual([[c for c in r if c] for r in rows[6:]], [
+                ["− 영업외 비용 (기획본부)", "500,000"], ["지원금 등 빼고 본 이익", "27,100,000"],
+                ["+ 영업외 수익 (경영관리)", "2,000,000"], ["세전 이익", "29,100,000"]])
+            self.assertEqual(rows[:6], [
+                ["기획1팀", "99,000,000", "31,680,000", "32.0%", "9,000,000", "2,000,000", "20,680,000", "3명", "6,893,333", "2.3배", "5,226,667"],
+                ["기획2팀", "81,000,000", "25,920,000", "32.0%", "7,500,000", "1,500,000", "16,920,000", "3명", "5,640,000", "2.3배", "3,973,333"],
+                ["기획본부 자체 비용", "", "", "", "4,000,000", "1,000,000", "−5,000,000", "1명", "", "", ""],
+                ["기획본부 합계", "180,000,000", "57,600,000", "32.0%", "20,500,000", "4,500,000", "32,600,000", "7명", "4,657,143", "1.6배", ""],
+                ["경영관리", "", "", "", "3,000,000", "2,000,000", "−5,000,000", "1명", "", "", ""],
+                ["회사 전체 (영업이익)", "180,000,000", "57,600,000", "32.0%", "23,500,000", "6,500,000", "27,600,000", "8명", "3,450,000", "1.2배", ""]])
+            ytd = [re.findall(r"<td[^>]*>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tables[1].split("<tbody>")[1])]
+            self.assertEqual(ytd[0], ["기획1팀", "742,500,000", "237,600,000", "32.0%", "110,000,000", "127,600,000", "77,600,000"])
+            self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)", "1,350,000,000"])
+            self.assertEqual(ytd[3][5], "132,000,000")
+            self.assertEqual([c for c in ytd[-1] if c], ["세전 이익", "147,000,000"])
+            # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
+            self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
+            self.assertEqual(77_600_000 + 54_400_000, 132_000_000)
+            self.assertIn("부서별 급여+판관비 30,000,000 = 장부 공통비 30,000,000", fs)
+            self.assertIn("27,600,000", fs.split("10월 실적")[1].split("<table")[0])   # 회사 순수익 = 실적 카드의 10월 이익
             self.assertLess(fs.index("10월 실적"), fs.index("프로젝트 예산은 남나?"))   # 월간은 실적이 1쪽
         self.assertNotIn("pt tm", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo"))
+
+    def test_team_profit_unknown_without_dept_file(self):
+        """부서비용.csv 가 없으면 급여·판관비·순수익을 0이 아니라 미확인으로 둔다."""
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        folder = os.path.join(tmp, "in")
+        shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), folder)
+        os.remove(os.path.join(folder, "부서비용.csv"))
+        fs = first_screen(render(compute(load(folder), "monthly", dt.date(2026, 10, 31)), "ceo"))
+        table = fs.split("<table class='pt tm'>")[1].split("</table>")[0]
+        first = re.findall(r"<td>(.*?)</td>", re.findall(r"<tr[^>]*>(.*?)</tr>", table.split("<tbody>")[1])[0])
+        self.assertEqual(first[:4], ["기획1팀", "99,000,000", "31,680,000", "32.0%"])
+        self.assertNotIn("0", [c for c in first[4:7]])
+        self.assertTrue(all("미확인" in c for c in first[4:7]), first)
+        self.assertIn("부서비용.csv 없음", fs)
 
     def test_pick_date_row_is_fixed_when_report_is_made(self):
         import test_report
