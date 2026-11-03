@@ -156,7 +156,8 @@ def books_with(lines, book_date=dt.date(2026, 11, 2)):
     b = wehago.Books()
     b.state, b.book_date = "ok", book_date
     for i, (day, account, debit, credit, vendor) in enumerate(lines):
-        b.journal.append({"date": day, "no": str(i + 1), "account_code": "", "account": account, "debit": debit,
+        code = {"미지급금": "25300", "보통예금": "10300", "외상매출금": "10800"}[account]
+        b.journal.append({"date": day, "no": str(i + 1), "account_code": code, "account": account, "debit": debit,
                           "credit": credit, "vendor": vendor, "memo": "", "sort": ""})
     return b
 

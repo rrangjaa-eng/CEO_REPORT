@@ -178,13 +178,19 @@ def _squash(text):
     return re.sub(r"\s+", "", text or "")
 
 
-def settle(rows, books, asof):
+PAYABLE_CODES = ("25300", "26200")   # 미지급금·미지급비용 (설정.csv 변환_payable_codes 와 같은 기본값)
+RECEIVABLE_CODES = ("10800",)        # 외상매출금(수입수수료미수금)
+CASH_CODES = ("10300",)              # 보통예금
+
+
+def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES, cash=CASH_CODES):
     """자금계획 줄마다 상태를 정한다 (2026-11-03 사용자 질문: 예정일보다 빠르거나 늦게 지급·입금된 건).
 
-    분개장에서 실제로 움직인 돈을 찾는다. 지급: 미지급금·미지급비용 차변 또는 예금 대변, 입금: 외상매출금 대변 또는 예금 차변이
-    같은 금액(거래처가 적힌 줄은 같은 거래처)이고 전표일자가 예정일 EARLY_DAYS일 전부터 장부 기준일까지면 '이미 지급'/'이미 입금'
-    (분개장 한 줄은 한 번만 쓴다, 거래처가 맞는 줄 먼저). 못 찾았고 예정일이 기준일 이전·당일이면 '예정일 지남', 아니면 '예정'.
-    분개장이 없으면 확인하지 못했다고 근거에 적는다 (지급을 빼지 않는다). rows 를 고쳐 쓰고 상태별 건수를 돌려준다.
+    분개장에서 실제로 움직인 돈을 찾는다. 지급: 미지급 계정(payable) 차변 또는 예금(cash) 대변, 입금: 매출채권(receivable)
+    대변 또는 예금 차변이 같은 금액(채무·채권 줄은 같은 거래처)이고 전표일자가 예정일 EARLY_DAYS일 전부터 장부 기준일까지면
+    '이미 지급'/'이미 입금' (분개장 한 줄은 한 번만 쓴다, 거래처가 맞는 줄 먼저). 못 찾았고 예정일이 기준일 이전·당일이면
+    '예정일 지남', 아니면 '예정'. 분개장이 없으면 확인하지 못했다고 근거에 적는다 (지급을 빼지 않는다).
+    rows 를 고쳐 쓰고 상태별 건수를 돌려준다.
     """
     from .wehago import norm_vendor
     journal = books.journal if books is not None and books.state == "ok" else None
@@ -193,17 +199,18 @@ def settle(rows, books, asof):
     counts = dict((k, 0) for k in STATES)
 
     def kind(line, io):
-        acct = _squash(line["account"])
+        code = _squash(line.get("account_code"))
+        debit, credit = line.get("debit") or 0, line.get("credit") or 0
         if io == "지급":
-            if acct in ("미지급금", "미지급비용") and line["debit"]:
-                return line["debit"], True
-            if "예금" in acct and line["credit"]:
-                return line["credit"], False
+            if code in payable and debit:
+                return debit, True
+            if code in cash and credit:
+                return credit, False
         else:
-            if acct == "외상매출금" and line["credit"]:
-                return line["credit"], True
-            if "예금" in acct and line["debit"]:
-                return line["debit"], False
+            if code in receivable and credit:
+                return credit, True
+            if code in cash and debit:
+                return debit, False
         return None, False
 
     for r in rows:

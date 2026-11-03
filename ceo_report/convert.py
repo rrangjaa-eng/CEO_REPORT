@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -761,7 +761,31 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,
                                        project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir))
         tables.extend([project_table, execs, xchk])
+    tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     return tables, states
+
+
+def build_fundplan(books, cfg, wehago_dir, asof):
+    """자금계획서 지출입금현황(.xls) -> 자금계획.csv 표 (D-55). 쓸 파일이 없으면 만들지 않고 기존 파일을 그대로 둔다."""
+    from . import fundplan
+    res = fundplan.load(wehago_dir)
+    notes = list(res["notes"])
+    if not res["rows"]:
+        reason = ("자금계획서 지출입금현황 파일 없음 (기존 파일 그대로)" if not notes
+                  else "쓸 수 있는 자금계획서 없음 (기존 파일 그대로): " + " / ".join(notes))
+        return Table("자금계획.csv", fundplan.COLUMNS, [], written=False, reason=reason)
+    counts = fundplan.settle(res["rows"], books, asof, cfg["payable_codes"], cfg["receivable_codes"], cfg["cash_codes"])
+    stamps = sorted(set(m[2] for m in res["months"]))
+    gap = (stamps[-1] - books.book_date).days
+    notes.append("자료일 %s · 장부 기준일 %s%s" % (
+        ", ".join(d.isoformat() for d in stamps), books.book_date.isoformat(),
+        " — 그 사이 %d일의 지급·입금은 분개장으로 확인 못함" % gap if gap > 0 else ""))
+    notes.append("분개장 대조: " + " · ".join("%s %d" % (k, counts[k]) for k in fundplan.STATES))
+    for r in res["rows"]:
+        if r["상태"] != "예정":
+            notes.append("  %s %s %s %s %s원 — %s" % (r["상태"], r["예정일"], r["입출금"], r["거래처"],
+                                                   "{:,}".format(r["금액"]), r["근거"]))
+    return Table("자금계획.csv", fundplan.COLUMNS, res["rows"], notes=notes)
 
 
 def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
