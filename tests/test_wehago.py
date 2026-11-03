@@ -544,12 +544,13 @@ class TestWehagoFolder(unittest.TestCase):
         self.assertNotIn(777, [r["total"] for r in books.einvoice])
 
     def test_xls_look_alike_is_named_in_the_missing_reason(self):
-        folder = folder_with(self, drop=("분개장",))
-        write_junk(os.path.join(folder, "분개장_20261031.xls"), b"\xd0\xcf\x11\xe0")
+        # 분개장은 인쇄 저장 .xls 도 읽는다 (D-56, tests/test_journal_xls.py). 다른 종류의 .xls 는 여전히 이름만 알린다
+        folder = folder_with(self, drop=("매입매출장",))
+        write_junk(os.path.join(folder, "매입매출장_20261031.xls"), b"\xd0\xcf\x11\xe0")
         books = load(folder)
         self.assertEqual(books.state, "자료 없음")
-        self.assertIn("분개장", books.reason)
-        self.assertIn(".xlsx만 읽음 (분개장_20261031.xls 있음)", books.reason)
+        self.assertIn("매입매출장", books.reason)
+        self.assertIn(".xlsx만 읽음 (매입매출장_20261031.xls 있음)", books.reason)
         self.assertEqual((books.journal, books.ledger, books.einvoice), ([], [], []))
 
     def test_missing_files_are_named(self):

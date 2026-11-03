@@ -283,6 +283,65 @@ def _is_subtotal(row):
     return False
 
 
+_PRINT_JOURNAL = {"일자": "전표일자", "전표번호": "전표번호", "계정코드": "Code", "계정과목": "계정과목", "적요": "적요",
+                  "차변": "차변", "대변": "대변", "거래처코드": "거래처Code", "거래처명": "거래처"}
+
+
+def _xls_text(v):
+    if isinstance(v, float):
+        return "%d" % v if v == int(v) else repr(v)
+    return v
+
+
+def read_journal_xls(path):
+    """분개장 인쇄 저장 파일(.xls, D-56) -> read_xlsx 와 같은 모양(첫 줄 KIND_HEADERS['분개장'] 머리글, 전표 줄만).
+
+    '기 간 : YYYY년 MM월 DD일 ~' 의 시작일로 'MM/DD' 일자에 해를 붙인다 (시작 월일보다 앞선 월일은 다음 해).
+    쪽마다 되풀이되는 회사명·머리글 줄, 빈 줄, '합 계' 줄은 뺀다. 구분 칸은 인쇄 파일의 '유형'(일반전표·매입전표…)이다.
+    """
+    from .xls import XlsError, read_xls
+    name = os.path.basename(path)
+    try:
+        grid = read_xls(path)
+    except XlsError as e:
+        raise WehagoError(str(e))
+    start, hdr = None, None
+    for i, row in enumerate(grid[:40]):
+        cells = [c for c in row if isinstance(c, str)]
+        for c in cells:
+            m = re.search(r"기\s*간\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", c)
+            if m and start is None:
+                start = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        if row and isinstance(row[0], str) and re.sub(r"\s+", "", row[0]) == "일자":
+            hdr = i
+            break
+    if hdr is None or start is None:
+        raise WehagoError("분개장 인쇄 파일 모양이 아님 (기간·머리글을 찾지 못함)")
+    names = [re.sub(r"\s+", "", c) if isinstance(c, str) else "" for c in grid[hdr]]
+    missing = [h for h in _PRINT_JOURNAL if h not in names]
+    if missing:
+        raise HeaderMismatch(name, "분개장", missing, [])
+    col = dict((h, names.index(h)) for h in _PRINT_JOURNAL)
+    sort_col = names.index("유형") if "유형" in names else None
+    out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요"]])
+    for row in grid[hdr + 1:]:
+        row = list(row) + [""] * (len(names) - len(row))
+        a = row[col["일자"]]
+        m = re.match(r"^\s*(\d{1,2})/(\d{1,2})\s*$", a) if isinstance(a, str) else None
+        if not m:
+            continue   # 쪽 머리(회사명·머리글), 빈 줄, '합 계'
+        mm, dd = int(m.group(1)), int(m.group(2))
+        year = start.year + (1 if (mm, dd) < (start.month, start.day) else 0)
+        try:
+            day = dt.date(year, mm, dd).isoformat()
+        except ValueError:
+            day = a
+        g = lambda h: _xls_text(row[col[h]])
+        out.append([day, g("전표번호"), _xls_text(row[sort_col]) if sort_col is not None else "", g("계정코드"),
+                    g("계정과목"), g("차변"), g("대변"), g("거래처명"), g("거래처코드"), g("적요")])
+    return out
+
+
 def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     """한 파일을 머리글 이름으로 읽어 (행 dict 목록, 요약)을 돌려준다. 머리글이 다르면 HeaderMismatch.
 
@@ -290,7 +349,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     기본값에서는 info["sales_rows"] 는 빈 목록이고 행 목록과 다른 요약 값은 이전과 같다.
     """
     name = os.path.basename(path)
-    rows = read_xlsx(path)
+    rows = read_journal_xls(path) if kind == "분개장" and path.lower().endswith(".xls") else read_xlsx(path)
     cols, extra = _check_header(rows, kind, name)
     year_ref = (file_date or asof) if kind == "전자세금계산서(매입)" else None  # 'MM-DD'는 전자세금계산서만 (W-12)
     d1904 = rows.date1904
@@ -361,13 +420,19 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
 
 
 def _file_date(name):
-    """파일 이름에서 '_' 뒤 첫 8자리 숫자(YYYYMMDD)."""
+    """파일 이름에서 '_' 뒤 첫 8자리 숫자(YYYYMMDD). 없으면 이름 앞 'YYMMDD '(인쇄 저장 파일, 예: '261103 분개장.xls')."""
     for m in re.finditer(r"_(\d+)", name):
         if len(m.group(1)) == 8:
             try:
                 return dt.date(int(m.group(1)[:4]), int(m.group(1)[4:6]), int(m.group(1)[6:]))
             except ValueError:
                 continue
+    m = re.match(r"^(\d{2})(\d{2})(\d{2})\s", os.path.basename(name))
+    if m:
+        try:
+            return dt.date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
     return None
 
 
@@ -449,7 +514,7 @@ def load_books(folder, asof, stale_days):
         if kind is None:
             continue
         ext = os.path.splitext(n)[1].lower()
-        if ext == ".xlsx":
+        if ext == ".xlsx" or (ext == ".xls" and kind == "분개장"):   # 분개장은 인쇄 저장 .xls 도 읽는다 (D-56)
             (candidates[kind] if readable else unused).append(n)
         elif readable and ext in (".xls", ".csv"):
             lookalikes[kind].append(n)
