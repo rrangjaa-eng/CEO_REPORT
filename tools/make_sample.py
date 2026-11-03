@@ -13,7 +13,8 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from ceo_report.data import DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA  # noqa: E402
+from ceo_report.data import DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
+from ceo_report.tax import COLUMNS as TAX_COLUMNS  # noqa: E402
 
 
 def write(folder, name, rows, header=None):
@@ -154,6 +155,12 @@ for m in range(1, 12):
         DEPT.append(["2026-%02d" % m, dept, "{:,}".format(sal), "{:,}".format(sga), str(heads), "{:,}".format(nin),
                      "{:,}".format(nout)])
 S[DEPT_FILE] = DEPT
+# 세금·4대보험 납부 예상 (가상 금액, 변환.py 가 분개장으로 만드는 선택 파일, 사용자 2026-11-03). 4대보험 = 직원분 예수금 + 회사분
+S[TAX_FILE] = [
+    ["4대보험", "2026년 10월분", "2026-11-10", "5,250,000", "예상", "예수금 중 공단 거래처 대변(직원분) 2,500,000원 + 회사분 = 직원분 × 1.10"],
+    ["원천세", "2026년 하반기 (7~12월)", "2027-01-11", "6,000,000", "예상", "예수금 중 세무서·구청 거래처 대변 합계, 반기납부"],
+    ["부가세", "2026년 4분기 (10~12월)", "2027-01-25", "21,000,000", "예상", "부가세예수금 − 부가세대급금"],
+]
 S["지급계획.csv"] = [
     ["2026-10-26", "P26201", "무대제작사", "11,000,000"],
     ["2026-10-26", "", "건물관리", "8,000,000"],
@@ -188,7 +195,7 @@ def is_real_input(folder):
 
 
 def write_sample(folder, data=None):
-    """샘플 CSV 12개(+ 선택 파일 부서비용.csv)를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
+    """샘플 CSV 12개(+ 선택 파일 부서비용.csv·세금예상.csv)를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
     if is_real_input(folder):
         raise ValueError("실제 입력 폴더에는 샘플을 쓰지 않습니다: %s" % folder)
     data = S if data is None else data
@@ -196,6 +203,8 @@ def write_sample(folder, data=None):
         write(folder, name, data.get(name, []))
     if DEPT_FILE in data:   # 선택 파일: 빈 입력양식은 만들지 않는다 (변환.py 가 만듦)
         write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
+    if TAX_FILE in data:
+        write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
 
 
 def write_templates(folder=TEMPLATES):

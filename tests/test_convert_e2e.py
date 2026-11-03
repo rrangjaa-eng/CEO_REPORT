@@ -245,7 +245,7 @@ class TestConvertDegraded(unittest.TestCase):
             self.assertEqual(sha(os.path.join(input_dir, name)), digest, name)
         self.assertFalse(os.path.exists(os.path.join(input_dir, "위하고대조.csv")))
         kept = os.listdir(os.path.join(input_dir, "이전", backups(input_dir)[0]))
-        self.assertEqual(sorted(kept), ["계산서.csv", "손익.csv"])
+        self.assertEqual(sorted(kept), ["계산서.csv", "세금예상.csv", "손익.csv"])
         self.assertEqual(section(lines, "[파일 사이 대조]"), [])
         self.assertEqual(lines[-1], "대조 불일치 0건")
 
