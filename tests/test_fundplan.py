@@ -180,6 +180,13 @@ class TestSettle(unittest.TestCase):
         fundplan.settle(rows, books, self.ASOF)
         self.assertEqual(rows[0]["상태"], "예정")
 
+    def test_bank_line_for_another_vendor_does_not_count(self):
+        rows = [plan_row("2026-11-06", "지급", "가상음향", 990000)]
+        books = books_with([(dt.date(2026, 10, 23), "미지급금", 990000, None, "다른회사"),
+                            (dt.date(2026, 10, 23), "보통예금", None, 990000, "다른회사")])
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual(rows[0]["상태"], "예정")
+
     def test_too_early_payment_does_not_count(self):
         rows = [plan_row("2026-12-20", "지급", "가상음향", 3410000)]
         books = books_with([(dt.date(2026, 10, 1), "미지급금", 3410000, None, "가상음향")])
