@@ -28,6 +28,8 @@ FUNDPLAN_KEYS = ["예정일", "입출금", "거래처", "금액", "대상월", "
 # 변환.py 가 분개장 관리항목(부서명·사원명)에서 만드는 선택 파일 (사용자 2026-11-03). 없으면 팀 순수익은 '미확인'.
 DEPT_FILE = "부서비용.csv"
 DEPT_KEYS = ["연월", "부서", "급여", "판관비", "인원"]
+ACCOUNT_FILE = "계정별비용.csv"   # 계정과목별 달별 사용 금액 (사용자 2026-11-03: 월간 연간표)
+ACCOUNT_KEYS = ["연월", "구분", "계정코드", "계정과목", "금액"]
 DEPT_OPTIONAL = ["영업외수익", "영업외비용"]   # 없는 예전 파일은 '미확인' (사용자 2026-11-03: 정부지원금 등은 팀에 넣지 않고 따로)
 NO_DEPT = "부서 없음"
 
@@ -202,6 +204,19 @@ def load(folder):
                        "nonop_in": num(r.get("영업외수익"), iss, r, "영업외수익") if "영업외수익" in r else None,
                        "nonop_out": num(r.get("영업외비용"), iss, r, "영업외비용") if "영업외비용" in r else None,
                        "has_nonop": "영업외수익" in r and "영업외비용" in r} for r in rows]
+
+    # 계정과목별 달별 사용 금액 (선택). 금액 빈칸은 None (모름)
+    d.accounts, d.accounts_problem = None, ""
+    path = os.path.join(folder, ACCOUNT_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, ACCOUNT_KEYS, iss, info)
+        if not ok or info["missing"]:
+            d.accounts_problem = "읽지 못함" if not ok else "필수 열 없음: " + ", ".join(info["missing"])
+        else:
+            d.accounts = [{"ym": (r.get("연월") or "").strip(), "group": (r.get("구분") or "").strip(),
+                           "code": (r.get("계정코드") or "").strip(), "name": (r.get("계정과목") or "").strip(),
+                           "amount": num(r.get("금액"), iss, r, "금액")} for r in rows]
 
     # 세금 예상 (선택): 날짜를 못 읽은 줄은 넣지 않고 입력 확인에 남긴다
     d.tax = None

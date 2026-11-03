@@ -216,6 +216,8 @@ def render(R, mode):
                 esc("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"]))))
 
     h.append(_first_screen(R, mode, per))
+    if R["kind"] == "monthly":   # 3쪽: 계정과목별 연간표 (사용자 2026-11-03, 3쪽으로 따로)
+        h.append(_acct_year_page(R))
     if mode == "ceo":
         # 대표 보고는 문서로 1~2쪽: 요약 화면만 싣는다. 상세 장(1~8)은 경영관리 보고에만 (사용자 2026-11-03)
         h.append("</div></body></html>")
@@ -279,6 +281,10 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 small.nin{display:block;color:var(--in);font-size:10.5px}
 .xbox{background:#fff8e6;border:1px solid #f0dca8;border-radius:10px;padding:10px 16px}
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
+table.pt.ayt{font-size:9.5px;table-layout:auto}table.pt.ayt th,table.pt.ayt td{padding:3px 2px}table.pt.ayt th{text-align:right}table.pt.ayt th:first-child{text-align:left}
+table.pt.ayt td:first-child{white-space:nowrap;max-width:96px;overflow:hidden;text-overflow:ellipsis}table.pt.ayt .fut{background:#f6f7f9}
+table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);padding-top:5px}table.pt.ayt tr.sub td{font-weight:700;border-top:1px solid var(--line)}
+table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.prow{padding:2px 0}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
@@ -684,6 +690,40 @@ def _week_out_table(R):
             steps.append("(금액 미확인 %d건 제외)" % (C["prev_unknown"] + C["cur_unknown"]))
         h.append("<div class='wchg'>%s</div><div class='note'>예정일 지난 미처리는 비교에서 뺌</div>" % esc(" ".join(steps)))
     h.append("</div>")
+    return "".join(h)
+
+
+def _acct_year_page(R):
+    """계정과목별 사용 금액 연간표. 보고월까지 칸을 채우고 뒤 달은 비운다. 월간 보고 때마다 한 달씩 늘어난다."""
+    A = R.get("acct_year") or {"state": "자료 없음", "year": R["asof"].strftime("%Y"), "upto": R["asof"].month}
+    title = "계정과목별 사용 금액 (%s년 1월~%d월)" % (A["year"], A["upto"])
+    h = ["<div class='page ay'><div class='sec'><div class='q'>%s</div>" % esc(title)]
+    if A["state"] != "ok":
+        h.append("<div class='card'>%s</div></div></div>" % _na("%s (계정별비용.csv — 대표보고 창의 '자료 변환'으로 만듦)" % A["state"]))
+        return "".join(h)
+    up = A["upto"]
+
+    def cells(months, total, partial):
+        out = []
+        for m, v in enumerate(months):
+            if m >= up:
+                out.append("<td class='fut'></td>")
+            else:
+                out.append("<td>%s</td>" % (_na("미확인") if v is None else esc(won(v))))
+        out.append("<td class='yt'>%s%s</td>" % (esc(won(total)), "*" if partial else ""))
+        return "".join(out)
+    head = "".join("<th%s>%d월</th>" % (" class='fut'" if m >= up else "", m + 1) for m in range(12))
+    h.append("<table class='pt ayt'><thead><tr><th>계정과목</th>%s<th>합계</th></tr></thead><tbody>" % head)
+    for g in A["groups"]:
+        h.append("<tr class='gh'><td colspan='14'>%s</td></tr>" % esc(g["name"]))
+        for a in g["accounts"]:
+            h.append("<tr><td>%s</td>%s</tr>" % (esc(a["name"] or a["code"]), cells(a["months"], a["total"], a["partial"])))
+        h.append("<tr class='sub'><td>%s 소계</td>%s</tr>" % (esc(g["name"]), cells(g["months"], g["total"], g["partial"])))
+    h.append("<tr class='tot'><td>합계</td>%s</tr></tbody></table>" % cells(A["months"], A["total"], A["partial"]))
+    note = "분개장 차변−대변 · 원가 = 프로젝트 직접비, 판매비와관리비 = 공통비, 영업외비용 = 설정 계정 · 월간 보고를 만들 때마다 그 달 칸이 채워짐"
+    if A["partial"]:
+        note += " · * 금액 미확인 칸 빼고 더함"
+    h.append("<div class='note'>%s</div></div></div>" % esc(note))
     return "".join(h)
 
 

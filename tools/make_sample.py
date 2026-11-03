@@ -13,7 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from ceo_report.data import DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
+from ceo_report.data import ACCOUNT_FILE, ACCOUNT_KEYS, DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
 from ceo_report.tax import CARD_COLUMNS, CARD_FILE, COLUMNS as TAX_COLUMNS  # noqa: E402
 
 
@@ -161,6 +161,22 @@ S[TAX_FILE] = [
     ["원천세", "2026년 하반기 (7~12월)", "2027-01-11", "6,000,000", "예상", "예수금 중 세무서·구청 거래처 대변 합계, 반기납부"],
     ["부가세", "2026년 4분기 (10~12월)", "2027-01-25", "21,000,000", "예상", "부가세예수금 − 부가세대급금"],
 ]
+# 계정과목별 달별 사용 금액 (가상, 변환.py 가 분개장으로 만드는 선택 파일, 사용자 2026-11-03: 월간 연간표).
+# 판매비와관리비 합계 = 달마다 공통비 30,000,000 (부서비용.csv 와 같음), 영업외비용 = 이자비용 500,000
+ACCOUNTS = []
+for m in range(1, 11):
+    ym = "2026-%02d" % m
+    for grp, code, name, amt in (("원가", "53300", "외주용역비", 40_000_000 + m * 3_000_000),
+                                 ("원가", "53500", "행사진행비", 12_000_000 + (m % 4) * 2_500_000),
+                                 ("판매비와관리비", "80200", "직원급여", 23_500_000),
+                                 ("판매비와관리비", "81100", "복리후생비", 1_800_000),
+                                 ("판매비와관리비", "81900", "임차료", 3_000_000),
+                                 ("판매비와관리비", "81400", "통신비", 300_000),
+                                 ("판매비와관리비", "83100", "지급수수료", 900_000),
+                                 ("판매비와관리비", "83000", "소모품비", 500_000),
+                                 ("영업외비용", "93100", "이자비용", 500_000)):
+        ACCOUNTS.append([ym, grp, code, name, "{:,}".format(amt)])
+S[ACCOUNT_FILE] = ACCOUNTS
 # 카드사별 납부일·기산일 (사용자 2026-11-03). 창의 '⑤ 카드 납부일'로 고친다
 CARD_ROWS = [["롯데", "14", "1"], ["비씨", "25", "1"], ["신한", "15", "1"]]
 S["지급계획.csv"] = [
@@ -207,6 +223,8 @@ def write_sample(folder, data=None):
         write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
     if TAX_FILE in data:
         write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
+    if ACCOUNT_FILE in data:
+        write(folder, ACCOUNT_FILE, data[ACCOUNT_FILE], ACCOUNT_KEYS)
     write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
 
 

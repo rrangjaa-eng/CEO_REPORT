@@ -662,8 +662,56 @@ def compute(d, kind, asof, start=None, pick=None):
         "asof": asof_rows, "diffs": d.diffs, "issues": issues.items, "checks": checks,
         "stale": stale_accounts,
     }
+    R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["risks"] = risks(R)
     return R
+
+
+ACCOUNT_GROUP_ORDER = ("원가", "판매비와관리비", "영업외비용")
+
+
+def account_year(rows, ym, problem=""):
+    """계정과목별 연간표 (사용자 2026-11-03: 월간 보고 때마다 해당 월 칸이 채워지며 누적).
+
+    올해 1월~보고월 칸만 채우고 그 뒤 달은 비운다. 칸에 금액 빈 줄이 하나라도 있으면 그 칸은 None(미확인).
+    구분 순서: 원가 → 판매비와관리비 → 영업외비용 (모르는 구분은 뒤에). 구분마다 소계, 맨 아래 합계."""
+    if rows is None:
+        return {"state": problem or "자료 없음", "year": ym[:4], "upto": int(ym[5:7]), "groups": []}
+    year, upto = ym[:4], int(ym[5:7])
+    cells = OrderedDict()
+    names = {}
+    for r in rows:
+        if r["ym"][:4] != year or not r["ym"][5:7].isdigit() or int(r["ym"][5:7]) > upto:
+            continue
+        k = (r["group"] or "구분 없음", r["code"])
+        names.setdefault(k, r["name"])
+        m = int(r["ym"][5:7]) - 1
+        c = cells.setdefault(k, [0] * 12 + [set()])
+        if r["amount"] is None:
+            c[12].add(m)
+        else:
+            c[m] += r["amount"]
+    groups = []
+    order = list(ACCOUNT_GROUP_ORDER) + sorted(set(g for g, _ in cells) - set(ACCOUNT_GROUP_ORDER))
+    for g in order:
+        accs = []
+        for (gg, code), c in sorted(cells.items(), key=lambda kv: kv[0][1]):
+            if gg != g:
+                continue
+            months = [None if (m in c[12] or m >= upto) else c[m] for m in range(12)]
+            known = [v for v in months[:upto] if v is not None]
+            accs.append({"code": code, "name": names[(gg, code)], "months": months,
+                         "unknown": sorted(c[12]), "total": sum(known), "partial": bool(c[12])})
+        if not accs:
+            continue
+        sub = [None if any(m in a["unknown"] for a in accs) or m >= upto else sum(a["months"][m] or 0 for a in accs)
+               for m in range(12)]
+        groups.append({"name": g, "accounts": accs, "months": sub, "total": sum(a["total"] for a in accs),
+                       "partial": any(a["partial"] for a in accs)})
+    tot = [None if m >= upto or any(g["months"][m] is None for g in groups) else sum(g["months"][m] for g in groups)
+           for m in range(12)]
+    return {"state": "ok" if groups else "올해 자료 없음", "year": year, "upto": upto, "groups": groups, "months": tot,
+            "total": sum(g["total"] for g in groups), "partial": any(g["partial"] for g in groups)}
 
 
 def period_ends(kind, asof):
