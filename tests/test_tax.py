@@ -263,3 +263,14 @@ class TestDeposits(unittest.TestCase):
         rows = tax.deposits([ln(D(2026, 9, 1), "1", "10500", debit=50, memo="정기예금")], D(2026, 11, 3))
         self.assertEqual((rows[0]["납부예정일"], rows[0]["금액"]), ("2026-11-03", "50"))
         self.assertIn("해지 전표 없음", rows[0]["근거"])
+
+
+class TestCardMatchNeedsSameCompany(unittest.TestCase):
+    def test_lotte_payment_is_not_taken_by_shinhan_schedule(self):
+        sched = [{"date": D(2026, 11, 14), "io": "out", "amount": 14, "firm": True, "cat": "카드대금", "desc": "신한카드", "basis": ""}]
+        t = [{"kind": "카드대금", "period": "롯데카드 11월 16일 결제", "due": D(2026, 11, 16), "amount": 3, "state": "예상", "basis": ""},
+             {"kind": "카드대금", "period": "신한카드 11월 16일 결제", "due": D(2026, 11, 16), "amount": 5, "state": "예상", "basis": ""}]
+        events, info = tax.merge(sched, t)
+        self.assertIsNone(info[0]["matched"])
+        self.assertEqual(info[1]["matched"]["desc"], "신한카드")
+        self.assertEqual(len(events), 2)

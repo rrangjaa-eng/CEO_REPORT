@@ -498,7 +498,12 @@ def merge(events, taxes):
 
     def text(ev):
         return _sq(" ".join(str(ev.get(k) or "") for k in ("cat", "desc", "basis")))
-    tests = (lambda ev, t: any(w in text(ev) for w in KEYWORDS.get(t["kind"], ())),
+    def words(t):
+        if t["kind"] == "카드대금":   # 카드사가 같아야 같은 카드대금 (롯데 결제를 신한 일정이 가져가지 않게)
+            co = str(t.get("period") or "").split("카드")[0].strip()
+            return (co,) if co else ()
+        return KEYWORDS.get(t["kind"], ())
+    tests = (lambda ev, t: any(w in text(ev) for w in words(t)),
              lambda ev, t: any(w in text(ev) for w in OFFICE.get(t["kind"], ())),
              lambda ev, t: t["amount"] is not None and ev["amount"] == t["amount"])
     for test in tests:
