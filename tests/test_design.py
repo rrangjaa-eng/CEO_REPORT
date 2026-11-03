@@ -143,6 +143,26 @@ class TestReportIsADocument(unittest.TestCase):
                     self.assertIn("@page{size:A4 portrait", html)
                     self.assertNotIn("landscape", html)
 
+    def test_weekly_lists_every_outflow_of_the_week(self):
+        """주간 대표 보고에 이번 주 지급 예정을 전부 보인다 (사용자 2026-11-03). 금액 미확인도 줄로, 0으로 치지 않는다."""
+        from ceo_report.render import week_outflows
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
+        W = week_outflows(R)
+        self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["rows"]],
+                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000)])
+        self.assertEqual(W["firm"] + W["est"], R["s2"]["periods"][0]["all"]["out"])   # 표의 1주 지급 예정과 같다
+        self.assertEqual(W["unknown_n"], 1)
+        for edition in ("ceo", "mgmt"):
+            fs = first_screen(render(R, edition))
+            self.assertIn("이번 주 지급 예정 (11/01 ~ 11/07)", fs)
+            table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
+            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 3)
+            self.assertIn("전시제작사", table)
+            self.assertIn("금액 미확인", table)
+            self.assertIn("3건 · 합계 확정 50,700,000 · 예상 0 · 금액 미확인 1건", fs)
+        self.assertNotIn("이번 주 지급 예정", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
+                                                             dt.date(2026, 10, 31)), "ceo"))
+
     def test_pick_date_row_is_fixed_when_report_is_made(self):
         import test_report
         pick = ASOF + dt.timedelta(days=40)

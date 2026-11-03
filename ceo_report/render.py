@@ -252,6 +252,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
 .prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
@@ -510,6 +511,48 @@ def _excluded_box(R):
     return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in items)
 
 
+def week_outflows(R):
+    """주간 대표 보고의 '이번 주 지급 예정' 목록 (사용자 2026-11-03: 이번 주에 나가는 돈은 전부 보여야 함).
+
+    기준일 다음 날부터 7일 안의 지급 예정 전부(금액 미확인 포함) + 예정일이 지났는데 아직 처리되지 않은 지급.
+    날짜 순, 같은 날은 금액 큰 순. 금액을 모르는 줄은 0으로 치지 않고 따로 센다."""
+    asof, end = R["asof"], R["asof"] + dt.timedelta(days=7)
+    rows = []
+    for e in R["events"]:
+        if e["io"] != "out" or e["date"] is None or e["date"] > end:
+            continue
+        rows.append(dict(e, overdue=e["date"] <= asof))
+    rows.sort(key=lambda e: (e["date"], -(e["amount"] or 0)))
+    known = [e for e in rows if e["amount"] is not None]
+    return {"start": asof + dt.timedelta(days=1), "end": end, "rows": rows,
+            "firm": sum(e["amount"] for e in known if e["firm"] and not e["overdue"]),
+            "est": sum(e["amount"] for e in known if not e["firm"] and not e["overdue"]),
+            "overdue": sum(e["amount"] for e in known if e["overdue"]),
+            "unknown_n": len(rows) - len(known)}
+
+
+def _week_out_table(R):
+    W_ = week_outflows(R)
+    h = ["<div class='card'><table class='pt wo'><thead><tr><th>예정일</th><th>거래처 · 내용</th><th>프로젝트</th><th>구분</th>"
+         "<th>금액</th><th>상태</th></tr></thead><tbody>"]
+    if not W_["rows"]:
+        h.append("<tr><td colspan='6'>이번 주 지급 예정 없음</td></tr>")
+    for e in W_["rows"]:
+        state = "예정일 지남" if e["overdue"] else ("확정" if e["firm"] else "예상")
+        amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
+        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class='vout'>%s</td><td>%s</td></tr>"
+                 % (" class='od'" if e["overdue"] else "", esc(d2s(e["date"])[5:].replace("-", "/")), esc(e.get("desc") or ""),
+                    esc(e.get("project") or ""), esc(e.get("cat") or ""), amt, esc(state)))
+    h.append("</tbody></table>")
+    tail = "확정 %s · 예상 %s" % (won(W_["firm"]), won(W_["est"]))
+    if W_["overdue"]:
+        tail += " · 예정일 지난 미처리 %s (위 1주 지급 예정에는 안 들어감)" % won(W_["overdue"])
+    if W_["unknown_n"]:
+        tail += " · 금액 미확인 %d건" % W_["unknown_n"]
+    h.append("<div class='note'>%s건 · 합계 %s</div></div>" % (len(W_["rows"]), esc(tail)))
+    return "".join(h)
+
+
 def _first_screen(R, mode, per):
     s1, s2, s7 = R["s1"], R["s2"], R["s7"]
     monthly = R["kind"] == "monthly"
@@ -524,6 +567,11 @@ def _first_screen(R, mode, per):
     h.append(_avail_table(R))
     h.append("<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
              % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))
+    if not monthly:
+        wo = week_outflows(R)
+        h.append(_q(i, "이번 주 지급 예정 (%s ~ %s)" % (d2s(wo["start"])[5:].replace("-", "/"), d2s(wo["end"])[5:].replace("-", "/"))))
+        i += 1
+        h.append(_week_out_table(R))
     h.append(_q(i, "프로젝트 예산은 남나?"))
     i += 1
     h.append(_project_bars(R, per))
@@ -539,7 +587,7 @@ def _first_screen(R, mode, per):
         elif X["state"] != "ok":
             h.append("<div class='card'>%s</div>" % _na("%s (%s)" % (X["state"], X["reason"])))
         else:
-            h.append("<div class='card'>%s<div class='note'>자세한 내용은 8번</div></div>" % _xk_summary(X))
+            h.append("<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X))
     h.append(_q(i, "위 숫자에 안 들어간 것 · 확인할 것"))
     h.append(_excluded_box(R))
     h.append("<div class='note' style='margin-top:10px'>%s</div>" % esc(
