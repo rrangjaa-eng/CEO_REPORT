@@ -168,7 +168,7 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 4)   # + 남은 예산 나눔 합친 한 줄
             self.assertIn("전시제작사", table)
             self.assertIn("금액 미확인", table)
-            self.assertIn("3건 · 합계 50,700,000 · 확정 50,700,000 · 예상 0 · 금액 미확인 1건", fs)
+            self.assertIn("4건 · 합계 52,545,735 · 확정 50,700,000 · 예상 1,845,735 · 금액 미확인 1건", fs)
         self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                     dt.date(2026, 10, 31)), "ceo"))
 
