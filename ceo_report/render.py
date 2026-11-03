@@ -6,6 +6,7 @@
 import datetime as dt
 import math
 import re
+from collections import OrderedDict
 
 from .util import won, man, pct, d2s, esc, date as parse_date
 
@@ -807,6 +808,7 @@ def _s5(R):
                           _inv_na(s5) if na else _amt_unk(s5["ar"], s5["ar_unknown_n"]), ""]))
     h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가). 미수 = 발행 합계(VAT포함) − 입금액 − 같은 프로젝트 취소·수정(음수) 상계. "
              "완료일이 없으면 미발행 경과일을 계산하지 않음.</div>")
+    h.append(_event_unissued_table(s5))
     h.append("<h3>발행 후 미수 (%d건)</h3>" % len(s5["ar_rows"]))
     rows = [[esc(v["project"]), esc(v["client"]), esc(d2s(v["date"])), esc(v["kind"]), W(v["total"]), W(v["paid"], "0"),
              W(v["outstanding"]), esc(d2s(v["due"])), esc("확정" if v["due_firm"] else "추정"),
@@ -826,6 +828,28 @@ def _s5(R):
         h.append("<h3>프로젝트 미연결 계산서 (%d건)</h3>" % len(s5["no_project"]))
         rows = [[esc(v["project"] or "-"), esc(v["client"]), esc(d2s(v["date"])), W(v["supply"])] for v in s5["no_project"]]
         h.append(table(["프로젝트", "거래처", "발행일", "공급가액"], rows, num_cols=(3,)))
+    return "".join(h)
+
+
+def _event_unissued_table(s5):
+    """행사일이 지났는데 계산서가 덜 나간 프로젝트 (사전견적 − 발행, 오래된 행사 순). 모르는 것은 까닭과 함께 건수로."""
+    E = s5["event_unissued"]
+    h = ["<h3>%s</h3>" % esc("행사 끝난 뒤 계산서 미발행 (%d건)" % len(E["rows"]))]
+    if E["missing"]:
+        h.append("<div class='note na'>%s</div>" % esc("계산서 자료 없음 — 행사 후 미발행은 ‘자료 없음’"))
+        return "".join(h)
+    rows = [[esc(y["P"]["id"]), esc(y["P"]["name"]), esc(d2s(y["event"])), esc("%d일" % y["days"]),
+             W(y["estimate"]), W(y["issued"], "0"), W(y["unissued"])] for y in E["rows"]]
+    h.append(table(["번호", "프로젝트", "행사일", "행사 후", "사전견적(공급가)", "발행금액(공급가)", "미발행금액"], rows,
+                   num_cols=(3, 4, 5, 6), total=["합계", "", "", "", "", "", W(E["total"])]))
+    note = "미발행금액 = 사전견적 − 발행금액(공급가). 행사일이 기준일 전인 프로젝트만."
+    if E["unknown"]:
+        by = OrderedDict()
+        for u in E["unknown"]:
+            by.setdefault(u["why"], []).append(u["P"]["id"])
+        note += " 판단 불가 %d건 (%s) — 합계에 없음." % (len(E["unknown"]), " · ".join(
+            "%s %d건" % (k, len(v)) for k, v in by.items()))
+    h.append("<div class='note'>%s</div>" % esc(note))
     return "".join(h)
 
 

@@ -384,6 +384,7 @@ def compute(d, kind, asof, start=None):
         "ar": ar_tot,
         "overdue_total": overdue_tot,
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
+        "event_unissued": event_unissued(inv_proj, asof, in_missing),
     }
 
     # ───────────── 2. 앞으로의 입금·지급 일정 ─────────────
@@ -646,6 +647,38 @@ def compute(d, kind, asof, start=None):
     }
     R["risks"] = risks(R)
     return R
+
+
+def event_unissued(inv_proj, asof, in_missing):
+    """행사일이 기준일보다 앞선 프로젝트 중 매출 계산서가 덜 나간 것 (사용자 2026-11-03).
+
+    미발행 = 사전견적금액(공급가액, 사용자 선택 2026-11-03) − 발행 공급가액. 오래된 행사 순. 사전견적·행사일·발행금액을 모르면
+    0으로 치지 않고 unknown 에 까닭과 함께 둔다. 계산서 자료가 없으면 합계는 None (0 아님)."""
+    rows, unknown = [], []
+    for x in inv_proj:
+        P = x["P"]
+        ev = _event_date(P.get("event_date"))
+        if ev is None:
+            if (P.get("event_date") or "").strip():
+                unknown.append({"P": P, "why": "행사일 해석 불가"})
+            else:
+                unknown.append({"P": P, "why": "행사일 없음"})
+            continue
+        if ev >= asof:
+            continue
+        if P.get("estimate") is None:
+            unknown.append({"P": P, "why": "사전견적 없음"})
+            continue
+        if in_missing or x["issued"] is None:
+            unknown.append({"P": P, "why": "발행금액 미확인"})
+            continue
+        left = P["estimate"] - x["issued"]
+        if left > 0:
+            rows.append({"P": P, "event": ev, "days": (asof - ev).days, "estimate": P["estimate"],
+                         "issued": x["issued"], "unissued": left})
+    rows.sort(key=lambda y: (-y["days"], y["P"]["id"]))
+    return {"rows": rows, "unknown": unknown, "missing": bool(in_missing),
+            "total": None if in_missing else sum(y["unissued"] for y in rows)}
 
 
 def _net_credits(invs):
