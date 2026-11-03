@@ -778,30 +778,28 @@ def _next_week_summary(G):
 
 
 def _week_out_table(R):
-    """금요일 출금 목록(가장 눈에 띄게) + 다음 주 지급 예정(항목별 요약 표) + 지난주 대비 한 줄 (사용자 2026-11-03).
+    """금요일 출금 목록(가장 눈에 띄게, 지난주 대비 포함) + 다음 주 지급 예정(항목별 요약 표) (사용자 2026-11-03).
 
-    지난주 기록(보고서.py 가 읽어 R['week_prev']에 둠)이 있으면 금요일 목록에 '지난주 대비' 칸을 두고,
-    아래 한 줄에는 빠진 것·추가된 것·변동된 것만 짧게 적는다."""
+    지난주 대비 = 지난주 기록이 이번 금요일까지 나간다고 본 금액 vs 이번 금요일 출금 금액.
+    줄마다 '지난주 대비' 칸, 아래 한 줄엔 두 합계와 빠진 것·추가된 것·변동된 것만 짧게."""
     from .weekdiff import compare
     W_ = week_outflows(R)
     prev = R.get("week_prev")
-    C = compare(prev, [e for e in W_["rows"] if not e["overdue"]], W_["start"], W_["end"]) if prev else None
-    md = _md
     P = W_["pay"]
+    C = compare(prev, [e for e in P["rows"] if not e["overdue"]], W_["start"], W_["fri"]) if prev else None
+    md = _md
     head = "<div class='fri'><span>금요일 %s 출금 합계</span><b>%s원</b><small>%d건%s</small></div>" % (
         esc(md(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
         esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
-    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R), "</div>",
-         "<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금) · 항목별 요약</div>" % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])),
-         _next_week_summary(W_["next"])]
+    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R)]
     if C is None:
         h.append("<div class='note'>지난주 기록 없음 — 다음 주 보고부터 지난주 대비를 보임</div>")
     else:
-        # 빠진 것·추가된 것·변동된 것만 (사용자 2026-11-03: 구구절절 쓰지 말 것)
         gone = [c for c in C["changes"] if c["kind"] == "빠짐"]
         new = [c for c in C["changes"] if c["kind"] in ("새로 생김", "금액 확인됨")]
         moved = [c for c in C["changes"] if c["kind"] in ("금액 바뀜", "금액 미확인", "날짜 바뀜")]
         diff = lambda cs: sum((c["cur"] or 0) - (c["prev"] or 0) for c in cs)
+
         def sgn(v):
             return ("+" if v > 0 else "−" if v < 0 else "") + won(abs(v))
         parts = []
@@ -811,8 +809,12 @@ def _week_out_table(R):
             parts.append("추가된 것 %d건 %s" % (len(new), sgn(diff(new))))
         if moved:
             parts.append("변동된 것 %d건 %s" % (len(moved), sgn(diff(moved))))
-        h.append("<div class='wchg'>지난주 대비: %s</div>" % esc(" · ".join(parts) if parts else "변동 없음"))
+        top = "지난주(%s) 예상 %s → 이번 금요일 %s (%s)" % (md(C["asof"]), won(C["prev_total"]), won(C["cur_total"]),
+                                                         sgn(C["cur_total"] - C["prev_total"]) if C["cur_total"] != C["prev_total"] else "변동 없음")
+        h.append("<div class='wchg'>지난주 대비: %s%s</div>" % (esc(top), esc(" · " + " · ".join(parts)) if parts else ""))
     h.append("</div>")
+    h += ["<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금) · 항목별 요약</div>"
+          % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])), _next_week_summary(W_["next"]), "</div>"]
     return "".join(h)
 
 

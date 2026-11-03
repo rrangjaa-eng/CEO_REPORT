@@ -101,16 +101,21 @@ class TestWeeklyReport(unittest.TestCase):
     def test_change_line_has_only_dropped_added_changed(self):
         """금요일 목록 표 + 다음 주 항목별 요약 표. 아래 한 줄엔 빠진 것·추가된 것·변동된 것만 (사용자 2026-11-03)."""
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
-        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 7), 8_800_000, "샘플 빠진 지급")]}
+        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 6), 8_800_000, "샘플 빠진 지급"),
+                                                            ev(D(2026, 11, 9), 1_000_000, "다음 주 것")]}
         fs = first_screen(render(R, "ceo"))
         part = fs[fs.index("출금 목록"):fs.index("지금 자금은?")]
+        # 비교 줄은 금요일 출금 카드 안 (다음 주 요약 표 앞): 지난주가 이번 금요일까지로 본 금액 vs 이번 금요일 (사용자 2026-11-03)
+        self.assertLess(part.index("지난주 대비:"), part.index("다음 주 지급 예정"))
         self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 항목별 요약
         self.assertIn("항목별 요약", part)
         line = part[part.index("지난주 대비:"):]
         line = line[:line.index("</div>")]
         self.assertIn("빠진 것 1건 −8,800,000 (샘플 빠진 지급)", line)
         self.assertIn("추가된 것", line)
-        for wordy in ("일정에서 없어짐", "= 지금", "지난주(10/24) 예상"):
+        self.assertIn("지난주(10/24) 예상 8,800,000 → 이번 금요일", line)   # 다음 주(11/09) 것은 비교에 넣지 않음
+        self.assertNotIn("다음 주 것", line)
+        for wordy in ("일정에서 없어짐", "= 지금"):
             self.assertNotIn(wordy, line)
 
     def test_next_week_is_summed_by_item(self):
