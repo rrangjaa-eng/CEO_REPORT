@@ -257,7 +257,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -497,7 +497,7 @@ def _results(R, cum=True):
             foot += " · 가장 오래된 것 %s (행사 후 %d일)" % (_short(o["P"]["name"], 14), o["days"])
         foot = esc(foot) + (_na(" · 확인 필요 %d건" % len(E["unknown"])) if E["unknown"] else "")
         cards.append(("행사 후 세금계산서 미발행", W(E["total"]), foot))
-    h = ["<div class='four'>"]
+    h = ["<div class='four%s'>" % (" c3" if len(cards) == 3 else "")]
     for lab, v, foot in cards:
         lab_html = lab if "<span" in lab else esc(lab)
         h.append("<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
@@ -1091,7 +1091,7 @@ def _over_line(R):
         body = "<b>예산 초과 없음</b>"
     if q:
         body += " · 원가 확인 필요 %d건" % q
-    return ("<div class='overl'>%s <small>(전체 %d건 · 집행 예정액·잔여 예산은 위 지급 일정에 포함)</small></div>"
+    return ("<div class='overl'>%s <small>(프로젝트 전체 %d건 · 집행 예정액·잔여 예산은 자금 일정에 이미 포함)</small></div>"
             % (body, len(ps)))
 
 
@@ -1105,7 +1105,7 @@ def _first_screen(R, mode, per):
     """대표 보고 본문 (사용자 2026-11-03: 대표가 꼭 알아야 할 것만, 주간 2쪽 · 월간 3쪽, 빈 곳 없이).
 
     주간  ① 금요일 출금 목록(합계·지난주 대비·상세 내역) + 다음 주 요약 ② 이번 주 실적(+예산 초과 프로젝트 한 줄) ③ 자금. 미수금·예정 지난 미지급은 월간에만 (사용자 2026-11-03)
-    월간  ① 이번 달 자금 흐름 ② 앞으로 자금 ③ 부가세·원천세 ④ 이번 달 실적·팀 ⑤ 누적 실적·목표 대비 ⑥ 지난 미수금·지급 ⑦ 계정과목별 연간표
+    월간  ① 이번 달 자금 흐름 ② 앞으로 자금(월별 그림은 그 달 1일부터) ③ 부가세·원천세 ④ 지난 미수금·지급 ⑤ 이번 달 실적·팀 ⑥ 누적 실적·목표 대비 ⑦ 계정과목별 연간표
     빠진 금액·자료 확인 목록, 표 설명, 장부 대조, 프로젝트별 상세는 경영관리용(근거자료)에만."""
     s1, s2 = R["s1"], R["s2"]
     monthly = R["kind"] == "monthly"
@@ -1120,10 +1120,11 @@ def _first_screen(R, mode, per):
     funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     if monthly:
-        blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + [("부가세·원천세 (분기·반기별)", _regular_box(R))]
+        # 1쪽 자금(흐름·앞으로·세금·지난 미처리) · 2쪽 실적 · 3쪽 계정과목별 연간표 (실제 계정 49개면 표가 거의 한 쪽)
+        blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + [("부가세·원천세 (분기·반기별)", _regular_box(R))] + past
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + _over_line(R) + _team_table(R, mode=mode)),
                      ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode))]
-                  + past + [_acct_year_block(R)])
+                  + [_acct_year_block(R)])
     else:
         wo = week_outflows(R)
         blocks = ([("금요일(%s) 출금 목록" % _md(wo["fri"]), _week_out_table(R)),
