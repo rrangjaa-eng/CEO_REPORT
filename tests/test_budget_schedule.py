@@ -100,5 +100,42 @@ class TestBudgetEvents(unittest.TestCase):
         self.assertEqual(R0["s2"]["buckets"][0]["label"], "1주차")
 
 
+class TestTeamBudget(unittest.TestCase):
+    """팀별 예산 (2026-11-03 사용자 "이어서 넣어"): 프로젝트 예산을 담당 팀(프로젝트.csv 팀)별로 더한다.
+    WEHAGO 예산입력에 부서 예산을 두 번 넣지 않고 보고서에서 묶는다. 모르는 값은 0으로 넣지 않는다."""
+
+    @classmethod
+    def setUpClass(cls):
+        refresh()
+        cls.R = compute(load(SAMPLE), "weekly", ASOF)
+
+    def team(self, name):
+        return [t for t in self.R["s3"]["by_team"] if t["team"] == name][0]
+
+    def test_team_rows_cover_every_project_once(self):
+        teams = self.R["s3"]["by_team"]
+        self.assertEqual([t["team"] for t in teams], ["기획1팀", "기획2팀"])
+        self.assertEqual(sum(t["n"] for t in teams), len(self.R["s3"]["projects"]))
+
+    def test_team_sums(self):
+        t1 = self.team("기획1팀")   # P26201 210,000,000 · P26204 예산 미지정 · P26205 31,500,000 · P26208 14,000,000
+        self.assertEqual((t1["n"], t1["budget"], t1["no_budget"]), (4, 255500000, 1))
+        self.assertEqual(t1["expected"], 238200000 + 18000000 + 31000000 + 350000)
+        # 잔여: P26201 −28,200,000 + P26205 500,000 + P26208 13,650,000 (예산 지정분만)
+        self.assertEqual((t1["remain"], t1["remain_unknown"]), (-14050000, 0))
+        self.assertEqual(t1["planned_pay"], 15015000)   # 진행 중 남은 예산 지급 예정(부가세 포함): P26208
+
+    def test_unknown_remain_is_counted_not_zero(self):
+        t2 = self.team("기획2팀")   # P26206 금액 미확인 원가 → 잔여 판단 불가
+        self.assertEqual(t2["remain_unknown"], 1)
+        self.assertEqual(t2["planned_pay"], 7700000)
+
+    def test_rendered_in_section_3(self):
+        from ceo_report.render import render
+        html = render(self.R, "ceo")
+        self.assertIn("팀별 예산·집행", html)
+        self.assertIn("기획1팀", html)
+
+
 if __name__ == "__main__":
     unittest.main()
