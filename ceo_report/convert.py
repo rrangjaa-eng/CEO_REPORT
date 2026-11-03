@@ -795,10 +795,10 @@ def build_tax(books, cfg, asof, input_dir=None):
         tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
-        tax.cards(books.journal, asof, card_days)
+        tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
-    notes = ["%s %s → %s 납부 %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
-                                       "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
+    notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
+                                       "입금" if r["세목"] == tax.DEPOSIT_IN else "납부", "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
     notes.extend(card_notes)

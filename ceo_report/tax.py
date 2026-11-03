@@ -407,6 +407,61 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
     return rows
 
 
+DEPOSIT_IN = "정기예금 만기"
+DEPOSIT_OUT = "정기예금 가입"
+
+
+def _add_months(d, k):
+    y, m = _next_month(d.year, d.month, k)
+    return _day_in(y, m, d.day)
+
+
+def deposits(journal, asof, codes=("10500",), words=("정기예금",)):
+    """정기예금 가입·만기 (사용자 2026-11-03: 여유 자금으로 정기예금을 들고 일반전표에 넣음).
+
+    가입 = 정기예금 계정 차변 + 통장 출금, 해지 = 정기예금 계정 대변 (적요·거래처에 '정기예금'이 있는 줄만: 공제부금 등은 뺀다).
+    같은 금액의 해지가 뒤에 있으면 끝난 예금. 남은 예금의 만기 = 가입일 + 기간(달), 쉬는 날이면 다음 영업일.
+    기간은 지난 예금의 가입→만기해지 간격(같은 금액 짝)에서 가장 흔한 달 수, 없으면 1개월.
+    기준일 뒤 가입 전표는 그날 지급, 만기는 원금 입금으로 본다 (이자는 모르니 넣지 않음)."""
+    codes = set(map(_sq, codes))
+
+    def mine(x):
+        return _sq(x["account_code"]) in codes and any(w in str(x.get("memo") or "") + str(x.get("vendor") or "") for w in words)
+    put = sorted((x["date"], x["debit"]) for x in journal if x["date"] is not None and mine(x) and (x.get("debit") or 0) > 0)
+    took = sorted((x["date"], x["credit"], "만기" in str(x.get("memo") or "")) for x in journal
+                  if x["date"] is not None and mine(x) and (x.get("credit") or 0) > 0)
+    open_, terms = [], []
+    used = set()
+    for d, a in put:
+        hit = next((i for i, (d2, a2, _) in enumerate(took) if i not in used and d2 >= d and a2 == a), None)
+        if hit is None:
+            open_.append((d, a))
+            continue
+        used.add(hit)
+        d2, _, matured = took[hit]
+        if matured:
+            terms.append(max(1, int(round((d2 - d).days / 30.4))))
+    left = sum(a for i, (_, a, _) in enumerate(took) if i not in used)   # 짝 없는 해지: 오래된 예금부터 지운다
+    still = []
+    for d, a in open_:
+        take = min(a, left)
+        left -= take
+        if a - take > 0:
+            still.append((d, a - take))
+    term = max(set(terms), key=lambda k: (terms.count(k), -k)) if terms else 1
+    why = "지난 예금 %d건의 가입→만기 간격" % len(terms) if terms else "지난 만기 기록 없음 → 1개월로 봄"
+    rows = []
+    for d, a in still:
+        if d > asof:
+            rows.append(_row(DEPOSIT_OUT, "%s 가입" % d.isoformat(), d, a, "확정(전표)", "정기예금 가입 전표 (통장에서 나감)"))
+        due = _after(_add_months(d, term))
+        note = "가입 %s + %d개월 (%s)" % (d.isoformat(), term, why)
+        if due < asof:
+            due, note = _after(asof), note + " — 만기가 지났는데 해지 전표 없음"
+        rows.append(_row(DEPOSIT_IN, "%s 가입분" % d.isoformat(), due, a, "예상", "원금만 (이자 제외). " + note))
+    return rows
+
+
 def _row(kind, period, due, amount, state, basis):
     return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
             "상태": state, "근거": basis}
@@ -415,9 +470,14 @@ def _row(kind, period, due, amount, state, basis):
 # ───────────── 보고서 쪽: 자금 일정에 넣기 ─────────────
 KEYWORDS = {"부가세": ("부가",), "원천세": ("원천", "소득세", "지방소득"),
             "4대보험": ("4대보험", "사대보험", "국민연금", "건강보험", "고용보험", "산재", "근로복지", "공단"),
-            "급여": ("급여", "월급", "임금", "인건비"), "카드대금": ("카드",)}
+            "급여": ("급여", "월급", "임금", "인건비"), "카드대금": ("카드",), DEPOSIT_IN: ("정기예금", "예금"),
+            DEPOSIT_OUT: ("정기예금", "예금")}
 OFFICE = {"부가세": ("세무서",), "원천세": ("세무서", "구청", "시청", "군청")}
 NEAR_DAYS = 7
+
+
+def _io(t):
+    return "in" if t["kind"] == DEPOSIT_IN else "out"
 
 
 def merge(events, taxes):
@@ -434,7 +494,7 @@ def merge(events, taxes):
     def near(ev, t):
         if t["due"] is None:
             return False
-        return ev["io"] == "out" and ev["date"] is not None and abs((ev["date"] - t["due"]).days) <= NEAR_DAYS
+        return ev["io"] == _io(t) and ev["date"] is not None and abs((ev["date"] - t["due"]).days) <= NEAR_DAYS
 
     def text(ev):
         return _sq(" ".join(str(ev.get(k) or "") for k in ("cat", "desc", "basis")))
@@ -455,7 +515,7 @@ def merge(events, taxes):
         diff = None if match is None or match["amount"] is None or t["amount"] is None else match["amount"] - t["amount"]
         info.append(dict(t, matched=match, diff=diff))
         if match is None and t["due"] is not None and (t["amount"] is None or t["amount"] > 0):
-            out.append({"date": t["due"], "io": "out", "amount": t["amount"], "firm": t["state"].startswith("확정"),
-                        "cat": "세금·4대보험 예상 (장부 계산)", "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],
+            out.append({"date": t["due"], "io": _io(t), "amount": t["amount"], "firm": t["state"].startswith("확정"),
+                        "cat": "장부로 계산한 예정 (세금·4대보험·급여·카드·예금)", "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],
                         "project": "", "source": "세금예상"})
     return out, info

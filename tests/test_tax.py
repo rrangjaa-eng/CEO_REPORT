@@ -12,8 +12,9 @@ from ceo_report import tax  # noqa: E402
 D = dt.date
 
 
-def ln(day, no, code, debit=None, credit=None, vendor=""):
-    return {"date": day, "no": no, "account_code": code, "account": "", "debit": debit, "credit": credit, "vendor": vendor}
+def ln(day, no, code, debit=None, credit=None, vendor="", memo=""):
+    return {"date": day, "no": no, "account_code": code, "account": "", "debit": debit, "credit": credit, "vendor": vendor,
+            "memo": memo}
 
 
 class TestVat(unittest.TestCase):
@@ -228,3 +229,37 @@ class TestCards(unittest.TestCase):
         days, notes = tax.read_card_days(tmp)
         self.assertEqual(days, {"비씨": (25, 12)})
         self.assertIn("신한", notes[0])
+
+
+class TestDeposits(unittest.TestCase):
+    """정기예금 가입·만기 (사용자 2026-11-03). 가상 금액."""
+
+    def j(self):
+        M = "정기예금입금"
+        return [ln(D(2026, 2, 19), "1", "10500", debit=70, memo=M), ln(D(2026, 2, 19), "1", "10300", credit=70),
+                ln(D(2026, 3, 19), "2", "10500", credit=70, memo="정기예금만기해지"),
+                ln(D(2026, 5, 4), "3", "10500", debit=40, memo=M), ln(D(2026, 6, 4), "4", "10500", credit=40, memo="정기예금만기해지"),
+                ln(D(2026, 10, 17), "5", "10500", debit=90, memo=M),
+                ln(D(2026, 10, 25), "6", "10500", debit=5, memo="공제부금_3회차"),   # 정기예금이 아님
+                ln(D(2026, 11, 20), "7", "10500", debit=30, memo=M)]                 # 미리 넣은 가입 전표
+
+    def test_open_deposit_matures_after_usual_term(self):
+        rows = tax.deposits(self.j(), D(2026, 11, 3))
+        got = [(r["세목"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got, [("정기예금 만기", "2026-11-17", "90", "예상"),       # 10/17 + 1개월
+                               ("정기예금 가입", "2026-11-20", "30", "확정(전표)"),
+                               ("정기예금 만기", "2026-12-21", "30", "예상")])      # 12/20 일 → 12/21
+        self.assertIn("2건", rows[0]["근거"])
+
+    def test_maturity_is_cash_in_on_the_schedule(self):
+        rows = tax.deposits(self.j(), D(2026, 11, 3))
+        taxes = [{"kind": r["세목"], "period": r["대상기간"], "due": D.fromisoformat(r["납부예정일"]), "amount": int(r["금액"]),
+                  "state": r["상태"], "basis": r["근거"]} for r in rows]
+        events, _ = tax.merge([], taxes)
+        self.assertEqual([(e["date"], e["io"], e["amount"]) for e in events],
+                         [(D(2026, 11, 17), "in", 90), (D(2026, 11, 20), "out", 30), (D(2026, 12, 21), "in", 30)])
+
+    def test_overdue_maturity_moves_to_today(self):
+        rows = tax.deposits([ln(D(2026, 9, 1), "1", "10500", debit=50, memo="정기예금")], D(2026, 11, 3))
+        self.assertEqual((rows[0]["납부예정일"], rows[0]["금액"]), ("2026-11-03", "50"))
+        self.assertIn("해지 전표 없음", rows[0]["근거"])
