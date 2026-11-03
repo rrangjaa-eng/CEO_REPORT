@@ -600,6 +600,7 @@ def _s2(R):
         "시작값은 보고 기준일 사용 가능액 %s%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠.%s"
         % (_won_or_unknown(s2["start"]), _bal_note(R["s1"]),
            " 부가세 미확인 %d건은 공급가액만 반영." % s2["vat_unknown_n"] if s2["vat_unknown_n"] else "")))
+    h.extend(_fundplan_notes(R.get("fundplan")))
     if s2["in_missing"]:
         h.append("<div class='note'>%s</div>" % esc(
             "계산서 자료 없음(%s) — 계산서 입금예정(수금)이 빠진 채 입금 칸과 계산 잔액을 만듦. 입금이 빠졌으므로 "
@@ -647,6 +648,42 @@ def _s2(R):
              "프로젝트 지급요청은 공급가액+부가세(실제 출금액)로 반영. "
              "부가세가 비어 있으면 공급가액만 반영하고 ‘부가세 미확인’으로 표시.</div>")
     return "".join(h)
+
+
+def _fundplan_notes(F):
+    """자금계획서 기준 일정 설명 (D-55). 자금계획.csv 가 없으면 아무것도 쓰지 않는다."""
+    if not F:
+        return []
+    if not F["used"]:
+        return ["<div class='note'>%s</div>" % esc("자금계획서 쓰지 않음: " + F["reason"])]
+    out = ["<div class='note'>%s</div>" % esc(
+        "일정 기준: WEHAGO 자금계획서 (자료일 %s, %s). 기존 일정과 같은 건 %d건은 자금계획서 날짜·금액으로 바꿈, "
+        "새로 넣은 줄 %d건, 이미 지급·입금되어 뺀 줄 %d건, 예정일 지난 미지급 %d건은 다음 금요일로 옮김, "
+        "입금 지연 %d건은 추정(지난 날짜, 잔액 계산 미포함). 자금계획서가 없는 달은 기존 일정으로 계산."
+        % (d2s(F["stamp"]), ", ".join(F["months"]), len(F["matched"]), len(F["added"]), len(F["done"]),
+           len(F["moved"]), len(F["late_in"])))]
+    if F["missing"]:
+        out.append("<h3>자금계획서에 없는 기존 일정 (%d건, 그대로 반영 · 확인 필요)</h3>" % len(F["missing"]))
+        out.append("<div class='note'>WEHAGO 자금계획서에 등록되지 않은 예정입니다. 같은 건이면 자금일정.csv 에서 지우고, "
+                   "다른 건이면 WEHAGO 에 지급·입금예정일을 넣어 주세요. 지급은 빼지 않고 그대로 계산합니다.</div>")
+        out.append(table(["예정일", "구분", "금액", "확정", "분류", "프로젝트", "거래처·내용", "원천"],
+                         [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"), W(e["amount"]),
+                           esc("확정" if e["firm"] else "추정"), esc(e["cat"]), esc(e["project"]), esc(e["desc"]),
+                           esc(e["source"])] for e in sorted(F["missing"], key=lambda e: e["date"])], num_cols=(2,)))
+    if F["done"]:
+        out.append("<h3>이미 지급·입금되어 일정에서 뺀 자금계획서 줄 (%d건)</h3>" % len(F["done"]))
+        out.append(table(["예정일", "상태", "금액", "거래처", "분개장 근거", "함께 뺀 기존 일정"],
+                         [[esc(d2s(x["plan"]["date"])), esc(x["plan"]["state"]), W(x["plan"]["amount"]),
+                           esc(x["plan"]["vendor"]), esc(x["plan"]["basis"]),
+                           esc("%s %s %s" % (x["old"]["source"], d2s(x["old"]["date"]), x["old"]["desc"]) if x["old"] else "-")]
+                          for x in F["done"]], num_cols=(2,)))
+    moved = [x for x in F["matched"] if x["old"]["date"] != x["plan"]["date"]]
+    if moved:
+        out.append("<h3>자금계획서로 날짜가 바뀐 일정 (%d건)</h3>" % len(moved))
+        out.append(table(["거래처", "금액", "기존 예정일", "자금계획서 예정일", "기존 원천"],
+                         [[esc(x["plan"]["desc"]), W(x["plan"]["amount"]), esc(d2s(x["old"]["date"])),
+                           esc(d2s(x["plan"]["date"])), esc(x["old"]["source"])] for x in moved], num_cols=(1,)))
+    return out
 
 
 def _s3(R, per):
