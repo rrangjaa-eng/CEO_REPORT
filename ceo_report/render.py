@@ -942,8 +942,8 @@ def _team_table(R, part="month"):
         per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
         out.append(_ytd_strip(Y, ym))
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th>"
-                   "<th>급여·판관비</th><th>순수익</th><th>평균 인원</th><th>1인당 순수익</th><th>공통비 나눈 뒤 1인당</th>"
-                   "</tr></thead><tbody>")
+                   "<th>급여</th><th>판관비</th><th>순수익</th><th>평균 인원</th><th>1인당 순수익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
+                   "</tr></thead><tbody>")   # 이번 달 표와 같은 칸 (사용자 2026-11-03)
         for r in [x for x in Y["rows"] if x["kind"] in ("team", "hq_total")] + [Y["company"]]:
             cls = {"company": " class='tot'", "hq_total": " class='hq'"}.get(r["kind"], "")
             h = r["heads"]
@@ -954,11 +954,12 @@ def _team_table(R, part="month"):
                 alloc = "미확인" if a is None or not h else W(round(a / h))
             elif r["kind"] == "company":
                 alloc = per
+            ratio = "미확인" if r["net"] is None or not r["salary"] else "%.1f배" % (r["net"] / r["salary"])
             cells = [esc(r["label"]) + ("<small>인원 = 기획본부만</small>" if r["kind"] == "company" else ""),
                      W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
-                     W(_add(r["salary"], r["sga"])), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, alloc]
+                     W(r["salary"]), W(r["sga"]), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, esc(ratio), alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
-        out.append(_nonop_rows(Y["nonop"], 4, 3))
+        out.append(_nonop_rows(Y["nonop"], 5, 4))
         out.append("</tbody></table>")
         out.append(_target_table(R, Y, ym))
     else:
