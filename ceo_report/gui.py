@@ -36,7 +36,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(760, 640)
+        root.minsize(820, 820)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -125,6 +125,19 @@ class Window(object):
         self._btn(f5, "저장", self.save_card)
         self.cards_now = tk.StringVar(value="지금: " + app.card_list(self.paths.input))
         ttk.Label(f5, textvariable=self.cards_now, style="S.TLabel").pack(side="left")
+
+        # ⑥ 이체 파일
+        f6 = ttk.LabelFrame(outer, text="⑥ 거래처 이체 파일 — 신한 대량이체 양식 (급여·세금·카드 등 정기 지급은 뺌)",
+                            style="Sec.TLabelframe", padding=8)
+        f6.pack(fill="x", pady=4)
+        today = dt.date.today()
+        self.t_from = tk.StringVar(value=(today + dt.timedelta(days=1)).isoformat())
+        self.t_to = tk.StringVar(value=(today + dt.timedelta(days=7)).isoformat())
+        ttk.Label(f6, text="지급일").pack(side="left")
+        ttk.Entry(f6, textvariable=self.t_from, width=12).pack(side="left", padx=(4, 4))
+        ttk.Label(f6, text="~").pack(side="left")
+        ttk.Entry(f6, textvariable=self.t_to, width=12).pack(side="left", padx=(4, 10))
+        self._btn(f6, "이체 파일 만들기", self.make_transfer)
 
         # 진행
         ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
@@ -237,6 +250,27 @@ class Window(object):
         self.cards_now.set("지금: " + app.card_list(self.paths.input))
         self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
                  % " · ".join("%s %d일(기산 %d일)" % r for r in rows))
+
+    def make_transfer(self):
+        from . import transfer
+        try:
+            start = dt.date.fromisoformat(self.t_from.get().strip())
+            end = dt.date.fromisoformat(self.t_to.get().strip())
+            asof = dt.date.fromisoformat(self.asof.get().strip())
+        except ValueError:
+            self.say("날짜 형식 오류 (예: 2026-11-30)")
+            return
+        if end < start:
+            self.say("지급일 끝이 시작보다 앞섭니다")
+            return
+        self.say("──── 이체 파일 ────")
+        try:
+            path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof)
+        except Exception as e:   # 트레이스백 대신 글로
+            self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
+            return
+        if path:
+            self.open_dir(self.paths.output)
 
     def open_dir(self, path):
         if not open_path(path):

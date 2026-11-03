@@ -1,0 +1,242 @@
+"""신한은행 대량이체 파일 (사용자 2026-11-03: 정기적으로 나가는 돈 말고 거래처 지급은 양식에 맞춰 계좌·은행·예금주까지).
+
+양식은 ERP_PLANT8_260917 저장소의 신한 대량이체 양식과 같다: 시트 '입력정보', 머리글 9칸, 칸마다 CP949 바이트 한도, 은행은 3자리 코드.
+계좌 정보는 입력/거래처계좌.csv (인트라넷에서 읽어 사용자 PC 에만 둔다. 저장소에는 올리지 않는다).
+은행 이름을 코드로 못 풀거나 계좌·예금주가 없으면 그 줄은 파일에 넣지 않고 이유를 알린다 (짐작해서 넣으면 돈이 엉뚱한 데로 간다).
+"""
+import datetime as dt
+import os
+import re
+import zipfile
+from xml.sax.saxutils import escape
+
+ACCOUNT_FILE = "거래처계좌.csv"
+ACCOUNT_COLUMNS = ["거래처", "은행", "계좌번호", "예금주"]
+SHEET = "입력정보"
+HEADER = ["*입금은행", "*입금계좌", "고객관리성명", "*입금액", "출금통장표시내용", "입금통장표시내용", "입금인코드", "비고", "업체사용key"]
+MAX_BYTES = {"account": 16, "holder": 20, "amount": 15, "our": 14, "their": 14, "memo": 20, "key": 20}
+
+# 정기적으로 나가는 돈 (이체 파일에 넣지 않음): 자동이체·카드·세금·급여·예금 등
+REGULAR = ("카드", "세금", "부가세", "원천세", "4대보험", "회사부담금", "급여", "인건비", "임차료", "구독료", "차입금", "정기예금",
+           "보험료", "통신비", "관리비")
+# 아직 요청이 아닌 계획 (이체할 돈이 아님)
+PLANS = ("프로젝트 남은 예산", "프로젝트 집행계획")
+
+BANK_CODES = {
+    "신한": "088", "경남": "039", "광주": "034", "국민": "004", "기업": "003", "지역농·축협": "012", "도이치": "055", "부산": "032",
+    "KDB산업": "002", "저축": "050", "새마을금고": "045", "수협": "007", "회원수협": "030", "신협": "048", "한국씨티": "027",
+    "아이엠뱅크": "031", "우리": "020", "우체국": "071", "전북": "037", "제주": "035", "하나": "081", "케이뱅크": "089",
+    "카카오뱅크": "090", "중국공상": "062", "비엔피파리바": "061", "BOA(BANKOFAMERICA)": "060", "HSBC": "054", "JP모건체이스": "057",
+    "SC제일": "023", "산림조합": "064", "중국건설": "067", "IBK투자증권": "225", "농협": "011", "유안타증권": "209", "KB증권": "218",
+    "미래에셋증권": "238", "삼성증권": "240", "한국투자증권": "243", "NH투자증권": "247", "아이엠증권": "262", "현대차증권": "263",
+    "한화투자증권": "269", "하나증권": "270", "신한투자증권": "278", "메리츠증권": "287", "유진투자증권": "280", "신영증권": "291",
+    "대신증권": "267", "DB금융투자": "279", "부국증권": "290", "엘에스증권주식회사": "265", "메리츠종합금융증권": "268",
+    "케이프투자증권": "292", "키움증권": "264", "우리투자증권": "294", "다올투자증권": "227", "BNK투자증권": "224",
+    "카카오페이증권": "288", "상상인증권": "221", "토스증권": "271", "중국은행": "063", "토스뱅크": "092", "교보증권": "261",
+    "에스케이증권": "266", "NH농협증권": "289",
+}
+ALIASES = {
+    "NH농협": "농협", "농협중앙회": "농협", "단위농협": "지역농·축협", "축협": "지역농·축협", "KB국민": "국민", "IBK기업": "기업",
+    "KEB하나": "하나", "하나은행": "하나", "SC": "SC제일", "제일": "SC제일", "스탠다드차타드": "SC제일", "씨티": "한국씨티",
+    "시티": "한국씨티", "산업": "KDB산업", "KDB": "KDB산업", "대구": "아이엠뱅크", "IM뱅크": "아이엠뱅크", "아이엠": "아이엠뱅크",
+    "카카오": "카카오뱅크", "케이": "케이뱅크", "K뱅크": "케이뱅크", "토스": "토스뱅크", "새마을": "새마을금고",
+    "MG새마을금고": "새마을금고", "신용협동조합": "신협", "수협은행": "수협", "우정사업본부": "우체국", "우체국예금보험": "우체국",
+    "BOA": "BOA(BANKOFAMERICA)", "뱅크오브아메리카": "BOA(BANKOFAMERICA)", "SK증권": "에스케이증권", "IBK증권": "IBK투자증권",
+}
+
+
+def _norm(text):
+    return re.sub(r"[\s()（）]", "", str(text or "")).upper()
+
+
+_CODES = dict((_norm(k), v) for k, v in BANK_CODES.items())
+_ALIAS = dict((_norm(k), _norm(v)) for k, v in ALIASES.items())
+
+
+def bank_code(name):
+    """은행 이름 -> 3자리 코드. 못 찾으면 None (짐작하지 않는다)."""
+    v = str(name or "").strip()
+    if re.match(r"^\d{3}$", v):
+        return v if v in BANK_CODES.values() else None
+    k = _norm(v)
+    for key in (k, k[:-2] if k.endswith("은행") else None):
+        if not key:
+            continue
+        if key in _CODES:
+            return _CODES[key]
+        if key in _ALIAS:
+            return _CODES.get(_ALIAS[key])
+    return None
+
+
+def nbytes(text):
+    """CP949 바이트 수 (ASCII 1, 그 밖 2)."""
+    return sum(1 if ord(c) < 0x80 else 2 for c in str(text))
+
+
+def cut(text, limit):
+    out, n = "", 0
+    for c in str(text or ""):
+        w = 1 if ord(c) < 0x80 else 2
+        if n + w > limit:
+            break
+        out, n = out + c, n + w
+    return out
+
+
+def _cp949_ok(text):
+    try:
+        str(text).encode("cp949")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def vendor_key(name):
+    """거래처 이름 맞추기: 빈칸·(주)·주식회사를 뗀다."""
+    t = re.sub(r"\(주\)|㈜|주식회사|\(유\)|유한회사", "", str(name or ""))
+    return re.sub(r"[\s·.,\-_]", "", t)
+
+
+def read_accounts(input_dir):
+    """입력/거래처계좌.csv -> ({거래처 열쇠: {거래처, 은행, 계좌번호, 예금주}}, 알림)."""
+    from .util import Issues, read_csv
+    path = os.path.join(input_dir, ACCOUNT_FILE)
+    if not os.path.exists(path):
+        return {}, ["%s 없음 → 계좌를 채울 수 없음 (인트라넷에서 거래처 계좌를 읽어 와야 함)" % ACCOUNT_FILE]
+    info = {}
+    rows, ok = read_csv(path, ACCOUNT_COLUMNS, Issues(), info)
+    if not ok or info.get("missing"):
+        return {}, ["%s 를 읽지 못함 (머리글: %s)" % (ACCOUNT_FILE, ",".join(ACCOUNT_COLUMNS))]
+    out = {}
+    for r in rows:
+        k = vendor_key(r.get("거래처"))
+        if k:
+            out[k] = dict((c, str(r.get(c) or "").strip()) for c in ACCOUNT_COLUMNS)
+    return out, []
+
+
+def is_regular(e):
+    text = " ".join(str(e.get(k) or "") for k in ("cat", "desc"))
+    return e.get("source") == "세금예상" or any(w in text for w in REGULAR)
+
+
+def pick(events, start, end):
+    """[start, end] 에 나갈 거래처 지급 (정기 지급·계획 제외) -> (거래처별로 합친 줄, 뺀 줄 수)."""
+    lines, skipped = {}, 0
+    for e in events:
+        if e["io"] != "out" or e["date"] is None or not (start <= e["date"] <= end) or e.get("cat") in PLANS:
+            continue
+        if is_regular(e):
+            skipped += 1
+            continue
+        name = str(e.get("desc") or "").strip()
+        k = vendor_key(name) or "?%d" % len(lines)
+        ln = lines.setdefault(k, {"vendor": name, "amount": 0, "unknown": False, "projects": [], "dates": [], "firm": True})
+        if e["amount"] is None:
+            ln["unknown"] = True
+        else:
+            ln["amount"] += e["amount"]
+        if e.get("project") and e["project"] not in ln["projects"]:
+            ln["projects"].append(e["project"])
+        ln["dates"].append(e["date"])
+        ln["firm"] = ln["firm"] and bool(e.get("firm"))
+    return sorted(lines.items(), key=lambda kv: (min(kv[1]["dates"]), kv[1]["vendor"])), skipped
+
+
+def build(events, accounts, start, end):
+    """-> (파일 줄 [9칸], 막힌 줄 [(거래처, 금액, 이유)], 뺀 정기 지급 수)."""
+    picked, skipped = pick(events, start, end)
+    rows, blocked = [], []
+    for k, ln in picked:
+        acc = accounts.get(k)
+        why = None
+        if ln["unknown"] or ln["amount"] <= 0:
+            why = "금액 미확인"
+        elif acc is None:
+            why = "계좌 정보 없음"
+        else:
+            holder = acc["예금주"]
+            number = re.sub(r"[\s-]", "", acc["계좌번호"])
+            if not holder:
+                why = "예금주 없음"
+            elif bank_code(acc["은행"]) is None:
+                why = "은행 코드 없음 (%s)" % acc["은행"]
+            elif not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
+                why = "예금주 형식·길이 오류"
+            elif not number.isdigit() or len(number) > MAX_BYTES["account"]:
+                why = "계좌번호 형식 오류"
+            elif len(str(ln["amount"])) > MAX_BYTES["amount"]:
+                why = "금액 자릿수 초과"
+        if why:
+            blocked.append((ln["vendor"], None if ln["unknown"] else ln["amount"], why))
+            continue
+        memo = cut(" ".join(ln["projects"]) or ln["vendor"], MAX_BYTES["memo"])
+        rows.append([bank_code(acc["은행"]), number, holder, str(ln["amount"]), cut(holder, MAX_BYTES["our"]), "", "",
+                     memo, cut(ln["vendor"], MAX_BYTES["key"])])
+    return rows, blocked, skipped
+
+
+def _col(i):
+    return chr(ord("A") + i)
+
+
+def write_xlsx(path, rows):
+    """글자 칸만 있는 시트 하나짜리 xlsx (앞 0이 사라지지 않게 모두 글자)."""
+    def cell(r, c, v):
+        return '<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>' % (_col(c), r, escape(str(v)))
+    body = "".join('<row r="%d">%s</row>' % (i + 1, "".join(cell(i + 1, j, v) for j, v in enumerate(row)))
+                   for i, row in enumerate([HEADER] + rows))
+    sheet = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>%s</sheetData></worksheet>' % body)
+    files = {
+        "[Content_Types].xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>',
+        "_rels/.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>',
+        "xl/workbook.xml": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="%s" sheetId="1" r:id="rId1"/></sheets></workbook>' % SHEET,
+        "xl/_rels/workbook.xml.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '</Relationships>',
+        "xl/worksheets/sheet1.xml": sheet,
+    }
+    tmp = path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in files.items():
+            z.writestr(name, text.encode("utf-8"))
+    os.replace(tmp, path)
+
+
+def make_file(input_dir, output_dir, start, end, say, asof=None):
+    """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None."""
+    from .calc import compute
+    from .data import load
+    d = load(input_dir)
+    R = compute(d, "weekly", asof or start - dt.timedelta(days=1))
+    accounts, notes = read_accounts(input_dir)
+    for n in notes:
+        say(n)
+    rows, blocked, skipped = build(R["events"], accounts, start, end)
+    say("이체 대상 %s ~ %s: 파일에 넣음 %d건 %s원, 못 넣음 %d건, 정기 지급 %d건은 뺌" % (
+        start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
+    for vendor, amount, why in blocked:
+        say("  못 넣음: %s %s — %s" % (vendor, "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    if not rows:
+        say("파일에 넣을 줄이 없어 만들지 않았습니다")
+        return None
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "신한대량이체_%s_%s.xlsx" % (start.strftime("%m%d"), end.strftime("%m%d")))
+    write_xlsx(path, rows)
+    say("이체 파일: %s — 신한은행 기업뱅킹 대량이체에서 불러오기 전에 금액·계좌를 한 번 더 확인하세요" % path)
+    return path
