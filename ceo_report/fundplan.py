@@ -16,7 +16,9 @@ DETAIL_RE = re.compile(r"^예정일\s*:\s*(\d{4})\.(\d{1,2})\.(\d{1,2})\s*-\s*(.
 PERIOD_RE = re.compile(r"계획기간\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월")
 SECTIONS = {"지급계획": "out", "입금계획": "in"}
 COLUMNS = ["예정일", "입출금", "분류", "거래처", "거래처코드", "금액", "대상월", "자료일", "파일", "상태", "근거"]
-EARLY_DAYS = 45   # 예정일보다 이만큼 앞선 전표까지 그 줄을 미리 지급·입금한 것으로 본다
+# 예정일보다 이만큼 앞선 전표까지 그 줄을 미리 지급·입금한 것으로 본다. 지급은 짧게: 매달 같은 금액을 내는 지급(복리후생비 등)의
+# 지난달 전표를 이번 달 지급으로 잘못 보면 지급이 빠진다 (실제 파일에서 확인). 입금은 잘못 맞아도 입금이 빠지는 쪽이라 길게 둔다.
+EARLY_DAYS = {"지급": 14, "입금": 45}
 STATES = ("예정", "예정일 지남", "이미 지급", "이미 입금")
 
 
@@ -187,7 +189,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     """자금계획 줄마다 상태를 정한다 (2026-11-03 사용자 질문: 예정일보다 빠르거나 늦게 지급·입금된 건).
 
     분개장에서 실제로 움직인 돈을 찾는다. 지급: 미지급 계정(payable) 차변 또는 예금(cash) 대변, 입금: 매출채권(receivable)
-    대변 또는 예금 차변이 같은 금액(채무·채권 줄은 같은 거래처)이고 전표일자가 예정일 EARLY_DAYS일 전부터 장부 기준일까지면
+    대변 또는 예금 차변이 같은 금액(채무·채권 줄은 같은 거래처)이고 전표일자가 예정일 EARLY_DAYS(지급 14일, 입금 45일) 전부터 장부 기준일까지면
     '이미 지급'/'이미 입금' (분개장 한 줄은 한 번만 쓴다, 거래처가 맞는 줄 먼저). 못 찾았고 예정일이 기준일 이전·당일이면
     '예정일 지남', 아니면 '예정'. 분개장이 없으면 확인하지 못했다고 근거에 적는다 (지급을 빼지 않는다).
     rows 를 고쳐 쓰고 상태별 건수를 돌려준다.
@@ -218,7 +220,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         found = None
         if journal is not None:
             key = norm_vendor(r["거래처"])
-            lo = due - dt.timedelta(days=EARLY_DAYS)
+            lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
             best = None
             for i, line in enumerate(journal):
                 if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
