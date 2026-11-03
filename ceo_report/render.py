@@ -253,6 +253,7 @@ table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
 table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}
+table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
 .prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
@@ -553,6 +554,28 @@ def _week_out_table(R):
     return "".join(h)
 
 
+def _team_table(R):
+    """월간 대표 보고: 팀별 매출 · 매출총이익 · 수익률 (이번 달, 올해 누적). 사용자 2026-11-03.
+
+    WEHAGO 분개장 매출·(도)원가를 인트라넷 프로젝트의 팀으로 묶은 값(상세 4번과 같은 숫자). 모르는 칸은 0이 아니라 미확인."""
+    src = R["s4"]["sources"].get("WEHAGO")
+    rows = [r for r in src["table"] if r["unit"] != "회사"] if src else []
+    co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
+    if not rows:
+        return "<div class='card'>%s</div>" % _na("팀별 자료 없음 (인트라넷 프로젝트 목록이 있어야 팀으로 묶음)")
+    h = ["<div class='card'><table class='pt tm'><thead><tr><th>팀</th><th>%s 매출</th><th>매출총이익</th><th>수익률</th>"
+         "<th>올해 누적 매출</th><th>누적 매출총이익</th><th>누적 수익률</th></tr></thead><tbody>" % esc(_ym_text(R["s4"]["ym"]))]
+    for r in rows + co:
+        c, y = r["cur"] or {"revenue": None, "gp": None}, r["ytd"] or {"revenue": None, "gp": None}   # 그 달 줄이 없으면 미확인
+        name = "합계 (회사 전체)" if r["unit"] == "회사" else r["target"]
+        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                 % (" class='tot'" if r["unit"] == "회사" else "", esc(name), W(c["revenue"]), W(c["gp"]), esc(pct(c["gp"], c["revenue"])),
+                    W(y["revenue"]), W(y["gp"]), esc(pct(y["gp"], y["revenue"]))))
+    h.append("</tbody></table><div class='note'>매출총이익 = 매출 − 직접비((도)원가). 수익률 = 매출총이익 ÷ 매출. "
+             "급여·임차료 같은 공통비는 팀에 나누지 않음</div></div>")
+    return "".join(h)
+
+
 def _first_screen(R, mode, per):
     s1, s2, s7 = R["s1"], R["s2"], R["s7"]
     monthly = R["kind"] == "monthly"
@@ -572,12 +595,14 @@ def _first_screen(R, mode, per):
         h.append(_q(i, "이번 주 지급 예정 (%s ~ %s)" % (d2s(wo["start"])[5:].replace("-", "/"), d2s(wo["end"])[5:].replace("-", "/"))))
         i += 1
         h.append(_week_out_table(R))
-    h.append(_q(i, "프로젝트 예산은 남나?"))
-    i += 1
-    h.append(_project_bars(R, per))
-    h.append(_q(i, "%s 실적" % _ym_text(R["s4"]["ym"])))
-    i += 1
-    h.append(_results(R))
+    blocks = [("프로젝트 예산은 남나?", _project_bars(R, per)),
+              ("%s 실적" % _ym_text(R["s4"]["ym"]), _results(R) + (_team_table(R) if monthly else ""))]
+    if monthly:   # 월간은 실적·팀별 표를 자금 바로 아래(1쪽)에 둔다: A4 세로 2쪽 (사용자 2026-11-03)
+        blocks.reverse()
+    for title, body in blocks:
+        h.append(_q(i, title))
+        i += 1
+        h.append(body)
     if monthly:
         h.append(_q(i, "장부와 맞춰 본 결과 (WEHAGO 기준)"))
         i += 1

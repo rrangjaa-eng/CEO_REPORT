@@ -163,6 +163,20 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertNotIn("이번 주 지급 예정", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                              dt.date(2026, 10, 31)), "ceo"))
 
+    def test_monthly_shows_team_sales_and_margin(self):
+        """월간 대표 보고에 팀별 매출 · 매출총이익 · 수익률 (사용자 2026-11-03). 값은 상세 4번(s4)과 같다."""
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly", dt.date(2026, 10, 31))
+        for edition in ("ceo", "mgmt"):
+            fs = first_screen(render(R, edition))
+            table = fs.split("<table class='pt tm'>")[1].split("</table>")[0]
+            rows = [re.findall(r"<td>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", table.split("<tbody>")[1])]
+            self.assertEqual(rows, [
+                ["기획1팀", "99,000,000", "31,680,000", "32.0%", "742,500,000", "237,600,000", "32.0%"],
+                ["기획2팀", "81,000,000", "25,920,000", "32.0%", "607,500,000", "194,400,000", "32.0%"],
+                ["합계 (회사 전체)", "180,000,000", "57,600,000", "32.0%", "1,350,000,000", "432,000,000", "32.0%"]])
+            self.assertLess(fs.index("10월 실적"), fs.index("프로젝트 예산은 남나?"))   # 월간은 실적이 1쪽
+        self.assertNotIn("pt tm", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31)), "ceo"))
+
     def test_pick_date_row_is_fixed_when_report_is_made(self):
         import test_report
         pick = ASOF + dt.timedelta(days=40)
