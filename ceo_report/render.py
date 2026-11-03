@@ -265,7 +265,8 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px}}
+@media print{.prow{padding:4px 0}.fs .big{font-size:18px}.q{margin:10px 0 4px;break-after:avoid}
+.fs svg{max-height:210px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
