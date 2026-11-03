@@ -14,7 +14,7 @@ import sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 from ceo_report.data import DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
-from ceo_report.tax import COLUMNS as TAX_COLUMNS  # noqa: E402
+from ceo_report.tax import CARD_COLUMNS, CARD_FILE, COLUMNS as TAX_COLUMNS  # noqa: E402
 
 
 def write(folder, name, rows, header=None):
@@ -161,6 +161,8 @@ S[TAX_FILE] = [
     ["원천세", "2026년 하반기 (7~12월)", "2027-01-11", "6,000,000", "예상", "예수금 중 세무서·구청 거래처 대변 합계, 반기납부"],
     ["부가세", "2026년 4분기 (10~12월)", "2027-01-25", "21,000,000", "예상", "부가세예수금 − 부가세대급금"],
 ]
+# 카드사별 납부일·기산일 (사용자 2026-11-03). 창의 '⑤ 카드 납부일'로 고친다
+CARD_ROWS = [["롯데", "14", "1"], ["비씨", "25", "1"], ["신한", "15", "1"]]
 S["지급계획.csv"] = [
     ["2026-10-26", "P26201", "무대제작사", "11,000,000"],
     ["2026-10-26", "", "건물관리", "8,000,000"],
@@ -205,12 +207,14 @@ def write_sample(folder, data=None):
         write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
     if TAX_FILE in data:
         write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
+    write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
 
 
 def write_templates(folder=TEMPLATES):
     """빈 입력양식(머리글만, 설정.csv 는 기본 항목)을 folder 에 쓴다."""
     for name in SCHEMA:
         write(folder, name, S["설정.csv"] if name == "설정.csv" else [])
+    write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
 
 
 def main(argv):

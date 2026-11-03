@@ -516,6 +516,6 @@ def merge(events, taxes):
         info.append(dict(t, matched=match, diff=diff))
         if match is None and t["due"] is not None and (t["amount"] is None or t["amount"] > 0):
             out.append({"date": t["due"], "io": _io(t), "amount": t["amount"], "firm": t["state"].startswith("확정"),
-                        "cat": "장부로 계산한 예정 (세금·4대보험·급여·카드·예금)", "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],
+                        "cat": "%s (장부 계산)" % t["kind"], "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],
                         "project": "", "source": "세금예상"})
     return out, info
