@@ -186,6 +186,13 @@ class TestSettle(unittest.TestCase):
         fundplan.settle(rows, books, self.ASOF)
         self.assertEqual(rows[0]["상태"], "예정")
 
+    def test_last_month_recurring_payment_is_not_this_month(self):
+        # 매달 5일 같은 거래처·같은 금액: 10/2 전표는 11/5 줄의 미리 지급이 아니다
+        rows = [plan_row("2026-11-05", "지급", "복지업체", 120000)]
+        books = books_with([(dt.date(2026, 10, 2), "미지급금", 120000, None, "복지업체")])
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual(rows[0]["상태"], "예정")
+
     def test_overdue_unpaid(self):
         rows = [plan_row("2026-11-02", "지급", "가상상사", 990000)]
         fundplan.settle(rows, books_with([]), self.ASOF)
