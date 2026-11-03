@@ -664,6 +664,7 @@ def compute(d, kind, asof, start=None, pick=None):
         "asof": asof_rows, "diffs": d.diffs, "issues": issues.items, "checks": checks,
         "stale": stale_accounts,
     }
+    R["targets"] = {t: v for (y, t), v in (getattr(d, "team_targets", None) or {}).items() if y == ym[:4]}
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["risks"] = risks(R)
     return R

@@ -257,7 +257,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -285,7 +285,8 @@ table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);pad
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.q{break-after:avoid}.fs .big{font-size:20px}table.pt td{padding:4px 6px}table.pt.tm td,table.pt.tm th{padding:3px 4px}
+@media print{.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
+.fs svg{max-height:200px}.fs.mon svg{max-height:200px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 .fs svg{max-height:200px}.fs.mon svg{max-height:105px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
 """
 
@@ -672,16 +673,25 @@ def _excluded_box(R):
         if len(po) > 6:
             h.append("<tr><td colspan='5'>외 %d건</td></tr>" % (len(po) - 6))
         h.append("</tbody></table>")
-    # 3) 일정에 든 정기 지출 (분기별)
-    h.append("<div class='wsub'>일정에 든 세금·카드대금·4대보험·이자·차입금 상환 (분기별)</div>")
-    h.append(_regular_table(R))
     h.append("</div>")
     return "".join(h)
 
 
-def _check_box(R):
-    """위 숫자에 안 들어간 것 · 확인할 것 (D-04: 조용히 빼지 않음). 마지막 쪽 끝에."""
-    return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in _check_items(R))
+def _regular_box(R):
+    """일정에 든 세금·카드대금·4대보험·이자·차입금 상환을 분기별로 (사용자 2026-11-03)."""
+    return "<div class='card'>%s</div>" % _regular_table(R)
+
+
+def _check_box(R, project_line=False):
+    """위 숫자에 안 들어간 것 · 확인할 것 (D-04: 조용히 빼지 않음). 마지막 쪽 끝에.
+    project_line: 대표용 월간은 프로젝트 칸이 없으므로 예산 초과·확인 건수를 한 줄로 (사용자 2026-11-03)."""
+    items = _check_items(R)
+    if project_line:
+        chips = [_proj_chip(P) for P in R["s3"]["projects"]]
+        over = sum(1 for c in chips if "c-over" in c)
+        q = sum(1 for c in chips if "c-q" in c)
+        items.insert(0, "프로젝트 예산 초과 %d건 · 확인 필요 %d건 (전체 %d건) — 자세한 내용은 경영관리 보고 3장" % (over, q, len(chips)))
+    return "<div class='xbox'><ul>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in items)
 
 
 PAY_WEEKDAY = 4   # 금요일: 회사는 매주 금요일에 출금 (사용자 2026-11-03)
@@ -911,6 +921,8 @@ def _team_table(R, part="month"):
             alloc = ""
             if r["kind"] == "team":
                 alloc = "미확인" if r.get("alloc") is None or not h else W(round(r["alloc"] / h))
+            elif r["kind"] == "company":   # 회사 영업이익은 이미 공통비를 다 뺀 값: 1인당 순수익과 같다 (사용자 2026-11-03)
+                alloc = per
             label = esc(r["label"])
             if r["kind"] == "company":   # 인원은 기획본부(팀+본부)만 (사용자 2026-11-03: 명시)
                 label += "<small>인원 = 기획본부만</small>"
@@ -940,17 +952,62 @@ def _team_table(R, part="month"):
             if r["kind"] == "team":
                 a = per_month.get(r["label"])
                 alloc = "미확인" if a is None or not h else W(round(a / h))
+            elif r["kind"] == "company":
+                alloc = per
             cells = [esc(r["label"]) + ("<small>인원 = 기획본부만</small>" if r["kind"] == "company" else ""),
                      W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
                      W(_add(r["salary"], r["sga"])), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
         out.append(_nonop_rows(Y["nonop"], 4, 3))
         out.append("</tbody></table>")
+        out.append(_target_table(R, Y, ym))
     else:
         out.append(_na("올해 누적 자료 없음"))
     out.append("<div class='note'>%s</div>%s</div>" % (esc("1월~%s 합계. 평균 인원 = 달마다 인원의 평균 · 공통비 나눈 뒤 = 달마다 나눈 값의 합"
                                                          % _ym_text(ym)), notes_html))
     return "".join(out)
+
+
+def _target_table(R, Y, ym):
+    """팀별 연간 목표 대비 누적 실적 (사용자 2026-11-03). 목표는 창 '⑧ 팀 목표'로 넣은 팀목표.csv.
+
+    달성률 = 누적 매출 ÷ 연간 매출 목표, 진도 기준 = 지난 달 수 ÷ 12. 달성률이 진도 기준 이상이면 '목표 이상'."""
+    T = R.get("targets") or {}
+    teams = [r for r in Y["rows"] if r["kind"] == "team"]
+    pace = int(ym[5:7]) / 12.0
+    h = ["<div class='wsub'>목표 대비 (진도 기준 %d월/12 = %.0f%%)</div>" % (int(ym[5:7]), pace * 100),
+         "<table class='pt tg'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>누적 매출</th><th>달성률</th><th>목표 수익률</th>"
+         "<th>실제 수익률</th><th>판정</th></tr></thead><tbody>"]
+    sum_t, sum_r, all_t = 0, 0, True
+    for r in teams:
+        t = T.get(r["label"]) or {}
+        tr, rate = t.get("revenue"), t.get("rate")
+        rev, gp = r["revenue"], r["gp"]
+        act_rate = None if not rev or gp is None else gp * 100.0 / rev
+        if tr and rev is not None:
+            ach = rev / tr
+            bar = "<span class='tbar'><i style='width:%d%%'></i><s style='left:%d%%'></s></span>" % (min(ach, 1) * 100, pace * 100)
+            ach_txt = "%s%.1f%%" % (bar, ach * 100)
+            sum_t += tr
+            sum_r += rev
+        else:
+            ach, ach_txt, all_t = None, _na("목표 없음" if not tr else "미확인"), False
+        verdict = []
+        if ach is not None:
+            verdict.append(("목표 이상", "c-ok") if ach >= pace else ("목표 미달", "c-over"))
+        if rate is not None and act_rate is not None:
+            verdict.append(("수익률 달성", "c-ok") if act_rate >= rate else ("수익률 미달", "c-over"))
+        chips = "".join("<span class='chip %s'>%s</span>" % (c, esc(v)) for v, c in verdict) or "—"
+        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                 % (esc(r["label"]), W(tr, "목표 없음"), W(rev), ach_txt, "—" if rate is None else "%g%%" % rate,
+                    "—" if act_rate is None else "%.1f%%" % act_rate, chips))
+    if teams and all_t and sum_t:
+        h.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%.1f%%</td><td></td><td></td><td></td></tr>"
+                 % (W(sum_t), W(sum_r), sum_r * 100.0 / sum_t))
+    h.append("</tbody></table>")
+    if not T:
+        h.append("<div class='note'>팀 목표 없음 — 대표보고 창 '⑧ 팀 목표'에 연간 매출 목표와 목표 수익률을 넣으면 보입니다</div>")
+    return "".join(h)
 
 
 def _ytd_strip(Y, ym):
@@ -987,8 +1044,9 @@ def _first_screen(R, mode, per):
     ymt = _ym_text(R["s4"]["ym"])
     funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R) + "<div class='card' style='margin-top:10px'><div class='lab'>%s</div>%s</div>"
               % (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2)))]
-    past = [("지난 미수금·지급 · 정기 지출 예상", _excluded_box(R))]
-    checks = ("위 숫자에 안 들어간 것 · 확인할 것", _check_box(R))
+    past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
+    regular = [("세금·카드대금·4대보험·이자·차입금 상환 (분기별)", _regular_box(R))]
+    checks = ("위 숫자에 안 들어간 것 · 확인할 것", _check_box(R, project_line=monthly))
     projects = [("프로젝트 예산은 남나?", _project_bars(R, per, flagged_only=monthly, active_only=not monthly))]
     if monthly:
         X = R.get("xchk")
@@ -999,31 +1057,33 @@ def _first_screen(R, mode, per):
         else:
             xk = "<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X)
         pages = [
-            ("자금", [("이번 달 자금 흐름", _flow_card(s1, per))] + funds + past),
+            ("자금", [("이번 달 자금 흐름", _flow_card(s1, per))] + funds + regular),
             ("실적", [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + _team_table(R)),
-                     ("올해 누적 실적 (1월~%s)" % ymt, _team_table(R, "ytd")),
-                     ("장부와 맞춰 본 결과 (WEHAGO 기준)", xk)]),
-            ("프로젝트 · 계정과목", projects + [_acct_year_block(R), checks]),
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd"))]),
+            ("지난 미수금·지급 · 확인할 것", past + [("장부와 맞춰 본 결과 (WEHAGO 기준)", xk), checks]),
+            ("계정과목별 사용 금액", [_acct_year_block(R)]),
         ]
+        # 프로젝트 예산은 월간 첫 화면에서 빼고 경영관리 보고 3장(프로젝트 예산·집행)에만 (사용자 2026-11-03 선택: 대표용 3쪽).
+        # 두 판의 첫 화면 숫자는 같아야 하므로(D-04) 경영관리 판 첫 화면도 같게 둔다.
+        pages = [pages[0], pages[1], ("지난 미수금·지급 · 계정과목", past + [_acct_year_block(R), ("장부와 맞춰 본 결과 (WEHAGO 기준)", xk), checks])]
     else:
         wo = week_outflows(R)
         pages = [
             ("나갈 돈", [("금요일(%s) 출금 목록" % _md(wo["fri"]), _week_out_table(R))] + past),
-            ("자금 · 실적", funds + [("%s 실적" % ymt, _results(R, cum=True))]),
-            ("프로젝트 · 확인할 것", projects + [checks]),
+            ("자금 · 실적", funds + [("%s 실적" % ymt, _results(R, cum=True)), checks]),
+            ("정기 지출 · 프로젝트", regular + projects),
         ]
-    h = ["<div class='fs%s'>" % (" mon" if monthly else "")]
+    # 쪽을 억지로 나누지 않는다: 절은 쪽 사이에서 끊기지 않게만 하고 차례대로 흘려 3쪽 안에 넣는다 (자료 양이 주마다 달라서)
+    h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     i = 0
-    for n, (ptitle, blocks) in enumerate(pages):
-        h.append("<div class='page pg%s'><div class='pgt'><span>%d / %d</span>%s</div>" % (" last" if n == len(pages) - 1 else "", n + 1, len(pages), esc(ptitle)))
+    for ptitle, blocks in pages:
         for title, body in blocks:
             h.append("<div class='sec'>%s%s</div>" % (_q(i, title), body))
             i += 1
-        if mode == "mgmt" and n == len(pages) - 1:
-            hi = sum(1 for r in R["risks"] if r["level"] == "높음")
-            h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
-                     % (len(R["risks"]), hi))
-        h.append("</div>")
+    if mode == "mgmt":
+        hi = sum(1 for r in R["risks"] if r["level"] == "높음")
+        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
+                 % (len(R["risks"]), hi))
     h.append("</div>")
     return "".join(h)
 

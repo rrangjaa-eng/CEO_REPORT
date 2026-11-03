@@ -36,7 +36,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(820, 900)
+        root.minsize(860, 960)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -151,6 +151,22 @@ class Window(object):
         ttk.Label(f7, text="상세 내역").pack(side="left")
         ttk.Entry(f7, textvariable=self.d_text, width=30).pack(side="left", padx=(4, 8))
         self._btn(f7, "저장", self.save_detail)
+
+        # ⑧ 팀 목표 (사용자 2026-11-03: 월간 누적 실적에서 목표 대비)
+        f8 = ttk.LabelFrame(outer, text="⑧ 팀 목표 — 연간 매출 목표와 목표 수익률(매출총이익률). 월간 보고 누적 실적에 목표 대비로 보임",
+                            style="Sec.TLabelframe", padding=8)
+        f8.pack(fill="x", pady=4)
+        self.g_year, self.g_team = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
+        self.g_rev, self.g_rate = tk.StringVar(), tk.StringVar()
+        ttk.Label(f8, text="연도").pack(side="left")
+        ttk.Entry(f8, textvariable=self.g_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Label(f8, text="팀").pack(side="left")
+        ttk.Combobox(f8, textvariable=self.g_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(4, 8))
+        ttk.Label(f8, text="연간 매출 목표(원)").pack(side="left")
+        ttk.Entry(f8, textvariable=self.g_rev, width=15).pack(side="left", padx=(4, 8))
+        ttk.Label(f8, text="목표 수익률(%)").pack(side="left")
+        ttk.Entry(f8, textvariable=self.g_rate, width=5).pack(side="left", padx=(4, 8))
+        self._btn(f8, "저장", self.save_target)
 
         # 진행
         ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
@@ -273,6 +289,15 @@ class Window(object):
         self.say("출금 상세 내역 저장 (%s %s원) — 전체 %d줄. 다음 보고서부터 금요일 출금 목록에 보입니다"
                  % (self.d_vendor.get().strip(), self.d_amt.get().strip(), n))
         self.d_text.set("")
+
+    def save_target(self):
+        try:
+            n = app.save_team_target(self.paths.input, self.g_year.get(), self.g_team.get(), self.g_rev.get(), self.g_rate.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.say("팀 목표 저장: %s년 %s 매출 %s원 · 수익률 %s%% (그 해 %d팀) — 다음 월간 보고부터 반영"
+                 % (self.g_year.get().strip(), self.g_team.get().strip(), self.g_rev.get().strip(), self.g_rate.get().strip(), n))
 
     def make_transfer(self):
         from . import transfer

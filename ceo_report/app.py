@@ -310,6 +310,12 @@ def save_pay_detail(input_dir, vendor, amount, text):
     return paydetail.save(input_dir, vendor, amount, text)
 
 
+def save_team_target(input_dir, year, team, revenue, rate):
+    """팀 연간 매출 목표·목표 수익률 저장 (사용자 2026-11-03). 월간 누적 실적의 목표 대비에 쓰인다."""
+    from . import targets
+    return targets.save(input_dir, year, team, revenue, rate)
+
+
 def card_list(input_dir):
     """창에 보일 글: '신한 15일(기산 1일) · 롯데 …'."""
     from . import tax
