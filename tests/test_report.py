@@ -573,7 +573,7 @@ class TestSettingsAndKpi(Base):
         R = compute(load(self.set_value("첫화면_프로젝트_표시수", "4")), "weekly", ASOF)
         self.assertIn("표시 4건 / 전체 8건", render(R, "mgmt"))
         R = compute(load(self.set_value("첫화면_프로젝트_표시수", "-1")), "weekly", ASOF)
-        self.assertIn("표시 8건 / 전체 8건", render(R, "mgmt"))
+        self.assertIn("표시 6건 / 전체 8건 (지급 진행 중, 행사일 순)", render(R, "mgmt"))   # 주간은 지급 진행 중인 6건이 전부
         self.assertEqual(R["settings_default"]["첫화면_프로젝트_표시수"], "0 이상 정수 아님")
         self.assertTrue(any("첫화면_프로젝트_표시수 값은 0 이상 정수여야 함" in m for _, _, m in R["s7"]["issues"]))
 

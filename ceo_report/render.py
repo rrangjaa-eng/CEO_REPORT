@@ -373,18 +373,20 @@ def _proj_right(P):
     return "<small>잔여 예산</small>%s" % esc(won(P["remain"]))
 
 
-def _active_by_event(s3):
+def _active_by_event(s3, n_show):
     """주간: 지금 지급이 진행 중인 프로젝트 (사용자 2026-11-03) = 남은 지급(지급요청·카드 미결제·미요청 계획)이 있거나,
     완료 전인데 이미 지급이 시작된 것. 행사일 순 (행사일 없는 것은 맨 뒤). -> (보일 것, 나머지)."""
     def active(P):
         pending = P["requested"] + P["card_unpaid"] + P["planned"]
+        unknown = sum(P["line_unknown"].get(st, 0) for st in UNPAID_STATES + PLAN_STATES)   # 금액 모르는 남은 지급도 진행 중
         done = (P.get("state") or "").strip() == "완료"
-        return pending > 0 or (not done and P["paid_total"] > 0)
+        return pending > 0 or unknown > 0 or (not done and P["paid_total"] > 0)
     def key(P):
         d = _event_date(P.get("event_date"))
         return (d is None, d.isoformat() if d else "", P["id"])
     act = sorted([P for P in s3["projects"] if active(P)], key=key)
-    return act, [P for P in s3["ranked"] if P not in act]
+    shown = act[:n_show]   # 첫화면_프로젝트_표시수 설정을 그대로 따른다
+    return shown, [P for P in s3["ranked"] if P not in shown]
 
 
 def _project_bars(R, per, flagged_only=False, active_only=False):
@@ -396,7 +398,7 @@ def _project_bars(R, per, flagged_only=False, active_only=False):
     shown = s3["shown"]
     rest = s3["rest"]
     if active_only:
-        shown, rest = _active_by_event(s3)
+        shown, rest = _active_by_event(s3, len(s3["shown"]))
     if flagged_only:
         ok = [P for P in shown if "c-ok" in _proj_chip(P)]
         shown = [P for P in shown if P not in ok]
@@ -421,7 +423,7 @@ def _project_bars(R, per, flagged_only=False, active_only=False):
         r = rest
         ra = _agg_lines(r)
         h.append("<div class='prow sub'><div class='pn'>%s</div><div class='bn'>원가 예산 %s · 집행액 %s · 집행 예정액 %s</div><div></div></div>"
-                 % (esc(("예산 내 등 외 %d건" if flagged_only else "지급 진행 없는 프로젝트 %d건" if active_only else "외 %d건") % len(r)), W(_sum_opt(x["budget"] for x in r)),
+                 % (esc(("예산 내 등 외 %d건" if flagged_only else "그 밖의 프로젝트 %d건" if active_only else "외 %d건") % len(r)), W(_sum_opt(x["budget"] for x in r)),
                     _amt_lines(W, sum(x["paid_total"] for x in r), ra, *PAID_STATES),
                     _amt_lines(W, sum(x["requested"] + x["card_unpaid"] + x["planned"] for x in r), ra, *(UNPAID_STATES + PLAN_STATES))))
     nb = _no_budget_note(s3)

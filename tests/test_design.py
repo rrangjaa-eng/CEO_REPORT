@@ -344,8 +344,9 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         self.assertLess(idx("지금 자금은"), idx("실적"))
         self.assertLess(idx("실적"), idx("프로젝트 예산"))
         ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", html)
-        # 완료(P26202·05·06)는 남은 지급이 없어 빠지고, 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
-        self.assertEqual(ids, ["P26203", "P26201", "P26207", "P26204", "P26208"])
+        # 완료 P26202·05는 남은 지급이 없어 빠진다. 완료 P26206은 금액 모르는 요청 줄이 남아 들어가고,
+        # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
+        self.assertEqual(ids, ["P26206", "P26203", "P26201", "P26207", "P26204", "P26208"])
         self.assertIn("행사일 순", html)
 
 

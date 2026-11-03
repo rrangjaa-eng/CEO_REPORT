@@ -75,5 +75,98 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(info[0]["diff"], 40)
 
 
+class TestPaidBeforeDueIsNotCountedTwice(unittest.TestCase):
+    """이미 통장에서 나간 세금은 납부일 전이라도 예상에 다시 넣지 않는다 (사용자 2026-11-03: 계산 오류 없게)."""
+
+    def test_vat_paid_from_bank_before_due_is_dropped(self):
+        j = TestVat().journal()
+        j = [x for x in j if x["no"] != "9"] + [ln(D(2026, 10, 20), "9", "25500", debit=70), ln(D(2026, 10, 20), "9", "10300", credit=70)]
+        rows = tax.vat(j, D(2026, 10, 21))
+        self.assertNotIn("2026년 3분기 (7~9월)", [r["대상기간"] for r in rows])
+        # 미지급비용으로 잡은 것은 아직 안 나간 것: 확정 금액으로 남는다
+        self.assertEqual(tax.vat(TestVat().journal(), D(2026, 10, 24))[0]["상태"], "확정(전표)")
+
+    def test_withholding_paid_early_is_dropped(self):
+        j = [ln(D(2026, 1, 9), "1", "25400", debit=50, vendor="역삼세무서"),
+             ln(D(2026, 8, 25), "3", "25400", credit=10, vendor="역삼세무서"),
+             ln(D(2027, 1, 8), "9", "25400", debit=10, vendor="역삼세무서")]
+        self.assertEqual(tax.withholding(j, D(2027, 1, 9)), [])
+
+
+class TestSocialInsurance(unittest.TestCase):
+    """4대보험: 전달 급여에서 뗀 직원분(예수금, 공단 거래처) + 회사 부담분을 다음 달 10일에 낸다. 회사분은 납부일에 비용 처리하므로
+    직전 납부의 회사분÷직원분 비율로 추정한다."""
+
+    def journal(self):
+        return [
+            # 9월분 떼어 둠 100, 10/10 납부: 직원분 100 + 회사분(복리후생비·세금과공과·보험료) 110
+            ln(D(2026, 9, 25), "1", "25400", credit=100, vendor="국민연금공단"),
+            ln(D(2026, 10, 10), "2", "25400", debit=100, vendor="국민연금공단"),
+            ln(D(2026, 10, 10), "2", "81701", debit=60, vendor="국민연금공단"),
+            ln(D(2026, 10, 10), "2", "82101", debit=50, vendor="근로복지공단"),
+            ln(D(2026, 10, 10), "2", "10300", credit=210),
+            # 10월분 떼어 둠 200 (건강보험 80, 연금 120)
+            ln(D(2026, 10, 25), "3", "25400", credit=80, vendor="건강보험공단"),
+            ln(D(2026, 10, 25), "3", "25400", credit=120, vendor="국민연금공단"),
+            ln(D(2026, 10, 25), "3", "25400", credit=30, vendor="역삼세무서"),       # 원천세는 넣지 않음
+        ]
+
+    def test_next_payment_is_withheld_plus_company_share(self):
+        rows = tax.social(self.journal(), D(2026, 11, 3))
+        self.assertEqual([(r["세목"], r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows],
+                         [("4대보험", "2026년 10월분", "2026-11-10", "420", "예상")])   # 200 + 200 × 110/100
+        self.assertIn("1.10", rows[0]["근거"])
+
+    def test_paid_month_is_not_listed(self):
+        self.assertEqual([r["대상기간"] for r in tax.social(self.journal()[:1], D(2026, 10, 5))], ["2026년 9월분"])
+        self.assertEqual(tax.social(self.journal()[:5], D(2026, 10, 10)), [])
+
+    def test_month_end_accrual_of_company_share_is_used_as_confirmed(self):
+        """사용자 2026-11-03: 월말에 회사분을 일반전표(비용 / 미지급비용, 공단)로 넣으면 추정 대신 그 금액을 확정으로 쓴다."""
+        j = self.journal() + [ln(D(2026, 10, 31), "7", "81106", debit=90, vendor="건강보험공단"),
+                              ln(D(2026, 10, 31), "7", "81701", debit=125, vendor="국민연금공단"),
+                              ln(D(2026, 10, 31), "7", "26200", credit=215, vendor="국민연금공단")]
+        rows = tax.social(j, D(2026, 11, 3))
+        self.assertEqual((rows[0]["금액"], rows[0]["상태"]), ("415", "확정(전표)"))   # 200 + 215
+        # 다음 달 10일 납부 전표가 미지급비용을 지우는 형태여도 납부로 알아보고 목록에서 뺀다
+        paid = j + [ln(D(2026, 11, 10), "8", "25400", debit=200, vendor="국민연금공단"),
+                    ln(D(2026, 11, 10), "8", "26200", debit=215, vendor="국민연금공단"),
+                    ln(D(2026, 11, 10), "8", "10300", credit=415)]
+        self.assertEqual(tax.social(paid, D(2026, 11, 10)), [])
+        # 그 다음 달 비율도 미지급비용 차변을 회사분으로 쳐서 계산
+        nxt = paid + [ln(D(2026, 11, 25), "9", "25400", credit=100, vendor="국민연금공단")]
+        self.assertEqual(tax.social(nxt, D(2026, 11, 26))[0]["금액"], "208")   # 100 + 100 × 215/200
+
+    def test_without_past_payment_company_share_equals_employee_share(self):
+        rows = tax.social(self.journal()[5:], D(2026, 11, 3))
+        self.assertEqual(rows[0]["금액"], "400")
+        self.assertIn("직원분과 같게", rows[0]["근거"])
+
+
+class TestMergeMatching(unittest.TestCase):
+    def test_insurance_matches_plan_by_name_and_tax_office_does_not(self):
+        T = {"kind": "4대보험", "period": "2026년 10월분", "due": D(2026, 11, 10), "amount": 420, "state": "예상", "basis": ""}
+        office = {"date": D(2026, 11, 10), "io": "out", "amount": 30, "firm": True, "cat": "", "desc": "역삼세무서", "basis": ""}
+        plan = {"date": D(2026, 11, 10), "io": "out", "amount": 430, "firm": True, "cat": "", "desc": "건강보험 등 4대보험", "basis": ""}
+        events, info = tax.merge([office, plan], [T])
+        self.assertEqual(events, [office, plan])
+        self.assertIs(info[0]["matched"], plan)
+        self.assertEqual(info[0]["diff"], 10)
+
+    def test_same_amount_on_near_date_counts_as_same_tax(self):
+        T = TestMerge.T
+        plan = {"date": D(2027, 1, 25), "io": "out", "amount": 360, "firm": True, "cat": "", "desc": "기타", "basis": ""}
+        events, info = tax.merge([plan], [T])
+        self.assertEqual(events, [plan])
+
+    def test_keyword_match_wins_over_office_match(self):
+        vat = dict(TestMerge.T, due=D(2027, 1, 15))
+        wh = {"kind": "원천세", "period": "하반기", "due": D(2027, 1, 11), "amount": 21, "state": "예상", "basis": ""}
+        a = {"date": D(2027, 1, 11), "io": "out", "amount": 25, "firm": True, "cat": "", "desc": "역삼세무서 원천세", "basis": ""}
+        b = {"date": D(2027, 1, 15), "io": "out", "amount": 365, "firm": True, "cat": "", "desc": "부가세", "basis": ""}
+        _, info = tax.merge([a, b], [vat, wh])
+        self.assertEqual([i["matched"] is not None and i["matched"]["desc"] for i in info], ["부가세", "역삼세무서 원천세"])
+
+
 if __name__ == "__main__":
     unittest.main()
