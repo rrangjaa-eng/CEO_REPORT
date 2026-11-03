@@ -208,8 +208,9 @@ def render(R, mode):
              "<body><div class='wrap'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS))
     h.append("<h1>%s<span class='badge%s'>%s</span></h1>" % (esc(title), "" if mode == "ceo" else " m",
                                                              "대표용" if mode == "ceo" else "경영관리용"))
-    h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원</div>"
-             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
+    h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원<br>%s</div>"
+             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                esc("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"]))))
 
     h.append(_first_screen(R, mode, per))
     if mode == "ceo":
@@ -273,7 +274,7 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.prow{padding:2px 0}.fs .big{font-size:18px}.q{margin:7px 0 3px;break-after:avoid}table.pt.tm td,table.pt.tm th{padding:2px 4px}
-.fs svg{max-height:180px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
+.fs svg{max-height:165px}table.pt td{padding:3px 6px}table.pt td.av b{font-size:14px}.fs .card{padding:6px 12px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧"
@@ -522,13 +523,14 @@ def _excluded_box(R):
         items.append("입금예정일 지난 미수금 %d건 %s (일정에 넣지 않음)" % (len(s5["overdue"]), won(s5["overdue_total"])))
     for t in R.get("tax") or []:   # 세금 납부 예상 (사용자 2026-11-03)
         amt = "금액 미확인" if t["amount"] is None else won(t["amount"])
-        head = "%s %s %s (%s 납부, %s)" % (t["kind"], t["period"], amt, d2s(t["due"])[5:].replace("-", "/"), t["state"])
+        period = re.sub(r"^\d{4}년 ", "", t["period"]) if t["period"].startswith("%d년" % R["asof"].year) else t["period"]
+        head = "%s %s %s (%s 납부, %s)" % (t["kind"], period, amt, d2s(t["due"])[5:].replace("-", "/"), t["state"])
         if t["matched"] is None:
             items.append(head + (" → 일정에 넣음" if t["amount"] is None or t["amount"] > 0 else " → 환급 예상, 일정에 넣지 않음"))
         else:
             m = t["matched"]
             gap = "" if t["diff"] is None else (" · 차이 %s" % won(t["diff"]) if t["diff"] else " · 같음")
-            items.append(head + " → 일정에 이미 있음 (%s %s)%s" % (m.get("desc") or m.get("cat") or "",
+            items.append(head + " → 일정에 있음 (%s %s)%s" % (m.get("desc") or m.get("cat") or "",
                                                               "금액 미확인" if m["amount"] is None else won(m["amount"]), gap))
     if s2["out_unknown_n"]:
         items.append("금액 미확인 지급 예정 %d건" % s2["out_unknown_n"])
@@ -754,8 +756,6 @@ def _first_screen(R, mode, per):
             h.append("<div class='card'>%s<div class='note'>자세한 내용은 경영관리 보고 8번</div></div>" % _xk_summary(X))
     h.append(_q(i, "위 숫자에 안 들어간 것 · 확인할 것"))
     h.append(_excluded_box(R))
-    h.append("<div class='note' style='margin-top:10px'>%s</div>" % esc(
-        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in s7["asof"])))
     if mode == "mgmt":
         hi = sum(1 for r in R["risks"] if r["level"] == "높음")
         h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
