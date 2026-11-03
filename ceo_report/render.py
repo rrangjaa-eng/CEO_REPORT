@@ -260,7 +260,7 @@ table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
 table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:700}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}
-table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}
+table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
 .prow:first-of-type{border-top:0}.pn{font-weight:700}.pn small{display:block;font-weight:400;color:var(--sub)}
@@ -882,7 +882,8 @@ def _team_table(R, part="month"):
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th><th>급여</th>"
                    "<th>판관비</th><th>순수익</th><th>인원</th><th>1인당 순수익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
                    "</tr></thead><tbody>")
-        for r in T["rows"] + [T["company"]]:
+        # 경영관리 등 매출 없는 부서는 실적 줄로 따로 두지 않는다: 영업외 수익 줄에만 부서 이름이 나온다 (사용자 2026-11-03)
+        for r in [x for x in T["rows"] if x["kind"] != "other"] + [T["company"]]:
             cls = {"company": " class='tot'", "hq_total": " class='hq'", "hq_self": " class='mut'", "other": " class='mut'",
                    "unlinked": " class='mut'"}.get(r["kind"], "")
             costly = r["kind"] != "unlinked"
@@ -895,8 +896,8 @@ def _team_table(R, part="month"):
             if r["kind"] == "team":
                 alloc = "미확인" if r.get("alloc") is None or not h else W(round(r["alloc"] / h))
             label = esc(r["label"])
-            if r["kind"] == "other" and r.get("nonop_in"):   # 매출은 없지만 영업외 수익을 가져온 부서 (경영관리)
-                label += "<small class='nin'>영업외 수익 실적 +%s</small>" % esc(won(r["nonop_in"]))
+            if r["kind"] == "company":   # 인원은 기획본부(팀+본부)만 (사용자 2026-11-03: 명시)
+                label += "<small>인원 = 기획본부만</small>"
             cells = [label] + list(rev) + [W(r["salary"]) if costly else "", W(r["sga"]) if costly else "", W(r["net"]),
                                                      ("미확인" if h is None else "%d명" % h) if costly else "", per, esc(ratio), alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
@@ -923,7 +924,8 @@ def _team_table(R, part="month"):
             if r["kind"] == "team":
                 a = per_month.get(r["label"])
                 alloc = "미확인" if a is None or not h else W(round(a / h))
-            cells = [esc(r["label"]), W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
+            cells = [esc(r["label"]) + ("<small>인원 = 기획본부만</small>" if r["kind"] == "company" else ""),
+                     W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
                      W(_add(r["salary"], r["sga"])), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
         out.append(_nonop_rows(Y["nonop"], 4, 3))
@@ -947,7 +949,7 @@ def _ytd_strip(Y, ym):
 def _team_notes(R, basis, dept, last, ym):
     notes = ["순수익 = 매출총이익 − 그 팀 급여·판관비 (분개장 부서명 기준). 본부 비용은 본부 합계에서, 다른 부서 비용은 회사 전체에서 뺌",
              "공통비 나눈 뒤 = 본부·경영관리 등 비용을 팀 %s 비율로 나눠 뺀 값 (팀 합계 = 회사 영업이익)" % ("인원" if basis == "heads" else "매출"),
-             "급여 대비 = 순수익 ÷ 급여", "회사 전체 인원 = 팀·본부 인원 (경영관리 등 매출 안 내는 부서 제외)"]
+             "급여 대비 = 순수익 ÷ 급여", "영업이익 줄의 인원 = 기획본부(팀+본부) 인원만, 경영관리 등은 빼고 비용만 회사 전체에서 뺌"]
     if dept is None:
         notes.append("급여·판관비 미확인: %s (대표보고 창의 '자료 변환'이 분개장 부서명으로 만듦)" % (
             "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
