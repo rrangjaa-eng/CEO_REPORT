@@ -136,3 +136,79 @@ def estimate(pretax, nonop_in, ym):
         rows.append({"label": label, "base": base, "corp": corp, "local": local,
                      "total": None if corp is None else corp + local})
     return rows
+
+
+# ───────────── 변환 쪽: 분개장으로 법인세 납부 예상 (사용자 2026-11-04: 지급 예상에 넣고, 중간예납 등 선납세금은 뺀다) ─────────────
+PREPAID_CODES = ("13600",)   # 선납세금: 8월 중간예납 + 이자 원천징수 법인세
+
+
+def _last_full_month(asof):
+    """보고 대상 마지막 달: 기준일이 그 달 말일이면 그 달, 아니면 앞 달. -> 'YYYY-MM' (1월 초면 작년 12월)."""
+    import calendar
+    import datetime as dt
+    if asof.day == calendar.monthrange(asof.year, asof.month)[1]:
+        return asof.strftime("%Y-%m")
+    prev = asof.replace(day=1) - dt.timedelta(days=1)
+    return prev.strftime("%Y-%m")
+
+
+def from_journal(journal, cfg, asof, manual=None):
+    """-> (세금예상 줄 목록, 메모). 올해 1월~마지막 달 장부로 세전 이익(감가상각비 예상 뺀) → 법인세 − 선납세금, 지방소득세.
+
+    납부일 = 다음 해 3월 31일(법인세), 4월 30일(지방소득세), 토·일이면 월요일. 상태는 '예상'."""
+    import datetime as dt
+    from .convert_pl import _classify, _net, _squash
+    from .tax import _row, _workday
+    ym = _last_full_month(asof)
+    year = ym[:4]
+    nin, nout = set(_squash(c) for c in cfg["nonop_in_codes"]), set(_squash(c) for c in cfg["nonop_out_codes"])
+    closing = set(_squash(c) for c in cfg.get("closing_sorts", ()))
+    prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
+    pretax, unknown, prepaid, dep_lines = 0, 0, 0, []
+    for ln in journal:
+        if ln["date"] is None:
+            continue
+        lym = ln["date"].strftime("%Y-%m")
+        code = _squash(ln["account_code"])
+        if "감가상각비" in _squash(ln["account"]) and lym[:4] in (year, str(int(year) - 1)):
+            dep_lines.append({"ym": lym, "name": ln["account"], "amount": _net(ln, "common")})
+        if lym[:4] != year or lym > ym:
+            continue
+        if _squash(ln.get("sort")) in closing:   # 결산 대체 전표(결차·결대)는 손익을 0으로 돌리므로 넣지 않는다 (손익.csv 와 같게)
+            continue
+        if code in prepaid_codes:
+            prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+            continue
+        kind = _classify(ln, cfg)
+        if code in nin:
+            v, sign = _net(ln, "revenue"), 1
+        elif code in nout:
+            v, sign = _net(ln, "common"), -1
+        elif kind == "revenue":
+            v, sign = _net(ln, "revenue"), 1
+        elif kind in ("direct", "common", "common_unmarked"):
+            v, sign = _net(ln, "common"), -1
+        else:
+            continue
+        if v is None:
+            unknown += 1
+        else:
+            pretax += sign * v
+    dep = depreciation(dep_lines, manual or {}, ym)
+    base = pretax - (dep["extra"] or 0)
+    corp = corp_tax(base, year)
+    local = int(corp * LOCAL_RATE)
+    pay = max(corp - prepaid, 0)
+    nxt = int(year) + 1
+    period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
+    basis = ("세전 이익 %s − 감가상각비 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
+             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(base), "{:,}".format(corp),
+                "{:,}".format(prepaid)))
+    if unknown:
+        basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
+    rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
+                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid)),
+            dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
+                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="")]
+    return rows, "법인세 %s → %s원 (산출 %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "{:,}".format(corp),
+                                                                 "{:,}".format(prepaid), "{:,}".format(local))

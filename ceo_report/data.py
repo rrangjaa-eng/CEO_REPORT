@@ -256,7 +256,11 @@ def load(folder):
                     continue
                 d.tax.append({"kind": r.get("세목", ""), "period": r.get("대상기간", ""), "due": due,
                               "amount": num(r.get("금액"), iss, r, "금액"), "state": r.get("상태", "") or "예상",
-                              "basis": r.get("근거", "")})
+                              "basis": r.get("근거", ""),
+                              # 법인세 줄만 (2026-11-04): 과세표준·산출세액·기납부(중간예납 등 선납세금)
+                              "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
+                              "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
+                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None})
 
     # 프로젝트
     d.projects = {}

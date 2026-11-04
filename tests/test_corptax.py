@@ -47,13 +47,6 @@ class TestDepreciation(unittest.TestCase):
         self.assertEqual(corptax.apply({"pretax": None}, 30)["pretax"], None)
 
 
-class TestEstimate(unittest.TestCase):
-    def test_two_rows_without_and_with_nonop_income(self):
-        a, b = corptax.estimate(135_000_000, 20_000_000, "2026-10")
-        self.assertEqual((a["base"], a["corp"], a["local"], a["total"]), (115_000_000, 11_500_000, 1_150_000, 12_650_000))
-        self.assertEqual((b["base"], b["total"]), (135_000_000, 14_850_000))
-
-
 class TestSave(unittest.TestCase):
     def test_save_read_and_clear(self):
         tmp = tempfile.mkdtemp()
@@ -66,19 +59,45 @@ class TestSave(unittest.TestCase):
             corptax.save(tmp, "26", "1")
 
 
+class TestFromJournal(unittest.TestCase):
+    def test_pretax_minus_dep_minus_prepaid(self):
+        sys.path.insert(0, HERE)
+        from test_dept import line
+        from ceo_report import convert
+        D = dt.date
+        j = [line(D(2025, 12, 31), "81800", "감가상각비(판)", 12_000_000),
+             line(D(2026, 3, 5), "41200", "용역매출", credit=300_000_000),
+             line(D(2026, 3, 5), "61000", "외주비(도)", 100_000_000),
+             line(D(2026, 4, 5), "80200", "직원급여(판)", 50_000_000),
+             line(D(2026, 5, 5), "92200", "정부지원금수익", credit=10_000_000),
+             line(D(2026, 8, 31), "13600", "선납세금", 4_000_000),
+             line(D(2026, 11, 2), "41200", "용역매출", credit=999_999_999)]   # 기준일 달(11월)은 아직 넣지 않음
+        cfg = dict(convert.DEFAULT_CONFIG)
+        rows, note = corptax.from_journal(j, cfg, D(2026, 11, 4), {})
+        ct, lt = rows
+        # 300 − 100 − 50 + 10 = 160, − 감가상각 12 = 148 (백만) → 14.8 − 선납 4 = 10.8
+        self.assertEqual((ct["과세표준"], ct["산출세액"], ct["기납부"], ct["금액"]), ("148000000", "14800000", "4000000", "10800000"))
+        self.assertEqual((ct["납부예정일"], ct["상태"], lt["세목"], lt["금액"], lt["납부예정일"]),
+                         ("2027-03-31", "예상", "법인지방소득세", "1480000", "2027-04-30"))
+        self.assertIn("1월~10월", ct["대상기간"])
+
+
 class TestReport(unittest.TestCase):
-    def test_monthly_shows_both_estimates_in_both_editions(self):
+    def test_monthly_shows_final_pretax_tax_minus_prepaid(self):
         from ceo_report.calc import compute
         from ceo_report.data import load
         from ceo_report.render import render
         R = compute(load(os.path.join(os.path.dirname(HERE), "입력양식", "샘플")), "monthly", dt.date(2026, 10, 31))
         for ed in ("ceo", "mgmt"):
             h = render(R, ed)
-            self.assertIn("법인세 예상 (1월~10월 누적 기준)", h)
-            self.assertIn("12,650,000", h)
-            self.assertIn("14,850,000", h)
-            self.assertIn("− 감가상각비 (예상, 작년 연간 12,000,000)", h)   # 누적 결산 줄에 비용으로 먼저 뺌
-            self.assertIn("누적 세전 이익</span><b>135,000,000", h.replace("\n", ""))
+            self.assertIn("법인세 예상 (1월~10월 누적 세전 이익 기준)", h)
+            self.assertNotIn("영업외 수익 뺀 세전 이익 기준", h)   # 사용자 2026-11-04: 최종 세전 이익 기준만
+            row = h.split("<table class='pt tx'>")[1].split("</table>")[0]
+            for v in ("135,000,000", "13,500,000", "4,000,000", "9,500,000", "1,350,000", "10,850,000"):
+                self.assertIn(v, row)
+            self.assertIn("− 감가상각비 (예상, 작년 연간 12,000,000)", h)
+        ev = [(e["date"], e["amount"]) for e in R["events"] if e["cat"].startswith("법인")]
+        self.assertEqual(ev, [(dt.date(2027, 3, 31), 9_500_000), (dt.date(2027, 4, 30), 1_350_000)])   # 지급 예상에 들어감
 
 
 if __name__ == "__main__":

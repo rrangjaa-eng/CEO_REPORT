@@ -798,12 +798,16 @@ def build_tax(books, cfg, asof, input_dir=None):
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
+    from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {})
+    rows += ct_rows
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
                                        "입금" if r["세목"] == tax.DEPOSIT_IN else "납부", "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
     notes.extend(card_notes)
+    notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
     return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
 
