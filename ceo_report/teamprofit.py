@@ -66,6 +66,8 @@ def build(pl_table, dept_rows, ym, ytd=False):
         if r["unit"] == "회사":
             company = v
         elif r["unit"] == "팀":
+            if r[key] is None:   # 그 기간에 손익 줄이 없는 팀 (예: 10월에 원가·매출이 없는 기획3팀): 줄을 만들지 않는다
+                continue
             if r["target"] in SPECIAL:
                 special.append((r["target"], v))
             else:
@@ -87,8 +89,12 @@ def build(pl_table, dept_rows, ym, ytd=False):
     def cost(d):
         if costs is None:
             return None, None, None
-        if d not in costs:   # 손익엔 있는데 부서비용에 없는 팀 (이름이 다르거나 빠짐): 0이 아니라 미확인 (2026-11-03 검토)
-            return None, None, None
+        if d not in costs:
+            # 이름만 다른 부서(띄어쓰기 등)가 있으면 미확인 (2026-11-03 검토). 그런 부서가 없으면 그 기간 급여·판관비 줄이 없는 팀 → 0
+            # (예: 원가만 있는 기획3팀, 팀 손익도 분개장 부서명 기준이 된 뒤 2026-11-04 실제 자료)
+            if any("".join(x.split()) == "".join(d.split()) for x in costs):
+                return None, None, None
+            return 0, 0, 0
         c = costs[d]
         return c["salary"], c["sga"], c["heads"]
 

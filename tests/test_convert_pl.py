@@ -318,7 +318,7 @@ class TestConvertPlNoSnapshot(unittest.TestCase):
                          [(W, "2026-09", "회사", "회사 전체", "100000000", "10000000", "2000000", "Y"),
                           (W, "2026-09", "프로젝트", "26201", "100000000", "10000000", "", "Y")])
         lines = r.result_lines()
-        self.assertIn("  알림 팀별 손익 없음 (인트라넷 스냅숏 없음)", lines)
+        self.assertIn("  알림 팀별 손익 없음 (분개장 부서명 칸·인트라넷 스냅숏 없음)", lines)
         self.assertEqual([ln for ln in lines if "팀별 합계" in ln], [])
         self.assertEqual(len(unit_check_lines(lines)), 4)   # 프로젝트별 2달 x 2
         self.assertIn("대조 불일치 0건", lines)
