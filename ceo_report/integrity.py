@@ -78,7 +78,8 @@ def _convert_checks(res, temp_input, out):
     out.append("- 대조 %d건: %s" % (sum(marks.values()), dict(marks)))
     for s in off[:30]:
         out.append("  · " + s)
-    keep = ("[확인]", "자금계획서", "보통예금 잔액", "장부 채무", "계산서 자료", "작년 분개장", "만듦", "쓰지 않음")
+    keep = ("[확인]", "자금계획서", "보통예금 잔액", "장부 채무", "계산서 자료", "작년 분개장", "만듦", "쓰지 않음",
+            "원가 줄:", "매출 줄:", "지난해 계산서", "중복 입력 의심 전표", "자금일정 정리", "중복 의심 ")
     out.append("## 변환 알림 (요약)")
     for ln in text:
         s = ln.strip()
@@ -130,11 +131,16 @@ def _cross_checks(temp_input, out):
         out.append("- 자금계획.csv %d줄, 달별 줄 수 %s" % (len(fp), dict(sorted((k, v[0]) for k, v in by.items()))))
 
 
+def _month_end(asof):
+    """월간 보고 기준일: asof 가 말일이면 그날, 아니면 지난달 말일 (2026-10-31 → 10/31, 11/4 → 10/31)."""
+    return asof if (asof + dt.timedelta(days=1)).day == 1 else asof.replace(day=1) - dt.timedelta(days=1)
+
+
 def _report_checks(tmp, temp_input, asof, out):
     from . import app
     out.append("## 보고서 만들기 (임시 폴더)")
     P = app.Paths(tmp)
-    month_end = asof.replace(day=1) - dt.timedelta(days=1)
+    month_end = _month_end(asof)
     for task, day in (("주간", asof), ("월간", month_end)):
         lines = []
         try:
@@ -190,7 +196,8 @@ def key_numbers(temp_input, asof, res):
         sm = res.links["costs"]["summary"]
         linked = sum(sm[b]["count"] for b in ("수동", "코드", "자동"))
         put("올해 원가 줄 연결률 (%)", lambda: round(100.0 * linked / max(1, linked + sm["미연결"]["count"]), 1))
-    month_end = asof.replace(day=1) - dt.timedelta(days=1)
+    month_end = _month_end(asof)
+    keys["월간 기준일"] = month_end.isoformat()
     R = None
     try:
         R = calc.compute(data.load(temp_input), "monthly", month_end)
@@ -199,8 +206,13 @@ def key_numbers(temp_input, asof, res):
     if R is not None:
         s2 = R["s2"]
         put("월간 시작 가용자금", lambda: s2["start"])
-        put("월간 다음 달 가장 적을 때 잔액", lambda: s2["min"]["all"][0])
-        put("월간 다음 달 가장 적은 날", lambda: s2["min"]["all"][1].isoformat())
+        first = lambda: s2["periods"][0]
+        put("월간 다음 달 나갈 돈", lambda: first()["all"]["out"])
+        put("월간 다음 달 가장 적을 때 잔액", lambda: first()["all"]["low"])
+        put("월간 다음 달 가장 적은 날", lambda: first()["all"]["low_date"].isoformat())
+        put("월간 다음 달 여유 자금", lambda: first()["all"]["avail"])
+        put("월간 보고 기간 전체 가장 적을 때 잔액", lambda: s2["min"]["all"][0])
+        put("월간 보고 기간 전체 가장 적은 날", lambda: s2["min"]["all"][1].isoformat())
         put("프로젝트 예상총집행", lambda: R["s3"]["total"]["expected"])
         put("미지급금 예정>장부 거래처 수", lambda: len((R.get("debts") or {}).get("over", [])))
         put("두 출처 출금 거래처 수", lambda: len(R.get("two_source") or []))
