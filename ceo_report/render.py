@@ -288,7 +288,7 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 .c-ok{background:#e7f3ec;color:var(--in)}.c-over{background:#fbe9e7;color:var(--out)}.c-q{background:#fff3d6;color:var(--warn)}.c-n{background:var(--soft);color:var(--sub)}
 .keys{font-size:11.5px;color:var(--sub);display:flex;gap:12px;flex-wrap:wrap}.keys i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:3px}
 .ptot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:2px solid var(--ink);padding-top:8px;margin-top:4px;font-size:12px}
-.exprow{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;gap:2px 10px;align-items:center;margin:0 0 8px;padding:6px 12px}.exprow .exp-b{grid-column:1/-1;border-top:1px solid var(--line);padding-top:3px;font-size:11px;color:var(--sub)}.exprow .exp-b+.exp-b{border-top:0;padding-top:0}.exprow .lab{white-space:nowrap}.exp-h b{display:block;font-size:13.5px;color:var(--accent)}.exp-h span{font-size:10.5px;color:var(--sub)}.exprow .big{font-size:18px}.exprow .big small{font-size:11px;font-weight:400;color:var(--sub)}.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
+.mchart{margin-top:8px}.mchart svg{max-height:300px}.exprow{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;gap:2px 10px;align-items:center;margin:0 0 8px;padding:6px 12px}.exprow .exp-b{grid-column:1/-1;border-top:1px solid var(--line);padding-top:3px;font-size:11px;color:var(--sub)}.exprow .exp-b+.exp-b{border-top:0;padding-top:0}.exprow .lab{white-space:nowrap}.exp-h b{display:block;font-size:13.5px;color:var(--accent)}.exp-h span{font-size:10.5px;color:var(--sub)}.exprow .big{font-size:18px}.exprow .big small{font-size:11px;font-weight:400;color:var(--sub)}.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
 small.nin{display:block;color:var(--in);font-size:10.5px}
 .xbox{background:#fff8e6;border:1px solid #f0dca8;border-radius:10px;padding:10px 16px}
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
@@ -1366,6 +1366,84 @@ def _expected_strip(R, mode="ceo", Y=None):
         "사전견적·발행 모두 공급가액, 프로젝트마다 0 밑은 0. 누적 매출은 회사 전체(프로젝트에 안 붙은 매출 포함)"))
 
 
+def _month_series(R):
+    """1월~보고 달 회사 매출·영업이익 (⑤ 이번 달 칸과 같은 기준: 부서 비용이 있으면 팀 표 회사 영업이익)."""
+    s4 = R["s4"]
+    src = s4["sources"].get("WEHAGO")
+    if not src:
+        return []
+    year = s4["ym"][:4]
+    out = []
+    from .teamprofit import build as _tp_build
+    for m, table in src.get("by_month", []):
+        if m[:4] != year or m > s4["ym"]:
+            continue
+        co = [r for r in table if r["unit"] == "회사"]
+        if not co or not co[0]["cur"]:
+            continue
+        c = co[0]["cur"]
+        np_ = c["np"]
+        if s4.get("dept") is not None:
+            T = _tp_build(table, s4["dept"], m, False)
+            if T is not None and T["company"]["net"] is not None:
+                np_ = T["company"]["net"]
+        out.append((m, c["revenue"], np_))
+    return out
+
+
+def _month_chart(R, H=300):
+    """월별 매출(막대)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에). 같은 원 단위라 축 하나."""
+    ser = _month_series(R)
+    if len(ser) < 2:
+        return ""
+    Wd, pl, pr, pt, pb = 900, 52, 10, 22, 30
+    vals = [0] + [v for _, r, p in ser for v in (r, p) if v is not None]
+    step = _nice_step((max(vals) - min(vals)) / 4 or 1)
+    hi = step * math.ceil(max(vals) / step)
+    lo = step * math.floor(min(vals) / step)
+    if hi == lo:
+        hi = lo + step
+    span = hi - lo
+    n = len(ser)
+    gw = (Wd - pl - pr) / n
+
+    def y(v):
+        return pt + (hi - v) * (H - pt - pb) / span
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="월별 매출과 영업이익">' % (Wd, H)]
+    for k in range(int(round(span / step)) + 1):
+        v = lo + step * k
+        out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#e6e9ef"/>' % (pl, Wd - pr, y(v), y(v)))
+        out.append('<text x="%d" y="%.1f" font-size="12" text-anchor="end" fill="#5b6475">%s</text>' % (pl - 5, y(v) + 4, _axis(v)))
+    out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#1d2433"/>' % (pl, Wd - pr, y(0), y(0)))
+    bw = gw * 0.56
+    pts = []
+    for i, (m, rev, np_) in enumerate(ser):
+        cx = pl + i * gw + gw / 2
+        if rev is not None and rev > 0:
+            top = y(rev)
+            out.append('<path d="M%.1f %.1f V%.1f Q%.1f %.1f %.1f %.1f H%.1f Q%.1f %.1f %.1f %.1f V%.1f Z" fill="#9fb4d3">'
+                       '<title>%s 매출 %s</title></path>'
+                       % (cx - bw / 2, y(0), top + 4, cx - bw / 2, top, cx - bw / 2 + 4, top, cx + bw / 2 - 4,
+                          cx + bw / 2, top, cx + bw / 2, top + 4, y(0), esc(_ym_text(m)), esc(won(rev))))
+        out.append('<text x="%.1f" y="%d" font-size="12" text-anchor="middle" fill="#5b6475">%s</text>'
+                   % (cx, H - 10, esc(_ym_text(m))))
+        if np_ is not None:
+            pts.append((cx, y(np_), m, np_))
+    if pts:
+        out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>'
+                   % " ".join("%.1f,%.1f" % (x, yy) for x, yy, _, _ in pts))
+        for x, yy, m, v in pts:
+            out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="#fff" stroke-width="2"><title>%s 영업이익 %s</title></circle>'
+                       % (x, yy, "#b5523b" if v < 0 else "#1f4e8c", esc(_ym_text(m)), esc(won(v))))
+        x, yy, m, v = pts[-1]   # 마지막 달만 값 표시 (점마다 숫자 넣지 않음)
+        out.append('<text x="%.1f" y="%.1f" font-size="12" text-anchor="end" fill="#1d2433">%s</text>' % (x - 6, yy - 8, esc(won(v))))
+    out.append("</svg>")
+    leg = ("<div class='legend'><span><i style='background:#9fb4d3'></i>매출</span>"
+           "<span><i style='background:#1f4e8c;height:2px;margin-bottom:4px'></i>영업이익 (빨간 점 = 손실 달)</span></div>")
+    return ("<div class='card mchart'><div class='lab'>월별 매출·영업이익 흐름 (%s~%s)</div>%s%s</div>"
+            % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg))
+
+
 def _team_notes(R, basis, dept, last, ym):
     notes = ["순수익 = 매출총이익 − 그 팀 급여·판관비 (분개장 부서명 기준). 본부 비용은 본부 합계에서, 다른 부서 비용은 회사 전체에서 뺌",
              "공통비 나눈 뒤 = 본부·경영관리 등 비용을 팀 %s 비율로 나눠 뺀 값 (팀 합계 = 회사 영업이익)" % ("인원" if basis == "heads" else "매출"),
@@ -1591,7 +1669,7 @@ def _first_screen(R, mode, per):
     if monthly:
         # 1쪽 자금(흐름·앞으로·세금·지난 미처리) · 2쪽~ 실적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + [("부가세·원천세 (분기·반기별)", _regular_box(R))] + past
-                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode)),
+                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
                      ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode))]
                   + [_acct_year_block(R, mode)])
     else:
