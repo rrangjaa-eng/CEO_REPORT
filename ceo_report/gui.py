@@ -176,6 +176,17 @@ class Window(object):
         ttk.Entry(f8, textvariable=self.g_rate, width=5).pack(side="left", padx=(4, 8))
         self._btn(f8, "저장", self.save_target)
 
+        # ⑨ 감가상각비 (사용자 2026-11-04: 법인세 예상. 장부엔 12월 결산 때 한 번에 들어감)
+        f9 = ttk.LabelFrame(outer, text="⑨ 감가상각비 — 법인세 예상에 쓸 올해 연간 금액. 비우고 저장하면 작년 장부 금액을 씀",
+                            style="Sec.TLabelframe", padding=8)
+        f9.pack(fill="x", pady=4)
+        self.v_year, self.v_amt = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
+        ttk.Label(f9, text="연도").pack(side="left")
+        ttk.Entry(f9, textvariable=self.v_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Label(f9, text="연간 감가상각비(원)").pack(side="left")
+        ttk.Entry(f9, textvariable=self.v_amt, width=15).pack(side="left", padx=(4, 8))
+        self._btn(f9, "저장", self.save_dep)
+
         # 진행
         ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
         box = ttk.Frame(outer)
@@ -308,6 +319,16 @@ class Window(object):
             return
         self.say("팀 목표 저장: %s년 %s 매출 %s원 · 수익률 %s%% (그 해 %d팀) — 다음 월간 보고부터 반영"
                  % (self.g_year.get().strip(), self.g_team.get().strip(), self.g_rev.get().strip(), self.g_rate.get().strip(), n))
+
+    def save_dep(self):
+        try:
+            n = app.save_depreciation(self.paths.input, self.v_year.get(), self.v_amt.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        amt = self.v_amt.get().strip()
+        self.say("감가상각비 저장: %s년 %s — 다음 월간 보고 법인세 예상부터 반영 (저장된 해 %d개)"
+                 % (self.v_year.get().strip(), amt + "원" if amt else "비움 (작년 장부 금액 사용)", n))
 
     def make_transfer(self):
         from . import transfer

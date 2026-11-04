@@ -238,6 +238,8 @@ def load(folder):
     d.pay_details = read_details(folder)
     from .targets import read as read_targets   # 팀별 연간 목표 (사용자 2026-11-03)
     d.team_targets = read_targets(folder)
+    from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)
+    d.dep_manual = read_dep(folder)
 
     # 세금 예상 (선택): 날짜를 못 읽은 줄은 넣지 않고 입력 확인에 남긴다
     d.tax = None

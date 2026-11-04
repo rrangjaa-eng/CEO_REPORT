@@ -319,6 +319,12 @@ def save_team_target(input_dir, year, team, revenue, rate):
     return targets.save(input_dir, year, team, revenue, rate)
 
 
+def save_depreciation(input_dir, year, amount):
+    """법인세 예상에 쓸 연간 감가상각비 저장 (사용자 2026-11-04). 비우면 작년 장부 값을 씀."""
+    from . import corptax
+    return corptax.save(input_dir, year, amount)
+
+
 def card_list(input_dir):
     """창에 보일 글: '신한 15일(기산 1일) · 롯데 …'."""
     from . import tax

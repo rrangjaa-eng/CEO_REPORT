@@ -703,6 +703,8 @@ def compute(d, kind, asof, start=None, pick=None):
         "stale": stale_accounts,
     }
     R["targets"] = {t: v for (y, t), v in (getattr(d, "team_targets", None) or {}).items() if y == ym[:4]}
+    from .corptax import depreciation   # 법인세 예상용 감가상각비 (사용자 2026-11-04)
+    R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["risks"] = risks(R)
     return R
