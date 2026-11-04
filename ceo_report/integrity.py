@@ -147,7 +147,7 @@ def _report_checks(tmp, temp_input, asof, out):
                 out.append("  · " + ln[:200])
 
 
-KEYS_FILE = "정합성_기준값.json"   # 입력 폴더 (저장소에 올라가지 않음): 지난 점검의 핵심 숫자
+KEYS_FILE = "정합성_기준값.json"   # 프로그램 폴더 (입력 폴더는 건드리지 않음): 지난 점검의 핵심 숫자
 
 
 def _num_csv(path, col, where=None):
@@ -209,9 +209,9 @@ def key_numbers(temp_input, asof, res):
 
 
 def compare_keys(app_dir, keys, out):
-    """지난 점검의 핵심 숫자와 비교해 바뀐 것만 적고, 이번 숫자를 저장한다 (입력 폴더)."""
+    """지난 점검의 핵심 숫자와 비교해 바뀐 것만 적고, 이번 숫자를 저장한다 (프로그램 폴더)."""
     import json
-    path = os.path.join(app_dir, "입력", KEYS_FILE)
+    path = os.path.join(app_dir, KEYS_FILE)
     old = {}
     try:
         with open(path, encoding="utf-8") as f:

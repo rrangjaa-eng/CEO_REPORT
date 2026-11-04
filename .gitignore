@@ -9,3 +9,5 @@ __pycache__/
 *.xls
 # 실제 입력 CSV (회사 자료). 빈 양식은 입력양식/, 예시 자료는 입력양식/샘플/ (tools/make_sample.py)
 /입력/
+/정합성_기준값.json
+/정합성점검.txt
