@@ -152,9 +152,10 @@ class TestReportIsADocument(unittest.TestCase):
         W = week_outflows(R)
         self.assertEqual(W["fri"], dt.date(2026, 11, 6))
         self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]],
-                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000), ("2026-11-06", 1_845_735)])
-        # 남은 예산 매주 나눔은 날짜마다 한 줄로 합쳐 보인다 (사용자 2026-11-03): P26207 962,500 + P26208 883,235
-        merged = W["pay"]["rows"][-1]
+                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000)])
+        # 금요일 출금 목록은 확정 건만 (사용자 2026-11-04). 남은 예산 매주 나눔(예상)은 pay_est 로 따로: P26207 962,500 + P26208 883,235
+        self.assertTrue(all(e["firm"] for e in W["pay"]["rows"]))
+        merged = W["pay_est"]["rows"][-1]
         self.assertEqual((merged["source"], len(merged["merged"]), merged["firm"]), ("남은 예산", 2, False))
         self.assertTrue(all(dt.date(2026, 11, 7) <= e["date"] <= dt.date(2026, 11, 13) for e in W["next"]["rows"]))
         self.assertTrue(W["next"]["rows"])
@@ -165,10 +166,12 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertIn("다음 주 지급 예정 (11/07 토 ~ 11/13 금)", fs)
             self.assertLess(fs.index("금요일(11/06) 출금 목록"), fs.index("다음 주 지급 예정"))
             table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
-            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 4)   # + 남은 예산 나눔 합친 한 줄
+            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 3)   # 확정 건만 (사용자 2026-11-04)
+            self.assertNotIn("예상", table)
             self.assertIn("전시제작사", table)
             self.assertIn("금액 미확인", table)
-            self.assertIn("4건 · 합계 52,545,735 · 확정 50,700,000 · 예상 1,845,735 · 금액 미확인 1건", fs)
+            self.assertIn("3건 · 합계 50,700,000 · 금액 미확인 1건", fs)
+            self.assertIn("확정 안 된 예상 지급 1건 1,845,735원은 목록에서 뺌", fs)
         self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                     dt.date(2026, 10, 31)), "ceo"))
 

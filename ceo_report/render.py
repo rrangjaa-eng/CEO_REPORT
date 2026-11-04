@@ -803,8 +803,18 @@ def week_outflows(R):
                 "est": sum(e["amount"] for e in known if not e["firm"] and not e["overdue"]),
                 "overdue": sum(e["amount"] for e in known if e["overdue"]),
                 "total": sum(e["amount"] for e in known), "unknown_n": len(rs) - len(known)}
+    # 금요일 출금 목록은 확정된 건만 (사용자 2026-11-04 재지적: 예상은 넣지 않는다). 예상 건은 pay_est 로 따로 두어
+    # 자금 표(예상분 포함)와 맞출 수 있게 목록 아래 한 줄로만 알린다.
+    upto = [e for e in rows if e["date"] <= fri]
     return {"fri": fri, "start": asof, "end": end, "rows": rows,
-            "pay": sums([e for e in rows if e["date"] <= fri]), "next": sums([e for e in rows if e["date"] > fri])}
+            "pay": sums([e for e in upto if e["firm"]]), "pay_est": sums([e for e in upto if not e["firm"]]),
+            "next": sums([e for e in rows if e["date"] > fri])}
+
+
+def _prev_firm(R):
+    """지난주 기록도 확정 건만 비교한다 (금요일 출금 목록이 확정 건만이므로)."""
+    prev = R.get("week_prev")
+    return dict(prev, rows=[r for r in prev["rows"] if r.get("firm")]) if prev else None
 
 
 def _md(d):
@@ -859,7 +869,7 @@ def _out_rows_table(G, C, empty, R=None):
                  % (esc(_md(e["date"])), esc(e.get("desc") or ""),
                     esc(_pname(R, e.get("project")) if R else (e.get("project") or "")), _cat_cell(e), amt))
     h.append("</tbody></table>")
-    tail = "합계 %s · 확정 %s · 예상 %s" % (won(G["total"]), won(G["firm"]), won(G["est"]))
+    tail = ("합계 %s" % won(G["total"])) if not G["est"] else "합계 %s · 확정 %s · 예상 %s" % (won(G["total"]), won(G["firm"]), won(G["est"]))
     if G["overdue"]:
         tail += " · 이 중 예정일 지난 미처리 %s" % won(G["overdue"])
     if G["unknown_n"]:
@@ -898,7 +908,7 @@ def _week_out_table(R):
     줄마다 '지난주 대비' 칸, 아래 한 줄엔 두 합계와 빠진 것·추가된 것·변동된 것만 짧게."""
     from .weekdiff import compare
     W_ = week_outflows(R)
-    prev = R.get("week_prev")
+    prev = _prev_firm(R)
     P = W_["pay"]
     C = compare(prev, [e for e in P["rows"] if not e["overdue"]], W_["start"], W_["fri"]) if prev else None
     md = _md
@@ -906,6 +916,10 @@ def _week_out_table(R):
         esc(md(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
         esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
     h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R)]
+    E = W_["pay_est"]
+    if E["rows"]:
+        h.append("<div class='note'>%s</div>" % esc("확정 안 된 예상 지급 %d건 %s원은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)"
+                                                    % (len(E["rows"]), won(E["total"]))))
     if C is None:
         h.append("<div class='note'>지난주 기록 없음 — 다음 주 보고부터 지난주 대비를 보임</div>")
     else:
@@ -923,7 +937,7 @@ def _week_out_table(R):
             parts.append("추가된 것 %d건 %s" % (len(new), sgn(diff(new))))
         if moved:
             parts.append("변동된 것 %d건 %s" % (len(moved), sgn(diff(moved))))
-        top = "지난주(%s) 예상 %s → 이번 금요일 %s (%s)" % (md(C["asof"]), won(C["prev_total"]), won(C["cur_total"]),
+        top = "지난주(%s) 확정 %s → 이번 금요일 %s (%s)" % (md(C["asof"]), won(C["prev_total"]), won(C["cur_total"]),
                                                          sgn(C["cur_total"] - C["prev_total"]) if C["cur_total"] != C["prev_total"] else "변동 없음")
         h.append("<div class='wchg'>지난주 대비: %s%s</div>" % (esc(top), esc(" · " + " · ".join(parts)) if parts else ""))
     h.append("</div>")
@@ -1247,7 +1261,7 @@ def _ev_rows(rows, R):
 def _ev_change_table(R):
     from .weekdiff import compare
     W_ = week_outflows(R)
-    prev = R.get("week_prev")
+    prev = _prev_firm(R)
     if not prev:
         return "<div class='note'>지난주 기록 없음 — 다음 주 보고부터 건별로 보임</div>"
     C = compare(prev, W_["pay"]["rows"], W_["start"], W_["fri"])

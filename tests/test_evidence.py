@@ -118,7 +118,8 @@ class TestCashTableMatchesPayLists(unittest.TestCase):
         W = week_outflows(R)
         p = R["s2"]["periods"]
         self.assertEqual((p[0]["end"], p[1]["end"]), (W["fri"], W["end"]))
-        self.assertEqual(p[0]["all"]["pout"], W["pay"]["total"])
+        self.assertEqual(p[0]["all"]["pout"], W["pay"]["total"] + W["pay_est"]["total"])   # 목록은 확정만, 자금 표는 예상분 포함
+        self.assertEqual(p[0]["firm"]["pout"], W["pay"]["total"])
         self.assertEqual(p[1]["all"]["pout"], W["next"]["total"])
         b = R["s2"]["buckets"]   # 그림의 주도 같은 주
         self.assertEqual((b[0]["to"], b[1]["to"]), (W["fri"], W["end"]))

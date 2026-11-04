@@ -113,7 +113,7 @@ class TestWeeklyReport(unittest.TestCase):
         line = line[:line.index("</div>")]
         self.assertIn("빠진 것 1건 −8,800,000 (샘플 빠진 지급)", line)
         self.assertIn("추가된 것", line)
-        self.assertIn("지난주(10/24) 예상 8,800,000 → 이번 금요일", line)   # 다음 주(11/09) 것은 비교에 넣지 않음
+        self.assertIn("지난주(10/24) 확정 8,800,000 → 이번 금요일", line)   # 다음 주(11/09) 것은 비교에 넣지 않음
         self.assertNotIn("다음 주 것", line)
         for wordy in ("일정에서 없어짐", "= 지금"):
             self.assertNotIn(wordy, line)
