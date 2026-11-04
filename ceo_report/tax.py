@@ -414,21 +414,56 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
         for d, a in use[co]:
             k = card_due(d, p, s)
             by_bill[k] = by_bill.get(k, 0) + a
+        # 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 (사용자 2026-11-04) → 입력 전 달은 최근 3달 평균으로 예상
+        past = [by_bill[k] for k in sorted(by_bill) if k < asof][-CARD_AVG_MONTHS:]
+        avg = sum(past) // len(past) if len(past) >= CARD_AVG_MONTHS else None
+        thin = {}
+        if avg:
+            for k in _open_bills(asof, p, s):
+                got = by_bill.get(k, 0)
+                if got < avg * CARD_THIN_RATE:
+                    thin[k] = (got, avg)
+                    by_bill.setdefault(k, 0)
         left = pay.get(co, 0)
-        by_due = {}
+        by_due, why = {}, {}
         for k in sorted(by_bill):
             take = min(by_bill[k], left)
             left -= take
-            if by_bill[k] - take <= 0:
+            extra = thin[k][1] - by_bill[k] if k in thin else 0
+            if by_bill[k] - take + extra <= 0:
                 continue
             due = k
             while due < asof:   # 결제일이 지났는데 남은 금액: 다음 납부일로
                 due = _after(_day_in(*_next_month(due.year, due.month), p))
-            by_due[due] = by_due.get(due, 0) + by_bill[k] - take
+            by_due[due] = by_due.get(due, 0) + by_bill[k] - take + extra
+            if k in thin:
+                why[due] = thin[k]
         for due in sorted(by_due):
-            rows.append(_row("카드대금", "%s카드 %d월 %d일 결제" % (co, due.month, due.day), due, by_due[due], "예상",
-                             "미지급비용 %s카드 사용 − 결제 (납부일 %d일, 기산일 %d일)" % (co, p, s)))
+            if due in why:
+                got, a = why[due]
+                rows.append(_row("카드대금", "%s카드 %d월 %d일 결제 (전표 입력 전 추정)" % (co, due.month, due.day), due,
+                                 by_due[due], "예상",
+                                 "%s %s카드 사용 전표가 입력된 것 %s원뿐 → 최근 %d달 평균 사용 %s원으로 잡음 (전표를 넣으면 실제 금액으로 바뀜)"
+                                 % (CARD_THIN_MARK, co, "{:,}".format(got), CARD_AVG_MONTHS, "{:,}".format(a))))
+            else:
+                rows.append(_row("카드대금", "%s카드 %d월 %d일 결제" % (co, due.month, due.day), due, by_due[due], "예상",
+                                 "미지급비용 %s카드 사용 − 결제 (납부일 %d일, 기산일 %d일)" % (co, p, s)))
     return rows
+
+
+CARD_AVG_MONTHS = 3      # 입력 전 달을 채울 때 보는 지난 결제 수
+CARD_THIN_RATE = 0.5     # 입력된 사용이 평균의 이 비율보다 적으면 '아직 입력 전'으로 봄
+CARD_THIN_MARK = "카드 전표 입력 전:"
+
+
+def _open_bills(asof, pay, start):
+    """기준일에 이미 시작했지만 아직 안 나간 결제 (지난 이용기간 결제가 아직이면 그것, 그리고 지금 이용기간 결제)."""
+    cur = card_due(asof, pay, start)
+    begin = _day_in(asof.year, asof.month, start)
+    if begin > asof:
+        begin = _day_in(*_next_month(asof.year, asof.month, -1), start)
+    prev = card_due(begin - dt.timedelta(days=1), pay, start)
+    return [k for k in sorted({prev, cur}) if k >= asof]
 
 
 DEPOSIT_IN = "정기예금 만기"

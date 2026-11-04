@@ -217,6 +217,32 @@ class TestCards(unittest.TestCase):
                                ("삼성카드 미결제 잔액", "", "50", "납부일 확인 필요"),
                                ("신한카드 11월 16일 결제", "2026-11-16", "200", "예상")])
 
+    def test_month_not_entered_yet_uses_three_month_average(self):
+        """사용자 2026-11-04: 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 → 입력 전 달은 최근 3달 평균으로 예상 + 표시."""
+        j = []
+        for m, a in ((6, 100), (7, 200), (8, 300)):   # 7/15·8/17·9/15 결제분, 모두 결제됨
+            j.append(ln(D(2026, m, 10), "u%d" % m, "26200", credit=a, vendor="신한_0001"))
+            j.append(ln(D(2026, m + 1, 15), "p%d" % m, "26200", debit=a, vendor="신한_0001"))
+        j.append(ln(D(2026, 9, 10), "u9", "26200", credit=210, vendor="신한_0001"))   # 9월은 다 넣음 (10/15 결제 → 평균에 들어감)
+        j.append(ln(D(2026, 10, 15), "p9", "26200", debit=210, vendor="신한_0001"))
+        j.append(ln(D(2026, 10, 3), "u10", "26200", credit=20, vendor="신한_0001"))   # 10월은 조금만 넣음
+        rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
+        got = [(r["대상기간"], r["납부예정일"], r["금액"]) for r in rows]
+        self.assertEqual(got, [("신한카드 11월 16일 결제 (전표 입력 전 추정)", "2026-11-16", str((200 + 300 + 210) // 3)),
+                               ("신한카드 12월 15일 결제 (전표 입력 전 추정)", "2026-12-15", str((200 + 300 + 210) // 3))])
+        self.assertTrue(rows[0]["근거"].startswith(tax.CARD_THIN_MARK))
+
+    def test_entered_month_is_not_replaced_by_average(self):
+        j = []
+        for m, a in ((6, 100), (7, 100), (8, 100), (9, 100)):
+            j.append(ln(D(2026, m, 10), "u%d" % m, "26200", credit=a, vendor="신한_0001"))
+            j.append(ln(D(2026, m + 1, 15), "p%d" % m, "26200", debit=a, vendor="신한_0001"))
+        j.append(ln(D(2026, 10, 10), "u10", "26200", credit=90, vendor="신한_0001"))
+        j.append(ln(D(2026, 11, 2), "u11", "26200", credit=80, vendor="신한_0001"))
+        rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
+        self.assertEqual([(r["대상기간"], r["금액"]) for r in rows], [("신한카드 11월 16일 결제", "90"),
+                                                                    ("신한카드 12월 15일 결제", "80")])
+
     def test_card_file_and_defaults(self):
         import tempfile, shutil
         tmp = tempfile.mkdtemp()

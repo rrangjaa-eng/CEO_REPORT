@@ -890,6 +890,10 @@ def build_tax(books, cfg, asof, input_dir=None):
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
     notes.extend(card_notes)
+    thin = [r for r in rows if r["세목"] == "카드대금" and r["근거"].startswith(tax.CARD_THIN_MARK)]
+    if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
+        notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 최근 3달 평균으로 카드대금을 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
+                     % ", ".join(r["대상기간"].replace(" (전표 입력 전 추정)", "") for r in thin))
     notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
     return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
@@ -1026,6 +1030,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     if _undecided(tables, cross):
         out.append("대조 판단 불가 %d건" % _undecided(tables, cross))
     out.append("대조 불일치 %d건" % _mismatches(tables, cross))
+    out.extend(n for t in tables for n in (t.notes or []) if str(n).startswith("[확인] 카드 전표 입력 전"))   # 진행 상황 칸에도 (사용자 2026-11-04)
     out.extend(summary)
     out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
     res.lines = out

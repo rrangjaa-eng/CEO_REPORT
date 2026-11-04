@@ -388,6 +388,17 @@ def _avail_rows(periods, s2=None):
     return "".join(rows)
 
 
+def _card_thin(R):
+    """카드 전표 입력 전 경고 (사용자 2026-11-04: 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 → 3달 평균으로 예상 + 경고)."""
+    from .tax import CARD_THIN_MARK
+    got = [t for t in (R.get("tax") or []) if str(t.get("basis") or "").startswith(CARD_THIN_MARK) and t.get("matched") is None
+           and t.get("due") is not None]
+    if not got:
+        return ""
+    return ("카드 전표 입력 전: %s 결제는 최근 3달 평균 사용액으로 잡음. 카드로 쓴 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
+            % ", ".join("%s %s %s" % (str(t["period"]).split("카드")[0], _md(t["due"]), won(t["amount"])) for t in got))
+
+
 def _avail_table(R, mode="mgmt"):
     """기간별 가용자금 표: 주간 1~4주, 월간 1~3개월 + 지정일 줄(보고서를 만들 때 --가용일 로 넣은 날짜) (사용자 2026-11-03).
 
@@ -424,6 +435,9 @@ def _avail_table(R, mode="mgmt"):
         notes.append("부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n"])
     if s2["out_unknown_n"]:
         notes.append("금액 미확인 지급 예정 %d건 (미반영)" % s2["out_unknown_n"])
+    thin = _card_thin(R)
+    if thin:
+        notes.append(thin)
     h.append("<ul class='nl'>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in notes))
     return "".join(h)
 
