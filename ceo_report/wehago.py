@@ -415,6 +415,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
             if "프로젝트명" in cols:   # 인쇄 분개장의 프로젝트 칸 (D-57): 전표별 코드는 D-53 과 같은 규칙
                 item["project_name"] = txt(row, "프로젝트명")
                 pcode = project_code(item["project_name"])
+                item["line_project"] = pcode   # 줄 자체의 프로젝트 (한 전표에 프로젝트가 여럿이어도 줄마다 맞게, 2026-11-04)
                 if pcode and date is not None:
                     k = (date.isoformat(), item["no"])
                     slips[k] = pcode if slips.get(k, pcode) == pcode else None
@@ -602,15 +603,16 @@ def _prior_years(folder, kind, names, rows, asof):
     """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
 
     names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일만 앞에 붙인다. 같은 해가 섞인
-    파일(같은 기수의 이전 내려받기)이나 읽을 수 없는 파일은 쓰지 않는다 -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름).
-    매입매출장 프로젝트명 칸(D-53)은 가장 새 파일 것만 쓴다.
+    파일(같은 기수의 이전 내려받기)이나 읽을 수 없는 파일은 쓰지 않는다
+    -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름, 붙인 파일의 전표별 프로젝트 코드).
+    분개장은 지난 기수 전표의 프로젝트명 코드도 함께 돌려준다 (2026-11-04: 버리면 작년 원가·매출이 모두 미연결).
     """
     years = _years(rows)
     floor = min(years) if years else None
-    added, used, skipped = [], [], []
+    added, used, skipped, slips = [], [], [], {}
     for n in names:
         try:
-            more, _ = read_book(os.path.join(folder, n), kind, _file_date(n), asof)
+            more, more_info = read_book(os.path.join(folder, n), kind, _file_date(n), asof)
         except Exception:  # 지난 파일이 깨졌으면 쓰지 않을 뿐 장부 전체를 멈추지 않는다
             skipped.append(n)
             continue
@@ -621,7 +623,9 @@ def _prior_years(folder, kind, names, rows, asof):
         added = more + added
         used.append(n)
         floor = min(ys)
-    return added, sorted(used), skipped
+        for k, v in (more_info.get("slip_projects") or {}).items():
+            slips.setdefault(k, v)
+    return added, sorted(used), skipped, slips
 
 
 def load_books(folder, asof, stale_days):
@@ -685,14 +689,15 @@ def load_books(folder, asof, stale_days):
             entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
-            prior_rows, entry["prior"], skipped = _prior_years(folder, kind, others.get(kind, []), rows, asof)
+            prior_rows, entry["prior"], skipped, prior_slips = _prior_years(folder, kind, others.get(kind, []), rows, asof)
             unused.extend(skipped)
             staged[kind] = prior_rows + rows
             if kind == "매입매출장":
                 slip_projects = info["slip_projects"]
                 ledger_sales = info["sales_rows"]
             elif kind == "분개장":
-                journal_slips = info["slip_projects"]
+                journal_slips = dict(prior_slips)
+                journal_slips.update(info["slip_projects"])
     # D-57: 인쇄 분개장에 매입전표·매출전표가 있으면 분개장 하나로 충분하다. 매입매출장·전자세금계산서(매입)는 있으면 대조만 한다
     derived = invoices_from_journal(staged["분개장"]) if "분개장" in staged else ([], [])
     from_journal = bool(derived[0] or derived[1])

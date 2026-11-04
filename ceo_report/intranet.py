@@ -296,9 +296,10 @@ def _text(parts):
 class Row(object):
     """표의 한 줄: cells(칸 글자), hrefs(칸마다 안에 있던 링크 주소 목록)."""
 
-    def __init__(self, cells, hrefs):
+    def __init__(self, cells, hrefs, spans=None):
         self.cells = cells
         self.hrefs = hrefs
+        self.spans = spans or [1] * len(cells)   # 칸마다 colspan (없으면 1)
 
 
 class Table(object):
@@ -338,7 +339,8 @@ class _PageParser(html.parser.HTMLParser):
                     ctx["table"].headers = [_text(c["text"]) for c in cells]
             else:
                 ctx["table"].rows.append(Row([_text(c["text"]) for c in cells],
-                                             [list(c["hrefs"]) for c in cells]))
+                                             [list(c["hrefs"]) for c in cells],
+                                             [c.get("span", 1) for c in cells]))
         ctx["cells"] = None
 
     def handle_starttag(self, tag, attrs):
@@ -356,7 +358,9 @@ class _PageParser(html.parser.HTMLParser):
             self._close_cell(ctx)
             if ctx["cells"] is None:
                 ctx["cells"] = []
-            ctx["cell"] = {"th": tag == "th", "text": [], "hrefs": []}
+            span = a.get("colspan", "1").strip()
+            ctx["cell"] = {"th": tag == "th", "text": [], "hrefs": [],
+                           "span": int(span) if span.isdigit() and 0 < int(span) < 50 else 1}
         elif tag == "br" and self._stack and self._stack[-1]["cell"] is not None:
             self._stack[-1]["cell"]["text"].append(" ")
         elif tag == "a" and "href" in a:
@@ -434,7 +438,8 @@ def _has_login_form(page):
 # ---------------------------------------------------------------------------
 
 CollectResult = collections.namedtuple(
-    "CollectResult", ["payments", "projects", "payment_pages", "project_pages", "login_info"])
+    "CollectResult", ["payments", "projects", "payment_pages", "project_pages", "login_info",
+                      "project_skipped", "diag"], defaults=(0, None))
 
 
 def login(opener, user_id, password):
@@ -535,7 +540,7 @@ _LISTS = {
     "payment": {"label": "지급요청", "path": "/payment/index", "header": PAYMENT_HEADER,
                 "aliases": PAYMENT_ALIASES, "mapper": _map_payment},
     "project": {"label": "프로젝트", "path": "/project/index", "header": PROJECT_HEADER,
-                "aliases": PROJECT_ALIASES, "mapper": _map_project},
+                "aliases": PROJECT_ALIASES, "mapper": _map_project, "skip_bad": True},
 }
 
 
@@ -570,29 +575,58 @@ def _find_table(page, spec):
         label, ", ".join(miss) or "(없음)", ", ".join(extra) or "(없음)", first or "(칸 수 차이)"))
 
 
-def _split_rows(table, spec):
+def _expand_spans(row):
+    """colspan 칸을 빈 칸으로 펼친 줄 (칸 수 = 화면의 열 수). 펼칠 것이 없으면 그대로."""
+    if all(n == 1 for n in row.spans):
+        return row
+    cells, hrefs = [], []
+    for c, h, n in zip(row.cells, row.hrefs, row.spans):
+        cells.append(c)
+        hrefs.append(h)
+        cells.extend([""] * (n - 1))
+        hrefs.extend([[] for _ in range(n - 1)])
+    return Row(cells, hrefs)
+
+
+def _row_shape(i, row):
+    """칸 수가 다른 줄의 모양 (값은 담지 않는다: 칸 수, colspan, 빈 칸 위치, 번호 칸이 숫자인지)."""
+    spans = [(k, n) for k, n in enumerate(row.spans) if n != 1]
+    empty = [k for k, c in enumerate(row.cells) if not c.strip()]
+    numeric = [k for k, c in enumerate(row.cells[:3]) if _DIGITS.match(c.strip()) and c.strip()]
+    return "줄 %d: %d칸, colspan %s, 빈 칸 %s, 앞 3칸 중 숫자 칸 %s, 링크 칸 %s" % (
+        i + 1, len(row.cells), spans or "없음", empty, numeric,
+        [k for k, h in enumerate(row.hrefs) if h])
+
+
+def _split_rows(table, spec, shapes=None):
     """표의 데이터 줄을 키가 붙은 dict로, 칸 수가 다른 줄 수와 함께: (줄 목록, 칸 수가 다른 줄 수).
-    Total 줄·빈 줄·안내 한 칸 줄은 데이터가 아니다."""
+    Total 줄·빈 줄·안내 한 칸 줄은 데이터가 아니다. colspan 은 빈 칸으로 펼친 뒤 센다.
+    shapes 목록을 주면 칸 수가 다른 줄의 모양(값 없이)을 담는다."""
     width = len(spec["header"])
     rows = []
     bad = 0
-    for row in table.rows:
+    for i, row in enumerate(table.rows):
         cells = row.cells
         if _is_total(cells) or not any(cells) or len(cells) == 1:
             continue
-        if len(cells) != width:
+        full = _expand_spans(row)
+        if len(full.cells) != width:
             bad += 1
+            if shapes is not None:
+                shapes.append(_row_shape(i, row))
             continue
-        rows.append(spec["mapper"](row))
+        rows.append(spec["mapper"](full))
     return rows, bad
 
 
-def _read_rows(table, spec):
-    rows, bad = _split_rows(table, spec)
-    if bad:
+def _read_rows(table, spec, shapes=None):
+    """지급요청은 칸 수가 다른 줄이 있으면 멈춘다 (승인 자료를 빠뜨리지 않는다).
+    프로젝트 목록은 그 줄만 건너뛰고 (줄 목록, 건너뛴 수)로 알린다: 계산서 연결에만 쓰여 한 줄이 빠져도 미연결로 드러난다."""
+    rows, bad = _split_rows(table, spec, shapes)
+    if bad and not spec.get("skip_bad"):
         raise StructureMismatch("%s 목록 표 줄의 칸 수가 머리글과 다름 (%d건, 머리글 %d칸)" % (
             spec["label"], bad, len(spec["header"])))
-    return rows
+    return rows, bad
 
 
 def _pairs(query):
@@ -699,8 +733,39 @@ def _classify_links(page, current_url, kind, list_path):
     return follow, recognised, unknown, mixed, shape
 
 
-def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None):
-    """adopt: 첫 쪽 주소에 붙일 조회 값 (쪽 링크가 붙여 온 것), expect: 그때 첫 쪽에서 읽어야 하는 줄 (같은 목록인지 확인)."""
+def _mask_link(url):
+    """구조 점검용 링크 모양: 경로 + 조회 이름 (숫자 값만 보이고 나머지 값은 *)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "(읽을 수 없는 주소)"
+    q = "&".join("%s=%s" % (n, v if _DIGITS.match(v) else "*") for n, v in _pairs(parts.query))
+    return parts.path + ("?" + q if q else "")
+
+
+def _list_links(page, current_url, list_path):
+    out = []
+    for href, _t in page.links:
+        h = href.strip()
+        if not h or h.startswith("#") or h.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        try:
+            full = urllib.parse.urljoin(current_url, h)
+            path = urllib.parse.urlsplit(full).path
+        except ValueError:
+            continue
+        if path.startswith(list_path):
+            out.append(_mask_link(full))
+    return out
+
+
+def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, diag=None):
+    """adopt: 첫 쪽 주소에 붙일 조회 값 (쪽 링크가 붙여 온 것), expect: 그때 첫 쪽에서 읽어야 하는 줄 (같은 목록인지 확인).
+    diag 목록을 주면 쪽마다 구조(줄 수, 칸 수가 다른 줄 모양, 같은 목록 링크 모양)를 값 없이 담는다.
+    -> (줄 목록, 쪽 수, 건너뛴 줄 수)"""
+    if diag is None:
+        diag = []
+    skipped = 0
     spec = _LISTS[kind]
     label = spec["label"]
     list_path = spec["path"]
@@ -723,10 +788,17 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None):
         if _has_login_form(page):
             raise LoginFailed("로그인 실패: ID 또는 비밀번호를 확인하세요")
         table = _find_table(page, spec)
+        shapes = []
+        diag.append("%s %s: 표 줄 %d개, 머리글 %d칸" % (label, _mask_link(url), len(table.rows), len(table.headers)))
         added = 0
         empty_number = 0
         clashes = []
-        for mapped in _read_rows(table, spec):
+        try:
+            mapped_rows, bad = _read_rows(table, spec, shapes)
+        finally:
+            diag.extend("  " + x for x in shapes)
+        skipped += bad
+        for mapped in mapped_rows:
             number = mapped["번호"].strip()
             if not number:
                 empty_number += 1
@@ -746,12 +818,17 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None):
             raise StructureMismatch("%s 목록: 쪽 링크의 조회 값(%s)을 붙이면 첫 쪽 내용이 달라져 멈춤"
                                     % (label, ", ".join(sorted(n for n, _ in adopt or ()))))
         follow, recognised, unknown, mixed, shape = _classify_links(page, url, kind, list_path)
+        links = _list_links(page, url, list_path)
+        diag.append("  같은 목록 링크 %d개: %s" % (len(links), ", ".join(sorted(set(links))[:40])))
+        diag.append("  쪽 링크로 알아봄 %d · 따라갈 주소 %d · 알 수 없는 이름 %s · 함께 바뀌는 조회 %s" % (
+            recognised, len(follow), sorted(unknown), sorted(mixed)))
         if pages == 1 and not recognised:
             pairs = shape.get("adopt") or set()
             names = [n for n, _ in pairs]
             if mixed and not unknown and adopt is None and pairs and len(names) == len(set(names)) and set(names) == mixed:
                 # 같은 이름에 값이 하나뿐일 때만: 그 값을 붙여 첫 쪽부터 다시 읽고 첫 쪽이 같아야 이어 간다
-                return _collect_list(opener, kind, max_pages, progress, adopt=pairs, expect=list(rows.values()))
+                diag.append("  → 쪽 링크의 조회 값 %s 을 붙여 첫 쪽부터 다시 읽음" % sorted(n for n, _ in pairs))
+                return _collect_list(opener, kind, max_pages, progress, adopt=pairs, expect=list(rows.values()), diag=diag)
             if unknown:
                 raise StructureMismatch(
                     "%s 목록: 쪽 이동으로 보이는 링크의 조회 이름(%s)을 알 수 없어 따라가지 않고 멈춤"
@@ -768,19 +845,21 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None):
                     queue.append(link)
     if not rows:
         raise StructureMismatch("%s 목록 0건 — 읽은 줄이 없어 멈춤" % label)
-    return list(rows.values()), pages
+    return list(rows.values()), pages, skipped
 
 
-def collect(opener, user_id, password, max_pages=300, progress=None):
+def collect(opener, user_id, password, max_pages=300, progress=None, diag=None):
     """로그인 → 지급요청 목록 전 페이지 → 프로젝트 목록 전 페이지.
 
     구조가 예상과 다르면 예외로 멈추고 아무 줄도 돌려주지 않는다(D-29).
     ID·비밀번호는 login()에만 넘기고 어디에도 보관하지 않는다.
     """
+    if diag is None:
+        diag = []
     info = login(opener, user_id, password)
-    payments, payment_pages = _collect_list(opener, "payment", max_pages, progress)
-    projects, project_pages = _collect_list(opener, "project", max_pages, progress)
-    return CollectResult(payments, projects, payment_pages, project_pages, info)
+    payments, payment_pages, _ = _collect_list(opener, "payment", max_pages, progress, diag=diag)
+    projects, project_pages, skipped = _collect_list(opener, "project", max_pages, progress, diag=diag)
+    return CollectResult(payments, projects, payment_pages, project_pages, info, skipped, diag)
 
 
 def _paging_stop(label, recognised, unknown, mixed):

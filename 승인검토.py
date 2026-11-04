@@ -316,6 +316,18 @@ def print_structure(rep, max_pages):
     return 0 if rep["ok"] else 3
 
 
+def write_structure_log(out_dir, when, diag, rc):
+    """인트라넷 화면 구조 기록 (출력\\인트라넷_구조점검.txt, 매번 덮어씀). 값은 없고 줄 수·칸 수·링크 모양만 있다."""
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "인트라넷_구조점검.txt"), "w", encoding="utf-8") as f:
+            f.write("인트라넷 구조 점검 %s · 결과 %s\n" % (when.strftime("%Y-%m-%d %H:%M:%S"),
+                                                 "완료" if rc is None else "멈춤 (코드 %s)" % rc))
+            f.write("\n".join(diag) + "\n")
+    except OSError:
+        pass
+
+
 def run_collect(a, asof, now):
     """ID·비밀번호를 묻고 → 인트라넷 전 쪽 수집 → 스냅숏 저장 → 화면 만들기 → 브라우저."""
     user_id, password, rc = ask_credentials()
@@ -327,15 +339,20 @@ def run_collect(a, asof, now):
     secrets = [user_id, password]
     collected_at = dt.datetime.now().replace(microsecond=0)  # 수집을 시작하는 순간 (P-13)
     started = time.monotonic()
+    diag = []
     try:
         result, rc = _guarded(
-            lambda: intranet.collect(make_collector_opener(), user_id, password, a.최대페이지, _progress),
+            lambda: intranet.collect(make_collector_opener(), user_id, password, a.최대페이지, _progress, diag),
             secrets)
     finally:
         user_id = password = None
         del secrets[:]
+    write_structure_log(a.출력, collected_at, diag, rc)
     if rc is not None:
         return rc
+    if result.project_skipped:
+        _say("[확인] 프로젝트 목록에서 칸 수가 다른 줄 %d건은 읽지 않고 건너뜀 — 그 프로젝트의 계산서는 미연결로 남습니다 "
+             "(모양: 출력\\인트라넷_구조점검.txt)" % result.project_skipped)
     _say("수집 완료: 지급요청 %d쪽 %d건 · 프로젝트 %d쪽 %d건 · %.1f초" % (
         result.payment_pages, len(result.payments), result.project_pages, len(result.projects),
         time.monotonic() - started))

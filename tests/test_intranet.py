@@ -711,6 +711,49 @@ class TestStructureStops(unittest.TestCase):
         self.assertIsInstance(exc, module.StructureMismatch)
         self.assertIn("칸 수", str(exc))
 
+    def test_colspan_row_is_expanded_not_stopped(self):
+        """칸을 colspan 으로 합친 줄은 빈 칸으로 펼쳐 읽는다 (화면 열 수가 머리글과 같으면)."""
+        page = project_page([jrow(26218, 901), jrow(26219, 902)])
+        # 두 번째 줄의 승인 4칸(대표이사·관리팀·팀장·담당자)을 colspan 4 한 칸으로
+        page = page.replace("<td>승인</td><td>승인</td><td>승인</td><td>승인</td><td><a href='/project/estimate/26219'>",
+                            "<td colspan='4'>완료</td><td><a href='/project/estimate/26219'>")
+        opener, _ = make_fake_opener(site_routes(extra={("GET", "/project/index"): (200, {}, page)}))
+        res = intranet().collect(opener, USER, PASSWORD)
+        self.assertEqual([r["번호"] for r in res.projects], ["26218", "26219"])
+        self.assertEqual(res.projects[1]["승인_담당자"], "완료")
+        self.assertEqual(res.projects[1]["승인_대표이사"], "")
+        self.assertEqual(res.project_skipped, 0)
+
+    def test_project_row_with_wrong_cell_count_is_skipped_and_counted(self):
+        """프로젝트 목록은 칸 수가 다른 줄만 건너뛰고 수를 알린다 (실제 인트라넷 2026-11-04: 1건 때문에 수집 전체가 멈춤)."""
+        page = project_page([jrow(26218, 901), jrow(26219, 902)])
+        page = page.replace("<td><a href='/project/estimate/26219'>견적</a></td>", "")
+        opener, _ = make_fake_opener(site_routes(extra={("GET", "/project/index"): (200, {}, page)}))
+        res = intranet().collect(opener, USER, PASSWORD)
+        self.assertEqual([r["번호"] for r in res.projects], ["26218"])
+        self.assertEqual(res.project_skipped, 1)
+        shape = [x for x in res.diag if "21칸" in x]
+        self.assertEqual(len(shape), 1)
+        self.assertNotIn("가상", "\n".join(res.diag))      # 구조 기록에 값은 없다
+        self.assertNotIn(PASSWORD, "\n".join(res.diag))
+
+    def test_diag_shows_page_link_shapes_without_values(self):
+        links = [("/payment/index?gyear=2026&page=2", "2"), ("/payment/index?search=가상", "찾기")]
+        first = payment_page([prow(5101)], links=links)
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026&page=2"): (200, {}, payment_page([prow(5103)])),
+        })
+        opener, _ = make_fake_opener(routes)
+        diag = []
+        intranet().collect(opener, USER, PASSWORD, diag=diag)
+        text = "\n".join(diag)
+        self.assertIn("/payment/index?gyear=2026&page=2", text)
+        self.assertIn("search=*", text)
+        self.assertIn("다시 읽음", text)
+        self.assertNotIn("가상", text)
+
     def test_row_without_number_stops(self):
         module = intranet()
         bad = prow(5102)

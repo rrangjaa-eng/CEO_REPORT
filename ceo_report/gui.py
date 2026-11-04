@@ -11,6 +11,7 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
+from tkinter import font as tkfont
 from tkinter import ttk
 
 from . import app, editmode
@@ -37,178 +38,184 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(1340, 800)
+        # 사용자 2026-11-04: 창이 너무 큼 → 한 화면에 다 보이게. 글꼴을 이름 있는 Font 로 두고, 화면보다 크면 줄인다 (fit_to_screen)
+        self.fonts = {
+            "base": tkfont.Font(root, family="Malgun Gothic", size=10),
+            "small": tkfont.Font(root, family="Malgun Gothic", size=9),
+            "head": tkfont.Font(root, family="Malgun Gothic", size=14, weight="bold"),
+            "big": tkfont.Font(root, family="Malgun Gothic", size=10, weight="bold"),
+            "sec": tkfont.Font(root, family="Malgun Gothic", size=10, weight="bold"),
+        }
+        F = self.fonts
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
-            style.configure(name, font=("Malgun Gothic", 10))
-        style.configure("H.TLabel", font=("Malgun Gothic", 15, "bold"))
-        style.configure("S.TLabel", foreground="#5b6475", font=("Malgun Gothic", 9))
-        style.configure("Big.TButton", font=("Malgun Gothic", 11, "bold"), padding=(14, 8))
-        style.configure("Sec.TLabelframe.Label", font=("Malgun Gothic", 10, "bold"))
+            style.configure(name, font=F["base"])
+        style.configure("TButton", padding=(6, 2))
+        style.configure("H.TLabel", font=F["head"])
+        style.configure("S.TLabel", foreground="#5b6475", font=F["small"])
+        style.configure("Big.TButton", font=F["big"], padding=(10, 4))
+        style.configure("Sec.TLabelframe.Label", font=F["sec"])
+        root.option_add("*TCombobox*Listbox.font", F["base"])
+        self.hints = []
 
-        # 사용자 2026-11-04: 진행 상황이 잘 안 보임 → 왼쪽은 칸·버튼, 오른쪽은 진행 상황을 창 높이만큼 길게
-        main = ttk.Frame(root, padding=14)
+        # 정보 구조: 왼쪽 = 매일 하는 일(날짜 → ① 변환 → ② 보고 → ③ 승인 검토), 가운데 = 가끔 넣는 값(④~⑨), 오른쪽 = 진행 상황
+        main = ttk.Frame(root, padding=10)
         main.pack(fill="both", expand=True)
-        outer = ttk.Frame(main)
-        outer.pack(side="left", fill="y", anchor="n")
-        side = ttk.Frame(main, padding=(14, 0, 0, 0))
+        colA = ttk.Frame(main)
+        colA.pack(side="left", fill="y", anchor="n")
+        colB = ttk.Frame(main, padding=(10, 0, 0, 0))
+        colB.pack(side="left", fill="y", anchor="n")
+        side = ttk.Frame(main, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="both", expand=True)
-        ttk.Label(outer, text=TITLE, style="H.TLabel").pack(anchor="w")
-        ttk.Label(outer, text="프로그램 폴더: %s" % self.paths.root, style="S.TLabel").pack(anchor="w", pady=(0, 8))
+
+        head = ttk.Frame(colA)
+        head.pack(fill="x")
+        ttk.Label(head, text=TITLE, style="H.TLabel").pack(side="left")
+        ttk.Label(head, text="  %s" % self.paths.root, style="S.TLabel").pack(side="left", pady=(6, 0))
 
         # 날짜
-        days = ttk.Frame(outer)
-        days.pack(fill="x", pady=(0, 6))
-        ttk.Label(days, text="기준일").pack(side="left")
+        fd = self._sec(colA, "날짜")
+        r = self._row(fd)
+        ttk.Label(r, text="기준일").pack(side="left")
         self.asof = tk.StringVar(value=dt.date.today().isoformat())
-        ttk.Entry(days, textvariable=self.asof, width=12).pack(side="left", padx=(4, 16))
-        ttk.Label(days, text="가용자금을 따로 볼 날짜 (선택)").pack(side="left")
-        self.pick = tk.StringVar()
-        ttk.Entry(days, textvariable=self.pick, width=12).pack(side="left", padx=4)
-        ttk.Label(days, text="예: 2026-12-31", style="S.TLabel").pack(side="left")
-        # 주간 출금 목록 날짜 (사용자 2026-11-04: 금요일 고정이 아니라 넣은 날짜 기준)
-        days2 = ttk.Frame(outer)
-        days2.pack(fill="x", pady=(0, 6))
-        ttk.Label(days2, text="출금일 (주간 보고 ① 출금 목록)").pack(side="left")
+        ttk.Entry(r, textvariable=self.asof, width=11).pack(side="left", padx=(4, 12))
+        ttk.Label(r, text="출금일").pack(side="left")
         self.payday = tk.StringVar()
-        ttk.Entry(days2, textvariable=self.payday, width=12).pack(side="left", padx=4)
-        ttk.Label(days2, text="비우면 기준일 뒤 첫 금요일 · 기준일보다 뒤 날짜 (출금 당일 아침이면 기준일을 전날로)",
-                  style="S.TLabel").pack(side="left")
+        ttk.Entry(r, textvariable=self.payday, width=11).pack(side="left", padx=(4, 0))
+        self._hint(fd, "출금일 = 주간 보고 ① 출금 목록의 날짜. 비우면 기준일 뒤 첫 금요일 (기준일보다 뒤 날짜만)")
+        r = self._row(fd)
+        ttk.Label(r, text="가용자금을 따로 볼 날짜 (선택)").pack(side="left")
+        self.pick = tk.StringVar()
+        ttk.Entry(r, textvariable=self.pick, width=11).pack(side="left", padx=4)
+        ttk.Label(r, text="예: 2026-12-31", style="S.TLabel").pack(side="left")
 
         # ① 자료 준비
-        f1 = ttk.LabelFrame(outer, text="① 자료 준비 — WEHAGO 엑셀·자금계획서를 수집\\위하고 폴더에 넣은 뒤", style="Sec.TLabelframe", padding=8)
-        f1.pack(fill="x", pady=4)
-        self._btn(f1, "자료 변환", lambda: self.start("변환"), big=True)
-        self._btn(f1, "예전 파일 지난자료로 옮기기", self.archive)
-        self._btn(f1, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
+        f1 = self._sec(colA, "① 자료 변환", "WEHAGO 분개장·자금계획서를 수집\\위하고 폴더에 넣은 뒤")
+        r = self._row(f1)
+        self._btn(r, "자료 변환", lambda: self.start("변환"), big=True)
+        self._btn(r, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
+        self._btn(r, "예전 파일 지난자료로", self.archive)
 
         # ② 보고서
-        f2 = ttk.LabelFrame(outer, text="② 대표 보고 — 만들면 PDF가 바로 열립니다", style="Sec.TLabelframe", padding=8)
-        f2.pack(fill="x", pady=4)
-        self._btn(f2, "주간 보고", lambda: self.start("주간"), big=True)
-        self._btn(f2, "월간 보고", lambda: self.start("월간"), big=True)
-        self._btn(f2, "출력 폴더 열기", lambda: self.open_dir(self.paths.output))
+        f2 = self._sec(colA, "② 대표 보고", "만들면 PDF가 바로 열립니다")
+        r = self._row(f2)
+        self._btn(r, "주간 보고", lambda: self.start("주간"), big=True)
+        self._btn(r, "월간 보고", lambda: self.start("월간"), big=True)
+        self._btn(r, "출력 폴더 열기", lambda: self.open_dir(self.paths.output))
         # 대표가 근거 번호로 요청하면: 같은 기준일 경영관리 보고에서 그 근거만 PDF로 (사용자 2026-11-03)
-        ev = ttk.Frame(f2)
-        ev.pack(side="left", padx=(16, 0))
+        r = self._row(f2)
         self.ev_kind, self.ev_nums = tk.StringVar(value="주간"), tk.StringVar()
-        ttk.Combobox(ev, textvariable=self.ev_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left")
-        ttk.Label(ev, text="근거 번호").pack(side="left", padx=(6, 0))
-        ttk.Entry(ev, textvariable=self.ev_nums, width=12).pack(side="left", padx=4)
-        self._btn(ev, "근거자료 PDF", lambda: self.start("근거" + self.ev_kind.get()))
-
+        ttk.Combobox(r, textvariable=self.ev_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left")
+        ttk.Label(r, text="근거 번호").pack(side="left", padx=(6, 0))
+        ttk.Entry(r, textvariable=self.ev_nums, width=10).pack(side="left", padx=4)
+        self._btn(r, "근거자료 PDF", lambda: self.start("근거" + self.ev_kind.get()))
         # 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기)
-        fe = ttk.LabelFrame(outer, text="②-1 수정 모드 — 가장 최근 대표 보고를 브라우저에서 바로 고치고 '_수정' PDF로 저장 (원래 보고서는 그대로)",
-                            style="Sec.TLabelframe", padding=8)
-        fe.pack(fill="x", pady=4)
+        r = self._row(f2)
         self.e_kind = tk.StringVar(value="주간")
-        ttk.Combobox(fe, textvariable=self.e_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left", padx=(0, 8))
-        self._btn(fe, "수정 모드 열기", self.edit_report, big=True)
+        ttk.Combobox(r, textvariable=self.e_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left", padx=(0, 6))
+        self._btn(r, "수정 모드 열기", self.edit_report)
+        ttk.Label(r, text="최근 보고를 브라우저에서 고쳐 '_수정' PDF로", style="S.TLabel").pack(side="left")
         self.edit = None
 
         # ③ 지급 승인 검토
-        f3 = ttk.LabelFrame(outer, text="③ 지급 승인 검토 — 인트라넷 지급요청을 읽어 승인 화면을 엽니다", style="Sec.TLabelframe", padding=8)
-        f3.pack(fill="x", pady=4)
-        ttk.Label(f3, text="인트라넷 ID").pack(side="left")
+        f3 = self._sec(colA, "③ 지급 승인 검토", "인트라넷 지급요청을 읽어 승인 화면을 엽니다 (조회만 함)")
+        r = self._row(f3)
+        ttk.Label(r, text="인트라넷 ID").pack(side="left")
         self.uid = tk.StringVar()
-        ttk.Entry(f3, textvariable=self.uid, width=14).pack(side="left", padx=(4, 10))
-        ttk.Label(f3, text="비밀번호").pack(side="left")
+        ttk.Entry(r, textvariable=self.uid, width=12).pack(side="left", padx=(4, 10))
+        ttk.Label(r, text="비밀번호").pack(side="left")
         self.pw = tk.StringVar()
-        ttk.Entry(f3, textvariable=self.pw, width=14, show="●").pack(side="left", padx=(4, 10))
-        self._btn(f3, "새로 읽고 검토", lambda: self.start("승인검토", collect=True), big=True)
-        self._btn(f3, "마지막 자료로 검토", lambda: self.start("승인검토"))
+        ttk.Entry(r, textvariable=self.pw, width=12, show="●").pack(side="left", padx=(4, 0))
+        r = self._row(f3)
+        self._btn(r, "새로 읽고 검토", lambda: self.start("승인검토", collect=True), big=True)
+        self._btn(r, "마지막 자료로 검토", lambda: self.start("승인검토"))
 
         # ④ 예정 지출·입금
-        f4 = ttk.LabelFrame(outer, text="④ 아직 장부에 없는 지출·입금 예정 넣기 — 자금일정에 들어가 가용자금에 바로 반영",
-                            style="Sec.TLabelframe", padding=8)
-        f4.pack(fill="x", pady=4)
-        row1 = ttk.Frame(f4)
-        row1.pack(fill="x")
+        f4 = self._sec(colB, "④ 장부에 없는 지출·입금 예정", "자금일정에 들어가 가용자금에 바로 반영")
+        r = self._row(f4)
         self.s_day, self.s_io, self.s_amt = tk.StringVar(), tk.StringVar(value="지급"), tk.StringVar()
         self.s_firm, self.s_vendor, self.s_note = tk.StringVar(value="예상"), tk.StringVar(), tk.StringVar()
-        ttk.Label(row1, text="예정일").pack(side="left")
-        ttk.Entry(row1, textvariable=self.s_day, width=12).pack(side="left", padx=(4, 10))
-        ttk.Combobox(row1, textvariable=self.s_io, values=("지급", "입금"), width=5, state="readonly").pack(side="left", padx=(0, 10))
-        ttk.Label(row1, text="금액(원)").pack(side="left")
-        ttk.Entry(row1, textvariable=self.s_amt, width=14).pack(side="left", padx=(4, 10))
-        ttk.Combobox(row1, textvariable=self.s_firm, values=("예상", "확정"), width=5, state="readonly").pack(side="left")
-        row2 = ttk.Frame(f4)
-        row2.pack(fill="x", pady=(6, 0))
-        ttk.Label(row2, text="거래처").pack(side="left")
-        ttk.Entry(row2, textvariable=self.s_vendor, width=18).pack(side="left", padx=(4, 10))
-        ttk.Label(row2, text="내용").pack(side="left")
-        ttk.Entry(row2, textvariable=self.s_note, width=26).pack(side="left", padx=(4, 10))
-        self._btn(row2, "넣기", self.add_schedule)
-        self._btn(row2, "자금일정 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
+        ttk.Label(r, text="예정일").pack(side="left")
+        ttk.Entry(r, textvariable=self.s_day, width=11).pack(side="left", padx=(4, 8))
+        ttk.Combobox(r, textvariable=self.s_io, values=("지급", "입금"), width=5, state="readonly").pack(side="left", padx=(0, 8))
+        ttk.Label(r, text="금액(원)").pack(side="left")
+        ttk.Entry(r, textvariable=self.s_amt, width=13).pack(side="left", padx=(4, 8))
+        ttk.Combobox(r, textvariable=self.s_firm, values=("예상", "확정"), width=5, state="readonly").pack(side="left")
+        r = self._row(f4)
+        ttk.Label(r, text="거래처").pack(side="left")
+        ttk.Entry(r, textvariable=self.s_vendor, width=14).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="내용").pack(side="left")
+        ttk.Entry(r, textvariable=self.s_note, width=20).pack(side="left", padx=(4, 0))
+        r = self._row(f4)
+        self._btn(r, "넣기", self.add_schedule)
+        self._btn(r, "자금일정 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
 
         # ⑤ 카드 납부일
-        f5 = ttk.LabelFrame(outer, text="⑤ 카드 납부일 — 카드사별 납부일·기산일(이용기간 시작일). 저장 후 '자료 변환'부터 반영",
-                            style="Sec.TLabelframe", padding=8)
-        f5.pack(fill="x", pady=4)
+        f5 = self._sec(colB, "⑤ 카드 납부일", "카드사별 납부일·기산일(이용기간 시작일). 저장 후 '자료 변환'부터 반영")
+        r = self._row(f5)
         self.c_co, self.c_pay, self.c_start = tk.StringVar(), tk.StringVar(), tk.StringVar(value="1")
-        ttk.Label(f5, text="카드사").pack(side="left")
-        ttk.Combobox(f5, textvariable=self.c_co, values=("신한", "롯데", "비씨", "삼성", "현대", "국민", "하나", "우리", "농협"),
-                     width=6).pack(side="left", padx=(4, 10))
-        ttk.Label(f5, text="납부일").pack(side="left")
-        ttk.Entry(f5, textvariable=self.c_pay, width=4).pack(side="left", padx=(4, 10))
-        ttk.Label(f5, text="기산일").pack(side="left")
-        ttk.Entry(f5, textvariable=self.c_start, width=4).pack(side="left", padx=(4, 10))
-        self._btn(f5, "저장", self.save_card)
+        ttk.Label(r, text="카드사").pack(side="left")
+        ttk.Combobox(r, textvariable=self.c_co, values=("신한", "롯데", "비씨", "삼성", "현대", "국민", "하나", "우리", "농협"),
+                     width=6).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="납부일").pack(side="left")
+        ttk.Entry(r, textvariable=self.c_pay, width=4).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="기산일").pack(side="left")
+        ttk.Entry(r, textvariable=self.c_start, width=4).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장", self.save_card)
         self.cards_now = tk.StringVar(value="지금: " + app.card_list(self.paths.input))
-        ttk.Label(f5, textvariable=self.cards_now, style="S.TLabel").pack(side="left")
+        self.hints.append(ttk.Label(f5, textvariable=self.cards_now, style="S.TLabel", wraplength=440, justify="left"))
+        self.hints[-1].pack(anchor="w")
 
         # ⑥ 이체 파일
-        f6 = ttk.LabelFrame(outer, text="⑥ 거래처 이체 파일 — 신한 대량이체 양식 (급여·세금·카드 등 정기 지급은 뺌)",
-                            style="Sec.TLabelframe", padding=8)
-        f6.pack(fill="x", pady=4)
+        f6 = self._sec(colB, "⑥ 거래처 이체 파일", "신한 대량이체 양식 (급여·세금·카드 등 정기 지급은 뺌)")
+        r = self._row(f6)
         today = dt.date.today()
         self.t_from = tk.StringVar(value=(today + dt.timedelta(days=1)).isoformat())
         self.t_to = tk.StringVar(value=(today + dt.timedelta(days=7)).isoformat())
-        ttk.Label(f6, text="지급일").pack(side="left")
-        ttk.Entry(f6, textvariable=self.t_from, width=12).pack(side="left", padx=(4, 4))
-        ttk.Label(f6, text="~").pack(side="left")
-        ttk.Entry(f6, textvariable=self.t_to, width=12).pack(side="left", padx=(4, 10))
-        self._btn(f6, "이체 파일 만들기", self.make_transfer)
+        ttk.Label(r, text="지급일").pack(side="left")
+        ttk.Entry(r, textvariable=self.t_from, width=11).pack(side="left", padx=(4, 4))
+        ttk.Label(r, text="~").pack(side="left")
+        ttk.Entry(r, textvariable=self.t_to, width=11).pack(side="left", padx=(4, 8))
+        self._btn(r, "이체 파일 만들기", self.make_transfer)
 
         # ⑦ 출금 상세 내역 (사용자 2026-11-03: 금요일 출금 목록에 무엇에 쓰는 돈인지)
-        f7 = ttk.LabelFrame(outer, text="⑦ 출금 상세 내역 — 같은 거래처·금액의 출금 목록 줄에 붙음 (내용을 비우고 저장하면 지움)",
-                            style="Sec.TLabelframe", padding=8)
-        f7.pack(fill="x", pady=4)
+        f7 = self._sec(colB, "⑦ 출금 상세 내역", "같은 거래처·금액의 출금 목록 줄에 붙음 (내용을 비우고 저장하면 지움)")
+        r = self._row(f7)
         self.d_vendor, self.d_amt, self.d_text = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        ttk.Label(f7, text="거래처").pack(side="left")
-        ttk.Entry(f7, textvariable=self.d_vendor, width=14).pack(side="left", padx=(4, 8))
-        ttk.Label(f7, text="금액(원)").pack(side="left")
-        ttk.Entry(f7, textvariable=self.d_amt, width=12).pack(side="left", padx=(4, 8))
-        ttk.Label(f7, text="상세 내역").pack(side="left")
-        ttk.Entry(f7, textvariable=self.d_text, width=30).pack(side="left", padx=(4, 8))
-        self._btn(f7, "저장", self.save_detail)
+        ttk.Label(r, text="거래처").pack(side="left")
+        ttk.Entry(r, textvariable=self.d_vendor, width=14).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="금액(원)").pack(side="left")
+        ttk.Entry(r, textvariable=self.d_amt, width=13).pack(side="left", padx=(4, 0))
+        r = self._row(f7)
+        ttk.Label(r, text="상세 내역").pack(side="left")
+        ttk.Entry(r, textvariable=self.d_text, width=30).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장", self.save_detail)
 
         # ⑧ 팀 목표 (사용자 2026-11-03: 월간 누적 실적에서 목표 대비)
-        f8 = ttk.LabelFrame(outer, text="⑧ 팀 목표 — 연간 매출 목표와 목표 수익률(매출총이익률). 월간 보고 누적 실적에 목표 대비로 보임",
-                            style="Sec.TLabelframe", padding=8)
-        f8.pack(fill="x", pady=4)
+        f8 = self._sec(colB, "⑧ 팀 목표", "연간 매출 목표와 목표 수익률(매출총이익률). 월간 누적 실적에 목표 대비로 보임")
+        r = self._row(f8)
         self.g_year, self.g_team = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
         self.g_rev, self.g_rate = tk.StringVar(), tk.StringVar()
-        ttk.Label(f8, text="연도").pack(side="left")
-        ttk.Entry(f8, textvariable=self.g_year, width=6).pack(side="left", padx=(4, 8))
-        ttk.Label(f8, text="팀").pack(side="left")
-        ttk.Combobox(f8, textvariable=self.g_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(4, 8))
-        ttk.Label(f8, text="연간 매출 목표(원)").pack(side="left")
-        ttk.Entry(f8, textvariable=self.g_rev, width=15).pack(side="left", padx=(4, 8))
-        ttk.Label(f8, text="목표 수익률(%)").pack(side="left")
-        ttk.Entry(f8, textvariable=self.g_rate, width=5).pack(side="left", padx=(4, 8))
-        self._btn(f8, "저장", self.save_target)
+        ttk.Label(r, text="연도").pack(side="left")
+        ttk.Entry(r, textvariable=self.g_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="팀").pack(side="left")
+        ttk.Combobox(r, textvariable=self.g_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(4, 0))
+        r = self._row(f8)
+        ttk.Label(r, text="매출 목표(원)").pack(side="left")
+        ttk.Entry(r, textvariable=self.g_rev, width=14).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="수익률(%)").pack(side="left")
+        ttk.Entry(r, textvariable=self.g_rate, width=5).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장", self.save_target)
 
         # ⑨ 감가상각비 (사용자 2026-11-04: 법인세 예상. 장부엔 12월 결산 때 한 번에 들어감)
-        f9 = ttk.LabelFrame(outer, text="⑨ 감가상각비 — 법인세 예상에 쓸 올해 연간 금액. 비우고 저장하면 작년 장부 금액을 씀",
-                            style="Sec.TLabelframe", padding=8)
-        f9.pack(fill="x", pady=4)
+        f9 = self._sec(colB, "⑨ 감가상각비", "법인세 예상에 쓸 올해 연간 금액. 비우고 저장하면 작년 장부 금액을 씀")
+        r = self._row(f9)
         self.v_year, self.v_amt = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
-        ttk.Label(f9, text="연도").pack(side="left")
-        ttk.Entry(f9, textvariable=self.v_year, width=6).pack(side="left", padx=(4, 8))
-        ttk.Label(f9, text="연간 감가상각비(원)").pack(side="left")
-        ttk.Entry(f9, textvariable=self.v_amt, width=15).pack(side="left", padx=(4, 8))
-        self._btn(f9, "저장", self.save_dep)
+        ttk.Label(r, text="연도").pack(side="left")
+        ttk.Entry(r, textvariable=self.v_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="연간 금액(원)").pack(side="left")
+        ttk.Entry(r, textvariable=self.v_amt, width=14).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장", self.save_dep)
 
         # 진행
         ttk.Label(side, text="진행 상황", style="Sec.TLabelframe.Label").pack(anchor="w", pady=(0, 2))
@@ -216,13 +223,58 @@ class Window(object):
         ttk.Label(side, textvariable=self.status, style="S.TLabel").pack(anchor="w", pady=(0, 4))
         box = ttk.Frame(side)
         box.pack(fill="both", expand=True)
-        self.log = tk.Text(box, width=56, height=30, wrap="word", font=("Malgun Gothic", 10), state="disabled",
+        self.log = tk.Text(box, width=40, height=12, wrap="word", font=F["base"], state="disabled",
                            background="#f7f8fa")
         bar = ttk.Scrollbar(box, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         self.log.pack(side="left", fill="both", expand=True)
         bar.pack(side="right", fill="y")
+        self.fit_to_screen()
         root.after(100, self.pump)
+
+    def _sec(self, parent, title, hint=""):
+        f = ttk.LabelFrame(parent, text=title, style="Sec.TLabelframe", padding=(8, 4, 8, 6))
+        f.pack(fill="x", pady=3)
+        if hint:
+            self._hint(f, hint)
+        return f
+
+    def _hint(self, parent, text):
+        lab = ttk.Label(parent, text=text, style="S.TLabel", wraplength=440, justify="left")
+        lab.pack(anchor="w", pady=(0, 2))
+        self.hints.append(lab)
+        return lab
+
+    def _row(self, parent):
+        r = ttk.Frame(parent)
+        r.pack(fill="x", pady=(2, 0))
+        return r
+
+    def screen_size(self):
+        """쓸 수 있는 화면 크기 (작업 표시줄·제목 줄 몫을 뺌)."""
+        return self.root.winfo_screenwidth() - 16, self.root.winfo_screenheight() - 90
+
+    def fit_to_screen(self):
+        """창이 화면보다 크면 글꼴·설명 폭을 줄여 한 화면에 들어오게 하고, 창을 화면 안에 놓는다 (사용자 2026-11-04)."""
+        root = self.root
+        sw, sh = self.screen_size()
+        base = {k: f.cget("size") for k, f in self.fonts.items()}
+        scale = 1.0
+        for _ in range(6):
+            root.update_idletasks()
+            w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+            if w <= sw and h <= sh:
+                break
+            scale *= max(0.6, min(sw / float(w), sh / float(h))) * 0.97
+            for k, f in self.fonts.items():
+                f.configure(size=max(7, int(round(base[k] * scale))))
+            for lab in self.hints:
+                lab.configure(wraplength=int(440 * scale))
+        root.update_idletasks()
+        w, h = min(root.winfo_reqwidth(), sw), min(root.winfo_reqheight(), sh)
+        root.minsize(min(w, 900), min(h, 560))
+        root.geometry("%dx%d+%d+%d" % (w, h, max(0, (sw - w) // 2), max(0, (sh - h) // 3)))
+        self.scale = scale
 
     def _btn(self, parent, text, cmd, big=False):
         b = ttk.Button(parent, text=text, command=cmd, style="Big.TButton" if big else "TButton")

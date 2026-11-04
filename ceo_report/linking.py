@@ -255,7 +255,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
             continue
         d, c = row.get("debit"), row.get("credit")
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
-                           slips.get(keys[i][:2])))
+                           row.get("line_project") or slips.get(keys[i][:2])))
     used = set()
     pending = []
     for ln in lines:
@@ -340,7 +340,7 @@ def link_revenue(books, projects, overrides, revenue_codes=("41200",)):
             continue
         d, c = row.get("debit"), row.get("credit")
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (c or 0) - (d or 0),
-                           slips.get(keys[i][:2])))
+                           row.get("line_project") or slips.get(keys[i][:2])))
     used = set()
     for ln in lines:
         if _fixed(ln, overrides, projects, used):

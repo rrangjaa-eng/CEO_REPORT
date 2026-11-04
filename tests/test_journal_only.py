@@ -148,6 +148,44 @@ class TestPriorYearPrint(unittest.TestCase):
         self.assertEqual(min(x["date"] for x in b.journal), dt.date(2025, 12, 31))
         self.assertEqual(b.book_date, dt.date(2026, 10, 31))
 
+    def test_prior_year_journal_keeps_project_codes(self):
+        """실제 자료 대조 (2026-11-04): 작년 분개장의 프로젝트명을 버려 작년 원가·매출이 모두 미연결이 되던 것."""
+        from ceo_report import linking
+        write_journal(self.dir)   # 2026
+        old = [("11/03", "50009", "63300", "행사외주비(도)", "무대", 700000.0, "", "가상무대", "[25101] 작년 행사", "매입전표"),
+               ("11/03", "50009", "25300", "미지급금", "무대", "", 700000.0, "가상무대", "[25101] 작년 행사", "매입전표")]
+        strings = []
+        rows = print_rows(old)
+        rows[1][1] = "기 간  : 2025년 01월 01일 ~ 2025년 12월 31일"
+        X.write_xls(os.path.join(self.dir, "261103 분개장_2025.xls"), X.grid_records(rows, strings), strings)
+        b = wehago.load_books(self.dir, ASOF, None)
+        self.assertEqual(b.slip_projects.get(("2025-11-03", "50009")), "25101")
+        self.assertEqual(b.slip_projects.get(("2026-10-05", "50001")), "26201")
+        res = linking.link_costs(b, [], {}, {})
+        got = dict((ln["date"].isoformat(), ln["project"]) for ln in res["lines"])
+        self.assertEqual(got, {"2025-11-03": "25101", "2026-10-05": "26201"})
+
+    def test_slip_with_two_projects_links_each_line(self):
+        """한 전표에 프로젝트가 둘이면 줄마다 그 줄의 프로젝트명으로 잇는다 (전에는 전표 통째로 미연결)."""
+        from ceo_report import linking
+        Q = "[26202] 가상 다른 행사"
+        lines = LINES + [
+            ("10/09", "50004", "63300", "행사외주비(도)", "인력", 300000.0, "", "가상인력", P, "매입전표"),
+            ("10/09", "50004", "63300", "행사외주비(도)", "인력", 200000.0, "", "가상인력", Q, "매입전표"),
+            ("10/09", "50004", "25300", "미지급금", "인력", "", 500000.0, "가상인력", "", "매입전표"),
+            ("10/10", "50005", "10800", "외상매출금", "대행", 880000.0, "", "가상고객", "", "매출전표"),
+            ("10/10", "50005", "41200", "수입수수료", "대행", "", 500000.0, "가상고객", P, "매출전표"),
+            ("10/10", "50005", "41200", "수입수수료", "대행", "", 300000.0, "가상고객", Q, "매출전표"),
+            ("10/10", "50005", "25500", "부가세예수금", "대행", "", 80000.0, "가상고객", "", "매출전표"),
+        ]
+        write_journal(self.dir, lines=lines)
+        b = wehago.load_books(self.dir, ASOF, None)
+        self.assertNotIn(("2026-10-09", "50004"), b.slip_projects)   # 전표 하나로는 정할 수 없음
+        cost = [(ln["amount"], ln["project"]) for ln in linking.link_costs(b, [], {}, {})["lines"] if ln["no"] == "50004"]
+        self.assertEqual(sorted(cost), [(200000, "26202"), (300000, "26201")])
+        rev = [(ln["amount"], ln["project"]) for ln in linking.link_revenue(b, {}, {})["lines"] if ln["no"] == "50005"]
+        self.assertEqual(sorted(rev), [(300000, "26202"), (500000, "26201")])
+
     def test_closing_slip_type_counts_as_closing(self):
         from ceo_report import convert
         self.assertIn("결산전표", convert.DEFAULT_CONFIG["closing_sorts"])

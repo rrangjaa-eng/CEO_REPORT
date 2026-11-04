@@ -124,8 +124,21 @@ def sweep(test, tmp, captured, fake=None):
                 test.assertNotIn(t, url)
 
 
+STRUCT_LOG = "인트라넷_구조점검.txt"
+SECRETS_IN_LOG = (USER, PASSWORD)
+
+
 def entries(path):
-    return sorted(os.listdir(path)) if os.path.isdir(path) else []
+    """폴더 안 이름들. 인트라넷 구조 점검 기록은 값 없이 매번 남는 파일이라 빼고 센다 (대신 비밀이 없는지 본다)."""
+    if not os.path.isdir(path):
+        return []
+    log = os.path.join(path, STRUCT_LOG)
+    if os.path.exists(log):
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        for secret in SECRETS_IN_LOG:
+            assert secret not in text, "구조 점검 기록에 비밀이 남음"
+    return sorted(n for n in os.listdir(path) if n != STRUCT_LOG)
 
 
 class _TmpMixin(object):
@@ -318,7 +331,7 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
                           ("GET", "/project/index"): (200, {}, project_page(FAKE_PROJECTS + [RRN_PROJECT]))})
         rc, out, err, fake, mocks = run_cli(self, self.argv(), site=site)
         self.assertEqual(rc, 0, out + err)
-        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 4)  # 스냅숏 CSV 3개 + 화면 1개
+        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 5)  # 스냅숏 CSV 3개 + 화면 1개 + 구조 점검 기록
         snap = snapshot_module().read_snapshot(os.path.join(self.root, entries(self.root)[0]))
         names = dict((p["번호"], (p["행사명"], p["파트너"])) for p in snap.payments)
         self.assertEqual(names["5201"], ("[26201] 강사료 홍길동 ******-*******", "홍길동 ******-*******"))
