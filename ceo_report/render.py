@@ -551,11 +551,11 @@ def _results(R, cum=True):
         else:
             cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (%s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
             np_, foot = c["np"], ""
-            if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용 포함, 사용자 2026-11-04)
+            if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (사용자 2026-11-04)
                 from .teamprofit import build as _tp_build
                 T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
                 if T is not None and T["company"]["net"] is not None:
-                    np_ = T["company"]["net"]   # 본부 영업외 비용은 본부 자체 비용으로만 보임 (문구 없음, 사용자 2026-11-04)
+                    np_ = T["company"]["net"]   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용은 영업외 비용 줄, 사용자 2026-11-04)
             cards.append(("%s 이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot))))
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
@@ -1024,6 +1024,9 @@ def _nonop_rows(N, before, after):
     if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
         rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
+    if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
+        rows.append(("− 법인세 예상 (지방소득세 포함)", N["tax"], "mut"))
+        rows.append(("당기순이익 (예상)", N["net_income"], "tot"))
     return "".join("<tr class='%s nonop'><td colspan='%d'>%s</td><td>%s</td>%s</tr>"
                    % (c, before + 1, esc(label), W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
 
@@ -1079,6 +1082,7 @@ def _team_table(R, part="month", mode="mgmt"):
     Y = build(src["table"], dept, ym, True)
     if Y is not None:
         _dep_into(R, Y, True)
+        _tax_into(Y, ym)
         out = [_ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
     else:
         out = ["<div class='card brk'>"]
@@ -1111,6 +1115,18 @@ def _team_table(R, part="month", mode="mgmt"):
     out.append("<div class='note'>%s</div>%s</div>" % (esc("1월~%s 합계. 평균 인원 = 달마다 인원의 평균 · 공통비 나눈 뒤 = 달마다 나눈 값의 합"
                                                          % _ym_text(ym)), _mg(mode, notes_html)))
     return "".join(out)
+
+
+def _tax_into(Y, ym):
+    """누적 결산 줄 끝: 세전 이익 − 법인세 예상(지방소득세 포함) = 당기순이익 예상 (사용자 2026-11-04).
+    법인세 예상 표와 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음)."""
+    from .corptax import LOCAL_RATE, corp_tax
+    N = Y["nonop"]
+    corp = corp_tax(N["pretax"], ym[:4])
+    if corp is None:
+        return
+    N["tax"] = corp + int(corp * LOCAL_RATE)
+    N["net_income"] = N["pretax"] - N["tax"]
 
 
 def _dep_into(R, T, ytd):
@@ -1232,7 +1248,7 @@ def _target_table(R, Y, ym):
 
 
 def _ytd_strip(Y, ym):
-    """올해 누적 큰 숫자 칸: 매출 · 영업이익 · 세전 이익. 이번 달 실적 칸과 같은 모양 (사용자 2026-11-04: 보기 편하게)."""
+    """올해 누적 큰 숫자 칸: 매출 · 영업이익 · 세전 이익 · 당기순이익(예상). 이번 달 실적 칸과 같은 모양 (사용자 2026-11-04: 보기 편하게)."""
     c, N = Y["company"], Y["nonop"]
     per = "1월~%s" % _ym_text(ym)
     parts = ["영업외 수익 %s" % won(N["in"]), "영업외 비용 %s" % won(N["out"])]
@@ -1241,9 +1257,11 @@ def _ytd_strip(Y, ym):
     cards = [("%s 매출" % per, W(c["revenue"]), "매출총이익 %s (%s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
              ("%s 영업이익" % per, W(c["net"], "확인 필요"), "이익률 %s" % esc(pct(c["net"], c["revenue"]))),
              ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]
-    return "<div class='four c3'>%s</div>" % "".join(
+    if "net_income" in N:   # 당기순이익 예상도 큰 숫자로 (사용자 2026-11-04)
+        cards.append(("%s 당기순이익 (예상)" % per, W(N["net_income"]), esc("법인세 예상 %s 뺌 (지방소득세 포함)" % won(N["tax"]))))
+    return "<div class='four%s'>%s</div>" % ("" if len(cards) == 4 else " c3", "".join(
         "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
-        % (esc(a), b, f) for a, b, f in cards)
+        % (esc(a), b, f) for a, b, f in cards))
 
 
 def _team_notes(R, basis, dept, last, ym):

@@ -76,13 +76,8 @@ def build(pl_table, dept_rows, ym, ytd=False):
         return None
     costs = _dept_costs(dept_rows or [], _months(ym, ytd)) if dept_rows is not None else None
     dept_ok = costs is not None
-    # 본부의 영업외 비용(이자 등)은 본부 자체 비용(판관비 칸)에 넣어 영업이익에서 뺀다 (사용자 2026-11-04). 회사 공통비 검산은 옮기기 전 값으로
+    # 본부의 영업외 비용(이자 등)도 결산자료처럼 영업외 비용에 둔다 (사용자 2026-11-04 정정: 판관비로 옮기지 않음)
     moved = OrderedDict()
-    for d, c in (costs or {}).items():
-        if d.endswith("본부") and c["nonop_out"]:
-            moved[d] = c["nonop_out"]
-            c["sga"] = _add(c["sga"], c["nonop_out"])
-            c["nonop_out"] = 0
     names = list(teams) + [d for d in (costs or {}) if d.endswith("팀") and d not in teams]
     zero = {"revenue": 0, "gp": 0} if company is not None and company.get("revenue") is not None else {"revenue": None, "gp": None}
 
