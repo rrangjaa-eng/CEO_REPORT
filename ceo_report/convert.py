@@ -1046,9 +1046,12 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
     listings, summary = [], []
     if books.state == "ok":
+        from . import review_checks
+        tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
+        dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
-        listings = overlap + checks
-        summary = [overlap[0], checks[0]]
+        listings = tidy + overlap + dups + checks
+        summary = ([tidy[0]] if tidy else []) + [overlap[0], dups[0], checks[0]]
     snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
     lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
                          snap_warning)

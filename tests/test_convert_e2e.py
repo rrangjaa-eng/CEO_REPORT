@@ -401,11 +401,13 @@ class TestConvertListings(unittest.TestCase):
         # 02-REVIEW WR-06: 둘째 줄은 쓴 스냅숏과 나이 (예전: 바로 파일 줄)
         self.assertEqual(lines[1], "인트라넷 스냅숏 인트라넷_20261101_180000 (수집 2026-11-01 18:00:00, 기준일보다 1일 이전)")
         self.assertEqual([ln.split(" ")[0] for ln in lines[2:7]], list(GENERATED_CSV))
-        tail = lines[-4:]
+        tail = lines[-6:]
         self.assertEqual(tail[0], "대조 불일치 0건")
-        self.assertTrue(tail[1].startswith("자금일정.csv와 겹칠 수 있는 줄 "))
-        self.assertTrue(tail[2].startswith("보고서 입력 확인 필요 "))
-        self.assertEqual(tail[3], "대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
+        self.assertTrue(tail[1].startswith("자금일정 정리: "))   # 장부에 들어온 지난 출금 줄 정리 (2026-11-04)
+        self.assertTrue(tail[2].startswith("자금일정.csv와 겹칠 수 있는 줄 "))
+        self.assertTrue(tail[3].startswith("중복 입력 의심 전표 "))
+        self.assertTrue(tail[4].startswith("보고서 입력 확인 필요 "))
+        self.assertEqual(tail[5], "대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
 
     def test_resident_numbers_never_reach_a_written_file_or_stdout(self):
         from test_approval import FAKE_PAYMENTS

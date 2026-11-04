@@ -380,7 +380,9 @@ def load(folder):
                     % (e["state"], "/".join(EXEC_STATES)))
             e["state"] = "요청미지급"
         from . import calc   # 순환 import 를 피해 여기서
-        if calc.INTRANET_IN_FUNDS or not str(e["basis"]).startswith("지급요청"):
+        if str(e["basis"]).startswith("WEHAGO "):
+            pass   # 장부 원가 줄의 음수는 취소·감액 전표: 부호 그대로 두어 원가에서 뺀다 (절댓값이면 취소가 원가를 두 배로 만듦, 2026-11-04)
+        elif calc.INTRANET_IN_FUNDS or not str(e["basis"]).startswith("지급요청"):
             # 인트라넷 지급요청 줄은 비교로만 쓰므로 취소·수정(음수) 금액을 그대로 둔다 (2026-11-04 '비교만')
             e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
             e["vat"] = _outflow(iss, r, "부가세", e["vat"])
