@@ -537,7 +537,15 @@ def _results(R, cum=True):
                           "이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"))))
         else:
             cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (%s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
-            cards.append(("%s 이익%s" % (esc(ym), tag), W(c["np"], "확인 필요"), "이익률 %s" % esc(pct(c["np"], c["revenue"]))))
+            np_, foot = c["np"], ""
+            if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용 포함, 사용자 2026-11-04)
+                from .teamprofit import build as _tp_build
+                T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
+                if T is not None and T["company"]["net"] is not None:
+                    np_ = T["company"]["net"]
+                    hn = sum(v for _, v in T.get("hq_nonop", []))
+                    foot = " · 본부 영업외 비용 %s 포함" % won(hn) if hn else ""
+            cards.append(("%s 이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot))))
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
         cards.append(("%s 매출" % ym, _na(why), ""))
@@ -1032,6 +1040,10 @@ def _team_table(R, part="month", mode="mgmt"):
             label = esc(r["label"])
             if r["kind"] == "company":   # 인원은 기획본부(팀+본부)만 (사용자 2026-11-03: 명시)
                 label += "<small>인원 = 기획본부만</small>"
+            if r["kind"] == "hq_self":   # 본부 영업외 비용은 본부 판관비에 넣어 영업이익에서 뺀다 (사용자 2026-11-04)
+                hn = dict(T.get("hq_nonop", [])).get(r["label"].replace(" 자체 비용", ""))
+                if hn:
+                    label += "<small>판관비에 영업외 비용 %s 포함</small>" % esc(won(hn))
             cells = [label] + list(rev) + [W(r["salary"]) if costly else "", W(r["sga"]) if costly else "", W(r["net"]),
                                                      ("미확인" if h is None else "%d명" % h) if costly else "", per, esc(ratio), alloc]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
@@ -1165,6 +1177,8 @@ def _team_notes(R, basis, dept, last, ym):
             "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
     elif last and not last["dept_ok"]:
         notes.append("급여·판관비 미확인: 부서비용.csv에 %s 자료가 없음" % _ym_text(ym))
+    for hq, v in (last or {}).get("hq_nonop", []):
+        notes.append("%s 영업외 비용(이자 등) %s은 %s 판관비에 넣어 영업이익에서 뺌 (결산 영업외 비용 줄에는 넣지 않음)" % (hq, won(v), hq))
     if last and last["check"]:
         got, want = last["check"]
         notes.append("부서별 급여+판관비 %s %s 장부 공통비 %s" % (won(got), "=" if got == want else "≠ (확인 필요)", won(want)))
