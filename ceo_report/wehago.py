@@ -1138,7 +1138,7 @@ def _link_items(links):
     """linking.link_costs 결과의 줄 -> 승인 화면 모양의 항목 (date, vendor, memo, amount + basis, label, request)."""
     return [(ln["project"], {"date": ln["date"], "vendor": ln["vendor"], "memo": ln["memo"], "amount": ln["amount"],
                              "basis": ln["basis"], "label": ln["label"], "request": ln["request"]})
-            for ln in links["lines"]]
+            for ln in links["lines"] if not ln.get("prior")]   # 지난해 줄은 승인 화면에 보이지 않는다 (참고만, 사용자 2026-11-04)
 
 
 def project_costs(books, project_keys, links=None):

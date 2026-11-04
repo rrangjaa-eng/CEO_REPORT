@@ -33,10 +33,14 @@ class TestPriorRule(unittest.TestCase):
         self.assertFalse(linking.is_old_code("AB1"))
 
     def test_prior_by_year_or_old_code(self):
-        self.assertTrue(linking._prior(_ln(dt.date(2025, 12, 31)), 2026))
-        self.assertFalse(linking._prior(_ln(dt.date(2026, 1, 1), "26053"), 2026))
-        self.assertTrue(linking._prior(_ln(dt.date(2026, 1, 1), slip="93"), 2026))   # 2026 분개장의 2025_선급금대체
-        self.assertFalse(linking._prior(_ln(None), 2026))
+        self.assertTrue(linking._prior(_ln(dt.date(2025, 12, 31))))
+        self.assertFalse(linking._prior(_ln(dt.date(2026, 1, 1), "26053")))
+        self.assertTrue(linking._prior(_ln(dt.date(2026, 1, 1), slip="93")))   # 2026 분개장의 2025_선급금대체
+        self.assertFalse(linking._prior(_ln(None)))
+        # 작년 날짜라도 지금 체계 5자리 코드면 올해 프로젝트 (작년 말 선금)
+        self.assertFalse(linking._prior(_ln(dt.date(2025, 12, 20), "26001")))
+        # 해가 바뀌어도 2026 줄이 저절로 '지난해'가 되지 않는다 (기준 해는 설정값)
+        self.assertFalse(linking._prior(_ln(dt.date(2026, 6, 1))))
 
 
 class TestPriorInvoices(unittest.TestCase):
@@ -49,18 +53,39 @@ class TestPriorInvoices(unittest.TestCase):
         old = inv(0, dt.date(2025, 12, 1), 1000, 400, "참고")
         a = inv(1, dt.date(2026, 3, 1), 500, 500, "코드")
         b = inv(2, dt.date(2026, 9, 1), 500, 500, "코드")
-        moved = CI._settle_prior([old, a, b], 2026)
+        c = inv(3, dt.date(2026, 10, 1), 300, 300, "코드")
+        c["exact"] = True   # 같은 금액 입금으로 맞춘 계산서는 건드리지 않는다
+        moved = CI._settle_prior([old, a, b, c])
+        self.assertEqual(c["applied"], 300)
         self.assertEqual(moved, [("가", 600)])
         self.assertEqual(old["applied"], 1000)          # 지난해 계산서는 다 들어온 것으로
         self.assertEqual((a["applied"], b["applied"]), (400, 0))   # 최근 계산서부터 미수로
         self.assertIsNone(b["paid_date"])
-        self.assertEqual(sum(x["total"] - x["applied"] for x in (old, a, b)), 600)   # 거래처 미수 합계는 그대로
+        self.assertEqual(sum(x["total"] - x["applied"] for x in (old, a, b, c)), 600)   # 거래처 미수 합계는 그대로
+
+    def test_prior_credit_note_nets_first(self):
+        """지난해 수정 계산서(−)는 지난해 미수와 먼저 상계한다 (실제 자료: 지난해 + 미수 1.8억 · − 1.88억)."""
+        from ceo_report import convert_invoices as CI
+
+        def inv(i, day, total, applied, basis):
+            return {"idx": i, "date": day, "total": total, "deducted": 0, "applied": applied, "vendor_norm": "가",
+                    "basis": basis, "paid_date": None}
+        pos = inv(0, dt.date(2025, 11, 1), 1000, 0, "참고")
+        neg = inv(1, dt.date(2025, 12, 1), -1200, 0, "참고")
+        cur = inv(2, dt.date(2026, 3, 1), 500, 0, "코드")
+        moved = CI._settle_prior([pos, neg, cur])
+        self.assertEqual(moved, [("가", -200)])   # 지난해에 200 더 받음 → 올해 미수 200 줄어듦
+        rest = lambda i: i["total"] - i["applied"]
+        self.assertEqual((rest(pos), rest(neg), rest(cur)), (0, 0, 300))
+        both = [inv(0, dt.date(2025, 11, 1), 1000, 0, "참고"), inv(1, dt.date(2025, 12, 1), -1000, 0, "참고")]
+        self.assertEqual(CI._settle_prior(both), [])
+        self.assertEqual([rest(i) for i in both], [0, 0])
 
     def test_prior_invoice_rule(self):
         from ceo_report import convert_invoices as CI
-        self.assertTrue(CI._prior({"date": dt.date(2025, 5, 1), "code": None}, 2026))
-        self.assertTrue(CI._prior({"date": dt.date(2026, 1, 2), "code": "93"}, 2026))
-        self.assertFalse(CI._prior({"date": dt.date(2026, 1, 2), "code": "26053"}, 2026))
+        self.assertTrue(CI._prior({"date": dt.date(2025, 5, 1), "code": None}))
+        self.assertTrue(CI._prior({"date": dt.date(2026, 1, 2), "code": "93"}))
+        self.assertFalse(CI._prior({"date": dt.date(2026, 1, 2), "code": "26053"}))
 
 
 class TestPriorRows(unittest.TestCase):

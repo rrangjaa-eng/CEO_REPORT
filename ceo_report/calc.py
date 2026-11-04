@@ -673,7 +673,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         if s["date"] and (v["next"] is None or s["date"] < v["next"]):
             v["next"] = s["date"]
     for e in d.execs:
-        if e["state"] == "요청미지급" and e["vendor"]:
+        if e["state"] == "요청미지급" and e["vendor"] and not is_prior(e):   # 지난해 건은 지급 끝남 (사용자 2026-11-04)
             v = _vendor(e["vendor"])
             if e["supply"] is None:
                 v["unknown"] += 1

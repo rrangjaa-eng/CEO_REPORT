@@ -186,19 +186,25 @@ def compare(debts, events, asof):
     # 반대 방향 (사용자 2026-11-04 '분개장과 자금계획서 비교 검토'): 미지급금 지급 예정이 장부 잔액보다 큰 거래처
     # = 같은 빚을 두 번 잡았거나(이중 계상) 장부에 아직 없는 빚. 거래처코드로 맞춘다.
     bal_code, bal_name, names = {}, {}, {}
+
+    def _add(table, key, bal):
+        table[key] = None if bal is None or table.get(key, 0) is None else table.get(key, 0) + bal
     for d in pays:
         vc = norm_code(d["vcode"])
         if vc:
-            bal_code[vc] = None if d["balance"] is None or bal_code.get(vc, 0) is None else bal_code.get(vc, 0) + d["balance"]
+            _add(bal_code, vc, d["balance"])
             names[vc] = d["vendor"] or vc
-        else:
-            nm = norm_vendor(d["vendor"])
-            bal_name[nm] = None if d["balance"] is None or bal_name.get(nm, 0) is None else bal_name.get(nm, 0) + d["balance"]
+        _add(bal_name, norm_vendor(d["vendor"]), d["balance"])   # 이름으로도 (코드가 한쪽에만 있을 때)
+    plan_desc = {}
+    for ev in events:
+        if "미지급금" in str(ev.get("cat") or "") and norm_code(ev.get("vendor_code")):
+            plan_desc.setdefault(norm_code(ev.get("vendor_code")), ev.get("desc") or "")
     over_rows = []
     for vc, plan in plan_code.items():
-        bal = bal_code.get(vc, 0)
+        name = names.get(vc) or plan_desc.get(vc) or ""
+        bal = bal_code[vc] if vc in bal_code else bal_name.get(norm_vendor(name), 0)
         if bal is not None and plan > max(bal, 0):
-            over_rows.append({"vendor": names.get(vc, ""), "vcode": vc, "balance": bal, "scheduled": plan, "over": plan - max(bal, 0)})
+            over_rows.append({"vendor": name, "vcode": vc, "balance": bal, "scheduled": plan, "over": plan - max(bal, 0)})
     for nm, plan in plan_name.items():
         bal = bal_name.get(nm, 0)
         if nm and bal is not None and plan > max(bal, 0):

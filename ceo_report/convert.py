@@ -698,7 +698,7 @@ def schedule_overlaps(input_dir, tables):
         execs, state = _read_prev_state(input_dir, "프로젝트집행.csv")
         if state == "읽지 못함":
             return None, "프로젝트집행.csv를 읽지 못함"
-    unpaid = [e for e in execs if (e.get("상태") or "").strip() in _UNPAID]
+    unpaid = [e for e in execs if (e.get("상태") or "").strip() in _UNPAID and data.PRIOR_TAG not in (e.get("근거") or "")]
     pairs = []
     for sr in sched:
         if (sr.get("입출금") or "").strip() not in ("출금", "지급"):

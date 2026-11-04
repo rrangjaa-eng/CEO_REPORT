@@ -118,6 +118,14 @@ class TestCompare(unittest.TestCase):
         got = debts.compare(self.debts(), evs, D(2026, 11, 4))
         self.assertEqual([(r["vcode"], r["over"]) for r in got["over"]], [("101", 1000000), ("224", 700000)])
         self.assertEqual(got["over_total"], 1700000)
+        # 코드가 한쪽에만 있으면 이름으로 맞춘다 (잘못 '이중 계상'으로 보이지 않게)
+        nocode = [{"io": "out", "amount": 5000000, "date": D(2026, 11, 20), "desc": "가상상사", "vendor_code": "",
+                   "cat": "자금계획서 미지급금 지급"}]
+        self.assertEqual(debts.compare(self.debts(), nocode, D(2026, 11, 4))["over"], [])
+        # 장부에 없는 거래처는 자금계획서 이름으로 보인다
+        new = [{"io": "out", "amount": 400000, "date": D(2026, 11, 20), "desc": "가상신규", "vendor_code": "00777",
+                "cat": "자금계획서 미지급금 지급"}]
+        self.assertEqual([r["vendor"] for r in debts.compare(self.debts(), new, D(2026, 11, 4))["over"]], ["가상신규"])
         old = [dict(e, date=D(2026, 11, 1)) for e in evs]   # 기준일 이전 줄은 지난 것
         self.assertEqual(debts.compare(self.debts(), old, D(2026, 11, 4))["over"], [])
 

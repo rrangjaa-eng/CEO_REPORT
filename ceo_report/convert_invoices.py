@@ -181,46 +181,64 @@ class _Journal(object):
         self.credits.sort(key=lambda r: (r["date"] or _FAR, _no_key(r["no"]), r["vn"], r["amount"]))
 
 
-def _prior(inv, year):
-    """지난해 계산서: 장부 마지막 해보다 앞선 발행일, 또는 예전 번호 체계([3자리]) 코드."""
-    if inv["date"] is not None and inv["date"].year < year:
-        return True
-    return linking.is_old_code(inv.get("code"))
+def _prior(inv):
+    """지난해 계산서: linking.is_prior 와 같은 규칙 (발행일·코드)."""
+    return linking.is_prior(inv["date"], (inv.get("code"),))
 
 
-def _settle_prior(invoices, year):
-    """지난해 계산서에 남은 미수를 같은 거래처 올해 계산서로 옮긴다 -> [(거래처, 옮긴 금액)].
+def _settle_prior(invoices):
+    """지난해 계산서는 입금이 끝난 것으로 보고, 거래처마다 지난해 계산서에 남은 순 미수(수정 계산서 감액 포함)를
+    같은 거래처 올해 계산서로 옮긴다 -> [(거래처, 옮긴 금액 (+ 올해 미수 늘어남 / − 줄어듦))].
 
-    거래처 미수 합계(= 분개장 잔액)는 그대로이고, 어느 계산서에 붙느냐만 바뀐다. 올해 계산서 입금을 최근 발행분부터
-    떼어 지난해 계산서에 붙인다 (최근 것이 아직 안 들어왔을 가능성이 크다). 뗄 입금이 모자라면 남은 만큼은 그대로 둔다.
+    거래처 미수 합계(= 분개장 잔액)는 그대로이고, 어느 계산서에 붙느냐만 바뀐다 (사용자 2026-11-04).
+    · 남은 순 미수가 + 이면: 올해 계산서 입금을 최근 발행분부터 뗀다 (같은 금액 입금으로 맞춘 계산서는 건드리지 않음).
+    · − 이면 (지난해에 더 받은 돈): 올해 미수 계산서에 오래된 것부터 입금으로 붙인다.
+    옮길 곳이 모자라면 모자란 만큼은 지난해 계산서에 그대로 남긴다.
     """
     by_vendor = collections.defaultdict(list)
     for inv in invoices:
-        if inv["total"] is not None and inv["total"] > 0 and inv["date"] is not None:
+        if inv["total"] is not None and inv["date"] is not None:
             by_vendor[inv["vendor_norm"]].append(inv)
     moved = []
     for vn, invs in by_vendor.items():
-        old = [i for i in invs if i["basis"] == "참고" and i["total"] - i["deducted"] - i["applied"] > 0]
-        new = sorted((i for i in invs if i["basis"] != "참고" and i["applied"] > 0), key=lambda i: (i["date"], i["idx"]),
-                     reverse=True)
-        total = 0
-        for o in old:
-            need = o["total"] - o["deducted"] - o["applied"]
-            for n in new:
-                if need <= 0:
-                    break
-                take = min(need, n["applied"])
-                if take <= 0:
-                    continue
-                o["paid_date"] = o["paid_date"] or n["paid_date"] or o["date"]
-                o["applied"] += take
+        old = [i for i in invs if i["basis"] == "참고"]
+        if not old:
+            continue
+        rest = lambda i: i["total"] - i["deducted"] - i["applied"]
+        net = sum(rest(i) for i in old)
+        for o in old:   # 지난해 계산서는 모두 끝난 것으로
+            if rest(o):
+                o["applied"] += rest(o)
+                o["paid_date"] = o["paid_date"] or o["date"]
+        left = abs(net)
+        if net == 0:
+            continue
+        if net > 0:
+            pool = sorted((i for i in invs if i["basis"] != "참고" and i["total"] > 0 and i["applied"] > 0 and not i.get("exact")),
+                          key=lambda i: (i["date"], i["idx"]), reverse=True)
+            for n in pool:
+                take = min(left, n["applied"])
                 n["applied"] -= take
                 if n["applied"] == 0:
                     n["paid_date"] = None
-                need -= take
-                total += take
-        if total:
-            moved.append((vn, total))
+                left -= take
+                if not left:
+                    break
+        else:
+            pool = sorted((i for i in invs if i["basis"] != "참고" and i["total"] > 0 and rest(i) > 0),
+                          key=lambda i: (i["date"], i["idx"]))
+            for n in pool:
+                give = min(left, rest(n))
+                n["applied"] += give
+                n["paid_date"] = n["paid_date"] or max(o["paid_date"] for o in old)
+                left -= give
+                if not left:
+                    break
+        if left:   # 옮길 곳이 모자란 만큼은 지난해 계산서에 남긴다
+            back = max(old, key=lambda i: (i["date"], i["idx"]))
+            back["applied"] -= left if net > 0 else -left
+        if abs(net) - left:
+            moved.append((vn, (abs(net) - left) * (1 if net > 0 else -1)))
     return moved
 
 
@@ -255,6 +273,7 @@ def _allocate(invoices, jr):
         for it in items.get(r["vn"], []):
             if it["remaining"] == it["inv"]["total"] - it["inv"]["deducted"] and it["remaining"] == r["amount"] and it["date"] <= r["date"]:
                 apply(it, r, r["amount"])
+                it["inv"]["exact"] = True
                 break
     # 2회전 (CR-05: 기초 줄이 없어도 돈다): 거래처마다 기초 미수 먼저, 그다음 오래된 계산서부터. 발행일 이후 입금만, 나눠 붙일 수 있다
     for r in jr.receipts:
@@ -323,9 +342,8 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     notes = list(sales["notes"])
     invoices = _invoices(sales["rows"])
     rev_lines = revenue["lines"] if revenue else []
-    year = max([inv["date"].year for inv in invoices if inv["date"] is not None] or [0])
     for inv in invoices:
-        if _prior(inv, year):
+        if _prior(inv):
             inv["project"], inv["basis"], inv["why"] = "", "참고", "지난해 계산서"
         else:
             inv["project"], inv["basis"], inv["why"] = _project_of(inv, rev_lines, projects)
@@ -333,10 +351,11 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     order = sorted(invoices, key=lambda x: (x["date"] or _FAR, x["idx"]))
     jr = _Journal(books, cfg)
     skip_fifo = _allocate(invoices, jr)
-    moved = _settle_prior(invoices, year)
+    moved = _settle_prior(invoices)
     if moved:
-        notes.append("지난해 계산서 미수 %s원 (%d곳)은 입금 끝난 것으로 보고 같은 거래처 올해 계산서 미수로 옮김 (사용자 2026-11-04: "
-                     "지난해 건은 입금 완료)" % (won(sum(m[1] for m in moved)), len(moved)))
+        notes.append("지난해 계산서는 입금 끝난 것으로 봄 (사용자 2026-11-04): 남은 순 미수를 같은 거래처 올해 계산서로 옮김 %d곳 "
+                     "(올해 미수 늘어남 %s · 줄어듦 %s)" % (len(moved), won(sum(m[1] for m in moved if m[1] > 0)),
+                                                won(-sum(m[1] for m in moved if m[1] < 0))))
 
     # 이전 계산서.csv: 입금예정일·예정일확정만 옮긴다. 입금은 WEHAGO 가 정한다 (D-37).
     carry_notes = []
@@ -355,7 +374,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             if prev_paid is not None and prev_paid != now_paid:
                 mismatch.append("이전 계산서.csv와 입금 기록 다름: %s %s 이전 %s · WEHAGO %s" % (
                     inv["vendor"], _day(inv["date"]), won(prev_paid), won(now_paid)))
-        paid = inv["applied"] + inv["deducted"] > 0
+        paid = inv["applied"] + inv["deducted"] != 0   # 지난해 수정 계산서(−)를 끝낸 것은 입금액이 − (사용자 2026-11-04)
         rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                      "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
                      "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
