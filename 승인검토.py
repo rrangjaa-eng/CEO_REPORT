@@ -75,6 +75,8 @@ def build_parser():
     ap.add_argument("--열기", default="열기", choices=["열기", "안함"])
     ap.add_argument("--수집", default="안함", choices=["함", "안함"],
                     help="함: 인트라넷에서 새로 읽기 (ID·비밀번호를 화면에서 물음). 기본: 안함")
+    ap.add_argument("--화면", default="만듦", choices=["만듦", "안함"],
+                    help="안함: 새로 읽어 저장만 하고 승인 검토 화면은 만들지 않음 (대표보고 창 ③ '인트라넷 자료 가져오기')")
     ap.add_argument("--구조점검", action="store_true",
                     help="로그인 후 각 목록의 첫 쪽만 읽어 화면 구조를 점검 (파일을 만들지 않음)")
     ap.add_argument("--최대페이지", type=_positive_int, default=300, help="목록마다 읽을 최대 쪽 수 (기본 300)")
@@ -328,6 +330,17 @@ def write_structure_log(out_dir, when, diag, rc):
         pass
 
 
+def gathered_summary(result):
+    """가져온 자료 요약 (값 없이 건수·합계만): 팀장 승인 요청, 사전견적이 있는 프로젝트 (사용자 2026-11-04)."""
+    from ceo_report.util import num
+    team_ok = sum(1 for r in result.payments if (r.get("팀장승인") or "").strip() == "승인")
+    est = [num(p.get("사전견적")) for p in result.projects]
+    est = [e for e in est if e]
+    _say("지급요청 %d건 중 팀장 승인 %d건 (비교용 — 가용자금에는 넣지 않음)" % (len(result.payments), team_ok))
+    _say("프로젝트 %d건 중 사전견적 있음 %d건 · 사전견적 합계 %s원 (예산 = 사전견적 × 원가율)"
+         % (len(result.projects), len(est), "{:,}".format(sum(est))))
+
+
 def run_collect(a, asof, now):
     """ID·비밀번호를 묻고 → 인트라넷 전 쪽 수집 → 스냅숏 저장 → 화면 만들기 → 브라우저."""
     user_id, password, rc = ask_credentials()
@@ -360,6 +373,10 @@ def run_collect(a, asof, now):
     try:
         snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
                                    pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages})
+        if a.화면 == "안함":
+            gathered_summary(result)
+            _say("다음: ① '자료 변환'을 누르면 이 자료로 프로젝트 예산·비교가 새로 만들어집니다")
+            return 0
         where = a.출력
         path, A = make_screen(a.입력, a.출력, snap_path, asof, now, True, wehago_dir=a.위하고폴더 or default_wehago(a))
     except (OSError, SnapshotError) as e:

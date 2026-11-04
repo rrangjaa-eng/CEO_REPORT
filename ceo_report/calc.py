@@ -8,7 +8,8 @@ from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
 from .util import date as parse_date
 
-INTRANET_IN_FUNDS = False   # 인트라넷 지급요청·남은 예산을 가용자금 일정에 넣을지 (사용자 2026-11-04: 넣지 않음, 비교만)
+INTRANET_IN_FUNDS = False   # 인트라넷 지급요청·집행계획을 가용자금 일정에 넣을지 (사용자 2026-11-04: 넣지 않음, 비교만)
+BUDGET_IN_FUNDS = True      # 프로젝트 남은 예산(사전견적×원가율 − 쓴 돈)을 예상 지출로 넣을지 (2026-11-04 결정 카드 대기, 권장 넣음)
 
 DAY = dt.timedelta(days=1)
 
@@ -444,7 +445,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                            "cat": "사용제한 해제", "desc": a["account"] + (" · " + a["reason"] if a["reason"] else ""),
                            "basis": "계좌잔액.csv 제한해제일", "project": "", "source": "계좌잔액"})
     for P in R["s3"]["projects"]:
-        if P["remain_cash"] and not INTRANET_IN_FUNDS:
+        if P["remain_cash"] and not (INTRANET_IN_FUNDS or BUDGET_IN_FUNDS):
             skipped_budget.append(P["remain_cash"])
             continue
         if P["remain_cash"]:

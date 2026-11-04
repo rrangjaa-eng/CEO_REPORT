@@ -20,7 +20,7 @@ from .util import date as parse_date
 
 ARCHIVE = "지난자료"
 SCHED_FILE = "자금일정.csv"
-TASKS = ("변환", "주간", "월간", "승인검토")
+TASKS = ("변환", "주간", "월간", "승인검토", "인트라넷")
 
 
 def program_dir():
@@ -86,6 +86,8 @@ def task_argv(task, paths, asof="", pick="", nums="", payday=""):
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
     if task == "승인검토":
         return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect]
+    if task == "인트라넷":   # 가져오기만 (사용자 2026-11-04: 승인 검토 화면은 만들지 않음)
+        return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect, "--화면", "안함"]
     raise ValueError("모르는 작업: %s" % task)
 
 
@@ -110,14 +112,14 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
     except ValueError as e:
         say(str(e))
         return 2, []
-    if task == "승인검토" and collect:
+    if task in ("승인검토", "인트라넷") and collect:
         argv += ["--수집", "함"]
     started = time.time() - 1
     out = _Lines(say)
     mod = _module(name)
     old_cred = getattr(mod, "CREDENTIALS", None)
     try:
-        if task == "승인검토":
+        if name == "승인검토":
             mod.CREDENTIALS = credentials
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             try:
@@ -129,7 +131,7 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
                 rc = 7
     finally:
         out.flush()
-        if task == "승인검토":
+        if name == "승인검토":
             mod.CREDENTIALS = old_cred
     return rc, new_files(paths.output, started)
 

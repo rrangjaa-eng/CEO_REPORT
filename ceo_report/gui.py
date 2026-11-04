@@ -14,7 +14,7 @@ import webbrowser
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from . import app, editmode
+from . import app, credstore, editmode
 
 TITLE = "대표 보고"
 
@@ -117,8 +117,9 @@ class Window(object):
         ttk.Label(r, text="최근 보고를 브라우저에서 고쳐 '_수정' PDF로", style="S.TLabel").pack(side="left")
         self.edit = None
 
-        # ③ 지급 승인 검토
-        f3 = self._sec(colA, "③ 지급 승인 검토", "인트라넷 지급요청을 읽어 승인 화면을 엽니다 (조회만 함)")
+        # ③ 인트라넷 자료 가져오기 (사용자 2026-11-04: 승인 검토는 안 함. 사전견적·팀장 승인 요청을 비교용으로 가져옴)
+        f3 = self._sec(colA, "③ 인트라넷 자료 가져오기", "프로젝트(사전견적)·지급요청을 모든 쪽 읽어 저장 (조회만 함). "
+                                                    "가져온 뒤 ① 자료 변환")
         r = self._row(f3)
         ttk.Label(r, text="인트라넷 ID").pack(side="left")
         self.uid = tk.StringVar()
@@ -127,8 +128,15 @@ class Window(object):
         self.pw = tk.StringVar()
         ttk.Entry(r, textvariable=self.pw, width=12, show="●").pack(side="left", padx=(4, 0))
         r = self._row(f3)
-        self._btn(r, "새로 읽고 검토", lambda: self.start("승인검토", collect=True), big=True)
-        self._btn(r, "마지막 자료로 검토", lambda: self.start("승인검토"))
+        self._btn(r, "인트라넷 자료 가져오기", lambda: self.start("인트라넷", collect=True), big=True)
+        self.remember = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r, text="계정 기억", variable=self.remember).pack(side="left", padx=(4, 4))
+        self._btn(r, "기억 지우기", self.forget_account)
+        saved = credstore.load(self.paths.input)
+        if saved:
+            self.uid.set(saved[0])
+            self.pw.set(saved[1])
+            self.remember.set(True)
 
         # ④ 예정 지출·입금
         f4 = self._sec(colB, "④ 장부에 없는 지출·입금 예정", "자금일정에 들어가 가용자금에 바로 반영")
@@ -178,18 +186,36 @@ class Window(object):
         ttk.Entry(r, textvariable=self.t_to, width=11).pack(side="left", padx=(4, 8))
         self._btn(r, "이체 파일 만들기", self.make_transfer)
 
-        # ⑦ 출금 상세 내역 (사용자 2026-11-03: 금요일 출금 목록에 무엇에 쓰는 돈인지)
-        f7 = self._sec(colB, "⑦ 출금 상세 내역", "같은 거래처·금액의 출금 목록 줄에 붙음 (내용을 비우고 저장하면 지움)")
+        # ⑦ 거래처 계좌 (사용자 2026-11-04: 출금 상세 내역 대신. 거래처는 위하고 거래처코드로 구분, 고르면 계좌를 넣을 수 있게)
+        f7 = self._sec(colB, "⑦ 거래처 계좌", "거래처를 골라 불러온 뒤 계좌를 넣고 저장. 목록은 '자료 변환' 때 "
+                                            "보통예금으로 지급한 매입 거래처가 자동으로 더해짐")
         r = self._row(f7)
-        self.d_vendor, self.d_amt, self.d_text = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.a_pick, self.a_code, self.a_name = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.a_bank, self.a_no, self.a_holder = tk.StringVar(), tk.StringVar(), tk.StringVar()
         ttk.Label(r, text="거래처").pack(side="left")
-        ttk.Entry(r, textvariable=self.d_vendor, width=14).pack(side="left", padx=(4, 8))
-        ttk.Label(r, text="금액(원)").pack(side="left")
-        ttk.Entry(r, textvariable=self.d_amt, width=13).pack(side="left", padx=(4, 0))
+        self.a_box = ttk.Combobox(r, textvariable=self.a_pick, width=30)
+        self.a_box.pack(side="left", padx=(4, 6))
+        self.a_box.bind("<KeyRelease>", self.filter_accounts)
+        self.a_box.bind("<<ComboboxSelected>>", lambda e: self.load_account())
+        self._btn(r, "불러오기", self.load_account)
         r = self._row(f7)
-        ttk.Label(r, text="상세 내역").pack(side="left")
-        ttk.Entry(r, textvariable=self.d_text, width=30).pack(side="left", padx=(4, 8))
-        self._btn(r, "저장", self.save_detail)
+        ttk.Label(r, text="코드").pack(side="left")
+        ttk.Entry(r, textvariable=self.a_code, width=8).pack(side="left", padx=(4, 6))
+        ttk.Label(r, text="은행").pack(side="left")
+        ttk.Combobox(r, textvariable=self.a_bank, width=7,
+                     values=("신한", "국민", "기업", "우리", "하나", "농협", "지역농·축협", "SC제일", "한국씨티", "수협", "신협",
+                             "새마을금고", "우체국", "아이엠뱅크", "부산", "경남", "광주", "전북", "제주", "KDB산업",
+                             "카카오뱅크", "케이뱅크", "토스뱅크")).pack(side="left", padx=(4, 6))
+        ttk.Label(r, text="계좌번호").pack(side="left")
+        ttk.Entry(r, textvariable=self.a_no, width=16).pack(side="left", padx=(4, 0))
+        r = self._row(f7)
+        ttk.Label(r, text="예금주").pack(side="left")
+        ttk.Entry(r, textvariable=self.a_holder, width=12).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장", self.save_account)
+        self._btn(r, "지우기", self.delete_account)
+        self._btn(r, "목록 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, "거래처계좌.csv")))
+        self.account_rows = []
+        self.refresh_accounts()
 
         # ⑧ 팀 목표 (사용자 2026-11-03: 월간 누적 실적에서 목표 대비)
         f8 = self._sec(colB, "⑧ 팀 목표", "연간 매출 목표와 목표 수익률(매출총이익률). 월간 누적 실적에 목표 대비로 보임")
@@ -316,7 +342,7 @@ class Window(object):
     def start(self, task, collect=False):
         if self.busy:
             return
-        if task == "승인검토" and collect and not (self.uid.get().strip() and self.pw.get()):
+        if task in ("승인검토", "인트라넷") and collect and not (self.uid.get().strip() and self.pw.get()):
             self.say("인트라넷 ID와 비밀번호를 넣고 다시 누르세요")
             return
         self.say("──── %s 시작 (%s) ────" % (task, dt.datetime.now().strftime("%H:%M:%S")))
@@ -338,8 +364,8 @@ class Window(object):
         threading.Thread(target=work, daemon=True).start()
 
     def finish(self, task, rc, files):
-        if task == "승인검토":
-            self.pw.set("")   # 비밀번호는 쓰고 바로 비운다
+        if task in ("승인검토", "인트라넷"):
+            self.after_collect(rc)
         if rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
@@ -350,6 +376,25 @@ class Window(object):
         else:
             self.say("%s 끝 — 오류가 있습니다 (위 글을 확인하세요)" % task)
             self.set_busy(False, "%s 끝 — 오류 (종료코드 %s)" % (task, rc))
+
+    def after_collect(self, rc):
+        """계정 기억 (사용자 2026-11-04): 체크했으면 로그인에 성공한 계정을 외장하드 입력 폴더 파일에 둔다. 아니면 비밀번호를 비운다."""
+        if not self.remember.get():
+            self.pw.set("")   # 비밀번호는 쓰고 바로 비운다
+            return
+        if rc == 3:   # 로그인 실패·화면 구조 변경: 틀린 계정을 기억하지 않는다
+            return
+        try:
+            credstore.save(self.paths.input, self.uid.get(), self.pw.get())
+            self.say("계정을 기억했습니다 (입력 폴더 %s · 외장하드를 잃어버리면 인트라넷 비밀번호를 바꾸세요)" % credstore.CRED_FILE)
+        except (ValueError, OSError) as e:
+            self.say("계정을 기억하지 못함: %s" % (e if isinstance(e, ValueError) else type(e).__name__))
+
+    def forget_account(self):
+        gone = credstore.clear(self.paths.input)
+        self.remember.set(False)
+        self.pw.set("")
+        self.say("기억한 계정을 지웠습니다" if gone else "기억한 계정이 없습니다")
 
     def edit_report(self):
         """가장 최근 대표 보고(주간·월간)를 수정 모드로 연다. 이미 열려 있으면 그 주소를 다시 연다."""
@@ -410,15 +455,58 @@ class Window(object):
         self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
                  % " · ".join("%s %d일(기산 %d일)" % r for r in rows))
 
-    def save_detail(self):
+    # ⑦ 거래처 계좌
+    def refresh_accounts(self):
+        from . import transfer
+        self.account_rows = transfer.account_choices(self.paths.input)
+        self.a_box["values"] = [c[0] for c in self.account_rows]
+
+    def filter_accounts(self, event=None):
+        """글자를 치면 이름·코드에 그 글자가 든 거래처만 목록에 보인다."""
+        text = self.a_pick.get().strip().replace(" ", "")
+        self.a_box["values"] = [c[0] for c in self.account_rows if not text or text in c[0].replace(" ", "")]
+
+    def load_account(self):
+        text = self.a_pick.get().strip()
+        hit = [c for c in self.account_rows if c[0] == text] or \
+              [c for c in self.account_rows if text and text.replace(" ", "") in c[0].replace(" ", "")]
+        if len(hit) != 1:
+            self.say("거래처를 목록에서 하나 고르세요 (맞는 곳 %d곳)" % len(hit))
+            return
+        _, code, name, accs = hit[0]
+        self.a_pick.set(hit[0][0])
+        self.a_code.set(code)
+        self.a_name.set(name)
+        acc = accs[0] if len(accs) == 1 else {}
+        self.a_bank.set(acc.get("은행", ""))
+        self.a_no.set(acc.get("계좌번호", ""))
+        self.a_holder.set(acc.get("예금주", ""))
+        if len(accs) > 1:
+            self.say("%s: 계좌 %d개 (예금주 %s) — 고칠 사람의 예금주를 넣고 저장하면 그 사람 계좌만 바뀝니다"
+                     % (name, len(accs), ", ".join(a["예금주"] for a in accs)))
+        elif not accs:
+            self.say("%s [%s]: 계좌 없음 — 은행·계좌번호·예금주를 넣고 저장하세요" % (name, code))
+
+    def save_account(self, delete=False):
+        from . import transfer
+        code = self.a_code.get().strip()
+        name = self.a_name.get().strip() if code else ""
         try:
-            n = app.save_pay_detail(self.paths.input, self.d_vendor.get(), self.d_amt.get(), self.d_text.get())
+            if delete:
+                action, n = transfer.save_account(self.paths.input, code, name, "", "", self.a_holder.get())
+            else:
+                action, n = transfer.save_account(self.paths.input, code, name, self.a_bank.get(), self.a_no.get(),
+                                                  self.a_holder.get())
         except (ValueError, OSError) as e:
             self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
-        self.say("출금 상세 내역 저장 (%s %s원) — 전체 %d줄. 다음 보고서부터 출금 목록에 보입니다"
-                 % (self.d_vendor.get().strip(), self.d_amt.get().strip(), n))
-        self.d_text.set("")
+        self.say("거래처 계좌 %s: %s [%s] — 목록 %d줄. 다음 이체 파일부터 씁니다" % (action, name or "-", code, n))
+        self.refresh_accounts()
+        for v in (self.a_bank, self.a_no, self.a_holder):
+            v.set("")
+
+    def delete_account(self):
+        self.save_account(delete=True)
 
     def save_target(self):
         try:

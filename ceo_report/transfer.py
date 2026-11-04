@@ -140,7 +140,9 @@ def read_accounts(input_dir):
     for r in rows:
         c = code_key(r["거래처코드"])
         if c:   # 한 코드에 여러 사람 계좌 (사업소득 프리랜서, 사용자 2026-11-04): 목록으로 둔다
-            out.setdefault(c, []).append(r)
+            got = out.setdefault(c, [])
+            if r["계좌번호"] or not got:   # 계좌 없이 코드·이름만 있는 줄(미리 등록)은 계좌가 있는 줄이 있으면 세지 않는다
+                got[:] = [g for g in got if g["계좌번호"]] + [r]
         k = vendor_key(r["거래처"])
         if k:
             out[k] = r if k not in out else AMBIGUOUS
@@ -176,17 +178,68 @@ def save_account(input_dir, code, name, bank, number, holder):
             raise ValueError("계좌번호는 숫자와 '-'만 (16자리 이하)")
         if not holder or not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
             raise ValueError("예금주를 넣으세요 (한글 10자 이하)")
+        if not name:
+            name = next((r["거래처"] for r in rows if code_key(r["거래처코드"]) == code_key(code) and r["거래처"]), "")
+        # 미리 등록된 같은 코드의 빈 줄(코드·이름만)은 계좌를 넣으면 없앤다
+        rest = [r for r in rest if not (code_key(r["거래처코드"]) == code_key(code) and not r["계좌번호"])]
         rest.append({"거래처코드": code, "거래처": name, "은행": bank, "계좌번호": number, "예금주": holder})
         action = "저장"
+    _write_rows(input_dir, rest)
+    return action, len(rest)
+
+
+def _write_rows(input_dir, rows):
+    import csv
     path = os.path.join(input_dir, ACCOUNT_FILE)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, lineterminator="\r\n")
         w.writerow(ACCOUNT_COLUMNS)
-        for r in rest:
+        for r in rows:
             w.writerow([r[c] for c in ACCOUNT_COLUMNS])
     os.replace(tmp, path)
-    return action, len(rest)
+
+
+def paid_vendors(journal):
+    """분개장에서 매입 전표의 거래처 가운데 보통예금으로 돈이 나간 곳 (사용자 2026-11-04) -> {정규화 코드: (코드, 이름)}.
+    매입 = 구분이 '매입전표'인 전표의 대변(미지급금 등) 거래처, 지급 = 보통예금(10300) 대변이 있는 전표의 차변 거래처.
+    카드 거래는 뺀다: 카드 매입의 대변 거래처는 카드사이고, 이름에 '카드'가 든 코드는 넣지 않는다."""
+    from collections import Counter, defaultdict
+    from .wehago import norm_code
+    slips = defaultdict(list)
+    for r in journal:
+        slips[(r["date"], r["no"])].append(r)
+    bought, paid, names = set(), set(), defaultdict(Counter)
+    for lines in slips.values():
+        bank_out = any(ln["account_code"] == "10300" and (ln["credit"] or 0) > 0 for ln in lines)
+        for ln in lines:
+            c = norm_code(ln.get("vendor_code"))
+            if not c:
+                continue
+            names[c][(ln.get("vendor_code").strip(), ln["vendor"].strip())] += 1
+            if lines[0]["sort"] == "매입전표" and (ln["credit"] or 0) > 0:
+                bought.add(c)
+            if bank_out and (ln["debit"] or 0) > 0 and ln["account_code"] != "10300":
+                paid.add(c)
+    out = {}
+    for c in bought & paid:
+        if any("카드" in n for _, n in names[c]):
+            continue
+        out[c] = names[c].most_common(1)[0][0]
+    return out
+
+
+def register_vendors(input_dir, vendors):
+    """계좌 목록에 없는 거래처코드를 코드·이름만으로 더한다 (계좌는 창 ⑦에서). -> 더한 수. 있던 줄은 건드리지 않는다."""
+    rows, problem = _read_rows(input_dir)
+    if problem:
+        raise ValueError(problem)
+    have = set(code_key(r["거래처코드"]) for r in rows)
+    new = [{"거래처코드": code, "거래처": name, "은행": "", "계좌번호": "", "예금주": ""}
+           for c, (code, name) in sorted(vendors.items(), key=lambda kv: kv[1][1]) if "#" + c not in have]
+    if new:
+        _write_rows(input_dir, rows + new)
+    return len(new)
 
 
 def find_account(accounts, ln):
@@ -197,6 +250,8 @@ def find_account(accounts, ln):
         if len(found) > 1:
             return None, "계좌 %d개 (%s) — 사람별 금액 필요, 은행 화면에서 나눠 넣으세요" % (
                 len(found), ", ".join(r["예금주"] for r in found))
+        if not found[0]["계좌번호"]:
+            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ⑦에서 넣으세요)"
         return found[0], None
     acc = accounts.get(vendor_key(ln["vendor"]))
     if acc is AMBIGUOUS:
@@ -334,3 +389,25 @@ def make_file(input_dir, output_dir, start, end, say, asof=None):
     write_xlsx(path, rows)
     say("이체 파일: %s — 신한은행 기업뱅킹 대량이체에서 불러오기 전에 금액·계좌를 한 번 더 확인하세요" % path)
     return path
+
+
+def account_choices(input_dir):
+    """창 ⑦ 거래처 고르기 목록 -> [(보이는 글, 코드, 이름, [계좌 줄...])]. 코드마다 한 줄, 이름 순."""
+    rows, problem = _read_rows(input_dir)
+    if problem:
+        return []
+    by = {}
+    for r in rows:
+        c = code_key(r["거래처코드"])
+        if not c:
+            continue
+        g = by.setdefault(c, {"code": r["거래처코드"], "name": r["거래처"], "accs": []})
+        g["name"] = g["name"] or r["거래처"]
+        if r["계좌번호"]:
+            g["accs"].append(r)
+    out = []
+    for g in sorted(by.values(), key=lambda g: (g["name"], g["code"])):
+        n = len(g["accs"])
+        tag = "계좌 없음" if not n else ("계좌 있음" if n == 1 else "계좌 %d개" % n)
+        out.append(("%s [%s] · %s" % (g["name"] or "(이름 없음)", g["code"], tag), g["code"], g["name"], g["accs"]))
+    return out

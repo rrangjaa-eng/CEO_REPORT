@@ -17,7 +17,7 @@ from ceo_report.data import load  # noqa: E402
 from sample_input import SAMPLE, refresh  # noqa: E402
 
 ASOF = dt.date(2026, 11, 2)
-INTRANET_SOURCES = ("남은 예산",)
+INTRANET_SOURCES = ()
 INTRANET_CATS = ("프로젝트 지급요청", "프로젝트 집행계획")
 
 
@@ -49,9 +49,20 @@ class TestCompareOnly(unittest.TestCase):
         budget = sum(e["amount"] or 0 for e in on["events"] if e["source"] == "남은 예산")
         self.assertGreater(n_req, 0)
         self.assertEqual(off["intranet_only"]["requests"][0], n_req)
-        # 남은 예산은 매주 나눠 잡기 전 프로젝트별 금액(부가세 포함)으로 센다: 나눈 줄 합과 원 단위 차이만 있을 수 있다
+        # 남은 예산은 따로 정한다 (BUDGET_IN_FUNDS): 켜져 있으면 일정에 그대로 있다
+        self.assertEqual(sum(e["amount"] or 0 for e in off["events"] if e["source"] == "남은 예산"), budget)
+
+    def test_budget_can_be_compare_only_too(self):
+        old = calc.BUDGET_IN_FUNDS
+        calc.BUDGET_IN_FUNDS = False
+        try:
+            on, off = self.run_with(True), self.run_with(False)
+        finally:
+            calc.BUDGET_IN_FUNDS = old
+        budget = sum(e["amount"] or 0 for e in on["events"] if e["source"] == "남은 예산")
+        self.assertFalse([e for e in off["events"] if e["source"] == "남은 예산"])
         self.assertGreater(off["intranet_only"]["budget"][0], 0)
-        self.assertLessEqual(abs(off["intranet_only"]["budget"][1] - budget), off["intranet_only"]["budget"][0] * 10)
+        self.assertEqual(off["intranet_only"]["budget"][1], budget)
 
 
 if __name__ == "__main__":

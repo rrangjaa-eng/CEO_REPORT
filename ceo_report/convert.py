@@ -1063,6 +1063,14 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         return res
     res.backup = os.path.join(input_dir, "이전", backup) if backup else None
     out = []
+    if books.state == "ok":   # 이체 파일용 거래처 계좌 목록에 보통예금으로 지급한 매입 거래처를 코드·이름만 더함 (사용자 2026-11-04)
+        from . import transfer
+        try:
+            added = transfer.register_vendors(input_dir, transfer.paid_vendors(books.journal))
+            if added:
+                out.append("거래처 계좌 목록에 새 거래처 %d곳 등록 (코드·이름만 — 계좌는 창 ⑦에서)" % added)
+        except (OSError, ValueError) as e:
+            out.append("거래처 계좌 목록을 고치지 못함: %s" % (e if isinstance(e, ValueError) else type(e).__name__))
     if books.state != "ok":
         out.append("변환하지 않음 — WEHAGO 장부를 쓸 수 없음: " + books.reason)
     else:
