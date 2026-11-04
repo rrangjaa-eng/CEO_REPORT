@@ -32,7 +32,7 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("payable_codes", ("25300", "26200")),
     ("cash_codes", ("10300",)),
     ("vat_codes", ("13500",)),
-    ("closing_sorts", ("결차", "결대", "결산전표")),   # 결산전표: 인쇄 분개장의 유형 (2025 분개장 12/31, D-57)
+    ("closing_sorts", ("결차", "결대", "결산전표", "잉여금관련전표")),   # 인쇄 분개장 유형: 결산전표(원가 대체·감가상각) · 잉여금관련전표(손익 대체), 2025 분개장 12/31
     ("link_days", 90),
     ("card_words", ("카드",)),
     ("snapshot_days", 7),
@@ -756,6 +756,35 @@ def _unwritten(reason):
     return [Table(n, columns[n], [], written=False, reason=reason) for n in GENERATED[:5]]
 
 
+def closing_pl_line(ln, closing_sorts):
+    """결산 전표 손익 줄 처리 (drop_closing_pl 설명). -> 그대로 쓸 줄, 감가상각비면 대변을 비운 줄, 뺄 줄이면 None."""
+    sq = wehago._squash
+    if sq(ln.get("sort")) not in set(sq(s) for s in closing_sorts) or not re.match(r"^[4-9]", sq(ln.get("account_code"))):
+        return ln
+    if "감가상각비" in sq(ln.get("account")) and ln.get("debit"):
+        return dict(ln, credit=None)
+    return None
+
+
+def drop_closing_pl(books, cfg):
+    """결산 전표의 손익 줄(계정코드 4~9로 시작)을 뺀다 (2026-11-04 실제 2025 분개장).
+
+    결산전표는 원가(도)를 진행중행사·행사매출원가로 옮기고, 잉여금관련전표는 손익 계정을 0으로 돌린다. 둘 다 넣으면 12월 원가·판관비가
+    마이너스로 바뀌고 감가상각비도 0이 된다. 감가상각비는 결산 때만 들어가므로 결산 줄의 차변만 남긴다 (대변 = 손익 대체).
+    대차대조표 줄(1~3)은 그대로 둔다 (세금·자금 계산이 쓰는 계정은 결산 줄에 없고, 결산한 해 판단에 쓴다). -> 뺀 줄 수."""
+    keep, dropped = [], 0
+    for ln in books.journal:
+        v = closing_pl_line(ln, cfg["closing_sorts"])
+        if v is None:
+            dropped += 1
+        else:
+            keep.append(v)
+    books.journal = keep
+    if dropped:
+        books.notes.append("결산 전표 손익 줄 %d건 뺌 (원가 대체·손익 대체, 감가상각비 차변은 남김)" % dropped)
+    return dropped
+
+
 def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     """모든 표를 한 번에 만든다: 같은 장부·스냅숏·연결·요청 대조에서. -> (표 목록, 이전 줄 읽기 상태)."""
     from . import convert_invoices, convert_pl, convert_projects, convert_xchk
@@ -877,6 +906,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         res.code = 3
         tables = _unwritten("WEHAGO 장부를 쓸 수 없음")
     else:
+        drop_closing_pl(books, cfg)
         tables, states = _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res)
         cross = cross_checks(tables)
     res.tables = tables

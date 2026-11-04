@@ -162,19 +162,19 @@ def from_journal(journal, cfg, asof, manual=None):
     ym = _last_full_month(asof)
     year = ym[:4]
     nin, nout = set(_squash(c) for c in cfg["nonop_in_codes"]), set(_squash(c) for c in cfg["nonop_out_codes"])
-    closing = set(_squash(c) for c in cfg.get("closing_sorts", ()))
+    from .convert import closing_pl_line
+    closing = cfg.get("closing_sorts", ())
     prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
     pretax, unknown, prepaid, dep_lines = 0, 0, 0, []
     for ln in journal:
-        if ln["date"] is None:
+        ln = closing_pl_line(ln, closing)   # 결산 전표: 원가·손익 대체는 빼고 감가상각비 차변만 (변환과 같게)
+        if ln is None or ln["date"] is None:
             continue
         lym = ln["date"].strftime("%Y-%m")
         code = _squash(ln["account_code"])
         if "감가상각비" in _squash(ln["account"]) and lym[:4] in (year, str(int(year) - 1)):
             dep_lines.append({"ym": lym, "name": ln["account"], "amount": _net(ln, "common")})
         if lym[:4] != year or lym > ym:
-            continue
-        if _squash(ln.get("sort")) in closing:   # 결산 대체 전표(결차·결대)는 손익을 0으로 돌리므로 넣지 않는다 (손익.csv 와 같게)
             continue
         if code in prepaid_codes:
             prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)

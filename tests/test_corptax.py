@@ -82,6 +82,48 @@ class TestFromJournal(unittest.TestCase):
         self.assertIn("1월~10월", ct["대상기간"])
 
 
+class TestClosingSlips(unittest.TestCase):
+    """2026-11-04 실제 2025 분개장: 결산전표가 (도) 원가를 행사매출원가로 옮기고 감가상각비를 넣고, 잉여금관련전표가 손익을 0으로 돌린다."""
+
+    def journal(self):
+        sys.path.insert(0, HERE)
+        from test_dept import line
+        D = dt.date(2025, 12, 31)
+
+        def c(ln, sort):
+            ln["sort"] = sort
+            return ln
+        return [line(dt.date(2025, 6, 5), "61000", "외주비(도)", 70_000_000),
+                line(dt.date(2025, 6, 5), "81100", "복리후생비(판)", 3_000_000),
+                c(line(D, "61000", "외주비(도)", credit=70_000_000), "결산전표"),
+                c(line(D, "45100", "행사매출원가", 70_000_000), "결산전표"),
+                c(line(D, "17000", "진행중행사", 70_000_000, 70_000_000), "결산전표"),
+                c(line(D, "81800", "감가상각비(판)", 6_000_000), "결산전표"),
+                c(line(D, "20900", "감가상각누계액", credit=6_000_000), "결산전표"),
+                c(line(D, "81800", "감가상각비(판)", credit=6_000_000), "잉여금관련전표"),
+                c(line(D, "81100", "복리후생비(판)", credit=3_000_000), "잉여금관련전표"),
+                c(line(D, "37500", "이월이익잉여금", 9_000_000), "잉여금관련전표")]
+
+    def test_drop_keeps_only_dep_debit_and_balance_lines(self):
+        from ceo_report import convert
+
+        class B(object):
+            pass
+        b = B()
+        b.journal, b.notes = self.journal(), []
+        self.assertEqual(convert.drop_closing_pl(b, dict(convert.DEFAULT_CONFIG)), 4)
+        dep = [ln for ln in b.journal if ln["account_code"] == "81800"]
+        self.assertEqual([(ln["debit"], ln["credit"]) for ln in dep], [(6_000_000, None)])
+        self.assertEqual(sum(ln["debit"] or 0 for ln in b.journal if ln["account_code"] == "61000"), 70_000_000)
+        self.assertTrue(any(ln["account_code"] == "37500" for ln in b.journal))   # 대차대조표 줄은 남김 (결산한 해 판단)
+        self.assertIn("결산 전표 손익 줄 4건 뺌", b.notes[0])
+
+    def test_last_year_dep_from_closing_slip(self):
+        from ceo_report import convert
+        rows, _ = corptax.from_journal(self.journal(), dict(convert.DEFAULT_CONFIG), dt.date(2026, 11, 4), {})
+        self.assertIn("감가상각비 예상 6,000,000", rows[0]["근거"])
+
+
 class TestReport(unittest.TestCase):
     def test_monthly_shows_final_pretax_tax_minus_prepaid(self):
         from ceo_report.calc import compute
