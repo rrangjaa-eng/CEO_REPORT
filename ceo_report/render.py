@@ -300,10 +300,10 @@ table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);pad
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
+@media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.pt.wo td{padding:2px 6px}.sec.brk table.pt.wo{font-size:11.5px}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 @media print{.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
-@media print{.fs:not(.mon) svg{max-height:400px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
+@media print{.fs:not(.mon) svg{max-height:300px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
