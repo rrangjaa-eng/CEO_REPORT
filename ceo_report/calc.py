@@ -4,7 +4,7 @@ import datetime as dt
 from collections import OrderedDict, defaultdict
 
 from . import fundplan
-from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
+from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER, is_prior
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
 from .util import date as parse_date
 
@@ -227,9 +227,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for pid in d.project_order:
         proj[pid] = _blank_proj(d.projects[pid], R["settings_num"]["예산_원가율"])
     unlinked_exec = []
+    prior_exec = []
     for e in d.execs:
         if from_intranet(e) and not INTRANET_IN_FUNDS:
             continue   # 쓴 돈(예상총집행)에 넣지 않는다 — 아래 일정에서도 빼고 intranet_only 로 센다
+        if is_prior(e):
+            prior_exec.append(e)   # 지난해 프로젝트: 참고로만 (미연결로 세지 않음)
+            continue
         if e["project"] not in proj:
             unlinked_exec.append(e)
             continue
@@ -339,11 +343,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["s3"] = {"projects": plist, "ranked": ranked, "shown": shown, "rest": rest, "total": tot,
                "remain_unknown": remain_unknown, "by_team": list(by_team.values()),
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
+               "prior": prior_exec, "prior_total": ssum(e["supply"] for e in prior_exec)[0],
                "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
     linked_lines = sum(len(P["lines"]) for P in plist)
     compare_only = 0 if INTRANET_IN_FUNDS else sum(1 for e in d.execs if from_intranet(e))
-    counted = linked_lines + len(unlinked_exec) + compare_only
-    checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄" + (" + 인트라넷 비교만 줄" if compare_only else ""),
+    counted = linked_lines + len(unlinked_exec) + compare_only + len(prior_exec)
+    checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄" + (" + 인트라넷 비교만 줄" if compare_only else "")
+                   + (" + 지난해 참고 줄" if prior_exec else ""),
                    len(d.execs), counted, len(d.execs) == counted))
     shown_exp = sum(P["expected"] for P in shown) + sum(P["expected"] for P in rest)
     checks.append(("첫 화면 표시 + 나머지 프로젝트 예상총집행 = 전체 합계", shown_exp, tot["expected"],
@@ -439,6 +445,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 돈의 기준은 위하고 분개장·자금계획서. 빼는 줄은 R["intranet_only"] 에 건수·합계로 남겨 비교로만 보인다.
     skipped_requests, skipped_budget = [], []
     for e in d.execs:
+        if is_prior(e):
+            continue   # 지난해 프로젝트는 입금·지급 모두 끝남 (사용자 2026-11-04) — 일정에 넣지 않는다
         # 요청미지급 줄(인트라넷 요청, 또는 장부 원가에 요청을 붙인 줄)의 지급은 위하고 자금계획서·장부채무가 잡는다
         # (실제 자료 2026-11-04: 같은 미지급이 자금계획서와 겹쳐 11월 출금이 0.8억 커짐). 예상총집행에는 위에서 그대로 들어간다.
         if e["state"] == "요청미지급" and not INTRANET_IN_FUNDS:

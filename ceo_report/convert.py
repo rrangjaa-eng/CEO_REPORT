@@ -469,7 +469,7 @@ def link_lines(links):
            "  매출 줄: " + _basis_text(links["revenue"]["summary"])]
     listed = 0
     for kind, result in (("원가", links["costs"]), ("매출", links["revenue"])):
-        for ln in sorted((x for x in result["lines"] if x["basis"] == "미연결"), key=_list_order):
+        for ln in sorted((x for x in result["lines"] if x["basis"] == "미연결" and not x.get("prior")), key=_list_order):
             parts = ["미연결", kind, ln["date"].isoformat() if ln["date"] else "날짜 없음", "%s-%d" % (ln["no"], ln["line"]),
                      ln["vendor"], won(ln["amount"]), ln["memo"]]
             out.append("  " + " ".join(p for p in parts if p != "") + " — " + ln["label"])

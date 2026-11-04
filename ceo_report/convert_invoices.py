@@ -15,13 +15,13 @@ import collections
 import datetime as dt
 import re
 
-from . import data
+from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
 from .util import date as parse_date
 from .util import mask_rrn, num, won
 from .wehago import norm_vendor
 
-BASES = ("코드", "분개장 매출 줄", "자동", "미연결")
+BASES = ("코드", "분개장 매출 줄", "자동", "미연결", "참고")   # 참고 = 지난해 계산서 (연결하지 않음, 사용자 2026-11-04)
 _NONE_REASON = "자료 없음 (매출 계산서 엑셀)"
 _FIRM = ("Y", "N", "확정", "")
 _FAR = dt.date.max
@@ -181,6 +181,49 @@ class _Journal(object):
         self.credits.sort(key=lambda r: (r["date"] or _FAR, _no_key(r["no"]), r["vn"], r["amount"]))
 
 
+def _prior(inv, year):
+    """지난해 계산서: 장부 마지막 해보다 앞선 발행일, 또는 예전 번호 체계([3자리]) 코드."""
+    if inv["date"] is not None and inv["date"].year < year:
+        return True
+    return linking.is_old_code(inv.get("code"))
+
+
+def _settle_prior(invoices, year):
+    """지난해 계산서에 남은 미수를 같은 거래처 올해 계산서로 옮긴다 -> [(거래처, 옮긴 금액)].
+
+    거래처 미수 합계(= 분개장 잔액)는 그대로이고, 어느 계산서에 붙느냐만 바뀐다. 올해 계산서 입금을 최근 발행분부터
+    떼어 지난해 계산서에 붙인다 (최근 것이 아직 안 들어왔을 가능성이 크다). 뗄 입금이 모자라면 남은 만큼은 그대로 둔다.
+    """
+    by_vendor = collections.defaultdict(list)
+    for inv in invoices:
+        if inv["total"] is not None and inv["total"] > 0 and inv["date"] is not None:
+            by_vendor[inv["vendor_norm"]].append(inv)
+    moved = []
+    for vn, invs in by_vendor.items():
+        old = [i for i in invs if i["basis"] == "참고" and i["total"] - i["deducted"] - i["applied"] > 0]
+        new = sorted((i for i in invs if i["basis"] != "참고" and i["applied"] > 0), key=lambda i: (i["date"], i["idx"]),
+                     reverse=True)
+        total = 0
+        for o in old:
+            need = o["total"] - o["deducted"] - o["applied"]
+            for n in new:
+                if need <= 0:
+                    break
+                take = min(need, n["applied"])
+                if take <= 0:
+                    continue
+                o["paid_date"] = o["paid_date"] or n["paid_date"] or o["date"]
+                o["applied"] += take
+                n["applied"] -= take
+                if n["applied"] == 0:
+                    n["paid_date"] = None
+                need -= take
+                total += take
+        if total:
+            moved.append((vn, total))
+    return moved
+
+
 def _allocate(invoices, jr):
     """입금을 계산서에 붙인다 -> 거래처별 기초 미수 항목 {거래처: 항목}. 입금 항목의 left 가 남은 금액이다."""
     items = collections.defaultdict(list)
@@ -280,12 +323,20 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     notes = list(sales["notes"])
     invoices = _invoices(sales["rows"])
     rev_lines = revenue["lines"] if revenue else []
+    year = max([inv["date"].year for inv in invoices if inv["date"] is not None] or [0])
     for inv in invoices:
-        inv["project"], inv["basis"], inv["why"] = _project_of(inv, rev_lines, projects)
+        if _prior(inv, year):
+            inv["project"], inv["basis"], inv["why"] = "", "참고", "지난해 계산서"
+        else:
+            inv["project"], inv["basis"], inv["why"] = _project_of(inv, rev_lines, projects)
         inv["kind"] = _kind_of(inv)
     order = sorted(invoices, key=lambda x: (x["date"] or _FAR, x["idx"]))
     jr = _Journal(books, cfg)
     skip_fifo = _allocate(invoices, jr)
+    moved = _settle_prior(invoices, year)
+    if moved:
+        notes.append("지난해 계산서 미수 %s원 (%d곳)은 입금 끝난 것으로 보고 같은 거래처 올해 계산서 미수로 옮김 (사용자 2026-11-04: "
+                     "지난해 건은 입금 완료)" % (won(sum(m[1] for m in moved)), len(moved)))
 
     # 이전 계산서.csv: 입금예정일·예정일확정만 옮긴다. 입금은 WEHAGO 가 정한다 (D-37).
     carry_notes = []
@@ -342,6 +393,8 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             s[1] += inv["supply"]
     parts = []
     for b, (n, total, unknown) in stat.items():
+        if b == "참고" and not n:
+            continue
         text = "%s %d건 %s" % (b, n, "미확인" if n and n == unknown else won(total))
         parts.append(text + (" (금액 미확인 %d건)" % unknown if unknown and n != unknown else ""))
     notes.append("프로젝트 연결: " + " · ".join(parts))

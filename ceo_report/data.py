@@ -65,6 +65,14 @@ INFLOW_KEYS = {
 }
 
 # 허용 값
+# 프로젝트집행.csv 근거에 이 말이 있으면 지난해 프로젝트 줄 = 연결·미연결 집계 없이 참고로만 (사용자 2026-11-04)
+PRIOR_TAG = "참고(지난해 프로젝트)"
+
+
+def is_prior(e):
+    return PRIOR_TAG in str(e.get("basis") or "")
+
+
 EXEC_STATES = ["지급완료", "요청미지급", "카드사용미결제", "카드결제완료", "집행계획미요청"]
 INVOICE_KINDS = ["발행", "선수금", "수정", "취소", "환불"]
 TRANSFER = "계좌간이체"
@@ -376,7 +384,9 @@ def load(folder):
             # 인트라넷 지급요청 줄은 비교로만 쓰므로 취소·수정(음수) 금액을 그대로 둔다 (2026-11-04 '비교만')
             e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
             e["vat"] = _outflow(iss, r, "부가세", e["vat"])
-        if not str(e["project"]).strip():
+        if is_prior(e):
+            pass   # 지난해 프로젝트: 번호가 없어도 알리지 않는다
+        elif not str(e["project"]).strip():
             blank_project.append(r)   # 줄마다 알리지 않고 아래에서 한 줄로 (실제 자료 2천 줄 넘음, 2026-11-04)
         elif e["project"] not in d.projects:
             iss.add(r["_file"], r["_line"], "프로젝트번호 '%s'가 프로젝트.csv에 없음 (프로젝트 미연결로 집계)" % e["project"])

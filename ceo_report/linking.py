@@ -159,10 +159,22 @@ def _squash(text):
     return re.sub(r"\s+", "", text or "")
 
 
+PRIOR = "참고"   # 지난해 프로젝트 줄: 연결하지 않고 참고로만 (사용자 2026-11-04, 2025년 건은 입금·지급 모두 끝남)
+PRIOR_LABEL = "참고 (지난해 프로젝트 · 연결하지 않음)"
+
+
+def is_old_code(code):
+    """예전(2025) 프로젝트 번호 체계: 숫자 5자리 미만 ([093] 등). 지금 체계는 [26053] 같은 5자리."""
+    s = str(code or "").strip()
+    return s.isdigit() and len(s) < 5
+
+
 def _summary(lines):
     out = OrderedDict((b, {"count": 0, "sum": 0, "unknown": 0}) for b in BASES)
     for ln in lines:
-        s = out[ln["basis"]]
+        if ln.get("prior"):
+            out.setdefault(PRIOR, {"count": 0, "sum": 0, "unknown": 0})
+        s = out[PRIOR if ln.get("prior") else ln["basis"]]
         s["count"] += 1
         if ln["amount"] is None:
             s["unknown"] += 1
@@ -224,6 +236,13 @@ def _no_key(n):
     return (0, int(n), n) if n.isdigit() else (1, 0, n)
 
 
+def _prior(ln, year):
+    """지난해 프로젝트 줄인가: 장부의 마지막 해보다 앞선 날짜, 또는 예전 번호 체계([3자리]) 코드 (2026 분개장의 '2025_선급금대체' 등)."""
+    if ln["date"] is not None and ln["date"].year < year:
+        return True
+    return any(is_old_code(c) for c in (ln.get("slip_code"), ln.get("code")) if c)
+
+
 # ───────────── 원가 줄 연결 ─────────────
 def _window_end(start, days):
     """start + days 일. 날짜 범위를 넘으면 마지막 날 (설정은 1~3650 으로 막지만 다른 호출도 예외 없이, 02-REVIEW WR-02)."""
@@ -258,7 +277,11 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
                            row.get("line_project") or slips.get(keys[i][:2])))
     used = set()
     pending = []
+    year = max([ln["date"].year for ln in lines if ln["date"] is not None] or [0])
     for ln in lines:
+        if ln["key"] not in overrides and _prior(ln, year):
+            ln.update(prior=True, label=PRIOR_LABEL)   # 지난해 줄은 코드·자동 연결 모두 하지 않는다 (수동 지정만 따른다)
+            continue
         if not _fixed(ln, overrides, projects, used):
             pending.append(ln)
 
@@ -342,7 +365,11 @@ def link_revenue(books, projects, overrides, revenue_codes=("41200",)):
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (c or 0) - (d or 0),
                            row.get("line_project") or slips.get(keys[i][:2])))
     used = set()
+    year = max([ln["date"].year for ln in lines if ln["date"] is not None] or [0])
     for ln in lines:
+        if ln["key"] not in overrides and _prior(ln, year):
+            ln.update(prior=True, label=PRIOR_LABEL)   # 지난해 프로젝트 매출: 참고로만 (사용자 2026-11-04)
+            continue
         if _fixed(ln, overrides, projects, used):
             continue
         if ln["amount"] is None:

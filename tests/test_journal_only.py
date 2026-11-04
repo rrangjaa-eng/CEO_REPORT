@@ -162,8 +162,11 @@ class TestPriorYearPrint(unittest.TestCase):
         self.assertEqual(b.slip_projects.get(("2025-11-03", "50009")), "25101")
         self.assertEqual(b.slip_projects.get(("2026-10-05", "50001")), "26201")
         res = linking.link_costs(b, [], {}, {})
-        got = dict((ln["date"].isoformat(), ln["project"]) for ln in res["lines"])
-        self.assertEqual(got, {"2025-11-03": "25101", "2026-10-05": "26201"})
+        got = dict((ln["date"].isoformat(), (ln["project"], bool(ln.get("prior")))) for ln in res["lines"])
+        # 사용자 2026-11-04: 2025년 프로젝트는 맞추지 않고 참고로만 (입금·지급 모두 끝남)
+        self.assertEqual(got, {"2025-11-03": (None, True), "2026-10-05": ("26201", False)})
+        self.assertEqual(res["summary"]["참고"]["count"], 1)
+        self.assertEqual(res["summary"]["미연결"]["count"], 0)
 
     def test_slip_with_two_projects_links_each_line(self):
         """한 전표에 프로젝트가 둘이면 줄마다 그 줄의 프로젝트명으로 잇는다 (전에는 전표 통째로 미연결)."""

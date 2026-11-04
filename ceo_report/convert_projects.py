@@ -248,12 +248,15 @@ def _group_cost_lines(costs):
     """원가 줄을 (전표일자, 전표번호, 거래처, 프로젝트 또는 코드)로 묶는다. 줄 순서는 분개장 순서."""
     groups = collections.OrderedDict()
     for ln in costs["lines"]:
-        project = ln["project"] or ln["code"] or ""
-        gkey = (ln["key"][0], ln["key"][1], ln["vendor_norm"], project)
+        prior = bool(ln.get("prior"))
+        old = ln["code"] or ln.get("slip_code") or ""
+        project = "" if prior else (ln["project"] or ln["code"] or "")
+        gkey = (ln["key"][0], ln["key"][1], ln["vendor_norm"], project, prior)
         g = groups.get(gkey)
         if g is None:
             g = groups[gkey] = {"day": ln["date"], "no": ln["no"], "vendor_norm": ln["vendor_norm"], "project": project,
-                                "lines": [], "vat": 0, "kind": "wehago", "request": None}
+                                "lines": [], "vat": 0, "kind": "wehago", "request": None, "prior": prior,
+                                "old_code": old if prior else ""}
         g["lines"].append(ln)
     for g in groups.values():
         amounts = [ln["amount"] for ln in g["lines"]]
@@ -432,6 +435,9 @@ def _wehago_rows(books, costs, cfg):
             mixed += 1
             extra += " · 현금·미지급 대변 함께 있음"
         g["basis"] = base + extra
+    for g in groups.values():
+        if g.get("prior"):
+            g["basis"] += " · " + data.PRIOR_TAG + (" [%s]" % g["old_code"] if g["old_code"] else "")
     if mixed:
         notes.append("현금·미지급 대변이 함께 있는 전표의 원가 줄 %d건 → 지급 전(요청미지급)으로 둠 (일부 현금 지급일 수 있음)" % mixed)
     for day, no, vendor_norm, amount in unplaced:
