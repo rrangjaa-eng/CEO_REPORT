@@ -1431,10 +1431,13 @@ def _bal_note(s1):
 
 
 def _bank_dates(s1):
-    ds = sorted(set(a["date"] for a in s1["accounts"]))
+    ds = sorted(set(a.get("bank_date") or a["date"] for a in s1["accounts"]))
     if not ds:
         return "자료 없음"
-    return d2s(ds[0]) if len(ds) == 1 else "%s~%s" % (d2s(ds[0]), d2s(ds[-1]))
+    txt = d2s(ds[0]) if len(ds) == 1 else "%s~%s" % (d2s(ds[0]), d2s(ds[-1]))
+    if s1.get("rolled"):   # 그 뒤 입출금내역을 반영해 오늘 잔액으로 계산함 (사용자 2026-11-04)
+        txt += " + 입출금 %s까지 반영" % d2s(s1["txn_cover"])
+    return txt
 
 
 def _amt_unk(v, unk, label="미확인", fmt=W):
@@ -1539,7 +1542,9 @@ def _s1(R, per):
     for a in s1["accounts"]:
         fl = s1["acct_flow"].get(a["account"], [0, 0])
         avail = None if a["balance"] is None else a["balance"] - (a["restricted"] or 0)
-        rows.append([esc(a["account"]), esc(a["bank"]), esc(d2s(a["date"])), W(a["balance"]), W(a["restricted"]),
+        bd = d2s(a["date"]) if not a.get("bank_date") else "%s (은행 %s %s %s건)" % (
+            d2s(a["date"]), d2s(a["bank_date"]), "%+d" % a["roll"] if a["roll"] else "±0", a["roll_n"])
+        rows.append([esc(a["account"]), esc(a["bank"]), esc(bd), W(a["balance"]), W(a["restricted"]),
                      esc(a["reason"]), W(avail), W(fl[0]), W(fl[1])])
     h.append("<h3>계좌별 잔액</h3>")
     h.append(table(["계좌", "은행", "잔액 기준일", "잔액", "사용제한", "제한 사유", "사용 가능액", per + " 입금", per + " 출금"],

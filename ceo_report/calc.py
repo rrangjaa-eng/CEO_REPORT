@@ -131,6 +131,18 @@ def compute(d, kind, asof, start=None, pick=None):
         if b["date"] <= p1:
             latest[b["account"]] = b
     accounts = list(latest.values())
+    # 은행 잔액 기준일 뒤 입출금내역을 더하고 빼서 입출금내역이 있는 마지막 날의 잔액으로 본다 (사용자 2026-11-04).
+    # 입출금내역 마지막 날 = 그 파일이 채워진 날로 보고, 그날을 그 계좌의 잔액 기준일로 바꾼다 (원래 은행 날짜는 bank_date).
+    cover = max((t["date"] for t in d.txns if t["date"] <= p1), default=None)
+    rolled = []
+    for i, a in enumerate(accounts):
+        if a["balance"] is None or cover is None or a["date"] >= cover:
+            continue
+        mv = [t for t in d.txns if t["account"] == a["account"] and a["date"] < t["date"] <= cover]
+        adj = sum(t["amount"] if t["io"] == "입금" else -t["amount"] for t in mv)
+        accounts[i] = dict(a, balance=a["balance"] + adj, date=cover, bank_date=a["date"], bank_balance=a["balance"],
+                           roll=adj, roll_n=len(mv))
+        rolled.append(accounts[i])
     total_bal, bal_unknown = ssum(a["balance"] for a in accounts)
     # 제한해제일이 기준일 이전이면 이미 풀린 돈: 빼지 않는다 (사용자 2026-11-03)
     released = [a for a in accounts if a.get("release") and a["release"] <= asof and a["restricted"]]
@@ -182,7 +194,7 @@ def compute(d, kind, asof, start=None, pick=None):
     R["s1"] = {
         "accounts": accounts, "total": total_bal, "bal_unknown": bal_unknown, "restricted": restricted,
         "restr_unknown": restr_unknown, "available": None if total_bal is None else total_bal - restricted,
-        "stale": stale_accounts,
+        "stale": stale_accounts, "rolled": rolled, "txn_cover": cover,
         "bal_unknown_names": unknown_names, "bal_unknown_restricted": bal_unknown_restricted,
         "in": tin, "out": tout, "start_calc": start_calc, "start_bank": start_bank,
         "end": total_bal, "by_cat": dict(by_cat), "transfer_in": tr_in, "transfer_out": tr_out,

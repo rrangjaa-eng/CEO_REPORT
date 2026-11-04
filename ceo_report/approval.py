@@ -490,8 +490,12 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
     issues.items = list(R["s7"]["issues"])
     n_weeks, regular = _read_settings(d, issues)
     start = R["s1"]["available"]
+    # 보고서는 은행 기준일 뒤 입출금내역을 반영한 잔액을 쓴다(사용자 2026-11-04). 이 화면은 은행 기준일 뒤 일정을 직접 넣으므로
+    # 은행 잔액·은행 기준일 그대로 쓴다 (두 번 빼지 않음).
+    if start is not None:
+        start -= sum(a.get("roll", 0) for a in R["s1"]["accounts"] if a.get("bank_date"))
     reserve = R["settings_num"]["위험_최소보유현금"]
-    accounts = [(a["account"], a["date"]) for a in R["s1"]["accounts"] if a["date"] is not None]
+    accounts = [(a["account"], a.get("bank_date") or a["date"]) for a in R["s1"]["accounts"] if a["date"] is not None]
     dates = [d0 for _, d0 in accounts]
     # 계좌마다 잔액 날짜가 다르면 가장 이른 날짜가 잔액 기준일이다: 그 뒤의 지급은 오래된 계좌 잔액에 없을 수 있으므로
     # 일정에 넣는다 (WR-05, D-24 보수적 기준). 가장 늦은 계좌 날짜까지의 입금은 이미 잔액에 있을 수 있어 넣지 않는다.
