@@ -128,14 +128,14 @@ def _axis(v):
     return "{:,.0f}".format(v)
 
 
-def chart(s2):
-    """기간별 입금(확정/추정)·지급(확정/추정) 막대와 계산 잔액 선."""
+def chart(s2, H=260):
+    """기간별 입금(확정/추정)·지급(확정/추정) 막대와 계산 잔액 선. H = 그림 높이 (주간 대표 보고는 빈 곳을 채우게 더 높게)."""
     bs = s2["buckets"]
     if not bs:
         return ""
     # 주 막대 이름은 위 자금 표와 같게: 이번 주·다음 주·3주째·4주째 (사용자 2026-11-04 디자인 검토)
     wk_name = {p["end"]: p["label"] for p in s2.get("periods") or [] if not p.get("pick")}
-    Wd, H, pl, pr, pt, pb = 900, 260, 52, 10, 14, 44
+    Wd, pl, pr, pt, pb = 900, 52, 10, 14, 44
     n = len(bs)
     gw = (Wd - pl - pr) / n
     has_bal = s2["start"] is not None and not s2["out_missing"]  # 시작 잔액·지급 자료를 모르면 계산 잔액 선을 그리지 않는다 (0에서 시작하지 않음)
@@ -302,7 +302,8 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
-.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
+@media print{.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
+@media print{.fs:not(.mon) svg{max-height:400px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
@@ -1438,9 +1439,9 @@ def _first_screen(R, mode, per):
         mf = month_flow(R)
         flow = (esc("월별 자금 흐름 (%d월 1일 가용액 %s에서 시작 · %d월은 통장 실적%s%s)"
                     % (mf["first"].month, _won_or_unknown(mf["start"]), mf["first"].month,
-                       "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf))
+                       "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf, H=370))
     else:
-        flow = (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2))
+        flow = (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=420))
     funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
