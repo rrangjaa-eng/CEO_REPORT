@@ -1367,7 +1367,7 @@ def _expected_strip(R, mode="ceo", Y=None):
 
 
 def _month_series(R):
-    """1월~보고 달 회사 매출·영업이익 (⑤ 이번 달 칸과 같은 기준: 부서 비용이 있으면 팀 표 회사 영업이익)."""
+    """1월~보고 달 회사 매출·매입(매출원가)·영업이익 (⑤ 이번 달 칸과 같은 기준: 부서 비용이 있으면 팀 표 회사 영업이익)."""
     s4 = R["s4"]
     src = s4["sources"].get("WEHAGO")
     if not src:
@@ -1387,17 +1387,18 @@ def _month_series(R):
             T = _tp_build(table, s4["dept"], m, False)
             if T is not None and T["company"]["net"] is not None:
                 np_ = T["company"]["net"]
-        out.append((m, c["revenue"], np_))
+        out.append((m, c["revenue"], c.get("direct"), np_))
     return out
 
 
 def _month_chart(R, H=300):
-    """월별 매출(막대)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에). 같은 원 단위라 축 하나."""
+    """월별 매출·매입(막대 두 개)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에, 매입 추가).
+    매입 = 손익 기준 매출원가 (매출 − 매출총이익). 같은 원 단위라 축 하나."""
     ser = _month_series(R)
     if len(ser) < 2:
         return ""
     Wd, pl, pr, pt, pb = 900, 52, 10, 22, 30
-    vals = [0] + [v for _, r, p in ser for v in (r, p) if v is not None]
+    vals = [0] + [v for _, r, k, p in ser for v in (r, k, p) if v is not None]
     step = _nice_step((max(vals) - min(vals)) / 4 or 1)
     hi = step * math.ceil(max(vals) / step)
     lo = step * math.floor(min(vals) / step)
@@ -1409,22 +1410,28 @@ def _month_chart(R, H=300):
 
     def y(v):
         return pt + (hi - v) * (H - pt - pb) / span
-    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="월별 매출과 영업이익">' % (Wd, H)]
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="월별 매출·매입과 영업이익">' % (Wd, H)]
     for k in range(int(round(span / step)) + 1):
         v = lo + step * k
         out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#e6e9ef"/>' % (pl, Wd - pr, y(v), y(v)))
         out.append('<text x="%d" y="%.1f" font-size="12" text-anchor="end" fill="#5b6475">%s</text>' % (pl - 5, y(v) + 4, _axis(v)))
     out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#1d2433"/>' % (pl, Wd - pr, y(0), y(0)))
-    bw = gw * 0.56
+    bw = gw * 0.3
     pts = []
-    for i, (m, rev, np_) in enumerate(ser):
+
+    def bar(x0, v, color, what, m):
+        if v is None or v <= 0:
+            return
+        top = y(v)
+        r = min(4, (y(0) - top) / 2)
+        out.append('<path d="M%.1f %.1f V%.1f Q%.1f %.1f %.1f %.1f H%.1f Q%.1f %.1f %.1f %.1f V%.1f Z" fill="%s">'
+                   '<title>%s %s %s</title></path>'
+                   % (x0, y(0), top + r, x0, top, x0 + r, top, x0 + bw - r, x0 + bw, top, x0 + bw, top + r, y(0),
+                      color, esc(_ym_text(m)), what, esc(won(v))))
+    for i, (m, rev, cost, np_) in enumerate(ser):
         cx = pl + i * gw + gw / 2
-        if rev is not None and rev > 0:
-            top = y(rev)
-            out.append('<path d="M%.1f %.1f V%.1f Q%.1f %.1f %.1f %.1f H%.1f Q%.1f %.1f %.1f %.1f V%.1f Z" fill="#9fb4d3">'
-                       '<title>%s 매출 %s</title></path>'
-                       % (cx - bw / 2, y(0), top + 4, cx - bw / 2, top, cx - bw / 2 + 4, top, cx + bw / 2 - 4,
-                          cx + bw / 2, top, cx + bw / 2, top + 4, y(0), esc(_ym_text(m)), esc(won(rev))))
+        bar(cx - bw - 1, rev, "#6b98dc", "매출", m)       # 막대 사이 2px
+        bar(cx + 1, cost, "#d8964a", "매입(매출원가)", m)
         out.append('<text x="%.1f" y="%d" font-size="12" text-anchor="middle" fill="#5b6475">%s</text>'
                    % (cx, H - 10, esc(_ym_text(m))))
         if np_ is not None:
@@ -1438,9 +1445,10 @@ def _month_chart(R, H=300):
         x, yy, m, v = pts[-1]   # 마지막 달만 값 표시 (점마다 숫자 넣지 않음)
         out.append('<text x="%.1f" y="%.1f" font-size="12" text-anchor="end" fill="#1d2433">%s</text>' % (x - 6, yy - 8, esc(won(v))))
     out.append("</svg>")
-    leg = ("<div class='legend'><span><i style='background:#9fb4d3'></i>매출</span>"
+    leg = ("<div class='legend'><span><i style='background:#6b98dc'></i>매출</span>"
+           "<span><i style='background:#d8964a'></i>매입 (매출원가)</span>"
            "<span><i style='background:#1f4e8c;height:2px;margin-bottom:4px'></i>영업이익 (빨간 점 = 손실 달)</span></div>")
-    return ("<div class='card mchart'><div class='lab'>월별 매출·영업이익 흐름 (%s~%s)</div>%s%s</div>"
+    return ("<div class='card mchart'><div class='lab'>월별 매출·매입·영업이익 흐름 (%s~%s)</div>%s%s</div>"
             % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg))
 
 
