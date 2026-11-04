@@ -148,13 +148,19 @@ def compare(debts, events, asof):
     if debts is None:
         return None
     from .wehago import norm_vendor, norm_code
-    by_code, by_name = {}, {}
+    by_code, by_name, plan_code, plan_name = {}, {}, {}, {}
     for ev in events:
         if ev["io"] != "out" or ev["amount"] is None or (ev["date"] is not None and ev["date"] <= asof):
             continue
         vc = norm_code(ev.get("vendor_code"))
         if vc:
             by_code[vc] = by_code.get(vc, 0) + ev["amount"]
+        if "미지급금" in str(ev.get("cat") or ""):   # 자금계획서 '미지급금 지급' 줄: 장부 미지급금을 갚는 돈
+            if vc:
+                plan_code[vc] = plan_code.get(vc, 0) + ev["amount"]
+            else:
+                key = norm_vendor(ev.get("desc") or "")
+                plan_name[key] = plan_name.get(key, 0) + ev["amount"]
         nm = norm_vendor(ev.get("desc") or "")
         if nm:
             by_name[nm] = by_name.get(nm, 0) + ev["amount"]
@@ -177,10 +183,32 @@ def compare(debts, events, asof):
             left_rows.append({"vendor": d["vendor"] or "(거래처 없음)", "vcode": d["vcode"], "balance": d["balance"],
                               "scheduled": sched, "left": left, "by_name": name_match and sched > 0})
     left_rows.sort(key=lambda r: -r["left"])
+    # 반대 방향 (사용자 2026-11-04 '분개장과 자금계획서 비교 검토'): 미지급금 지급 예정이 장부 잔액보다 큰 거래처
+    # = 같은 빚을 두 번 잡았거나(이중 계상) 장부에 아직 없는 빚. 거래처코드로 맞춘다.
+    bal_code, bal_name, names = {}, {}, {}
+    for d in pays:
+        vc = norm_code(d["vcode"])
+        if vc:
+            bal_code[vc] = None if d["balance"] is None or bal_code.get(vc, 0) is None else bal_code.get(vc, 0) + d["balance"]
+            names[vc] = d["vendor"] or vc
+        else:
+            nm = norm_vendor(d["vendor"])
+            bal_name[nm] = None if d["balance"] is None or bal_name.get(nm, 0) is None else bal_name.get(nm, 0) + d["balance"]
+    over_rows = []
+    for vc, plan in plan_code.items():
+        bal = bal_code.get(vc, 0)
+        if bal is not None and plan > max(bal, 0):
+            over_rows.append({"vendor": names.get(vc, ""), "vcode": vc, "balance": bal, "scheduled": plan, "over": plan - max(bal, 0)})
+    for nm, plan in plan_name.items():
+        bal = bal_name.get(nm, 0)
+        if nm and bal is not None and plan > max(bal, 0):
+            over_rows.append({"vendor": nm, "vcode": "", "balance": bal, "scheduled": plan, "over": plan - max(bal, 0)})
+    over_rows.sort(key=lambda r: -r["over"])
     # 차입금: 잔액이 양수인 것만 잔액으로 더한다. 마이너스는 전기이월이 없어 '올해 갚은 원금'만 보이는 것.
     known_loans = [d for d in loans if d["balance"] is not None and d["balance"] > 0]
     repaid = [d for d in loans if d["balance"] is not None and d["balance"] < 0]
     return {"opening": all(d.get("opening", True) for d in debts), "repaid_loans": repaid,"unscheduled": left_rows, "unscheduled_total": sum(r["left"] for r in left_rows), "unknown_n": unknown_n,
+            "over": over_rows, "over_total": sum(r["over"] for r in over_rows),
             "payable_total": sum(d["balance"] for d in pays if d["balance"] is not None),
             "loans": known_loans, "loan_total": sum(d["balance"] for d in known_loans),
             "loan_unknown_n": sum(1 for d in loans if d["balance"] is None), "date": next((d["date"] for d in debts if d["date"]), "")}

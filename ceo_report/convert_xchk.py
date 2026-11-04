@@ -338,7 +338,11 @@ def _cash_rows(books, cfg, bank):
     later = [ln for ln in moves if ln["date"] is not None and ref is not None and ln["date"] > ref]
     upto = [ln for ln in moves if ln["date"] is not None and (ref is None or ln["date"] <= ref)]
     upto_total, upto_unknown = _known_sum([_line_net(ln) for ln in upto])
-    if not opening:
+    if not opening and getattr(books, "from_start", False) and not open_unknown:
+        # 분개장이 회사 설립부터 있으면 기초 잔액은 0 (실제 자료 2026-11-04: 2025-02-01 설립 자본금부터 누적 = 실제 통장)
+        balance, balance_note = (None, "현금 줄 날짜 없음 %d줄 — 장부 기준일 이전인지 알 수 없음" % len(undated)) if undated else \
+            ((None, _unknown_note(upto_unknown, "줄")) if upto_unknown else (upto_total, "회사 설립부터 누적 (기초 0)"))
+    elif not opening:
         balance, balance_note = None, NO_OPENING
         if moves:
             notes.append("보통예금 기초 잔액(전기이월·기초잔액) 줄이 없어 장부 잔액은 판단 불가")
@@ -352,8 +356,9 @@ def _cash_rows(books, cfg, bank):
         balance = open_total + upto_total
         balance_note = "장부 기준일 이후 %d줄 제외" % len(later) if later else ""
     amount, accounts, bank_note = _bank_balance(bank.get("balances"))
-    rows = [_row("보통예금", "", "", CASH_OPENING, open_total if opening else None, len(opening),
-                 NO_OPENING if not opening else _unknown_note(open_unknown, "줄")),
+    started = not opening and getattr(books, "from_start", False)
+    rows = [_row("보통예금", "", "", CASH_OPENING, open_total if opening else (0 if started else None), len(opening),
+                 ("회사 설립부터 장부 있음 (기초 0)" if started else NO_OPENING) if not opening else _unknown_note(open_unknown, "줄")),
             _row("보통예금", "", "", CASH_CHANGE, move_total, len(moves), _unknown_note(move_unknown, "줄")),
             _row("보통예금", "", "", CASH_BALANCE, balance, None, balance_note),
             _row("보통예금", "", "", CASH_BANK, amount, accounts, bank_note)]

@@ -107,6 +107,21 @@ class TestCompare(unittest.TestCase):
         self.assertFalse(got["opening"])
 
 
+    def test_plan_bigger_than_book_is_flagged(self):
+        """자금계획서 미지급금 지급 예정 > 장부 잔액 = 이중 계상 신호 (실제 자료 2026-11-04: 예정이 잔액의 정확히 2배)."""
+        evs = [{"io": "out", "amount": 6000000, "date": D(2026, 11, 20), "desc": "가상상사", "vendor_code": "00101",
+                "cat": "자금계획서 미지급금 지급"},
+               {"io": "out", "amount": 700000, "date": D(2026, 11, 21), "desc": "가상스튜디오", "vendor_code": "00224",
+                "cat": "자금계획서 미지급금 지급"},
+               {"io": "out", "amount": 900000, "date": D(2026, 11, 22), "desc": "급여", "vendor_code": "00999",
+                "cat": "자금계획서 인건비"}]   # 미지급금 지급이 아닌 줄은 보지 않는다
+        got = debts.compare(self.debts(), evs, D(2026, 11, 4))
+        self.assertEqual([(r["vcode"], r["over"]) for r in got["over"]], [("101", 1000000), ("224", 700000)])
+        self.assertEqual(got["over_total"], 1700000)
+        old = [dict(e, date=D(2026, 11, 1)) for e in evs]   # 기준일 이전 줄은 지난 것
+        self.assertEqual(debts.compare(self.debts(), old, D(2026, 11, 4))["over"], [])
+
+
 class TestSettleByCode(unittest.TestCase):
     def test_code_decides_even_when_names_differ(self):
         j = [ln(D(2026, 11, 3), "25300", 990000, None, "가상상사 본점", "00001", "지급", account="미지급금")]

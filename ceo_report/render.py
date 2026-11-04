@@ -441,6 +441,10 @@ def _left_out_lines(R):
             top = D["unscheduled"][0]
             out.append("장부에 있는 미지급금 중 지급일이 일정에 없는 것 %s (%d곳 · 가장 큰 곳 %s %s · 장부 %s 기준)" % (
                 won(D["unscheduled_total"]), len(D["unscheduled"]), top["vendor"], won(top["left"]), D["date"] or "-"))
+        if D.get("over"):
+            top = D["over"][0]
+            out.append("미지급금 지급 예정이 장부 잔액보다 큰 거래처 %s (%d곳 · 가장 큰 곳 %s 예정 %s · 장부 %s) — 이중 계상이거나 장부에 아직 없는 빚" % (
+                won(D["over_total"]), len(D["over"]), top["vendor"] or top["vcode"], won(top["scheduled"]), won(top["balance"])))
         if D["unknown_n"]:
             out.append("미지급금 금액 미확인 %d곳" % D["unknown_n"])
         for ln in D["loans"]:
