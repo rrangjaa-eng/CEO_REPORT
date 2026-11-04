@@ -920,6 +920,19 @@ def _net_credits(invs):
             v["outstanding"] -= take
             v["netted"] += take
             left -= take
+        if left > 0 and c["client"]:
+            # 같은 프로젝트에서 다 못 뺀 감액은 같은 거래처의 다른 미수에서 오래된 것부터 뺀다 (2026-11-04: 수정 계산서가
+            # 다른 프로젝트로 붙어 거래처 미수가 1억여 원 부풀던 것. 장부 매출채권은 거래처 단위로 줄어든다)
+            more = sorted((v for v in invs if v is not c and v["kind"] != "환불" and v["client"] == c["client"]
+                           and v["outstanding"] is not None and v["outstanding"] > 0),
+                          key=lambda v: (v["date"] is None, v["date"] or dt.date.min))
+            for v in more:
+                if left <= 0:
+                    break
+                take = min(left, v["outstanding"])
+                v["outstanding"] -= take
+                v["netted"] += take
+                left -= take
         c["credit_applied"], c["credit_left"] = credit - left, left
 
 
