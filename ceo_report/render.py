@@ -434,6 +434,11 @@ def _left_out_lines(R):
         out.append("예정일이 지났는데 안 나간 지급 %s" % _amt_n(s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]))
     if s2["out_unknown_n"]:
         out.append("금액을 모르는 지급 예정 %d건" % s2["out_unknown_n"])
+    two = R.get("two_source") or []
+    if two:
+        g = two[0]
+        out.append("같은 거래처·같은 달 출금이 두 출처에 있음 %d곳 (가장 큰 곳 %s %s월: %s) — 같은 돈이면 하나를 지우세요" % (
+            len(two), g["vendor"], int(g["month"][5:]), " · ".join("%s %s" % (k, won(v)) for k, v in g["sources"].items())))
     if D is None:
         out.append("장부 미지급금·차입금 대조 안 함 (장부채무.csv 없음 — 자료 변환 필요)")
     else:

@@ -83,6 +83,32 @@ def _add(a, b):
     return None if a is None or b is None else a + b
 
 
+TWO_SOURCE_KINDS = ("자금계획서", "자금일정", "프로젝트집행")
+
+
+def two_sources(events, asof):
+    """출금 출처 하나 원칙 점검 (사용자 2026-11-04): 기준일 뒤 같은 거래처·같은 달 출금이 두 출처 이상에 있으면 목록.
+    거래처는 거래처코드, 없으면 이름으로 맞춘다. 같은 돈일 수 있다는 신호일 뿐 빼지는 않는다.
+    -> [{vendor, month, sources: {출처: 금액}}] 금액 큰 순."""
+    from .wehago import norm_code, norm_vendor
+    groups = OrderedDict()
+    for ev in events:
+        if ev["io"] != "out" or ev["amount"] is None or ev["date"] is None or ev["date"] <= asof:
+            continue
+        src = ev.get("source")
+        if src not in TWO_SOURCE_KINDS:
+            continue
+        key = norm_code(ev.get("vendor_code")) or norm_vendor(ev.get("desc") or "")
+        if not key:
+            continue
+        g = groups.setdefault((key, ev["date"].strftime("%Y-%m")), {"vendor": ev.get("desc") or key,
+                                                                     "month": ev["date"].strftime("%Y-%m"), "sources": OrderedDict()})
+        g["sources"][src] = g["sources"].get(src, 0) + ev["amount"]
+    out = [g for g in groups.values() if len(g["sources"]) > 1]
+    out.sort(key=lambda g: -sum(g["sources"].values()))
+    return out
+
+
 def compute(d, kind, asof, start=None, pick=None, payday=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
@@ -500,6 +526,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["events"] = events
     from .debts import compare as compare_debts   # 장부 미지급금·차입금 대 일정 (2026-11-04 점검 A1·A2)
     R["debts"] = compare_debts(getattr(d, "debts", None), events, asof)
+    R["two_source"] = two_sources(events, asof)
 
     week_ends = [R["payday"] + 7 * i * DAY for i in range(4)]   # 출금일 단위 한 주 (기본 금요일, 토~금)
     buckets = []
