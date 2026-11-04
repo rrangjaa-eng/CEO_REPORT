@@ -1,7 +1,9 @@
 """신한은행 대량이체 파일 (사용자 2026-11-03: 정기적으로 나가는 돈 말고 거래처 지급은 양식에 맞춰 계좌·은행·예금주까지).
 
 양식은 ERP_PLANT8_260917 저장소의 신한 대량이체 양식과 같다: 시트 '입력정보', 머리글 9칸, 칸마다 CP949 바이트 한도, 은행은 3자리 코드.
-계좌 정보는 입력/거래처계좌.csv (인트라넷에서 읽어 사용자 PC 에만 둔다. 저장소에는 올리지 않는다).
+계좌 정보는 입력/거래처계좌.csv (대표보고 창 ⑦에서 넣는다. 외장하드 입력 폴더에만 두고 저장소에는 올리지 않는다).
+거래처는 위하고 거래처코드로 구분한다 (사용자 2026-11-04). 자금계획서 줄의 코드로 계좌를 찾고, 코드가 없는 줄(손으로 넣은 일정)은
+이름이 계좌 목록의 한 곳과만 맞을 때 쓴다.
 은행 이름을 코드로 못 풀거나 계좌·예금주가 없으면 그 줄은 파일에 넣지 않고 이유를 알린다 (짐작해서 넣으면 돈이 엉뚱한 데로 간다).
 """
 import datetime as dt
@@ -11,7 +13,9 @@ import zipfile
 from xml.sax.saxutils import escape
 
 ACCOUNT_FILE = "거래처계좌.csv"
-ACCOUNT_COLUMNS = ["거래처", "은행", "계좌번호", "예금주"]
+ACCOUNT_COLUMNS = ["거래처코드", "거래처", "은행", "계좌번호", "예금주"]
+OLD_COLUMNS = ["거래처", "은행", "계좌번호", "예금주"]   # 거래처코드 칸이 없던 옛 파일도 읽는다
+AMBIGUOUS = object()   # 같은 이름이 둘 이상인 거래처 (이름으로는 고르지 않는다)
 SHEET = "입력정보"
 HEADER = ["*입금은행", "*입금계좌", "고객관리성명", "*입금액", "출금통장표시내용", "입금통장표시내용", "입금인코드", "비고", "업체사용key"]
 MAX_BYTES = {"account": 16, "holder": 20, "amount": 15, "our": 14, "their": 14, "memo": 20, "key": 20}
@@ -98,22 +102,110 @@ def vendor_key(name):
     return re.sub(r"[\s·.,\-_]", "", t)
 
 
-def read_accounts(input_dir):
-    """입력/거래처계좌.csv -> ({거래처 열쇠: {거래처, 은행, 계좌번호, 예금주}}, 알림)."""
-    from .util import Issues, read_csv
+def code_key(code):
+    from .wehago import norm_code
+    c = norm_code(code)
+    return "#" + c if c else ""
+
+
+def _read_rows(input_dir):
+    """-> (줄 목록 [{거래처코드, 거래처, 은행, 계좌번호, 예금주}], 알림 또는 None). 파일이 없으면 ([], None)."""
+    import csv
     path = os.path.join(input_dir, ACCOUNT_FILE)
     if not os.path.exists(path):
-        return {}, ["%s 없음 → 계좌를 채울 수 없음 (인트라넷에서 거래처 계좌를 읽어 와야 함)" % ACCOUNT_FILE]
-    info = {}
-    rows, ok = read_csv(path, ACCOUNT_COLUMNS, Issues(), info)
-    if not ok or info.get("missing"):
-        return {}, ["%s 를 읽지 못함 (머리글: %s)" % (ACCOUNT_FILE, ",".join(ACCOUNT_COLUMNS))]
+        return [], None
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            head = [h.strip() for h in (reader.fieldnames or [])]
+            if not all(c in head for c in OLD_COLUMNS):
+                return [], "%s 를 읽지 못함 (머리글: %s)" % (ACCOUNT_FILE, ",".join(ACCOUNT_COLUMNS))
+            rows = []
+            for r in reader:
+                r = dict(((k or "").strip(), str(v or "").strip()) for k, v in r.items() if k)
+                rows.append(dict((c, r.get(c, "")) for c in ACCOUNT_COLUMNS))
+    except (OSError, UnicodeDecodeError, csv.Error) as e:
+        return [], "%s 를 읽지 못함 (%s)" % (ACCOUNT_FILE, type(e).__name__)
+    return rows, None
+
+
+def read_accounts(input_dir):
+    """입력/거래처계좌.csv -> ({'#코드': [계좌, ...], 이름 열쇠: 계좌 또는 AMBIGUOUS}, 알림)."""
+    rows, problem = _read_rows(input_dir)
+    if problem:
+        return {}, [problem]
+    if not rows and not os.path.exists(os.path.join(input_dir, ACCOUNT_FILE)):
+        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ⑦ 거래처 계좌에서 넣으세요)" % ACCOUNT_FILE]
     out = {}
     for r in rows:
-        k = vendor_key(r.get("거래처"))
+        c = code_key(r["거래처코드"])
+        if c:   # 한 코드에 여러 사람 계좌 (사업소득 프리랜서, 사용자 2026-11-04): 목록으로 둔다
+            out.setdefault(c, []).append(r)
+        k = vendor_key(r["거래처"])
         if k:
-            out[k] = dict((c, str(r.get(c) or "").strip()) for c in ACCOUNT_COLUMNS)
+            out[k] = r if k not in out else AMBIGUOUS
     return out, []
+
+
+def save_account(input_dir, code, name, bank, number, holder):
+    """한 계좌를 넣거나 고친다 (같은 거래처코드·같은 예금주면 바꿈. 한 코드에 여러 사람 계좌를 둘 수 있다).
+    은행·계좌번호를 비우면 지운다 (예금주를 넣으면 그 사람만, 비우면 그 코드 전부).
+    -> ('저장'|'지움', 전체 줄 수). 확인에 걸리면 ValueError (저장하지 않음)."""
+    import csv
+    from .wehago import norm_code
+    code, name, bank = (code or "").strip(), (name or "").strip(), (bank or "").strip()
+    number, holder = (number or "").strip(), (holder or "").strip()
+    if not norm_code(code):
+        raise ValueError("위하고 거래처코드를 넣으세요 (자금계획서의 [000101] 같은 번호)")
+    if not os.path.isdir(input_dir):
+        raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    rows, problem = _read_rows(input_dir)
+    if problem:
+        raise ValueError(problem)
+    same = lambda r: code_key(r["거래처코드"]) == code_key(code) and (not holder or r["예금주"] == holder)
+    rest = [r for r in rows if not same(r)]
+    if not (bank or number):
+        if len(rest) == len(rows):
+            raise ValueError("지울 계좌가 없습니다 (거래처코드 %s%s)" % (code, " · " + holder if holder else ""))
+        action = "지움"
+    else:
+        digits = re.sub(r"[\s-]", "", number)
+        if bank_code(bank) is None:
+            raise ValueError("은행 이름을 알 수 없음: '%s' (예: 신한, 국민, 기업, 농협)" % bank)
+        if not digits.isdigit() or len(digits) > MAX_BYTES["account"]:
+            raise ValueError("계좌번호는 숫자와 '-'만 (16자리 이하)")
+        if not holder or not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
+            raise ValueError("예금주를 넣으세요 (한글 10자 이하)")
+        rest.append({"거래처코드": code, "거래처": name, "은행": bank, "계좌번호": number, "예금주": holder})
+        action = "저장"
+    path = os.path.join(input_dir, ACCOUNT_FILE)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, lineterminator="\r\n")
+        w.writerow(ACCOUNT_COLUMNS)
+        for r in rest:
+            w.writerow([r[c] for c in ACCOUNT_COLUMNS])
+    os.replace(tmp, path)
+    return action, len(rest)
+
+
+def find_account(accounts, ln):
+    """이체 줄 -> (계좌 또는 None, 못 찾은 이유). 코드가 있으면 코드로만, 없으면 이름이 한 곳과 맞을 때만."""
+    c = code_key(ln.get("code"))
+    if c and c in accounts:
+        found = accounts[c]
+        if len(found) > 1:
+            return None, "계좌 %d개 (%s) — 사람별 금액 필요, 은행 화면에서 나눠 넣으세요" % (
+                len(found), ", ".join(r["예금주"] for r in found))
+        return found[0], None
+    acc = accounts.get(vendor_key(ln["vendor"]))
+    if acc is AMBIGUOUS:
+        return None, "같은 이름 거래처가 여럿 (거래처코드로 넣으세요)"
+    if acc is not None and c and code_key(acc.get("거래처코드")) and code_key(acc.get("거래처코드")) != c:
+        return None, "계좌 정보 없음 (거래처코드 %s)" % ln["code"]   # 이름만 같은 다른 거래처
+    if acc is None:
+        return None, "계좌 정보 없음" + (" (거래처코드 %s)" % ln["code"] if c else "")
+    return acc, None
 
 
 def is_regular(e):
@@ -131,8 +223,10 @@ def pick(events, start, end):
             skipped += 1
             continue
         name = str(e.get("desc") or "").strip()
-        k = vendor_key(name) or "?%d" % len(lines)
-        ln = lines.setdefault(k, {"vendor": name, "amount": 0, "unknown": False, "projects": [], "dates": [], "firm": True})
+        code = str(e.get("vendor_code") or "").strip()
+        k = code_key(code) or vendor_key(name) or "?%d" % len(lines)
+        ln = lines.setdefault(k, {"vendor": name, "code": code, "amount": 0, "unknown": False, "projects": [], "dates": [],
+                                  "firm": True})
         if e["amount"] is None:
             ln["unknown"] = True
         else:
@@ -149,12 +243,12 @@ def build(events, accounts, start, end):
     picked, skipped = pick(events, start, end)
     rows, blocked = [], []
     for k, ln in picked:
-        acc = accounts.get(k)
+        acc, missing = find_account(accounts, ln)
         why = None
         if ln["unknown"] or ln["amount"] <= 0:
             why = "금액 미확인"
         elif acc is None:
-            why = "계좌 정보 없음"
+            why = missing
         else:
             holder = acc["예금주"]
             number = re.sub(r"[\s-]", "", acc["계좌번호"])

@@ -177,8 +177,14 @@ class TestReportIsADocument(unittest.TestCase):
     def test_weekly_lists_friday_payments_then_next_week(self):
         """매주 금요일 출금 (사용자 2026-11-03): ① 금요일 출금 목록, 그 아래 다음 주(토~다음 금) 지급 예정.
         금요일 목록은 금액이 확정된 건만 (사용자 2026-11-04 세 번 지적: 예상·금액 미확인 모두 뺌)."""
+        from ceo_report import calc
         from ceo_report.render import week_outflows
-        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
+        # 목록 모양을 보는 시험이라 인트라넷 요청·남은 예산이 일정에 들어가던 규칙으로 본다 (기본은 '비교만', 2026-11-04)
+        old, calc.INTRANET_IN_FUNDS = calc.INTRANET_IN_FUNDS, True
+        try:
+            R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
+        finally:
+            calc.INTRANET_IN_FUNDS = old
         W = week_outflows(R)
         self.assertEqual(W["fri"], dt.date(2026, 11, 6))
         self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]],

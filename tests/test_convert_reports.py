@@ -163,10 +163,15 @@ class TestConvertedNoDouble(unittest.TestCase):
         cls.tmp, cls.input_dir, cls.collect, cls.wehago_dir = converted_company(cls.holder)
         cls.snap = snapshot.read_snapshot(snapshot.latest_snapshot(cls.collect))
         cls.d = data.load(cls.input_dir)
-        cls.R = calc.compute(cls.d, "weekly", ASOF)
-        cls.A = approval.build(cls.d, cls.snap, ASOF, NOW, cls.wehago_dir, cls.input_dir)
-        cls.bare_dir = copy_without_request_rows(cls.holder, cls.input_dir)
-        cls.B = approval.build(data.load(cls.bare_dir), cls.snap, ASOF, NOW, cls.wehago_dir, cls.bare_dir)
+        # 인트라넷 요청을 일정에 넣던 규칙에서의 겹침 없음을 지킨다 (기본은 '비교만', 사용자 2026-11-04)
+        old, calc.INTRANET_IN_FUNDS = calc.INTRANET_IN_FUNDS, True
+        try:
+            cls.R = calc.compute(cls.d, "weekly", ASOF)
+            cls.A = approval.build(cls.d, cls.snap, ASOF, NOW, cls.wehago_dir, cls.input_dir)
+            cls.bare_dir = copy_without_request_rows(cls.holder, cls.input_dir)
+            cls.B = approval.build(data.load(cls.bare_dir), cls.snap, ASOF, NOW, cls.wehago_dir, cls.bare_dir)
+        finally:
+            calc.INTRANET_IN_FUNDS = old
 
     @classmethod
     def tearDownClass(cls):
@@ -375,24 +380,6 @@ class TestConvertedIgnored(unittest.TestCase):
             self.skipTest("git 저장소 아님")
         self.assertEqual(rc, 1)
 
-
-# ───── 인트라넷을 가용자금 일정에 넣던 규칙 (calc.INTRANET_IN_FUNDS=True) 으로 시험 ─────
-# 사용자 결정(2026-11-04 '비교만') 뒤 기본은 False. 이 파일은 그 규칙이 켜졌을 때의 일정 계산을 그대로 지킨다.
-import ceo_report.calc as _calc_for_flag  # noqa: E402
-_setup_before_flag = globals().get("setUpModule")
-_teardown_before_flag = globals().get("tearDownModule")
-
-
-def setUpModule():  # noqa: F811
-    _calc_for_flag.INTRANET_IN_FUNDS = True
-    if _setup_before_flag:
-        _setup_before_flag()
-
-
-def tearDownModule():  # noqa: F811
-    _calc_for_flag.INTRANET_IN_FUNDS = False
-    if _teardown_before_flag:
-        _teardown_before_flag()
 
 
 if __name__ == "__main__":

@@ -97,3 +97,59 @@ class TestMakeFile(unittest.TestCase):
         self.assertIsNone(transfer.make_file(inp, os.path.join(tmp, "출력"), D(2026, 11, 1), D(2026, 11, 30), lines.append,
                                              asof=D(2026, 10, 31)))
         self.assertIn("거래처계좌.csv 없음", lines[0])
+
+
+class TestAccountsByCode(unittest.TestCase):
+    """거래처는 위하고 거래처코드로 구분 (사용자 2026-11-04). 가상 값만."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def save(self, *a):
+        return transfer.save_account(self.tmp, *a)
+
+    def test_save_replace_and_delete(self):
+        self.assertEqual(self.save("000101", "가상무대", "신한", "100-000-000001", "가상무대"), ("저장", 1))
+        self.assertEqual(self.save("101", "가상무대", "국민", "200-000-000002", "가상무대"), ("저장", 1))   # 앞 0 같은 코드
+        acc, _ = transfer.read_accounts(self.tmp)
+        self.assertEqual(acc["#101"][0]["은행"], "국민")
+        self.assertEqual(self.save("101", "", "", "", ""), ("지움", 0))
+        with self.assertRaises(ValueError):
+            self.save("101", "", "", "", "")
+
+    def test_checks_before_saving(self):
+        for args in (("", "x", "신한", "1", "가"), ("1", "x", "모름은행", "1", "가"), ("1", "x", "신한", "12a", "가"),
+                     ("1", "x", "신한", "1", "")):
+            with self.assertRaises(ValueError):
+                self.save(*args)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, transfer.ACCOUNT_FILE)))
+
+    def test_event_code_picks_the_account_even_with_another_name(self):
+        self.save("000101", "가상무대", "신한", "100-000-000001", "가상무대")
+        self.save("000102", "가상무대", "농협", "301-0000-0000-02", "다른무대")   # 같은 이름, 다른 코드
+        acc, _ = transfer.read_accounts(self.tmp)
+        e1 = dict(ev(D(2026, 11, 4), 1_000_000, "(주)가상무대 본점"), vendor_code="000101")
+        e2 = dict(ev(D(2026, 11, 4), 2_000_000, "가상무대"), vendor_code="102")
+        e3 = ev(D(2026, 11, 4), 3_000_000, "가상무대")   # 코드 없는 줄: 이름이 두 곳과 맞아 고르지 않음
+        rows, blocked, _ = transfer.build([e1, e2, e3], acc, D(2026, 11, 1), D(2026, 11, 7))
+        self.assertEqual([(r[0], r[1], r[3]) for r in rows], [("088", "100000000001", "1000000"), ("011", "3010000000002", "2000000")])
+        self.assertEqual(len(blocked), 1)
+        self.assertIn("여럿", blocked[0][2])
+
+    def test_one_code_with_several_people_is_not_split(self):
+        self.save("200", "사업소득", "신한", "100-000-000011", "가상갑")
+        self.save("200", "사업소득", "국민", "200-000-000012", "가상을")
+        acc, _ = transfer.read_accounts(self.tmp)
+        rows, blocked, _ = transfer.build([dict(ev(D(2026, 11, 4), 900_000, "사업소득"), vendor_code="200")], acc,
+                                          D(2026, 11, 1), D(2026, 11, 7))
+        self.assertEqual(rows, [])
+        self.assertIn("계좌 2개", blocked[0][2])
+        self.assertEqual(self.save("200", "", "", "", "가상갑"), ("지움", 1))   # 그 사람만 지움
+
+    def test_old_file_without_code_column_still_reads_by_name(self):
+        with open(os.path.join(self.tmp, transfer.ACCOUNT_FILE), "w", encoding="utf-8-sig") as f:
+            f.write("거래처,은행,계좌번호,예금주\n가상조명,우리은행,1002-000-000003,가상조명\n")
+        acc, notes = transfer.read_accounts(self.tmp)
+        self.assertEqual(notes, [])
+        rows, _, _ = transfer.build([ev(D(2026, 11, 4), 500_000, "가상조명")], acc, D(2026, 11, 1), D(2026, 11, 7))
+        self.assertEqual(rows[0][0], "020")
