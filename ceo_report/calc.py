@@ -13,6 +13,12 @@ BUDGET_IN_FUNDS = True      # 프로젝트 남은 예산(사전견적×원가율
 
 DAY = dt.timedelta(days=1)
 
+
+def from_intranet(e):
+    """변환이 인트라넷 지급요청으로 만든 프로젝트집행 줄 (근거 '지급요청 …', 아직 장부에 없는 요청).
+    사용자 2026-11-04: 인트라넷에서는 사전견적만 쓰고, 쓴 돈·남은 예산은 위하고 자료로 본다 → 이 줄은 비교로만."""
+    return e["state"] == "요청미지급" and str(e.get("basis") or "").startswith("지급요청")
+
 # 숫자로 읽는 설정 항목과 입력 확인 목록에 쓰는 이름 (이름에 해석·권고 낱말을 넣지 않는다)
 NUM_SETTINGS = ("첫화면_프로젝트_표시수", "위험_최소보유현금", "위험_미수경과일", "위험_미발행경과일", "위험_자료경과일",
                 "위험_예산초과율", "예산_원가율")
@@ -222,6 +228,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         proj[pid] = _blank_proj(d.projects[pid], R["settings_num"]["예산_원가율"])
     unlinked_exec = []
     for e in d.execs:
+        if from_intranet(e) and not INTRANET_IN_FUNDS:
+            continue   # 쓴 돈(예상총집행)에 넣지 않는다 — 아래 일정에서도 빼고 intranet_only 로 센다
         if e["project"] not in proj:
             unlinked_exec.append(e)
             continue
@@ -333,8 +341,10 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
                "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
     linked_lines = sum(len(P["lines"]) for P in plist)
-    checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄", len(d.execs), linked_lines + len(unlinked_exec),
-                   len(d.execs) == linked_lines + len(unlinked_exec)))
+    compare_only = 0 if INTRANET_IN_FUNDS else sum(1 for e in d.execs if from_intranet(e))
+    counted = linked_lines + len(unlinked_exec) + compare_only
+    checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄" + (" + 인트라넷 비교만 줄" if compare_only else ""),
+                   len(d.execs), counted, len(d.execs) == counted))
     shown_exp = sum(P["expected"] for P in shown) + sum(P["expected"] for P in rest)
     checks.append(("첫 화면 표시 + 나머지 프로젝트 예상총집행 = 전체 합계", shown_exp, tot["expected"],
                    shown_exp == tot["expected"]))
@@ -429,7 +439,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 돈의 기준은 위하고 분개장·자금계획서. 빼는 줄은 R["intranet_only"] 에 건수·합계로 남겨 비교로만 보인다.
     skipped_requests, skipped_budget = [], []
     for e in d.execs:
-        if e["state"] in ("요청미지급", "집행계획미요청") and not INTRANET_IN_FUNDS:
+        if from_intranet(e) and not INTRANET_IN_FUNDS:
             skipped_requests.append(None if e["supply"] is None else e["supply"] + (e["vat"] or 0))
             continue
         if e["state"] in ("요청미지급", "집행계획미요청"):
