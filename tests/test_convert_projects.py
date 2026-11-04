@@ -406,6 +406,15 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertIn("원가 전표 부가세대급금: 원본 24,873,000 · CSV 24,873,000 → 일치", lines)
         self.assertIn("원가 줄 수: 원본 12 · CSV 12 → 일치", lines)
 
+    def test_vat_with_other_vendor_goes_to_the_only_cost_group_of_the_slip(self):
+        """실제 자료 2025-12 8건: 부가세 줄 거래처(가맹점)와 원가 줄 거래처가 다른 카드 매입 → 전표의 원가 묶음이 하나면 거기에."""
+        other = [_jl(_D, 52, "61101", "행사외주비(도)", 100000, None, "가상가게", "[26201] 다른 거래처 부가세"),
+                 _jl(_D, 52, "13500", "부가세대급금", 10000, None, "가상가맹점", "[26201] 다른 거래처 부가세"),
+                 _jl(_D, 52, "25300", "미지급금", None, 110000, "가상가게", "[26201] 다른 거래처 부가세")]
+        t = exec_table(exec_inputs(journal_with(other)))
+        self.assertEqual(by_slip(t, 52)[5], "10000")
+        self.assertIn("원가 전표 부가세대급금: 원본 24,850,000 · CSV 24,850,000 → 일치", check_lines(t))
+
     def test_card_bill_payment_makes_it_paid_on_the_payment_date(self):
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA, CARD_PAID_EXTRA)))
         row = by_slip(t, 50)
@@ -511,7 +520,9 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertIn("원가 줄 수: 원본 13 · CSV 13 → 일치", check_lines(t))
 
     def test_a_vat_line_of_another_vendor_cannot_be_placed_and_shows_as_a_mismatch(self):
-        lines = [_jl(dt.date(2026, 10, 20), 1, "13500", "부가세대급금", 1000, None, "가상다른곳", "부가세")]
+        # 전표에 원가 묶음이 둘 이상이면 어느 것에 붙일지 몰라 놓지 않는다 (하나면 거기에 붙임, 위 시험)
+        lines = [_jl(dt.date(2026, 10, 20), 1, "13500", "부가세대급금", 1000, None, "가상다른곳", "부가세"),
+                 _jl(dt.date(2026, 10, 20), 1, "61101", "행사외주비(도)", 5000, None, "가상셋째", "[26201] 셋째")]
         t = exec_table(exec_inputs(journal_with(lines)))
         chk = [c for c in t.checks if c.label == "원가 전표 부가세대급금"][0]
         self.assertEqual(mod("convert").check_result(chk), "불일치")

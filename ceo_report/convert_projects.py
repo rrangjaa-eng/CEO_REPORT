@@ -285,13 +285,19 @@ def _place_vat(groups, books, keys, vat_codes):
     for (slip, vendor_norm), amount in sums.items():
         mine = [g for gk, g in groups.items() if (gk[0], gk[1]) == slip and gk[2] == vendor_norm]
         if not mine:
+            # 부가세 줄 거래처가 원가 줄과 다른 전표 (카드 매입 등, 실제 자료 2025-12 8건): 그 전표 원가 묶음이 하나면 거기에 붙인다
+            same_slip = [g for gk, g in groups.items() if (gk[0], gk[1]) == slip]
+            if len(same_slip) == 1:
+                g = same_slip[0]
+                g["vat"] = None if amount is None or g["vat"] is None else g["vat"] + amount
+                continue
             unplaced.append((slip[0], slip[1], vendor_norm, amount))
             continue
         target = mine[0]
         for g in mine[1:]:
             if g["supply"] is not None and (target["supply"] is None or g["supply"] > target["supply"]):
                 target = g
-        target["vat"] = amount
+        target["vat"] = None if amount is None or target["vat"] is None else target["vat"] + amount
     total = _sum_or_none(sums.values())
     return total, unplaced
 
