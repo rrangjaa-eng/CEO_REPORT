@@ -766,8 +766,11 @@ class TestBuildExecsRequests(unittest.TestCase):
         issues = [it for it in d.issues.items if it[0] == "프로젝트집행.csv"]
         # 02-REVIEW WR-03: P26207 은 이전 프로젝트.csv 에서 옮겨져 이제 프로젝트.csv 에 있다 (예전 4건)
         self.assertEqual(len(issues), 3, issues)
-        got = sorted(re.match(r"프로젝트번호 '(.*)'가 프로젝트.csv에 없음 \(프로젝트 미연결로 집계\)$", it[2]).group(1) for it in issues)
-        self.assertEqual(got, ["", "26299", "26999"])
+        # 빈 번호 줄은 줄마다가 아니라 한 줄로 센다 (실제 자료 2천 줄 넘음, 2026-11-04)
+        got = sorted(re.match(r"프로젝트번호 '(.*)'가 프로젝트.csv에 없음 \(프로젝트 미연결로 집계\)$", it[2]).group(1)
+                     for it in issues if not it[2].startswith("프로젝트번호 빈칸"))
+        self.assertEqual(got, ["26299", "26999"])
+        self.assertIn("프로젝트번호 빈칸 줄 1건", " ".join(it[2] for it in issues))
         self.assertEqual([it for it in d.issues.items if it[0] == "프로젝트.csv"], [])
 
 

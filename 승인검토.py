@@ -330,10 +330,13 @@ def write_structure_log(out_dir, when, diag, rc):
         pass
 
 
+TEAM_OK = ("수락완료", "승인")   # 인트라넷 팀장승인 칸: 실제 값은 수락완료·수락요청중 (2026-11-04 수집)
+
+
 def gathered_summary(result):
     """가져온 자료 요약 (값 없이 건수·합계만): 팀장 승인 요청, 사전견적이 있는 프로젝트 (사용자 2026-11-04)."""
     from ceo_report.util import num
-    team_ok = sum(1 for r in result.payments if (r.get("팀장승인") or "").strip() == "승인")
+    team_ok = sum(1 for r in result.payments if (r.get("팀장승인") or "").strip() in TEAM_OK)
     est = [num(p.get("사전견적")) for p in result.projects]
     est = [e for e in est if e]
     _say("지급요청 %d건 중 팀장 승인 %d건 (비교용 — 가용자금에는 넣지 않음)" % (len(result.payments), team_ok))

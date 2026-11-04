@@ -14,7 +14,7 @@ import os
 import re
 from collections import OrderedDict
 
-from .approval import _expected_date, _masked, _status, parse_registered, project_code
+from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
 from .wehago import norm_vendor
@@ -51,7 +51,7 @@ def projects_of(snap):
         return out
     for p in _masked(snap.projects):
         title = p.get("행사명", "")
-        key = project_code(title) or (p.get("번호", "") or "").strip()
+        key = project_code(title) or norm_project(p.get("번호", ""))
         if not key:
             continue
         if key in out:
@@ -114,7 +114,7 @@ def read_links(input_dir):
         day = parse_date(row.get("전표일자"))
         no = _norm_no(row.get("전표번호"))
         nth = (row.get("줄") or "").strip()
-        project = (row.get("프로젝트번호") or "").strip()
+        project = norm_project(row.get("프로젝트번호"))
         m = re.match(r"^\[(.*)\]$", project)
         if m:
             project = m.group(1).strip()

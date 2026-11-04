@@ -360,6 +360,7 @@ def load(folder):
 
     # 프로젝트집행
     d.execs = []
+    blank_project = []
     for r in raw["프로젝트집행.csv"]:
         e = {"project": r.get("프로젝트번호", ""), "item": r.get("항목", ""), "vendor": r.get("거래처", ""),
              "state": r.get("상태", ""), "supply": num(r.get("공급가액"), iss, r, "공급가액"),
@@ -370,13 +371,21 @@ def load(folder):
             iss.add(r["_file"], r["_line"], "상태 값 '%s'은(는) 허용 값이 아님 (%s) → 지급 전(요청미지급)으로 보고 지급 일정에 넣음"
                     % (e["state"], "/".join(EXEC_STATES)))
             e["state"] = "요청미지급"
-        e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
-        e["vat"] = _outflow(iss, r, "부가세", e["vat"])
-        if e["project"] not in d.projects:
+        from . import calc   # 순환 import 를 피해 여기서
+        if calc.INTRANET_IN_FUNDS or not str(e["basis"]).startswith("지급요청"):
+            # 인트라넷 지급요청 줄은 비교로만 쓰므로 취소·수정(음수) 금액을 그대로 둔다 (2026-11-04 '비교만')
+            e["supply"] = _outflow(iss, r, "공급가액", e["supply"])
+            e["vat"] = _outflow(iss, r, "부가세", e["vat"])
+        if not str(e["project"]).strip():
+            blank_project.append(r)   # 줄마다 알리지 않고 아래에서 한 줄로 (실제 자료 2천 줄 넘음, 2026-11-04)
+        elif e["project"] not in d.projects:
             iss.add(r["_file"], r["_line"], "프로젝트번호 '%s'가 프로젝트.csv에 없음 (프로젝트 미연결로 집계)" % e["project"])
         if e["state"] == "집행계획미요청" and not e["basis"]:
             iss.add(r["_file"], r["_line"], "집행계획미요청 줄에 근거(계약·발주·집행계획) 없음")
         d.execs.append(e)
+    if blank_project:
+        iss.add(blank_project[0]["_file"], "-", "프로젝트번호 빈칸 줄 %d건 → 프로젝트 미연결로 집계 (어느 줄인지는 변환결과.txt [연결])"
+                % len(blank_project))
 
     # 계산서
     d.invoices = []

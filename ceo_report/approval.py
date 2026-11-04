@@ -112,7 +112,13 @@ def parse_registered(text):
 def project_code(text):
     """행사명 맨 앞 [ ] 안의 숫자(프로젝트 코드). 앞 공백은 허용하고, 없으면 None (P-4)."""
     m = _CODE_RE.match(text or "")
-    return m.group(1) if m else None
+    return norm_project(m.group(1)) if m else None
+
+
+def norm_project(code):
+    """프로젝트 번호 맞추기: 숫자면 앞 0을 뗀다 (분개장 [093] = 인트라넷 번호 93, 실제 자료 2026-11-04). 빈칸은 ''."""
+    s = str(code or "").strip()
+    return (s.lstrip("0") or "0") if s.isdigit() else s
 
 
 def friday_after(ref):
@@ -247,7 +253,7 @@ def _projects(projects, req_all):
     프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·미승인·수락요청중인 것.
     실행가가 비었거나 누계에 금액 미확인이 있거나 키가 겹치면 판단 불가이고, 0으로 두지 않는다.
     """
-    keyed = [(project_code(p.get("행사명", "")) or (p.get("번호", "") or "").strip(), p) for p in projects]
+    keyed = [(project_code(p.get("행사명", "")) or norm_project(p.get("번호", "")), p) for p in projects]
     count = {}
     for key, _ in keyed:
         count[key] = count.get(key, 0) + 1
