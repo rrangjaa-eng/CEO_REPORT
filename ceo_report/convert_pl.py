@@ -457,6 +457,38 @@ def build_dept(books, cfg, prev_rows=()):
     return Table(DEPT_FILE, DEPT_COLUMNS, rows, checks=checks, notes=notes)
 
 
+def build_staff(books, cfg, prev_rows=()):
+    """사원급여.csv Table (사용자 2026-11-04): 달·부서·사원명마다 급여(계정 cfg['salary_codes'] 차변−대변).
+
+    1인당 순이익을 본인 급여 비율로 나누는 데 쓴다. 사원명이 빈 급여 줄은 넣지 않는다 (그 팀·달은 보고서에서 사원 합 ≠ 부서 급여 → 미확인).
+    금액 없는 줄이 있는 칸은 비운다. 분개장에 사원명 칸이 없으면 만들지 않고 기존 파일을 그대로 둔다. 새 분개장에 없는 달의 이전 줄은 잇는다."""
+    if not any("employee" in ln for ln in books.journal):
+        return Table(data.STAFF_FILE, data.STAFF_KEYS, [], written=False, reason="분개장에 사원명(관리항목) 칸 없음 (기존 파일 그대로)")
+    salary = set(_squash(c) for c in cfg["salary_codes"])
+    cells, months, nameless = OrderedDict(), set(), 0
+    for ln in books.journal:
+        if _squash(ln["account_code"]) not in salary or ln["date"] is None:
+            continue
+        ym = ln["date"].strftime("%Y-%m")
+        months.add(ym)
+        if not ln.get("employee"):
+            nameless += 1
+            continue
+        c = cells.setdefault((ym, ln.get("dept") or NO_DEPT, ln["employee"]), [0, 0])
+        amount = _net(ln, "common")
+        if amount is None:
+            c[1] += 1
+        else:
+            c[0] += amount
+    rows = [r for r in prev_rows if r.get("연월") not in months]
+    for (ym, dept, name), c in sorted(cells.items()):
+        rows.append(dict(zip(data.STAFF_KEYS, [ym, dept, name, cell_amount(_cell(c))])))
+    notes = ["사원별 급여 = 계정 %s, 부서는 분개장 관리항목 부서명 · %d명" % (",".join(cfg["salary_codes"]), len(set(k[2] for k in cells)))]
+    if nameless:
+        notes.append("사원명 없는 급여 줄 %d건 → 넣지 않음 (그 팀·달 1인당 몫은 미확인)" % nameless)
+    return Table(data.STAFF_FILE, data.STAFF_KEYS, rows, notes=notes)
+
+
 def _dept_cell():
     return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": set(), "nameless": 0}
 

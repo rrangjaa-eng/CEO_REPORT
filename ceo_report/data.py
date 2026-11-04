@@ -32,6 +32,9 @@ ACCOUNT_FILE = "계정별비용.csv"   # 계정과목별 달별 사용 금액 (�
 ACCOUNT_KEYS = ["연월", "구분", "계정코드", "계정과목", "금액"]
 DEPT_OPTIONAL = ["영업외수익", "영업외비용"]   # 없는 예전 파일은 '미확인' (사용자 2026-11-03: 정부지원금 등은 팀에 넣지 않고 따로)
 NO_DEPT = "부서 없음"
+# 사원별 달별 급여 (분개장 급여 줄의 관리항목 사원명, 사용자 2026-11-04: 1인당 순이익을 본인 급여 비율로 나눔). 경영관리용에만 씀
+STAFF_FILE = "사원급여.csv"
+STAFF_KEYS = ["연월", "부서", "사원명", "급여"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
@@ -206,6 +209,16 @@ def load(folder):
                        "nonop_in": num(r.get("영업외수익"), iss, r, "영업외수익") if "영업외수익" in r else None,
                        "nonop_out": num(r.get("영업외비용"), iss, r, "영업외비용") if "영업외비용" in r else None,
                        "has_nonop": "영업외수익" in r and "영업외비용" in r} for r in rows]
+
+    # 사원별 급여 (선택, 사용자 2026-11-04): 읽지 못하면 쓰지 않는다. 급여 빈칸은 None (모름)
+    d.staff = None
+    path = os.path.join(folder, STAFF_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, STAFF_KEYS, iss, info)
+        if ok and not info["missing"]:
+            d.staff = [{"ym": (r.get("연월") or "").strip(), "dept": (r.get("부서") or "").strip(),
+                        "name": (r.get("사원명") or "").strip(), "salary": num(r.get("급여"), iss, r, "급여")} for r in rows]
 
     # 계정과목별 달별 사용 금액 (선택). 금액 빈칸은 None (모름)
     d.accounts, d.accounts_problem = None, ""

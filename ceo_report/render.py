@@ -1068,11 +1068,41 @@ def _team_table(R, part="month", mode="mgmt"):
         out.append(_nonop_rows(Y["nonop"], 5, 4))
         out.append("</tbody></table>")
         out.append(_target_table(R, Y, ym))
+        out.append(_mg(mode, _person_table(R, src, dept, ym, basis)))   # 사람별 급여가 드러나므로 경영관리용에만 (2026-11-04)
     else:
         out.append(_na("올해 누적 자료 없음"))
     out.append("<div class='note'>%s</div>%s</div>" % (esc("1월~%s 합계. 평균 인원 = 달마다 인원의 평균 · 공통비 나눈 뒤 = 달마다 나눈 값의 합"
                                                          % _ym_text(ym)), _mg(mode, notes_html)))
     return "".join(out)
+
+
+def _person_table(R, src, dept, ym, basis):
+    """팀원별 순이익 몫 (사용자 2026-11-04: 1인당 순이익을 본인 급여 비율로만 나눔). 사원급여.csv 가 있어야 한다."""
+    from .teamprofit import per_person
+    P = per_person(src.get("by_month", []), dept, R["s4"].get("staff"), ym, basis)
+    head = "<div class='wsub'>팀원별 순이익 몫 (본인 급여 비율)</div>"
+    if P is None or not P["people"]:
+        return head + "<div class='note'>%s</div>" % esc(
+            "사원급여.csv 없음 — 대표보고 창의 '자료 변환'이 분개장 사원명으로 만듦" if R["s4"].get("staff") is None
+            else "팀 사원 급여 자료 없음")
+    h = [head, "<table class='pt tm pp'><thead><tr><th>팀</th><th>사원</th><th>%s 급여</th><th>%s 몫</th>"
+               "<th>누적 급여</th><th>누적 몫</th><th>급여 달수</th></tr></thead><tbody>" % (esc(_ym_text(ym)), esc(_ym_text(ym)))]
+    team = None
+    for p in P["people"] + [None]:
+        if team is not None and (p is None or p["team"] != team):
+            t = P["teams"][team]
+            h.append("<tr class='hq'><td>%s 합계</td><td></td><td></td><td>%s</td><td></td><td>%s</td><td></td></tr>"
+                     % (esc(team), W(None if t["cur"] is None else round(t["cur"])), W(None if t["ytd"] is None else round(t["ytd"]))))
+        if p is None:
+            break
+        team = p["team"]
+        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%d달</td></tr>"
+                 % (esc(p["team"]), esc(p["name"]), W(p["salary"], "—"), W(None if p["share"] is None else round(p["share"]), "미확인" if p["salary"] is not None else "—"),
+                    W(p["salary_ytd"]), W(None if p["share_ytd"] is None else round(p["share_ytd"])), p["months"]))
+    h.append("</tbody></table><div class='note'>%s</div>" % esc(
+        "몫 = 그 달 팀의 공통비 나눈 뒤 순수익 × 본인 급여 ÷ 팀 급여 합, 누적은 달마다 나눈 몫의 합 (팀 몫 합계 = 팀 공통비 나눈 뒤 순수익). "
+        "같은 팀이면 급여 1원당 몫이 같아 개인 성과 차이는 나타나지 않음. 본부·경영관리 인원은 팀이 아니어서 넣지 않음"))
+    return "".join(h)
 
 
 def _target_table(R, Y, ym):

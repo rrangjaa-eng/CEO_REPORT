@@ -599,7 +599,8 @@ def compute(d, kind, asof, start=None, pick=None):
                "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
                "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None),
                # 부서별 급여·판관비 (선택 파일 부서비용.csv, 사용자 2026-11-03). None = 파일 없음, 팀 순수익은 미확인
-               "dept": getattr(d, "dept", None), "dept_problem": getattr(d, "dept_problem", "")}
+               "dept": getattr(d, "dept", None), "dept_problem": getattr(d, "dept_problem", ""),
+               "staff": getattr(d, "staff", None)}   # 사원별 급여 (사원급여.csv, 사용자 2026-11-04)
 
     # ───────────── 6. 프로젝트 밖 지급과 지급의무 ─────────────
     nonproj = [s for s in d.schedule if s["io"] == "지급"]

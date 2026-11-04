@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "세금예상.csv", "계정별비용.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -782,6 +782,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
+    tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
     tables.append(build_tax(books, cfg, asof, input_dir))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
     return tables, states

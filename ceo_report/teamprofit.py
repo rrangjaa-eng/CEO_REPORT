@@ -167,3 +167,46 @@ def build_ytd_alloc(pl_month_tables, dept_rows, ym, basis="heads"):
             if r["kind"] == "team":
                 out[r["label"]] = _add(out.get(r["label"], 0), r["alloc"])
     return out
+
+
+def per_person(pl_month_tables, dept_rows, staff_rows, ym, basis="heads"):
+    """팀원별 순이익 몫 (사용자 2026-11-04: 본인 급여 비율로만 나눔).
+
+    달마다: 몫 = 그 달 팀의 '공통비 나눈 뒤' 순수익(allocate) × 본인 급여 ÷ 그 팀 사원 급여 합. 누적은 달마다 나눈 몫의 합.
+    그 팀·달 사원 급여 합이 부서비용 급여와 다르거나(사원명 없는 줄 등) 모르는 값이 있으면 그 달 몫은 None (모름).
+    -> {"people": [{team, name, salary, share, salary_ytd, share_ytd, months}], "teams": {팀: {"cur": , "ytd": }}} 또는 None."""
+    if staff_rows is None or dept_rows is None:
+        return None
+    by_tm = OrderedDict()
+    for s in staff_rows:
+        by_tm.setdefault((s["ym"], s["dept"]), []).append(s)
+    people, teams = OrderedDict(), OrderedDict()
+    for m, table in pl_month_tables:
+        if m[:4] != ym[:4] or m > ym:
+            continue
+        T = build(table, dept_rows, m, False)
+        if T is None:
+            continue
+        allocate(T, basis)
+        for r in T["rows"]:
+            if r["kind"] != "team":
+                continue
+            staff = by_tm.get((m, r["label"]), [])
+            total = _add(*[s["salary"] for s in staff]) if staff else 0
+            ok = r["alloc"] is not None and total is not None and total == r["salary"] and total > 0
+            t = teams.setdefault(r["label"], {"cur": None, "ytd": 0})
+            t["ytd"] = _add(t["ytd"], r["alloc"])
+            if m == ym:
+                t["cur"] = r["alloc"]
+            for s in staff:
+                p = people.setdefault((r["label"], s["name"]), {"team": r["label"], "name": s["name"], "salary": None,
+                                                                "share": None, "salary_ytd": 0, "share_ytd": 0, "months": 0})
+                share = r["alloc"] * s["salary"] / total if ok else None
+                p["salary_ytd"] = _add(p["salary_ytd"], s["salary"])
+                p["share_ytd"] = _add(p["share_ytd"], share)
+                p["months"] += 1
+                if m == ym:
+                    p["salary"], p["share"] = s["salary"], share
+    order = list(teams)
+    return {"people": sorted(people.values(), key=lambda p: (order.index(p["team"]), -(p["salary_ytd"] or 0), p["name"])),
+            "teams": teams}
