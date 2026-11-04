@@ -288,7 +288,7 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 .c-ok{background:#e7f3ec;color:var(--in)}.c-over{background:#fbe9e7;color:var(--out)}.c-q{background:#fff3d6;color:var(--warn)}.c-n{background:var(--soft);color:var(--sub)}
 .keys{font-size:11.5px;color:var(--sub);display:flex;gap:12px;flex-wrap:wrap}.keys i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:3px}
 .ptot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:2px solid var(--ink);padding-top:8px;margin-top:4px;font-size:12px}
-.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
+.exprow{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr;gap:2px 10px;align-items:center;margin:0 0 8px;padding:6px 12px}.exprow .exp-b{grid-column:1/-1;border-top:1px solid var(--line);padding-top:3px;font-size:11px;color:var(--sub)}.exprow .exp-b+.exp-b{border-top:0;padding-top:0}.exprow .lab{white-space:nowrap}.exp-h b{display:block;font-size:13.5px;color:var(--accent)}.exp-h span{font-size:10.5px;color:var(--sub)}.exprow .big{font-size:18px}.exprow .big small{font-size:11px;font-weight:400;color:var(--sub)}.four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
 small.nin{display:block;color:var(--in);font-size:10.5px}
 .xbox{background:#fff8e6;border:1px solid #f0dca8;border-radius:10px;padding:10px 16px}
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
@@ -296,12 +296,12 @@ table.pt.ayt{font-size:9.5px;table-layout:auto}table.pt.ayt th,table.pt.ayt td{p
 table.pt.ayt td:first-child{white-space:nowrap;max-width:96px;overflow:hidden;text-overflow:ellipsis}table.pt.ayt .fut{background:#f6f7f9}
 table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);padding-top:5px}table.pt.ayt tr.sub td{font-weight:700;border-top:1px solid var(--line)}
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
-@media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
+@media screen and (max-width:820px){.four,.exprow{grid-template-columns:1fr 1fr}.exprow .lab{white-space:normal}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
 @media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.pt.wo td{padding:2px 6px}.sec.brk table.pt.wo{font-size:11.5px}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 @media print{.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
-@media print{.wrap.mon{zoom:.95}.fs:not(.mon) svg{max-height:300px}.fs.mon svg{max-height:220px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:2px 3px}.fs.mon table.pt.tg td,.fs.mon table.pt.tg th{padding:3px 5px}.fs.mon .four .card{padding:6px 12px}.fs.mon .four .big{font-size:18px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
+@media print{.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 2px}.fs.mon table.pt.tg{font-size:12.5px}.fs.mon table.pt.tg td,.fs.mon table.pt.tg th{padding:5px 6px}.fs.mon .sec.pgb{break-before:page}.fs:not(.mon) svg{max-height:300px}.fs.mon svg{max-height:300px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
@@ -1117,9 +1117,9 @@ def _team_table(R, part="month", mode="mgmt"):
     if Y is not None:
         _dep_into(R, Y, True)
         _tax_into(Y, ym)
-        out = [_ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
+        out = [_expected_strip(R, mode, Y), _ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
     else:
-        out = ["<div class='card brk'>"]
+        out = [_expected_strip(R, mode), "<div class='card brk'>"]
     if Y is not None:   # 누적은 줄인 표: 팀 · 본부 합계 · 회사 · 세전 이익. 공통비 나눈 뒤는 달마다 나눠 더한 값
         allocate(Y, basis)
         per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
@@ -1315,6 +1315,55 @@ def _ytd_strip(Y, ym):
     return "<div class='four%s'>%s</div>" % ("" if len(cards) == 4 else " c3", "".join(
         "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
         % (esc(a), b, f) for a, b, f in cards))
+
+
+def _ytd_revenue(R):
+    src = R["s4"]["sources"].get("WEHAGO")
+    co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
+    y = co[0]["ytd"] if co else None
+    return y.get("revenue") if y else None
+
+
+def _expected_strip(R, mode="ceo", Y=None):
+    """앞으로 들어올 매출 한 줄 칸 (사용자 2026-11-04: ⑥ 맨 위, 표가 아니라 큰 숫자 칸).
+
+    앞으로 들어올 매출 = 누적 매출 외에 더 들어올 매출 = 사전견적 − 발행 계산서(공급가액, 프로젝트마다 0 밑은 0):
+    행사 끝남(⑤ '행사 후 세금계산서 미발행'과 같은 수) + 올해 남은 행사. 다음 해 이후 행사는 내년 보고로.
+    누적 매출 + 앞으로 들어올 매출 = 올해 매출 예상. 팀별 금액은 E['by_team'] (경영관리용 근거용)."""
+    E = R["s5"].get("expected")
+    y = R["asof"].year
+    head = ("<div class='exp-h'><b>앞으로 들어올 매출</b><span>인트라넷 예상 매출(사전견적) 기준 · %d년 이후 행사 제외</span></div>"
+            % (y + 1))
+    if not E or E["missing"]:
+        return "<div class='card exprow'>%s<div class='exp-c'>%s</div></div>" % (head, esc("계산서 자료가 없어 판단 불가"))
+    if not E["est_n"]:
+        return "<div class='card exprow'>%s<div class='exp-c'>%s</div></div>" % (head, esc("인트라넷 예상 매출(사전견적) 자료 없음"))
+    ymt = _ym_text(R["s4"]["ym"])
+    rev = _ytd_revenue(R)
+    add = E["past"] + E["this_year"]
+    total = None if rev is None else rev + add
+
+    def cell(lab, val, sub=""):
+        return ("<div class='exp-c'><div class='lab'>%s</div><div class='big'>%s%s</div></div>"
+                % (esc(lab), val, " <small>%s</small>" % esc(sub) if sub else ""))
+    top = [cell("1월~%s 누적 매출" % ymt, W(rev, "확인 필요")),
+           cell("+ 앞으로 들어올 매출", W(add), "%d건" % (E["past_n"] + E["this_year_n"])),
+           cell("= %d년 매출 예상" % y, W(total, "확인 필요"))]
+    bot = "앞으로 들어올 매출 = 사전견적 − 이미 발행한 계산서 · 행사 끝남(미발행) %s (%d건) + %d년 남은 행사 %s (%d건)" % (
+        won(E["past"]), E["past_n"], y, won(E["this_year"]), E["this_year_n"])
+    h = "<div class='card exprow'>%s%s<div class='exp-b'>%s</div>" % (head, "".join(top), esc(bot))
+    left = []
+    if E["no_date_n"]:
+        left.append("행사일 없는 %d건" % E["no_date_n"])
+    if E["unknown_n"]:
+        left.append("발행금액 미확인 %d건" % E["unknown_n"])
+    if E["later_n"]:
+        left.append("%d년 이후 행사 %d건은 내년 보고에" % (y + 1, E["later_n"]))
+    if left:
+        h += "<div class='exp-b'>%s</div>" % esc("금액에서 뺀 것: " + " · ".join(left))
+    h += "</div>"
+    return h + _mg(mode, "<div class='note'>%s</div>" % esc(
+        "사전견적·발행 모두 공급가액, 프로젝트마다 0 밑은 0. 누적 매출은 회사 전체(프로젝트에 안 붙은 매출 포함)"))
 
 
 def _team_notes(R, basis, dept, last, ym):
@@ -1540,7 +1589,7 @@ def _first_screen(R, mode, per):
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
-        # 1쪽 자금(흐름·앞으로·세금·지난 미처리) · 2쪽 실적 · 3쪽 계정과목별 연간표 (실제 계정 49개면 표가 거의 한 쪽)
+        # 1쪽 자금(흐름·앞으로·세금·지난 미처리) · 2쪽~ 실적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + [("부가세·원천세 (분기·반기별)", _regular_box(R))] + past
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode)),
                      ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode))]
@@ -1551,12 +1600,16 @@ def _first_screen(R, mode, per):
                    ("%s 실적" % ymt, _results(R, cum=True) + over)] + funds)
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
-    if not monthly:
-        h.append(_top_strip(R))
+    h.append(_mon_strip(R) if monthly else _top_strip(R))
     for i, (title, body) in enumerate(blocks):
         # 주간 ① 출금 목록은 길면 쪽을 넘어 이어진다 (사용자 2026-11-04: 통째로 다음 쪽에 밀려 1쪽이 비던 것)
         cls = "sec brk" if (not monthly and i == 0) else "sec"
-        h.append("<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body))
+        if monthly and i == 5:
+            cls += " pgb"   # 월간 ⑥ 누적 실적은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
+        sec = "<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body)
+        if monthly and i == 6:
+            sec = _mg(mode, sec)   # 계정과목별 사용 금액은 경영관리용에만 (사용자 2026-11-04: 대표 보고에서 없앰)
+        h.append(sec)
     h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.</div>")
     n = len(blocks)
     h.append(_mg(mode, _evidence(R, n) + "<div class='sec'>%s%s</div><div class='sec'>%s%s</div>" % (
@@ -1590,18 +1643,61 @@ def _top_strip(R):
               "%d건%s" % (len(pay["rows"]), " · 금액 미확인 %d건 별도" % pay["unknown_n"] if pay["unknown_n"] else "")),
              ("이번 주 가용자금", av(ps[0]), "출금일 출금 뒤 · 최저 잔액일 %s" % low_day(ps[0])),
              ("%s까지 가용자금" % ps[-1]["label"], av(ps[-1]), "%s까지 · 최저 잔액일 %s" % (_md(ps[-1]["end"]), low_day(ps[-1])))]
-    if s5["in_missing"]:
-        cells.append(("입금일 지난 미수금", _na("계산서 자료 없음"), ""))
-    elif not s5["overdue"]:
-        cells.append(("입금일 지난 미수금", "없음", ""))
-    else:
-        top = max(s5["overdue"], key=lambda v: v["outstanding"] or 0)
-        cells.append(("입금일 지난 미수금", "<span class='neg'>%s</span>" % esc(won(s5["overdue_total"])),
-                      "%d건 · 가장 큰 건 %s %s (%d일 지남)" % (len(s5["overdue"]), top["client"] or "", won(top["outstanding"]),
-                                                       top["overdue_days"])))
+    cells.append(_overdue_cell(s5))
+    return _strip(cells)
+
+
+def _strip(cells):
     return "<div class='four top'>%s</div>" % "".join(
         "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
         % (esc(a), b, esc(c)) for a, b, c in cells)
+
+
+def _overdue_cell(s5):
+    if s5["in_missing"]:
+        return ("입금일 지난 미수금", _na("계산서 자료 없음"), "")
+    if not s5["overdue"]:
+        return ("입금일 지난 미수금", "없음", "")
+    top = max(s5["overdue"], key=lambda v: v["outstanding"] or 0)
+    return ("입금일 지난 미수금", "<span class='neg'>%s</span>" % esc(won(s5["overdue_total"])),
+            "%d건 · 가장 큰 건 %s %s (%d일 지남)" % (len(s5["overdue"]), top["client"] or "", won(top["outstanding"]),
+                                             top["overdue_days"]))
+
+
+def _mon_strip(R):
+    """월간 첫 줄 '한눈에' (사용자 2026-11-04: 월간 쪽 디자인 다시): 월말 잔액 · 앞으로 가용자금 · 이번 달 영업이익 · 입금일 지난 미수금.
+    값은 아래 절과 같은 숫자를 옮긴다 (따로 계산하지 않음)."""
+    s1, s5 = R["s1"], R["s5"]
+    ym = _ym_text(R["s4"]["ym"])
+    ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
+    cells = [("%s말 통장 잔액" % ym, W(s1["end"]), "이번 달 입금 %s · 지급 %s" % (won(s1["in"]), won(s1["out"])))]
+    if ps:
+        a = ps[-1]["all"]["avail"]
+        d0 = ps[-1]["all"]["low_date"]
+        cells.append(("%s까지 가용자금" % ps[-1]["label"], _na("확인 필요") if a is None else
+                      "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a))),
+                      "최저 잔액일 %s · 최소 보유현금 뺀 금액" % ("-" if d0 is None else _md(d0))))
+    rev, np_ = _month_rev_np(R)
+    cells.append(("%s 영업이익" % ym, W(np_, "확인 필요"), "매출 %s · 이익률 %s" % (won(rev) if rev is not None else "-", pct(np_, rev))))
+    cells.append(_overdue_cell(s5))
+    return _strip(cells)
+
+
+def _month_rev_np(R):
+    """이번 달 회사 매출과 영업이익 (⑤ 실적 칸과 같은 값: 팀 표 회사 영업이익이 있으면 그것)."""
+    s4 = R["s4"]
+    src = s4["sources"].get("WEHAGO")
+    co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
+    if not co or not co[0]["cur"]:
+        return None, None
+    c = co[0]["cur"]
+    np_ = c["np"]
+    if s4.get("dept") is not None:
+        from .teamprofit import build as _tp_build
+        T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
+        if T is not None and T["company"]["net"] is not None:
+            np_ = T["company"]["net"]
+    return c["revenue"], np_
 
 
 def _kpi(label, value, sub, unit=True, cls=""):

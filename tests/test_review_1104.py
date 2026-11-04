@@ -82,7 +82,7 @@ class TestCeoWordingAndTopStrip(unittest.TestCase):
         self.assertIn("<span class='ev'>근거 1-1~1-3</span>", self.ceo)
 
     def test_monthly_tables(self):
-        M = render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo")
+        M = render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "mgmt")   # ⑦ 계정표는 경영관리용에만 (2026-11-04)
         self.assertIn("<th>다음 출금일</th><th>다음 출금액</th>", M)
         ay = M[M.index("class='pt ayt'"):]
         ay = ay[:ay.index("</thead>")]

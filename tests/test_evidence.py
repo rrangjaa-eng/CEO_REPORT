@@ -54,7 +54,8 @@ class TestCeoHasNoBudgetNoDecisions(unittest.TestCase):
                 self.assertNotIn("판단할 것", ceo)
                 self.assertIn("판단할 것 (경영관리용)", mgmt)
                 for n, _, _ in evidence_index(R):
-                    self.assertIn(n, ev_tags(ceo))
+                    if not (kind == "monthly" and n.startswith("7-")):   # ⑦ 계정표는 경영관리용에만 (2026-11-04)
+                        self.assertIn(n, ev_tags(ceo))
                     self.assertIn(n, ev_tags(mgmt))
                     self.assertIn("<td><b>근거 %s</b></td>" % n, mgmt)
                     self.assertNotIn("<td><b>근거 %s</b></td>" % n, ceo)

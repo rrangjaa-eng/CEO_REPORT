@@ -455,14 +455,19 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         self.assertIn("+ 영업외 수익 (경영관리 2,000,000)", part_month)
         self.assertNotIn("<td>경영관리", part_month)
 
-    def test_monthly_prints_at_95_percent_and_weekly_does_not(self):
-        """월간은 인쇄 때 95%. 작은 계정 묶기·법인세 한 줄 등으로 줄여 A4 3쪽에 맞춘다 (사용자 2026-11-04: 글자 키우고 3쪽)."""
+    def test_monthly_prints_at_full_size_on_three_themed_pages(self):
+        """월간은 주간과 같은 100% (사용자 2026-11-04: ⑦ 계정표를 대표용에서 빼고 쪽 디자인 다시).
+        1쪽 한눈에·자금(①②) · 2쪽 ③④⑤ · 3쪽 ⑥(누적 큰 숫자 · 앞으로 들어올 매출 · 누적·목표) 통째로."""
         S = load(os.path.join(ROOT, "입력양식", "샘플"))
         mon = render(compute(S, "monthly", dt.date(2026, 10, 31)), "ceo")
         wk = render(compute(S, "weekly", dt.date(2026, 10, 31)), "ceo")
         self.assertIn("<div class='wrap mon'>", mon)
         self.assertIn("<div class='wrap'>", wk)
-        self.assertIn(".wrap.mon{zoom:.95}", mon)
+        self.assertNotIn("zoom:.95", mon)
+        # ⑥ 누적 실적(앞으로 들어올 매출 포함)은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
+        self.assertIn(".fs.mon .sec.pgb{break-before:page}", mon)
+        self.assertEqual(mon.count("<div class='sec pgb'><div class='q'>⑥"), 1)
+        self.assertIn("10월말 통장 잔액", mon)   # 1쪽 맨 위 한눈에 칸
         # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
         self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)
 
@@ -489,7 +494,9 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 # 주간 ① 출금 목록만 쪽을 넘어 이어질 수 있다 (사용자 2026-11-04: 길면 통째로 밀려 1쪽이 비던 것)
                 brk = html.count("<div class='sec brk'><div class='q'>")
                 self.assertEqual(brk, 1 if kind == "weekly" else 0)
-                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk)
+                pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ⑥: 새 쪽에서 통째로
+                self.assertEqual(pgb, 0 if kind == "weekly" else 1)
+                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
                 self.assertEqual(html.count("break-inside:auto"), 1)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)

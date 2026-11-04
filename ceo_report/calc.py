@@ -404,6 +404,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "overdue_total": overdue_tot,
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
         "event_unissued": event_unissued(inv_proj, asof, in_missing),
+        "expected": expected_revenue(inv_proj, asof, in_missing),
     }
 
     # ───────────── 2. 앞으로의 입금·지급 일정 ─────────────
@@ -845,6 +846,48 @@ def event_unissued(inv_proj, asof, in_missing):
     rows.sort(key=lambda y: (-y["days"], y["P"]["id"]))
     return {"rows": rows, "unknown": unknown, "missing": bool(in_missing),
             "total": None if in_missing else sum(y["unissued"] for y in rows)}
+
+
+def expected_revenue(inv_proj, asof, in_missing):
+    """인트라넷 사전견적(예상 매출) 중 아직 계산서가 안 나간 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
+
+    남은 예상 매출 = 사전견적(공급가액) − 발행 공급가액, 0 밑은 0. 묶음: 행사 끝남(= 행사 끝난 뒤 미발행과 같은 수),
+    올해 남은 행사, 다음 해 이후. 사전견적이 있는 프로젝트만 센다. 행사일·발행금액을 모르면 금액에 넣지 않고 건수로만."""
+    groups = {"past": [0, 0], "this_year": [0, 0], "later": [0, 0]}
+    est_total = est_n = 0
+    no_date = unknown_issued = year_est = year_n = 0
+    by_team = {}
+    for x in inv_proj:
+        P = x["P"]
+        if P.get("estimate") is None:
+            continue
+        est_total += P["estimate"]
+        est_n += 1
+        ev = _event_date(P.get("event_date"))
+        if ev is None:
+            no_date += 1
+            continue
+        if ev.year == asof.year:   # 올해 행사의 예상 매출 합계: 누적 매출과 견줘 보인다 (사용자 2026-11-04)
+            year_est += P["estimate"]
+            year_n += 1
+        if in_missing or x["issued"] is None:
+            unknown_issued += 1
+            continue
+        left = P["estimate"] - x["issued"]
+        if left <= 0:
+            continue
+        g = "past" if ev < asof else ("this_year" if ev.year == asof.year else "later")
+        groups[g][0] += left
+        groups[g][1] += 1
+        if g != "later":   # 팀별 (누적 매출 표와 견주기, 사용자 2026-11-04)
+            t = by_team.setdefault((P.get("team") or "").strip(), {"past": 0, "this_year": 0, "n": 0})
+            t[g] += left
+            t["n"] += 1
+    return {"missing": bool(in_missing), "est_total": est_total, "est_n": est_n,
+            "past": groups["past"][0], "past_n": groups["past"][1],
+            "this_year": groups["this_year"][0], "this_year_n": groups["this_year"][1],
+            "later": groups["later"][0], "later_n": groups["later"][1],
+            "no_date_n": no_date, "unknown_n": unknown_issued, "year_est": year_est, "year_n": year_n, "by_team": by_team}
 
 
 def _net_credits(invs):

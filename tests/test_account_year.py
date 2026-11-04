@@ -62,10 +62,11 @@ class TestMonthlyPage(unittest.TestCase):
     def test_monthly_reports_have_the_table_and_weekly_does_not(self):
         d = load(SAMPLE)
         M = compute(d, "monthly", dt.date(2026, 10, 31))
-        for mode in ("ceo", "mgmt"):
-            html = render(M, mode)
-            self.assertIn("계정과목별 사용 금액 (2026년 1월~10월)", html)
-            self.assertIn("판매비와관리비 소계", html)
+        html = render(M, "mgmt")
+        self.assertIn("계정과목별 사용 금액 (2026년 1월~10월)", html)
+        self.assertIn("판매비와관리비 소계", html)
+        # 대표용 월간에서는 뺐다 (사용자 2026-11-04: 계정과목별 사용 금액도 대표 보고에서 없애)
+        self.assertNotIn("계정과목별 사용 금액", render(M, "ceo"))
         W = compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31))
         self.assertNotIn("계정과목별 사용 금액", render(W, "ceo"))
 
