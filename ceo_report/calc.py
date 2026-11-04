@@ -439,7 +439,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 돈의 기준은 위하고 분개장·자금계획서. 빼는 줄은 R["intranet_only"] 에 건수·합계로 남겨 비교로만 보인다.
     skipped_requests, skipped_budget = [], []
     for e in d.execs:
-        if from_intranet(e) and not INTRANET_IN_FUNDS:
+        # 요청미지급 줄(인트라넷 요청, 또는 장부 원가에 요청을 붙인 줄)의 지급은 위하고 자금계획서·장부채무가 잡는다
+        # (실제 자료 2026-11-04: 같은 미지급이 자금계획서와 겹쳐 11월 출금이 0.8억 커짐). 예상총집행에는 위에서 그대로 들어간다.
+        if e["state"] == "요청미지급" and not INTRANET_IN_FUNDS:
             skipped_requests.append(None if e["supply"] is None else e["supply"] + (e["vat"] or 0))
             continue
         if e["state"] in ("요청미지급", "집행계획미요청"):

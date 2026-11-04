@@ -40,12 +40,13 @@ class TestCompareOnly(unittest.TestCase):
 
     def test_no_intranet_lines_in_the_schedule(self):
         R = self.run_with(False)
-        self.assertEqual([e for e in R["events"] if is_intranet(e)], [])
+        self.assertEqual([e for e in R["events"] if e.get("cat") == "프로젝트 지급요청"], [])
         self.assertTrue([e for e in R["events"] if e.get("cat") == "프로젝트 집행계획"])   # 손으로 넣은 계획은 남음
 
     def test_skipped_lines_are_counted_for_comparison(self):
         on, off = self.run_with(True), self.run_with(False)
-        n_req = sum(1 for e in on["events"] if is_intranet(e))
+        # 일정에서 빠지는 줄 = 요청미지급 전부 (지급은 자금계획서가 잡음)
+        n_req = sum(1 for e in on["events"] if e.get("cat") == "프로젝트 지급요청")
         budget = sum(e["amount"] or 0 for e in on["events"] if e["source"] == "남은 예산")
         self.assertGreater(n_req, 0)
         self.assertEqual(off["intranet_only"]["requests"][0], n_req)
