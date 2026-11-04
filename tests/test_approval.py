@@ -1217,6 +1217,7 @@ def load_report_cli():
         spec = importlib.util.spec_from_file_location("report_cli", os.path.join(ROOT, "보고서.py"))
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
+        m.PDF_WAIT = 0.5  # 시험: PDF 가 안 생기는 경우를 오래 기다리지 않게
         _REPORT_CLI = m
     return _REPORT_CLI
 

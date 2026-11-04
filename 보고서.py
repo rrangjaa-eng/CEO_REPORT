@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -77,6 +78,32 @@ def _is_windows():
     return os.name == "nt"
 
 
+PDF_WAIT = 20  # 초. Windows Edge 는 명령이 먼저 끝나고 PDF 는 조금 뒤에 써지는 일이 있다 (사용자 PC 2026-11-04: 1~3초 뒤 생김)
+
+
+def _pdf_ready(pdf_path):
+    """끝까지 써진 PDF 인가 (%EOF 로 끝남)."""
+    try:
+        if os.path.getsize(pdf_path) <= 0:
+            return False
+        with open(pdf_path, "rb") as f:
+            f.seek(max(0, os.path.getsize(pdf_path) - 1024))
+            return b"%EOF" in f.read()
+    except OSError:
+        return False
+
+
+def _wait_pdf(pdf_path, limit=None):
+    """브라우저가 끝난 뒤에도 PDF 가 다 써질 때까지 잠깐 기다린다."""
+    end = time.time() + (PDF_WAIT if limit is None else limit)
+    while True:
+        if _pdf_ready(pdf_path):
+            return True
+        if time.time() >= end:
+            return False
+        time.sleep(0.3)
+
+
 def to_pdf(browser, html_path, pdf_path):
     # 이전 실행의 PDF가 남아 있으면 새로 만든 것으로 착각하므로 먼저 지운다.
     # Windows에서 PDF 뷰어가 열려 있으면 지울 수 없다.
@@ -101,9 +128,11 @@ def to_pdf(browser, html_path, pdf_path):
         return "PDF 실패: 브라우저가 %d초 안에 끝나지 않음" % PDF_TIMEOUT
     except Exception as e:  # noqa: BLE001  명령 줄(임시 프로필 경로)은 보이지 않는다
         return "PDF 실패: 브라우저를 실행하지 못함 (%s)" % (getattr(e, "strerror", None) or type(e).__name__)
+    else:
+        _wait_pdf(pdf_path)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
-    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+    if _pdf_ready(pdf_path):
         return None
     if os.path.exists(pdf_path):  # 0바이트 파일은 성공이 아니다
         try:

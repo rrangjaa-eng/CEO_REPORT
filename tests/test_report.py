@@ -123,6 +123,7 @@ def load_cli():
         spec = importlib.util.spec_from_file_location("report_cli", os.path.join(ROOT, "보고서.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        mod.PDF_WAIT = 0.5  # 시험: PDF 가 안 생기는 경우를 오래 기다리지 않게
         _CLI = mod
     return _CLI
 
@@ -1396,9 +1397,34 @@ class TestPdfLaunch(unittest.TestCase):
                     calls[-1] += (os.path.isdir(arg.split("=", 1)[1]),)
                 if arg.startswith("--print-to-pdf="):
                     with open(arg.split("=", 1)[1], "wb") as f:
-                        f.write(b"%PDF-" if size else b"")
+                        f.write(b"%PDF-1.4\n%%EOF\n" if size else b"")
             return None
         return run
+
+    def test_pdf_written_after_browser_returns_is_success(self):
+        """사용자 PC 2026-11-04: Edge 명령이 먼저 끝나고 PDF 는 1~3초 뒤에 써짐 → 실패로 적으면 안 됨."""
+        import threading
+        html_path, pdf_path = self.make_html()
+
+        def late(cmd, **kwargs):
+            def write():
+                with open(pdf_path, "wb") as f:
+                    f.write(b"%PDF-1.4\n%%EOF\n")
+            threading.Timer(0.3, write).start()
+            return None
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=late), \
+                mock.patch.object(self.cli, "PDF_WAIT", 5):
+            self.assertIsNone(self.cli.to_pdf("b", html_path, pdf_path))
+
+    def test_half_written_pdf_is_not_success(self):
+        html_path, pdf_path = self.make_html()
+
+        def half(cmd, **kwargs):
+            with open(pdf_path, "wb") as f:
+                f.write(b"%PDF-1.4\n1 0 obj")
+            return None
+        with mock.patch.object(self.cli.subprocess, "run", side_effect=half):
+            self.assertIsNotNone(self.cli.to_pdf("b", html_path, pdf_path))
 
     def test_dedicated_profile_dir_used_and_removed(self):
         html_path, pdf_path = self.make_html()

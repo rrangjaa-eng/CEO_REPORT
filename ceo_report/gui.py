@@ -1,6 +1,6 @@
 """대표 보고 프로그램 창 (사용자 2026-11-03: 실행 파일 여러 개 말고 창 하나에서 버튼·입력으로 결과가 나오게).
 
-일은 app.py 가 하고, 여기서는 칸과 버튼만 놓는다. 작업은 따로 도는 스레드에서 하고 글은 아래 진행 칸에 보인다.
+일은 app.py 가 하고, 여기서는 칸과 버튼만 놓는다. 작업은 따로 도는 스레드에서 하고 글은 오른쪽 진행 칸에 보인다.
 비밀번호 칸은 가려서 보이고, 작업이 끝나면 비운다. 비밀번호는 파일·글에 남기지 않는다.
 """
 import datetime as dt
@@ -37,7 +37,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(860, 1040)
+        root.minsize(1340, 800)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -46,8 +46,13 @@ class Window(object):
         style.configure("Big.TButton", font=("Malgun Gothic", 11, "bold"), padding=(14, 8))
         style.configure("Sec.TLabelframe.Label", font=("Malgun Gothic", 10, "bold"))
 
-        outer = ttk.Frame(root, padding=14)
-        outer.pack(fill="both", expand=True)
+        # 사용자 2026-11-04: 진행 상황이 잘 안 보임 → 왼쪽은 칸·버튼, 오른쪽은 진행 상황을 창 높이만큼 길게
+        main = ttk.Frame(root, padding=14)
+        main.pack(fill="both", expand=True)
+        outer = ttk.Frame(main)
+        outer.pack(side="left", fill="y", anchor="n")
+        side = ttk.Frame(main, padding=(14, 0, 0, 0))
+        side.pack(side="left", fill="both", expand=True)
         ttk.Label(outer, text=TITLE, style="H.TLabel").pack(anchor="w")
         ttk.Label(outer, text="프로그램 폴더: %s" % self.paths.root, style="S.TLabel").pack(anchor="w", pady=(0, 8))
 
@@ -166,7 +171,7 @@ class Window(object):
         self._btn(f6, "이체 파일 만들기", self.make_transfer)
 
         # ⑦ 출금 상세 내역 (사용자 2026-11-03: 금요일 출금 목록에 무엇에 쓰는 돈인지)
-        f7 = ttk.LabelFrame(outer, text="⑦ 출금 상세 내역 — 같은 거래처·금액의 금요일 출금 줄에 붙음 (내용을 비우고 저장하면 지움)",
+        f7 = ttk.LabelFrame(outer, text="⑦ 출금 상세 내역 — 같은 거래처·금액의 출금 목록 줄에 붙음 (내용을 비우고 저장하면 지움)",
                             style="Sec.TLabelframe", padding=8)
         f7.pack(fill="x", pady=4)
         self.d_vendor, self.d_amt, self.d_text = tk.StringVar(), tk.StringVar(), tk.StringVar()
@@ -206,16 +211,17 @@ class Window(object):
         self._btn(f9, "저장", self.save_dep)
 
         # 진행
-        ttk.Label(outer, text="진행 상황").pack(anchor="w", pady=(8, 2))
-        box = ttk.Frame(outer)
+        ttk.Label(side, text="진행 상황", style="Sec.TLabelframe.Label").pack(anchor="w", pady=(0, 2))
+        self.status = tk.StringVar(value="준비됨")
+        ttk.Label(side, textvariable=self.status, style="S.TLabel").pack(anchor="w", pady=(0, 4))
+        box = ttk.Frame(side)
         box.pack(fill="both", expand=True)
-        self.log = tk.Text(box, height=14, wrap="word", font=("Malgun Gothic", 9), state="disabled", background="#f7f8fa")
+        self.log = tk.Text(box, width=56, height=30, wrap="word", font=("Malgun Gothic", 10), state="disabled",
+                           background="#f7f8fa")
         bar = ttk.Scrollbar(box, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         self.log.pack(side="left", fill="both", expand=True)
         bar.pack(side="right", fill="y")
-        self.status = tk.StringVar(value="준비됨")
-        ttk.Label(outer, textvariable=self.status, style="S.TLabel").pack(anchor="w", pady=(4, 0))
         root.after(100, self.pump)
 
     def _btn(self, parent, text, cmd, big=False):
@@ -358,7 +364,7 @@ class Window(object):
         except (ValueError, OSError) as e:
             self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
-        self.say("출금 상세 내역 저장 (%s %s원) — 전체 %d줄. 다음 보고서부터 금요일 출금 목록에 보입니다"
+        self.say("출금 상세 내역 저장 (%s %s원) — 전체 %d줄. 다음 보고서부터 출금 목록에 보입니다"
                  % (self.d_vendor.get().strip(), self.d_amt.get().strip(), n))
         self.d_text.set("")
 
