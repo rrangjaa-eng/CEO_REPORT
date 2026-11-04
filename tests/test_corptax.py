@@ -132,11 +132,16 @@ class TestReport(unittest.TestCase):
         R = compute(load(os.path.join(os.path.dirname(HERE), "입력양식", "샘플")), "monthly", dt.date(2026, 10, 31))
         for ed in ("ceo", "mgmt"):
             h = render(R, ed)
-            self.assertIn("법인세 예상 (1월~10월 누적 세전 이익 기준)", h)
             self.assertNotIn("영업외 수익 뺀 세전 이익 기준", h)   # 사용자 2026-11-04: 최종 세전 이익 기준만
-            row = h.split("<table class='pt tx'>")[1].split("</table>")[0]
-            for v in ("135,000,000", "13,500,000", "4,000,000", "9,500,000", "1,350,000", "10,850,000"):
-                self.assertIn(v, row)
+            # 두 판 모두 한 줄 (월간 3쪽, 사용자 2026-11-04), 표는 경영관리용에만
+            self.assertIn("법인세 예상 13,500,000 + 지방소득세 1,350,000 − 중간예납 등 기납부 4,000,000 = 납부 10,850,000 (2027-03-31 예상)", h)
+            if ed == "mgmt":
+                self.assertIn("법인세 예상 (1월~10월 누적 세전 이익 기준)", h)
+                row = h.split("<table class='pt tx'>")[1].split("</table>")[0]
+                for v in ("135,000,000", "13,500,000", "4,000,000", "9,500,000", "1,350,000", "10,850,000"):
+                    self.assertIn(v, row)
+            else:
+                self.assertNotIn("<table class='pt tx'>", h)
             self.assertIn("− 감가상각비 (예상, 작년 연간 12,000,000)", h)
         ev = [(e["date"], e["amount"]) for e in R["events"] if e["cat"].startswith("법인")]
         self.assertEqual(ev, [(dt.date(2027, 3, 31), 9_500_000), (dt.date(2027, 4, 30), 1_350_000)])   # 지급 예상에 들어감

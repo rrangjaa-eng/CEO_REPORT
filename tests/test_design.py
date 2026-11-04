@@ -455,16 +455,27 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         self.assertIn("+ 영업외 수익 (경영관리 2,000,000)", part_month)
         self.assertNotIn("<td>경영관리", part_month)
 
-    def test_monthly_prints_at_80_percent_and_weekly_does_not(self):
-        """월간은 표가 넓어 인쇄 때 80%로 줄여 A4 3쪽에 맞춘다. 넘치는 표로 브라우저가 몰래 줄이던 것 대신 (사용자 2026-11-04)."""
+    def test_monthly_prints_at_95_percent_and_weekly_does_not(self):
+        """월간은 인쇄 때 95%. 작은 계정 묶기·법인세 한 줄 등으로 줄여 A4 3쪽에 맞춘다 (사용자 2026-11-04: 글자 키우고 3쪽)."""
         S = load(os.path.join(ROOT, "입력양식", "샘플"))
         mon = render(compute(S, "monthly", dt.date(2026, 10, 31)), "ceo")
         wk = render(compute(S, "weekly", dt.date(2026, 10, 31)), "ceo")
         self.assertIn("<div class='wrap mon'>", mon)
         self.assertIn("<div class='wrap'>", wk)
-        self.assertIn(".wrap.mon{zoom:.8}", mon)
+        self.assertIn(".wrap.mon{zoom:.95}", mon)
         # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
         self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)
+
+    def test_small_accounts_are_merged_into_other(self):
+        """⑦ 계정표: 묶음 소계의 1% 미만 계정이 2개 이상이면 '기타 (n개 계정)' 한 줄로 (사용자 2026-11-04: 월간 3쪽)."""
+        from ceo_report.render import _merge_small
+        acc = [{"name": "큰", "code": "1", "months": [900, 100], "total": 1000, "partial": False},
+               {"name": "작1", "code": "2", "months": [3, 2], "total": 5, "partial": False},
+               {"name": "작2", "code": "3", "months": [None, 4], "total": 4, "partial": True}]
+        out = _merge_small(acc, 1009, 2)
+        self.assertEqual([a["name"] for a in out], ["큰", "기타 (2개 계정)"])
+        self.assertEqual((out[1]["months"], out[1]["total"], out[1]["partial"]), ([None, 6], 9, True))
+        self.assertEqual(_merge_small(acc[:2], 1005, 2), acc[:2])   # 하나뿐이면 그대로
 
 
 
