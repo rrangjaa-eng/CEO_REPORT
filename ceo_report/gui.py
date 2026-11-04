@@ -447,6 +447,11 @@ def main(argv=None):
         sys.stderr = open(os.devnull, "w")
     if argv[:1] == ["--점검"]:
         return self_check(argv[1] if len(argv) > 1 else "점검결과.txt")
+    if argv[:1] == ["--정합성"]:   # 자료 정합성 점검 (사용자 2026-11-04): 입력 폴더는 바꾸지 않는다
+        from . import integrity
+        out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "정합성점검.txt")
+        day = dt.date.fromisoformat(argv[2]) if len(argv) > 2 else None
+        return integrity.run(app.program_dir(), out, day)
     root = tk.Tk()
     Window(root)
     root.mainloop()
