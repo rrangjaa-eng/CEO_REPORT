@@ -211,6 +211,14 @@ def key_numbers(temp_input, asof, res):
         put("월간 다음 달 가장 적을 때 잔액", lambda: first()["all"]["low"])
         put("월간 다음 달 가장 적은 날", lambda: first()["all"]["low_date"].isoformat())
         put("월간 다음 달 여유 자금", lambda: first()["all"]["avail"])
+        def by_source():
+            p0 = first()
+            agg = collections.Counter()
+            for ev in R["events"]:
+                if ev["io"] == "out" and ev["amount"] is not None and ev["date"] is not None and p0["from"] <= ev["date"] <= p0["end"]:
+                    agg["%s · %s" % (ev.get("source") or "-", ev.get("cat") or "-")] += ev["amount"]
+            return ", ".join("%s %s" % (k, _won(v)) for k, v in agg.most_common())
+        put("월간 다음 달 나갈 돈 출처별", by_source)
         put("월간 보고 기간 전체 가장 적을 때 잔액", lambda: s2["min"]["all"][0])
         put("월간 보고 기간 전체 가장 적은 날", lambda: s2["min"]["all"][1].isoformat())
         put("프로젝트 예상총집행", lambda: R["s3"]["total"]["expected"])
