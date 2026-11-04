@@ -49,7 +49,9 @@ def build(books, cfg):
     from . import wehago
     # 분개장에 전기이월 줄이 없으면 잔액은 '올해 늘고 준 금액'뿐이다 (실제 분개장 2026-11-04: 이월 줄 없음).
     # 미지급금·차입금은 작년 말 잔액만큼 더 클 수 있고, 마이너스는 작년 말 잔액을 올해 갚은 것이다.
-    opening = any(_is_opening(ln) for ln in books.journal)
+    # 작년 분개장을 함께 넣어 회사 처음(설립 자본금)부터 있으면 잔액은 실제 잔액이다 (2026-11-04 정합성 점검)
+    opening = any(_is_opening(ln) for ln in books.journal) or (
+        bool(books.journal) and wehago.journal_from_start(books.journal))
     kinds = [(PAYABLE, set(_sq(c) for c in cfg["payable_codes"])), (LOAN, set(_sq(c) for c in cfg["loan_codes"])),
              (DEPOSIT, set(_sq(c) for c in cfg["deposit_codes"]))]
     ref = books.book_date

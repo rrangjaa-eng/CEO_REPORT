@@ -879,6 +879,12 @@ def build_bank(books, cfg):
         why = "분개장에 보통예금(%s) 줄 없음" % ",".join(cfg["cash_codes"])
         return [Table(data.BOOK_BAL_FILE, data.BOOK_BAL_KEYS, [], written=False, reason=why),
                 Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], [], written=False, reason=why)]
+    if not getattr(books, "from_start", True):
+        # 작년 분개장이 빠지면 잔액이 '올해 증감'뿐이다: 머리글만 쓴다 (예전 파일이 남아 낡은 잔액을 쓰지 않게) → 보고서는 계좌잔액.csv
+        why = "작년 분개장 없음 (분개장 %s부터, 전기이월·설립 자본금 줄 없음) → 통장 잔액은 계좌잔액.csv 사용" % min(
+            ln["date"] for ln in lines).isoformat()
+        return [Table(data.BOOK_BAL_FILE, data.BOOK_BAL_KEYS, [], notes=[why]),
+                Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], [], notes=[why])]
     lines.sort(key=lambda ln: (ln["date"], str(ln.get("no") or "")))
     slips = collections.defaultdict(lambda: [False, False])
     for ln in lines:

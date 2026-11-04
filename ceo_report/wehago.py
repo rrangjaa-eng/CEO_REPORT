@@ -250,6 +250,8 @@ class Books:
         self.from_journal = False
         self.journal_sales = []
         self.notes = []   # 변환결과.txt 에 쓰는 장부 알림 (매입매출장 대조 등)
+        # 분개장이 회사 처음(자본금 납입) 또는 전기이월 줄부터 있는지 (2026-11-04 정합성 점검). False 면 통장·채무 잔액을 만들 수 없다
+        self.from_start = True
 
 
 _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
@@ -504,6 +506,26 @@ def _mtime(path):
         return 0
 
 
+OPENING_MEMO = ("전기이월", "기초잔액")
+CAPITAL_PREFIX = "331"   # 자본금
+
+
+def journal_from_start(journal):
+    """분개장이 잔액을 셀 수 있는 처음부터 있는가 (2026-11-04 정합성 점검).
+
+    WEHAGO 는 기수(연도)마다 분개장을 따로 주고, 다음 기수 분개장에는 전기이월 줄이 없다 (실제 2026 분개장).
+    그래서 올해 분개장만 있으면 통장 잔액이 '올해 늘고 준 금액'이 되어 실제와 크게 다르다 (실제 자료: −1.3억 대 3.6억).
+    처음부터라고 보는 경우: 전기이월·기초잔액 줄이 있거나, 첫 전표 달에 자본금(331xx) 대변(회사 설립 납입)이 있을 때."""
+    dated = [ln for ln in journal if ln.get("date") is not None]
+    if not dated:
+        return True
+    if any(w in _squash(ln.get("memo")) for ln in journal for w in OPENING_MEMO):
+        return True
+    first = min(ln["date"] for ln in dated)
+    return any(_squash(ln.get("account_code")).startswith(CAPITAL_PREFIX) and (ln.get("credit") or 0) > 0
+               and (ln["date"].year, ln["date"].month) == (first.year, first.month) for ln in dated)
+
+
 # ───────────── 분개장 매입·매출 전표 -> 계산서 단위 (D-57) ─────────────
 INVOICE_SORTS = {"매입전표": "매입", "매출전표": "매출"}
 VAT_IN_CODES = ("13500",)    # 부가세대급금
@@ -720,6 +742,14 @@ def load_books(folder, asof, stale_days):
                 books.reason = "장부 기준일 %s, 기준일보다 %d일 이전 (%s)" % (books.book_date.isoformat(), late, oldest)
             else:
                 books.state = "ok"
+    if "분개장" in staged:
+        books.from_start = journal_from_start(staged["분개장"])
+        if not books.from_start:
+            first = min((ln["date"] for ln in staged["분개장"] if ln["date"] is not None), default=None)
+            books.notes.insert(0, "[확인] 분개장이 %s부터라 작년 분개장이 빠졌음 (전기이월·설립 자본금 줄 없음) — 수집\\위하고 에 "
+                               "작년 분개장(예: 분개장_%d.xls)을 함께 넣으세요. 그 전까지 통장 잔액은 분개장으로 만들지 않고, "
+                               "미지급금·차입금·매출채권은 올해 늘고 준 금액만입니다"
+                               % (first.isoformat() if first else "날짜 모름", (first.year - 1) if first else 0))
     if books.state == "ok" and from_journal:
         books.journal, books.ledger, books.einvoice = staged["분개장"], derived[0], []
         books.journal_sales, books.from_journal = derived[1], True
