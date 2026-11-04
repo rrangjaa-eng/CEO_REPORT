@@ -147,6 +147,94 @@ def _report_checks(tmp, temp_input, asof, out):
                 out.append("  · " + ln[:200])
 
 
+KEYS_FILE = "정합성_기준값.json"   # 입력 폴더 (저장소에 올라가지 않음): 지난 점검의 핵심 숫자
+
+
+def _num_csv(path, col, where=None):
+    from .util import num
+    import csv
+    total = 0
+    with open(path, encoding="utf-8-sig") as f:
+        for r in csv.DictReader(f):
+            if where is None or where(r):
+                total += num(r.get(col)) or 0
+    return total
+
+
+def key_numbers(temp_input, asof, res):
+    """실제 자료의 핵심 숫자 (빌드마다 같은 자료로 비교해 프로그램이 숫자를 바꿨는지 본다, 사용자 2026-11-04 ⑤)."""
+    from . import calc, data
+    keys = collections.OrderedDict()
+
+    def put(name, fn):
+        try:
+            keys[name] = fn()
+        except Exception as e:   # 하나가 안 돼도 나머지는 센다
+            keys[name] = "판단 불가 (%s)" % type(e).__name__
+    p = lambda n: os.path.join(temp_input, n)
+
+    def bank():
+        import csv
+        with open(p("장부잔액.csv"), encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        last = max(r["기준일"] for r in rows)
+        return sum(int(r["잔액"] or 0) for r in rows if r["기준일"] == last)
+    put("통장 잔액 (분개장)", bank)
+    put("미지급금 잔액 (장부)", lambda: _num_csv(p("장부채무.csv"), "잔액", lambda r: r.get("구분") == "미지급금"))
+    put("계산서 미수 합계", lambda: _num_csv(p("계산서.csv"), "공급가액") + _num_csv(p("계산서.csv"), "부가세")
+        - _num_csv(p("계산서.csv"), "입금액"))
+    year = str(asof.year)
+    put("올해 매출 (손익 회사)", lambda: _num_csv(p("손익.csv"), "매출", lambda r: r.get("단위") == "회사" and r.get("연월", "").startswith(year)))
+    put("올해 직접비 (손익 회사)", lambda: _num_csv(p("손익.csv"), "직접비", lambda r: r.get("단위") == "회사" and r.get("연월", "").startswith(year)))
+    if res is not None and getattr(res, "links", None):
+        sm = res.links["costs"]["summary"]
+        linked = sum(sm[b]["count"] for b in ("수동", "코드", "자동"))
+        put("올해 원가 줄 연결률 (%)", lambda: round(100.0 * linked / max(1, linked + sm["미연결"]["count"]), 1))
+    month_end = asof.replace(day=1) - dt.timedelta(days=1)
+    R = None
+    try:
+        R = calc.compute(data.load(temp_input), "monthly", month_end)
+    except Exception as e:
+        keys["월간 계산"] = "판단 불가 (%s)" % type(e).__name__
+    if R is not None:
+        s2 = R["s2"]
+        put("월간 시작 가용자금", lambda: s2["start"])
+        put("월간 다음 달 가장 적을 때 잔액", lambda: s2["min"]["all"][0])
+        put("월간 다음 달 가장 적은 날", lambda: s2["min"]["all"][1].isoformat())
+        put("프로젝트 예상총집행", lambda: R["s3"]["total"]["expected"])
+        put("미지급금 예정>장부 거래처 수", lambda: len((R.get("debts") or {}).get("over", [])))
+        put("두 출처 출금 거래처 수", lambda: len(R.get("two_source") or []))
+        put("보고서 입력 확인 필요 건수", lambda: len(R["s7"]["issues"]))
+    return keys
+
+
+def compare_keys(app_dir, keys, out):
+    """지난 점검의 핵심 숫자와 비교해 바뀐 것만 적고, 이번 숫자를 저장한다 (입력 폴더)."""
+    import json
+    path = os.path.join(app_dir, "입력", KEYS_FILE)
+    old = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        pass
+    out.append("## 핵심 숫자 (지난 점검 %s 대비)" % (old.get("_시각") or "없음"))
+    prev = old.get("숫자", {})
+    changed = 0
+    for k, v in keys.items():
+        if k in prev and prev[k] != v:
+            changed += 1
+            out.append("- %s: %s → %s  ← 바뀜" % (k, _won(prev[k]), _won(v)))
+        else:
+            out.append("- %s: %s" % (k, _won(v)))
+    out.append("- 바뀐 숫자 %d개%s" % (changed, " (같은 자료인데 바뀌었으면 프로그램 변경 때문 — 이유 확인)" if changed else ""))
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"_시각": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "숫자": keys}, f, ensure_ascii=False, indent=1)
+    except OSError as e:
+        out.append("- 핵심 숫자를 저장하지 못함 (%s)" % type(e).__name__)
+
+
 def run(app_dir, out_path, asof=None):
     asof = asof or dt.date.today()
     now = dt.datetime.now()
@@ -172,6 +260,7 @@ def run(app_dir, out_path, asof=None):
         if os.path.isdir(os.path.join(tmp, "수집")) is False:
             os.makedirs(os.path.join(tmp, "수집"), exist_ok=True)
         _report_checks(tmp, temp_input, asof, out)
+        compare_keys(app_dir, key_numbers(temp_input, asof, res), out)
     except Exception as e:
         out.append("점검 오류 (%s): %s" % (type(e).__name__, str(e)[:300]))
         rc = 8
