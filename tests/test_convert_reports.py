@@ -376,5 +376,24 @@ class TestConvertedIgnored(unittest.TestCase):
         self.assertEqual(rc, 1)
 
 
+# ───── 인트라넷을 가용자금 일정에 넣던 규칙 (calc.INTRANET_IN_FUNDS=True) 으로 시험 ─────
+# 사용자 결정(2026-11-04 '비교만') 뒤 기본은 False. 이 파일은 그 규칙이 켜졌을 때의 일정 계산을 그대로 지킨다.
+import ceo_report.calc as _calc_for_flag  # noqa: E402
+_setup_before_flag = globals().get("setUpModule")
+_teardown_before_flag = globals().get("tearDownModule")
+
+
+def setUpModule():  # noqa: F811
+    _calc_for_flag.INTRANET_IN_FUNDS = True
+    if _setup_before_flag:
+        _setup_before_flag()
+
+
+def tearDownModule():  # noqa: F811
+    _calc_for_flag.INTRANET_IN_FUNDS = False
+    if _teardown_before_flag:
+        _teardown_before_flag()
+
+
 if __name__ == "__main__":
     unittest.main()

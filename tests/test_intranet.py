@@ -754,6 +754,49 @@ class TestStructureStops(unittest.TestCase):
         self.assertIn("다시 읽음", text)
         self.assertNotIn("가상", text)
 
+    def test_real_page_link_shapes_read_every_page(self):
+        """실제 인트라넷 (2026-11-04): 지급요청 쪽 링크에 빈 pro_num=, 프로젝트 쪽 링크는 /project/index/?page=10 (줄 위치)."""
+        PQ = "&team=&subteam=&partner=&writer=&search=&project=&confirm=&pro_num="
+        JQ = "&team=&subteam=&client=&client_kor=&writer=&search=&invoice=&confirm=&start_date=&end_date=&po_number="
+        p2 = "/payment/index?page=2&gyear=2026" + PQ
+        j2 = "/project/index/?page=10&gyear=2026" + JQ
+        pay1 = payment_page([prow(5101), prow(5102)], links=[(p2, "2")])
+        proj1 = project_page([jrow(26218, 901)], links=[(j2, "2")])
+        group = "<tr><td colspan='10'>가상 묶음</td><td></td><td></td><td></td><td></td><td></td><td></td><td colspan='7'></td></tr>"
+        proj1 = proj1.replace("<tbody>", "<tbody>" + group)
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, pay1),
+            ("GET", "/payment/index?gyear=2026"): (200, {}, pay1),
+            ("GET", p2): (200, {}, payment_page([prow(5103)], links=[("/payment/index?page=1&gyear=2026" + PQ, "1")])),
+            ("GET", "/project/index"): (200, {}, proj1),
+            ("GET", "/project/index?gyear=2026"): (200, {}, proj1),
+            ("GET", j2): (200, {}, project_page([jrow(26219, 902)], total=False)),
+        })
+        opener, fake = make_fake_opener(routes)
+        res = intranet().collect(opener, USER, PASSWORD)
+        self.assertEqual([r["번호"] for r in res.payments], ["5101", "5102", "5103"])
+        self.assertEqual([r["번호"] for r in res.projects], ["26218", "26219"])
+        self.assertEqual(res.project_skipped, 0)          # 번호·링크 없는 묶음 줄은 데이터가 아님
+        self.assertIn(("GET", p2), fake.requested())
+
+    def test_recognised_page_link_that_is_blocked_stops(self):
+        """알아본 쪽 링크를 허용 목록이 막으면 1쪽만 읽고 '완료'하지 않고 멈춘다."""
+        bad = "/payment/index?page=2&pro_num=5"   # pro_num 은 빈 값만 받는다
+        routes = site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page([prow(5101)], links=[(bad, "2")]))})
+        exc, fake = collect_raises(self, routes)
+        self.assertIsInstance(exc, intranet().StructureMismatch)
+        self.assertNotIn(("GET", bad), fake.requested())
+
+    def test_page_seen_in_links_but_not_read_stops(self):
+        """새 줄이 없는 쪽에서 본 다음 쪽 링크를 읽지 않고 끝내면 일부만 읽은 것이라 멈춘다."""
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, payment_page([prow(5101)], links=[("/payment/index?page=2", "2")])),
+            ("GET", "/payment/index?page=2"): (200, {}, payment_page([prow(5101)], links=[("/payment/index?page=3", "3")])),
+        })
+        exc, _ = collect_raises(self, routes)
+        self.assertIsInstance(exc, intranet().StructureMismatch)
+        self.assertIn("읽지 못해", str(exc))
+
     def test_row_without_number_stops(self):
         module = intranet()
         bad = prow(5102)

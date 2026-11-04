@@ -8,6 +8,8 @@ from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
 from .util import date as parse_date
 
+INTRANET_IN_FUNDS = False   # 인트라넷 지급요청·남은 예산을 가용자금 일정에 넣을지 (사용자 2026-11-04: 넣지 않음, 비교만)
+
 DAY = dt.timedelta(days=1)
 
 # 숫자로 읽는 설정 항목과 입력 확인 목록에 쓰는 이름 (이름에 해석·권고 낱말을 넣지 않는다)
@@ -422,7 +424,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
                            "cat": "환불", "desc": v["client"], "basis": "계산서 환불", "project": v["project"],
                            "source": "계산서"})
+    # 사용자 결정 (2026-11-04 카드 '비교만'): 인트라넷에서 온 지급요청·집행계획과 남은 예산은 가용자금 일정에 더하지 않는다.
+    # 돈의 기준은 위하고 분개장·자금계획서. 빼는 줄은 R["intranet_only"] 에 건수·합계로 남겨 비교로만 보인다.
+    skipped_requests, skipped_budget = [], []
     for e in d.execs:
+        if e["state"] in ("요청미지급", "집행계획미요청") and not INTRANET_IN_FUNDS:
+            skipped_requests.append(None if e["supply"] is None else e["supply"] + (e["vat"] or 0))
+            continue
         if e["state"] in ("요청미지급", "집행계획미요청"):
             amt = None if e["supply"] is None else e["supply"] + (e["vat"] or 0)
             events.append({"date": e["date"], "io": "out", "amount": amt,
@@ -436,6 +444,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                            "cat": "사용제한 해제", "desc": a["account"] + (" · " + a["reason"] if a["reason"] else ""),
                            "basis": "계좌잔액.csv 제한해제일", "project": "", "source": "계좌잔액"})
     for P in R["s3"]["projects"]:
+        if P["remain_cash"] and not INTRANET_IN_FUNDS:
+            skipped_budget.append(P["remain_cash"])
+            continue
         if P["remain_cash"]:
             # 매주 금요일로 나눠 잡는다 (사용자 2026-11-03): 다음 지급 금요일부터 행사일 다음 달 말 금요일까지 같은 금액.
             # 진행 중 계속 쓰는 예산이 한 날짜에 몰려 그 전 기간 가용자금이 커 보이지 않게. 행사일을 모르면 날짜 없는 한 줄.
@@ -456,6 +467,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                                    ", %s~%s 매주 금요일 나눔 (%d/%d)" % (d2s(days[0]), d2s(days[-1]), k + 1, n) if n > 1
                                    else ", 행사일 다음 달 말 금요일" if day else "")),
                                "project": P["id"], "source": "남은 예산", "split": (k + 1, n)})
+    R["intranet_only"] = {"requests": (len(skipped_requests), sum(x for x in skipped_requests if x)),
+                          "budget": (len(skipped_budget), sum(skipped_budget))}
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
                                            int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만

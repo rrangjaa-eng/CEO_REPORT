@@ -64,8 +64,13 @@ FILTER_NAMES = {
     "payment": frozenset(["gyear", "team", "subteam", "project", "partner", "writer", "search", "confirm"]),
     "project": frozenset(["gyear", "team", "subteam", "search"]),
 }
+# 실제 쪽 링크(2026-11-04)에 빈 값으로만 붙어 오는 이름: 빈 값일 때만 받는다 (값이 있으면 다른 조회라 막음)
+EMPTY_ONLY_NAMES = {
+    "payment": frozenset(["pro_num"]),
+    "project": frozenset(["client", "client_kor", "writer", "invoice", "confirm", "start_date", "end_date", "po_number"]),
+}
 _BAD_VALUE_FRAGMENTS = ("/confirm", "/logout", "://", "javascript:", "<", ">")
-_LIST_RE = re.compile(r"^/(payment|project)/index(?:/([0-9]+))?$")
+_LIST_RE = re.compile(r"^/(payment|project)/index(?:/([0-9]+))?/?$")   # 실제 프로젝트 쪽 링크: /project/index/?page=10
 _DIGITS = re.compile(r"^[0-9]*$")
 
 
@@ -151,6 +156,10 @@ def _check_list_query(method, path, kind, query):
         if pair == "":
             _block(method, path, "빈 조회 항목")
         name, _, value = pair.partition("=")
+        if name in EMPTY_ONLY_NAMES[kind] and name not in known:
+            if value != "":
+                _block(method, path, "빈 값만 허용되는 조회 이름: %s" % name[:30])
+            continue
         if name not in known:
             _block(method, path, "알 수 없는 조회 이름: %s" % name[:30])
         if name in PAGE_NAMES:
@@ -610,6 +619,12 @@ def _split_rows(table, spec, shapes=None):
         if _is_total(cells) or not any(cells) or len(cells) == 1:
             continue
         full = _expand_spans(row)
+        if len(full.cells) != width and not any(row.hrefs) and not any(
+                _DIGITS.match(c.strip()) and c.strip() for c in row.cells[:3]):
+            # 번호도 링크도 없는 줄 (실제 프로젝트 목록 2026-11-04: 칸을 합친 안내·묶음 줄): 데이터가 아니다
+            if shapes is not None:
+                shapes.append(_row_shape(i, row) + " → 데이터 줄 아님 (번호·링크 없음)")
+            continue
         if len(full.cells) != width:
             bad += 1
             if shapes is not None:
@@ -659,7 +674,7 @@ def _is_first_page_pair(name, value):
 def _canonical(url):
     """같은 쪽을 가리키는 주소를 같은 값으로 (page=1, 쪽 이름 없음, 끝 /0)."""
     parts = urllib.parse.urlsplit(url)
-    path = re.sub(r"/0+$", "", parts.path)
+    path = re.sub(r"/0+$", "", parts.path.rstrip("/"))
     pairs = sorted((n, v) for n, v in _pairs(parts.query) if v != "" and not _is_first_page_pair(n, v))
     return path, tuple(pairs)
 
@@ -692,7 +707,7 @@ def _classify_links(page, current_url, kind, list_path):
             continue
         if parts.scheme != "https" or host != HOST:
             continue
-        if not re.match(r"^%s(?:/[0-9]+)?$" % re.escape(list_path), parts.path):
+        if not re.match(r"^%s(?:/[0-9]+)?/?$" % re.escape(list_path), parts.path):
             continue
         link_set = _significant(_pairs(parts.query))
         diff = link_set ^ cur_set
@@ -714,8 +729,9 @@ def _classify_links(page, current_url, kind, list_path):
                 shape["max_number"] = max(numbers)
             try:
                 follow.append(check_url("GET", full))
-            except BlockedRequest:
-                pass
+            except BlockedRequest as e:
+                # 알아본 쪽 링크를 조용히 버리면 1쪽만 읽고 '완료'가 된다 (실제 인트라넷 2026-11-04) → 멈춘다
+                raise StructureMismatch("쪽 이동 링크를 읽을 수 없어 멈춤 — %s" % e)
             continue
         added = set((n, v) for n, v in link_set - cur_set)
         # 쪽 링크가 지금 주소에 없던 조회 값만 더 붙인 경우 (실제 인트라넷 2026-11-04: page 링크에 gyear=2026).
@@ -774,6 +790,7 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
         start = check_url("GET", start + "?" + "&".join("%s=%s" % (n, urllib.parse.quote(v, safe="")) for n, v in sorted(adopt)))
     queue = [start]
     seen = set([_canonical(start)])
+    linked, fetched = set(), set()   # 쪽 링크로 본 주소 · 실제로 읽은 주소 (끝에 다 읽었는지 맞춰 본다)
     rows = collections.OrderedDict()
     pages = 0
     while queue:
@@ -782,6 +799,7 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
                 "%s 목록: 최대 페이지 수 %d 도달 — 남은 페이지가 있어 수집을 멈춤 (--최대페이지로 늘릴 수 있음)"
                 % (label, max_pages))
         url = queue.pop(0)
+        fetched.add(_canonical(url))
         _, _, text = opener.get(url)
         pages += 1
         page = _parse(text)
@@ -837,6 +855,7 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
                 raise StructureMismatch(
                     "%s 목록: 쪽 링크가 다른 조회 값(%s)도 함께 바꿔서 따라가지 않고 멈춤"
                     % (label, ", ".join(sorted(mixed))))
+        linked.update(_canonical(link) for link in follow)
         if added:  # 새 줄이 없는 쪽의 링크는 따라가지 않는다(되돌이 방지)
             for link in follow:
                 key = _canonical(link)
@@ -845,6 +864,11 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
                     queue.append(link)
     if not rows:
         raise StructureMismatch("%s 목록 0건 — 읽은 줄이 없어 멈춤" % label)
+    missing = linked - fetched
+    diag.append("  %s 목록: 읽은 쪽 %d · 링크로 본 쪽 중 안 읽은 쪽 %d · 줄 %d건" % (label, pages, len(missing), len(rows)))
+    if missing:
+        raise StructureMismatch("%s 목록: 쪽 링크로 보인 쪽 %d개를 읽지 못해 멈춤 (일부만 읽은 자료는 저장하지 않음)"
+                                % (label, len(missing)))
     return list(rows.values()), pages, skipped
 
 
