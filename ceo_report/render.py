@@ -983,13 +983,13 @@ def _acct_year_page(R):
 
 
 def _nonop_rows(N, before, after):
-    """회사 영업이익 아래 결산 (사용자 2026-11-03): − 영업외 비용 = 지원금 등 빼고 본 이익, + 영업외 수익 = 세전 이익.
+    """회사 영업이익 아래 결산, 위하고 결산자료 순서 (사용자 2026-11-04): + 영업외 수익, − 영업외 비용 = 세전 이익.
     어느 부서에서 났는지 이름을 붙인다. before/after = 금액 칸 앞뒤의 빈 칸 수."""
     def who(i):   # 어느 부서가 가져온 것인지 금액과 함께 (사용자 2026-11-03: 경영관리의 영업외 수익을 그 부서 실적으로 보이게)
         parts = ["%s %s" % (d, won(a if i == 1 else b)) for d, a, b in N["by_dept"] if (a if i == 1 else b)]
         return " (%s)" % " · ".join(parts) if parts else ""
-    rows = [("− 영업외 비용%s" % who(2), N["out"], "mut"), ("지원금 등 빼고 본 이익", N["before_in"], "hq"),
-            ("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("세전 이익", N["pretax"], "tot")]
+    rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut"),
+            ("세전 이익", N["pretax"], "tot")]
     return "".join("<tr class='%s'><td>%s</td><td colspan='%d'></td><td>%s</td>%s</tr>"
                    % (c, esc(label), before, W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
 

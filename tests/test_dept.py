@@ -114,7 +114,8 @@ class TestTeamProfit(unittest.TestCase):
         teams = [r for r in T["rows"] if r["kind"] == "team"]
         self.assertAlmostEqual(sum(r["alloc"] for r in teams), 15)   # 나눈 뒤 팀 합계 = 회사 영업이익
         self.assertAlmostEqual(teams[0]["alloc"], 20 + (15 - 25) * 2 / 3)
-        self.assertEqual((T["nonop"]["before_in"], T["nonop"]["pretax"]), (15, 22))
+        self.assertEqual(T["nonop"]["pretax"], 22)
+        self.assertNotIn("before_in", T["nonop"])
 
     def test_missing_dept_month_is_unknown_not_zero(self):
         T = teamprofit.build(self.table(), [], "2026-10")

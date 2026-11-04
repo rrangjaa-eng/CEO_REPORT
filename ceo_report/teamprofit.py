@@ -127,8 +127,9 @@ def build(pl_table, dept_rows, ym, ytd=False):
     else:
         nin = nout = None
         by_dept = []
-    before_in = _add(comp["net"], -nout if nout is not None else None)   # 영업외 수익 없이 본 이익 (사용자 2026-11-03)
-    nonop = {"in": nin, "out": nout, "by_dept": by_dept, "before_in": before_in, "pretax": _add(before_in, nin)}
+    # 위하고 결산자료 순서: 영업이익 + 영업외 수익 − 영업외 비용 = 세전 이익 (사용자 2026-11-04: '지원금 빼고 본 이익' 줄 없앰)
+    nonop = {"in": nin, "out": nout, "by_dept": by_dept,
+             "pretax": _add(comp["net"], nin, -nout if nout is not None else None)}
     common = company.get("common") if company else None
     check = None if (common is None or total_s is None or total_g is None) else (total_s + total_g, common)
     return {"rows": rows, "company": comp, "dept_ok": dept_ok, "check": check, "nonop": nonop}
