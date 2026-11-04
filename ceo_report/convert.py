@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -820,7 +820,43 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.extend(build_bank(books, cfg))
     tables.append(build_debts(books, cfg))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
+    tables.append(build_evidence(books, sales, _read_prev_rows(input_dir, data.EVID_FILE, data.EVID_KEYS)))
     return tables, states
+
+
+def build_evidence(books, sales, prev_rows=()):
+    """증빙월별.csv (사용자 2026-11-04: 매출·매입은 증빙 작성일자 기준). 달마다 공급가액 합.
+
+    매출 = 매출 계산서 원천(분개장 매출전표 또는 매입매출장 매출 줄), 매입 = 분개장 매입전표 또는 매입매출장 매입 줄.
+    전표일자 = 증빙 작성일자. 금액 모르는 줄이 있는 달은 빈칸. 새 자료에 없는 달의 이전 줄은 그대로 잇는다 (누적)."""
+    cells = collections.OrderedDict()
+
+    def add(rows, i):
+        for r in rows:
+            if r.get("date") is None:
+                continue
+            c = cells.setdefault(r["date"].strftime("%Y-%m"), [[0, 0], [0, 0]])[i]
+            if r.get("supply") is None:
+                c[1] += 1
+            else:
+                c[0] += r["supply"]
+    have_sales = sales.get("state") == "ok"
+    have_buys = books.state == "ok"
+    if have_sales:
+        add(sales["rows"], 0)
+    if have_buys:
+        add(books.ledger or [], 1)
+    if not cells:
+        return Table(data.EVID_FILE, data.EVID_KEYS, [], written=False, reason="매출·매입 증빙 자료 없음 (기존 파일 그대로)")
+    cell = lambda c, ok: "" if not ok or c[1] else str(int(c[0]))
+    rows = [r for r in prev_rows if r.get("연월") not in cells]
+    for ym, (sv, bv) in cells.items():
+        rows.append(dict(zip(data.EVID_KEYS, [ym, cell(sv, have_sales), cell(bv, have_buys)])))
+    rows.sort(key=lambda r: r.get("연월", ""))
+    note = "매출 %s · 매입 %s · 작성일자(전표일자) 달별 공급가액" % (
+        sales.get("source") or "자료 없음" if have_sales else "자료 없음",
+        ("분개장 매입전표" if getattr(books, "from_journal", False) else "매입매출장 매입") if have_buys else "자료 없음")
+    return Table(data.EVID_FILE, data.EVID_KEYS, rows, notes=[note])
 
 
 def build_debts(books, cfg):

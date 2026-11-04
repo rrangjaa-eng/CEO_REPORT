@@ -31,6 +31,9 @@ DEPT_FILE = "부서비용.csv"
 DEPT_KEYS = ["연월", "부서", "급여", "판관비", "인원"]
 ACCOUNT_FILE = "계정별비용.csv"   # 계정과목별 달별 사용 금액 (사용자 2026-11-03: 월간 연간표)
 ACCOUNT_KEYS = ["연월", "구분", "계정코드", "계정과목", "금액"]
+# 증빙(세금계산서 등) 작성일자 기준 달별 매출·매입 공급가액 (사용자 2026-11-04: 월간 2쪽 흐름 그림 막대)
+EVID_FILE = "증빙월별.csv"
+EVID_KEYS = ["연월", "매출", "매입"]
 DEPT_OPTIONAL = ["영업외수익", "영업외비용"]   # 없는 예전 파일은 '미확인' (사용자 2026-11-03: 정부지원금 등은 팀에 넣지 않고 따로)
 NO_DEPT = "부서 없음"
 # 사원별 달별 급여 (분개장 급여 줄의 관리항목 사원명, 사용자 2026-11-04: 1인당 순이익을 본인 급여 비율로 나눔). 경영관리용에만 씀
@@ -246,6 +249,16 @@ def load(folder):
         if ok and not info["missing"]:
             d.staff = [{"ym": (r.get("연월") or "").strip(), "dept": (r.get("부서") or "").strip(),
                         "name": (r.get("사원명") or "").strip(), "salary": num(r.get("급여"), iss, r, "급여")} for r in rows]
+
+    # 증빙 작성일자 기준 달별 매출·매입 (선택). 빈칸은 None (모름)
+    d.evid_month = None
+    path = os.path.join(folder, EVID_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, EVID_KEYS, iss, info)
+        if ok and not info["missing"]:
+            d.evid_month = dict(((r.get("연월") or "").strip(), (num(r.get("매출"), iss, r, "매출"), num(r.get("매입"), iss, r, "매입")))
+                                for r in rows if (r.get("연월") or "").strip())
 
     # 계정과목별 달별 사용 금액 (선택). 금액 빈칸은 None (모름)
     d.accounts, d.accounts_problem = None, ""

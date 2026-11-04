@@ -338,7 +338,7 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 @media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.pt.wo td{padding:2px 6px}.sec.brk table.pt.wo{font-size:11.5px}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:262px}.fs.mon svg{max-height:262px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 @media print{.fs svg{max-height:200px}.fs.mon svg{max-height:262px}.fs.mon svg{max-height:262px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
-@media print{.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 2px}.fs.mon table.pt.tg{font-size:12.5px}.fs.mon table.pt.tg td,.fs.mon table.pt.tg th{padding:5px 6px}.fs.mon .sec.pgb{break-before:page}.fs:not(.mon) svg{max-height:240px}.fs.mon svg{max-height:300px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
+@media print{.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 2px}.fs.mon table.pt.tg{font-size:12.5px}.fs.mon table.pt.tg td,.fs.mon table.pt.tg th{padding:5px 6px}.fs.mon .sec.pgb{break-before:page}.fs:not(.mon) svg{max-height:240px}.fs.mon svg{max-height:300px}.fs.mon .card:not(.mchart) svg{max-height:190px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
@@ -1539,13 +1539,15 @@ def _expected_strip(R, mode="ceo", Y=None):
 
 
 def _month_series(R):
-    """1월~보고 달 회사 매출·매입(매출원가)·영업이익 (⑤ 이번 달 칸과 같은 기준: 부서 비용이 있으면 팀 표 회사 영업이익)."""
+    """1월~보고 달 (연월, 매출, 매입, 영업이익).
+
+    매출·매입 = 증빙(세금계산서 등) 작성일자 기준 공급가액 (증빙월별.csv, 사용자 2026-11-04). 그 파일이 없으면 매출은 손익 기준,
+    매입은 None. 영업이익 = ⑤ 이번 달 칸과 같은 기준 (부서 비용이 있으면 그 달 팀 표 회사 영업이익, 공통비까지 뺀 값)."""
     s4 = R["s4"]
-    src = s4["sources"].get("WEHAGO")
-    if not src:
-        return []
+    src = s4["sources"].get("WEHAGO") or {}
     year = s4["ym"][:4]
-    out = []
+    ev = R.get("evid_month")
+    pl = {}
     from .teamprofit import build as _tp_build
     for m, table in src.get("by_month", []):
         if m[:4] != year or m > s4["ym"]:
@@ -1559,13 +1561,24 @@ def _month_series(R):
             T = _tp_build(table, s4["dept"], m, False)
             if T is not None and T["company"]["net"] is not None:
                 np_ = T["company"]["net"]
-        out.append((m, c["revenue"], c.get("direct"), np_))
+        pl[m] = (c["revenue"], np_)
+    months = set(pl)
+    if ev is not None:
+        months |= set(m for m in ev if m[:4] == year and m <= s4["ym"])
+    out = []
+    for m in sorted(months):
+        rev, np_ = pl.get(m, (None, None))
+        if ev is not None:
+            sale, buy = ev.get(m, (0, 0))
+        else:
+            sale, buy = rev, None
+        out.append((m, sale, buy, np_))
     return out
 
 
 def _month_chart(R, H=300):
     """월별 매출·매입(막대 두 개)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에, 매입 추가).
-    매입 = 손익 기준 매출원가 (매출 − 매출총이익). 같은 원 단위라 축 하나."""
+    매출·매입 = 증빙 작성일자 기준 공급가액, 영업이익 = 월별 실적 기준. 같은 원 단위라 축 하나."""
     ser = _month_series(R)
     if len(ser) < 2:
         return ""
@@ -1603,7 +1616,7 @@ def _month_chart(R, H=300):
     for i, (m, rev, cost, np_) in enumerate(ser):
         cx = pl + i * gw + gw / 2
         bar(cx - bw - 1, rev, "#6b98dc", "매출", m)       # 막대 사이 2px
-        bar(cx + 1, cost, "#d8964a", "매입(매출원가)", m)
+        bar(cx + 1, cost, "#d8964a", "매입", m)
         out.append('<text x="%.1f" y="%d" font-size="12" text-anchor="middle" fill="#5b6475">%s</text>'
                    % (cx, H - 10, esc(_ym_text(m))))
         if np_ is not None:
@@ -1617,11 +1630,14 @@ def _month_chart(R, H=300):
         x, yy, m, v = pts[-1]   # 마지막 달만 값 표시 (점마다 숫자 넣지 않음)
         out.append('<text x="%.1f" y="%.1f" font-size="12" text-anchor="end" fill="#1d2433">%s</text>' % (x - 6, yy - 8, esc(won(v))))
     out.append("</svg>")
-    leg = ("<div class='legend'><span><i style='background:#6b98dc'></i>매출</span>"
-           "<span><i style='background:#d8964a'></i>매입 (매출원가)</span>"
-           "<span><i style='background:#1f4e8c;height:2px;margin-bottom:4px'></i>영업이익 (빨간 점 = 손실 달)</span></div>")
-    return ("<div class='card mchart'><div class='lab'>월별 매출·매입·영업이익 흐름 (%s~%s)</div>%s%s</div>"
-            % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg))
+    ev = R.get("evid_month") is not None
+    leg = ("<div class='legend'><span><i style='background:#6b98dc'></i>%s</span>%s"
+           "<span><i style='background:#1f4e8c;height:2px;margin-bottom:4px'></i>영업이익 (빨간 점 = 손실 달)</span></div>"
+           % ("매출" if ev else "매출 (손익 기준)", "<span><i style='background:#d8964a'></i>매입</span>" if ev else ""))
+    foot = ("매출·매입 = 세금계산서 등 증빙 작성일자 기준 공급가액 · 영업이익 = 월별 실적과 같은 기준 (공통비까지 뺀 값)" if ev else
+            "증빙월별.csv 없음: 매입 막대 없이 손익 기준 매출만 (대표보고 창의 '자료 변환'이 분개장으로 만듦)")
+    return ("<div class='card mchart'><div class='lab'>월별 매출·매입·영업이익 흐름 (%s~%s)</div>%s%s<div class='note'>%s</div></div>"
+            % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg, esc(foot)))
 
 
 def _team_notes(R, basis, dept, last, ym):
