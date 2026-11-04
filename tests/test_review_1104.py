@@ -49,6 +49,46 @@ class TestBalanceRolledForwardWithTransactions(unittest.TestCase):
         self.assertEqual(R["s1"]["total"], 558_000_000)
         self.assertEqual(R["s1"]["rolled"], [])
 
+class TestCeoWordingAndTopStrip(unittest.TestCase):
+    """결정 3 (대표용 이름) · 결정 4·5 (주간 첫 줄) · 결정 6 (디자인)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
+        cls.ceo, cls.mgmt = render(cls.R, "ceo"), render(cls.R, "mgmt")
+
+    def test_restriction_name(self):
+        self.assertIn("쓸 수 없는 돈 (담보·전용) 30,000,000", self.ceo)
+        self.assertNotIn("사용제한", self.ceo.split("<div class='toc'>")[0].split("<body")[1])
+        self.assertIn("− 사용제한 30,000,000", self.mgmt)
+
+    def test_top_strip_repeats_the_table_numbers(self):
+        from ceo_report.render import week_outflows
+        strip = self.ceo[self.ceo.index("<div class='four top'>"):]
+        strip = strip[:strip.index("<div class='sec'>")]
+        p = [x for x in self.R["s2"]["periods"] if not x.get("pick")]
+        for v in (week_outflows(self.R)["pay"]["total"], p[0]["all"]["avail"], p[-1]["all"]["avail"],
+                  self.R["s5"]["overdue_total"]):
+            self.assertIn("{:,}".format(v), strip)
+        self.assertIn("입금일 지난 미수금", strip)
+        self.assertLess(self.ceo.index("<div class='four top'>"), self.ceo.index("출금 목록"))
+
+    def test_chart_uses_table_week_names_and_short_axis(self):
+        self.assertIn(">이번 주</text>", self.ceo)
+        self.assertNotIn("1주차", self.ceo)
+        self.assertRegex(self.ceo, r">\d(\.\d+)?억</text>")
+
+    def test_evidence_tags_are_one_range(self):
+        self.assertIn("<span class='ev'>근거 1-1~1-3</span>", self.ceo)
+
+    def test_monthly_tables(self):
+        M = render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo")
+        self.assertIn("<th>다음 출금일</th><th>다음 출금액</th>", M)
+        ay = M[M.index("class='pt ayt'"):]
+        ay = ay[:ay.index("</thead>")]
+        self.assertIn("<th>10월</th>", ay)
+        self.assertNotIn("11월", ay)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -376,9 +376,10 @@ class TestUnknownBalance(unittest.TestCase):
         self.assertEqual(s1["available"], s1["total"] - s1["restricted"])
         self.assertEqual(s1["bal_unknown_restricted"], 30_000_000)
         self.assertEqual(R["s2"]["start"], 356_100_000)
-        self.assertIn("사용제한 30,000,000 · 제한금액 미확인 1계좌 · ", first_screen(html))
+        self.assertIn("사용제한 30,000,000 · 은행 기준일", first_screen(html))
+        self.assertIn("사용제한금액 빈칸 1계좌", first_screen(html))   # 0으로 계산, 경영관리용에 경고 (사용자 2026-11-04)
         self.assertIn(self.NOTE, first_screen(html))
-        self.assertEqual(box_item(first_screen(html), "사용제한 금액 미확인"), "사용제한 금액 미확인 1계좌")
+        self.assertTrue(box_item(first_screen(html), "사용제한금액 빈칸").startswith("사용제한금액 빈칸 1계좌 (0으로 계산"))
         self.assertIn("사용제한 30,000,000원은 사용 가능액에서 차감", section(html, 1))
         for c in R["s7"]["checks"]:
             self.assertTrue(c[3], c[0])

@@ -23,6 +23,20 @@ D = dt.date
 ASOF = D(2026, 10, 31)
 
 
+def ev_tags(html):
+    """숫자 옆 근거 꼬리표의 번호들. '근거 1-1~1-3' 은 1-1, 1-2, 1-3 (사용자 2026-11-04 디자인 검토)."""
+    out = set()
+    for t in re.findall(r"<span class='ev'>근거 ([^<]+)</span>", html):
+        for part in t.split(", "):
+            if "~" in part:
+                a, b = part.split("~")
+                h, i, j = a.split("-")[0], int(a.split("-")[1]), int(b.split("-")[1])
+                out.update("%s-%d" % (h, k) for k in range(i, j + 1))
+            else:
+                out.add(part)
+    return out
+
+
 def text(html):
     body = html[html.index("<body"):].split("<div class='toc'>")[0]
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
@@ -40,8 +54,8 @@ class TestCeoHasNoBudgetNoDecisions(unittest.TestCase):
                 self.assertNotIn("판단할 것", ceo)
                 self.assertIn("판단할 것 (경영관리용)", mgmt)
                 for n, _, _ in evidence_index(R):
-                    self.assertIn("<span class='ev'>근거 %s</span>" % n, ceo)
-                    self.assertIn("<span class='ev'>근거 %s</span>" % n, mgmt)
+                    self.assertIn(n, ev_tags(ceo))
+                    self.assertIn(n, ev_tags(mgmt))
                     self.assertIn("<td><b>근거 %s</b></td>" % n, mgmt)
                     self.assertNotIn("<td><b>근거 %s</b></td>" % n, ceo)
                 self.assertNotIn("class='evb'", ceo)

@@ -40,7 +40,7 @@ class TestMonthFlowStartsOnTheFirst(unittest.TestCase):
         self.assertIn("10월(실적)", month_flow(R)["buckets"][0]["label"])
         html = render(R, "ceo")
         self.assertIn("월별 자금 흐름 (10월 1일 가용액", html)
-        self.assertIn("단위: 원 · 월별 (첫 달은 1일부터)", html)
+        self.assertIn("월별 (첫 달은 1일부터)", html)
 
     def test_weekly_chart_is_unchanged(self):
         html = render(compute(load(SAMPLE), "weekly", D(2026, 10, 31)), "ceo")

@@ -117,12 +117,25 @@ def _nice_step(raw):
     return 10 * mag
 
 
+def _axis(v):
+    """세로축 금액: 억·만 단위로 짧게 (사용자 2026-11-04 디자인 검토)."""
+    if v == 0:
+        return "0"
+    if abs(v) >= 100_000_000:
+        return "{:g}억".format(round(v / 100_000_000, 2))
+    if abs(v) >= 10_000:
+        return "{:,.0f}만".format(v / 10_000)
+    return "{:,.0f}".format(v)
+
+
 def chart(s2):
     """기간별 입금(확정/추정)·지급(확정/추정) 막대와 계산 잔액 선."""
     bs = s2["buckets"]
     if not bs:
         return ""
-    Wd, H, pl, pr, pt, pb = 900, 260, 90, 10, 14, 44
+    # 주 막대 이름은 위 자금 표와 같게: 이번 주·다음 주·3주째·4주째 (사용자 2026-11-04 디자인 검토)
+    wk_name = {p["end"]: p["label"] for p in s2.get("periods") or [] if not p.get("pick")}
+    Wd, H, pl, pr, pt, pb = 900, 260, 52, 10, 14, 44
     n = len(bs)
     gw = (Wd - pl - pr) / n
     has_bal = s2["start"] is not None and not s2["out_missing"]  # 시작 잔액·지급 자료를 모르면 계산 잔액 선을 그리지 않는다 (0에서 시작하지 않음)
@@ -145,8 +158,8 @@ def chart(s2):
     for k in range(int(round(span / step)) + 1):
         v = lo + step * k
         out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#e6e9ef"/>' % (pl, Wd - pr, y(v), y(v)))
-        out.append('<text x="%d" y="%.1f" font-size="9.5" text-anchor="end" fill="#5b6475">%s</text>'
-                   % (pl - 4, y(v) + 3, "{:,.0f}".format(v)))
+        out.append('<text x="%d" y="%.1f" font-size="12" text-anchor="end" fill="#5b6475">%s</text>'
+                   % (pl - 5, y(v) + 4, _axis(v)))
     out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#1d2433"/>' % (pl, Wd - pr, y(0), y(0)))
     bw = gw * 0.34
     pts_f, pts_a = [], []
@@ -167,9 +180,11 @@ def chart(s2):
             pts_f.append("%.1f,%.1f" % (cx, y(b["bal_firm"])))
             pts_a.append("%.1f,%.1f" % (cx, y(b["bal_all"])))
         lab = b["label"].replace(" (일부)", "*")
+        if b["type"] == "week" and b.get("to") in wk_name:
+            lab = wk_name[b["to"]]
         if b["type"] == "month":
             lab = lab.split(" ")[1]
-        out.append('<text x="%.1f" y="%d" font-size="9.5" text-anchor="middle" fill="#1d2433">%s</text>'
+        out.append('<text x="%.1f" y="%d" font-size="11.5" text-anchor="middle" fill="#1d2433">%s</text>'
                    % (cx, H - pb + 14, esc(lab)))
     if has_bal:
         out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join(pts_f))
@@ -181,7 +196,7 @@ def chart(s2):
     else:
         out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">%s — 예상 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
                    % (pl + 6, pt + 12, "지급 자료 없음" if s2["out_missing"] else "잔액 미확인"))
-    out.append(('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">' + ("단위: 원 · 월별 (첫 달은 1일부터)" if all(b["type"] == "month" for b in bs) else "단위: 원 · 4주는 주별, 이후는 월별 (* 일부 기간)") + '</text>')
+    out.append(('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">' + ("월별 (첫 달은 1일부터)" if all(b["type"] == "month" for b in bs) else "4주는 주별, 이후는 월별 (* 일부 기간)") + '</text>')
                % (pl, H - 8))
     out.append("</svg>")
     legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정분</span>'
@@ -257,7 +272,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}.four.top{clear:both;margin:10px 0 2px}.four.top .card{border:1.5px solid var(--line)}.four.top .card:first-child{border-color:var(--out)}.four.top .big{font-size:19px}.four.top .foot{font-size:11px}ul.nl{margin:6px 0 0;padding-left:16px;font-size:11px;color:var(--sub)}ul.nl li{margin:1px 0}.card table.pt.tm{font-size:10px}.card table.pt.tm td,.card table.pt.tm th{padding:3px 3px}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -293,8 +308,21 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 
 
+def _ev_span(tags):
+    """근거 번호를 한 꼬리표로: 같은 절의 이어진 번호는 '근거 1-1~1-3' (사용자 2026-11-04 디자인 검토)."""
+    if not tags:
+        return ""
+    t = list(tags)
+    if len(t) > 1:
+        head = {x.split("-")[0] for x in t}
+        nums = [int(x.split("-")[1]) for x in t]
+        if len(head) == 1 and nums == list(range(nums[0], nums[0] + len(nums))):
+            return "<span class='ev'>근거 %s~%s</span>" % (esc(t[0]), esc(t[-1]))
+    return "<span class='ev'>근거 %s</span>" % esc(", ".join(t))
+
+
 def _q(i, text, tags=()):
-    ev = "".join("<span class='ev'>근거 %s</span>" % esc(t) for t in tags)
+    ev = _ev_span(tags)
     return "<div class='q'>%s %s%s</div>" % (CIRCLED[i], esc(text), ev)
 
 
@@ -359,7 +387,7 @@ def _avail_rows(periods, s2=None):
     return "".join(rows)
 
 
-def _avail_table(R):
+def _avail_table(R, mode="mgmt"):
     """기간별 가용자금 표: 주간 1~4주, 월간 1~3개월 + 지정일 줄(보고서를 만들 때 --가용일 로 넣은 날짜) (사용자 2026-11-03).
 
     보고서는 문서(PDF)로 전달하므로 단추·날짜 입력 칸 없이 모든 값이 그대로 보인다 (사용자 2026-11-03).
@@ -367,10 +395,17 @@ def _avail_table(R):
     s1, s2 = R["s1"], R["s2"]
     periods = [dict(p, asof=R["asof"]) for p in s2["periods"]]
     mc = s2["min_cash"]
+    # 대표용은 '쓸 수 없는 돈 (담보·전용)', 사용제한금액 빈칸 경고는 경영관리용에만 (사용자 2026-11-04)
+    rname = RESTRICT_CEO if mode == "ceo" else "사용제한"
     h = ["<div class='card avail'><div class='lab'>기간별 가용자금 <span style='font-weight:400'>%s</span></div>"
-         % esc("시작: 오늘 가용액 %s = 계좌 합계 %s − 사용제한 %s%s · 은행 기준일 %s%s" % (
-             _won_or_unknown(s2["start"]), _won_or_unknown(s1["total"]), won(s1["restricted"]),
-             " · 제한금액 미확인 %d계좌" % s1["restr_unknown"] if s1["restr_unknown"] else "", _bank_dates(s1), _bal_note(s1)))]
+         % esc("시작: 오늘 가용액 %s = 계좌 합계 %s − %s %s · 은행 기준일 %s%s" % (
+             _won_or_unknown(s2["start"]), _won_or_unknown(s1["total"]), rname, won(s1["restricted"]),
+             _bank_dates(s1), _bal_note(s1)))]
+    if s1["restr_unknown"]:
+        names = [a["account"] for a in s1["accounts"] if a["restricted"] is None]
+        h.append(_mg(mode, "<div class='warnbar'>%s</div>" % esc(
+            "사용제한금액 빈칸 %d계좌 (%s): 0으로 계산함. 담보·전용 자금이면 계좌잔액.csv에 금액을 적으세요."
+            % (s1["restr_unknown"], ", ".join(names)))))
     head = ("<thead><tr><th>기간</th><th>그 기간 입금 예정</th><th>그 기간 지급 예정</th><th>기간 끝 예상 잔액</th><th>오늘부터 최저 잔액</th>"
             "<th class='av'>가용자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % esc(won(mc) if mc is not None else "설정 오류"))
     h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows(periods, s2)))
@@ -388,8 +423,11 @@ def _avail_table(R):
         notes.append("부가세 미확인 %d건 (공급가액만 반영)" % s2["vat_unknown_n"])
     if s2["out_unknown_n"]:
         notes.append("금액 미확인 지급 예정 %d건 (미반영)" % s2["out_unknown_n"])
-    h.append("<div class='note'>%s</div></div>" % esc(" · ".join(notes)))
+    h.append("<ul class='nl'>%s</ul></div>" % "".join("<li>%s</li>" % esc(t) for t in notes))
     return "".join(h)
+
+
+RESTRICT_CEO = "쓸 수 없는 돈 (담보·전용)"   # 대표용 '사용제한' 이름 (사용자 2026-11-04)
 
 
 def _proj_chip(P):
@@ -555,7 +593,9 @@ def _check_items(R):
     elif s1["total"] is None:
         items.append("계좌 잔액 미확인 (계좌 자료 없음)")
     if s1["restr_unknown"]:
-        items.append("사용제한 금액 미확인 %d계좌" % s1["restr_unknown"])
+        names = [a["account"] for a in s1["accounts"] if a["restricted"] is None]
+        items.append("사용제한금액 빈칸 %d계좌 (0으로 계산 · 담보·전용 자금이면 계좌잔액.csv에 금액 적기): %s"
+                     % (s1["restr_unknown"], ", ".join(names)))
     inv_na = " (계산서 자료 없음: %s)" % _inv_files(s2) if s2["in_missing"] else ""
     items.append("예정일 지난 미처리 입금 %s%s / 지급 %s (일정에 넣지 않음)" % (
         side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]), inv_na,
@@ -653,16 +693,16 @@ def _regular_table(R):
                 if r["next"] is None or e["date"] < r["next"]["date"]:
                     r["next"] = e
     head = "".join("<th>%s</th>" % ("%d년 %d분기%s" % (y, q, " (남은 기간)" if i == 0 else "")) for i, (y, q, _, _) in enumerate(qs))
-    h = ["<table class='pt xr'><thead><tr><th>항목</th><th>다음 출금</th>%s</tr></thead><tbody>" % head]
+    h = ["<table class='pt xr'><thead><tr><th>항목</th><th>다음 출금일</th><th>다음 출금액</th>%s</tr></thead><tbody>" % head]
     for k, r in rows.items():
         if r["next"] is None and not any(r["q"]) and not any(r["unk"]):
             continue
         n = r["next"]
-        nxt = "%s %s%s" % (_md(n["date"]), "금액 미확인" if n["amount"] is None else won(n["amount"]), "" if n["firm"] else " (예상)")
+        amt = ("금액 미확인" if n["amount"] is None else won(n["amount"])) + ("" if n["firm"] else " (예상)")
         cells = "".join("<td>%s%s</td>" % (won(v) if v else "—", (" + 미확인 %d건" % u) if u else "") for v, u in zip(r["q"], r["unk"]))
-        h.append("<tr><td>%s</td><td>%s</td>%s</tr>" % (esc(k), esc(nxt), cells))
+        h.append("<tr><td>%s</td><td>%s</td><td>%s</td>%s</tr>" % (esc(k), esc(_md(n["date"])), esc(amt), cells))
     if len(h) == 1:
-        h.append("<tr><td colspan='%d'>일정에 부가세·원천세 없음</td></tr>" % (2 + len(qs)))
+        h.append("<tr><td colspan='%d'>일정에 부가세·원천세 없음</td></tr>" % (3 + len(qs)))
     h.append("</tbody></table>")
     return "".join(h)
 
@@ -909,17 +949,14 @@ def _acct_year_page(R):
 
     def cells(months, total, partial):
         out = []
-        for m, v in enumerate(months):
-            if m >= up:
-                out.append("<td class='fut'></td>")
-            else:
-                out.append("<td>%s</td>" % (_na("미확인") if v is None else esc(won(v))))
+        for m, v in enumerate(months[:up]):   # 아직 안 온 달 칸은 싣지 않는다 (사용자 2026-11-04 디자인 검토)
+            out.append("<td>%s</td>" % (_na("미확인") if v is None else esc(won(v))))
         out.append("<td class='yt'>%s%s</td>" % (esc(won(total)), "*" if partial else ""))
         return "".join(out)
-    head = "".join("<th%s>%d월</th>" % (" class='fut'" if m >= up else "", m + 1) for m in range(12))
+    head = "".join("<th>%d월</th>" % (m + 1) for m in range(up))
     h.append("<table class='pt ayt'><thead><tr><th>계정과목</th>%s<th>합계</th></tr></thead><tbody>" % head)
     for g in A["groups"]:
-        h.append("<tr class='gh'><td colspan='14'>%s</td></tr>" % esc(g["name"]))
+        h.append("<tr class='gh'><td colspan='%d'>%s</td></tr>" % (up + 2, esc(g["name"])))
         for a in g["accounts"]:
             h.append("<tr><td>%s</td>%s</tr>" % (esc(a["name"] or a["code"]), cells(a["months"], a["total"], a["partial"])))
         h.append("<tr class='sub'><td>%s 소계</td>%s</tr>" % (esc(g["name"]), cells(g["months"], g["total"], g["partial"])))
@@ -1292,7 +1329,7 @@ def _first_screen(R, mode, per):
                        "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf))
     else:
         flow = (esc("기간별 자금 흐름 (시작: 오늘 가용액 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2))
-    funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
+    funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
@@ -1307,6 +1344,8 @@ def _first_screen(R, mode, per):
                    ("%s 실적" % ymt, _results(R, cum=True) + over)] + funds)
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
+    if not monthly:
+        h.append(_top_strip(R))
     for i, (title, body) in enumerate(blocks):
         h.append("<div class='sec'>%s%s</div>" % (_q(i, title, _ev_tags(R, i + 1)), body))
     h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.</div>")
@@ -1320,6 +1359,40 @@ def _first_screen(R, mode, per):
                  % (len(R["risks"]), hi))
     h.append("</div>")
     return "".join(h)
+
+
+def _top_strip(R):
+    """주간 첫 줄 (사용자 2026-11-04 결정): 금요일 출금 · 이번 주 가용자금 · 4주 가용자금 · 입금일 지난 미수금.
+    값은 아래 표와 같은 숫자를 그대로 옮긴다 (따로 계산하지 않음)."""
+    wo, s5 = week_outflows(R), R["s5"]
+    ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
+    if not ps:
+        return ""
+
+    def av(p):
+        a = p["all"]["avail"]
+        return _na("확인 필요") if a is None else "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a)))
+
+    def low_day(p):
+        d0 = p["all"]["low_date"]
+        return "" if d0 is None else ("오늘" if d0 == R["asof"] else _md(d0))
+    pay = wo["pay"]
+    cells = [("금요일(%s) 출금" % _md(wo["fri"]), W(pay["total"]),
+              "%d건%s" % (len(pay["rows"]), " · 금액 미확인 %d건 별도" % pay["unknown_n"] if pay["unknown_n"] else "")),
+             ("이번 주 가용자금", av(ps[0]), "금요일 출금 뒤 · 최저 잔액일 %s" % low_day(ps[0])),
+             ("%s까지 가용자금" % ps[-1]["label"], av(ps[-1]), "%s까지 · 최저 잔액일 %s" % (_md(ps[-1]["end"]), low_day(ps[-1])))]
+    if s5["in_missing"]:
+        cells.append(("입금일 지난 미수금", _na("계산서 자료 없음"), ""))
+    elif not s5["overdue"]:
+        cells.append(("입금일 지난 미수금", "없음", ""))
+    else:
+        top = max(s5["overdue"], key=lambda v: v["outstanding"] or 0)
+        cells.append(("입금일 지난 미수금", "<span class='neg'>%s</span>" % esc(won(s5["overdue_total"])),
+                      "%d건 · 가장 큰 건 %s %s (%d일 지남)" % (len(s5["overdue"]), top["client"] or "", won(top["outstanding"]),
+                                                       top["overdue_days"])))
+    return "<div class='four top'>%s</div>" % "".join(
+        "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
+        % (esc(a), b, esc(c)) for a, b, c in cells)
 
 
 def _kpi(label, value, sub, unit=True, cls=""):
