@@ -684,6 +684,14 @@ def _classify_links(page, current_url, kind, list_path):
                 pass
             continue
         added = set((n, v) for n, v in link_set - cur_set)
+        # 쪽 링크가 지금 주소에 없던 조회 값만 더 붙인 경우 (실제 인트라넷 2026-11-04: page 링크에 gyear=2026).
+        # 바로 따라가지 않고 후보로만 남긴다 → _collect_list 가 그 값을 붙인 첫 쪽이 지금 첫 쪽과 같은지 확인한 뒤 다시 읽는다.
+        cur_names = set(n for n, _ in cur_set)
+        removed = set(n for n, _ in cur_set - link_set)
+        extra = [(n, v) for n, v in added if n not in PAGE_NAMES]
+        if (any(n in PAGE_NAMES and v.isdigit() for n, v in added) and extra and removed <= PAGE_NAMES
+                and all(n in FILTER_NAMES[kind] and n not in cur_names for n, _ in extra)):
+            shape.setdefault("adopt", set()).update(extra)
         shape["unfollowed"].update(n for n, v in added if n not in PAGE_NAMES)
         unknown.update(n for n, v in added if n not in known and v.isdigit())
         if any(n in PAGE_NAMES and v.isdigit() for n, v in added):
@@ -691,11 +699,14 @@ def _classify_links(page, current_url, kind, list_path):
     return follow, recognised, unknown, mixed, shape
 
 
-def _collect_list(opener, kind, max_pages, progress):
+def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None):
+    """adopt: 첫 쪽 주소에 붙일 조회 값 (쪽 링크가 붙여 온 것), expect: 그때 첫 쪽에서 읽어야 하는 줄 (같은 목록인지 확인)."""
     spec = _LISTS[kind]
     label = spec["label"]
     list_path = spec["path"]
     start = BASE + list_path
+    if adopt:
+        start = check_url("GET", start + "?" + "&".join("%s=%s" % (n, urllib.parse.quote(v, safe="")) for n, v in sorted(adopt)))
     queue = [start]
     seen = set([_canonical(start)])
     rows = collections.OrderedDict()
@@ -731,8 +742,16 @@ def _collect_list(opener, kind, max_pages, progress):
                                     % (label, len(clashes), ", ".join(sorted(set(clashes))[:5])))
         if progress is not None:
             progress(label, pages, len(rows))
-        follow, recognised, unknown, mixed, _ = _classify_links(page, url, kind, list_path)
+        if pages == 1 and expect is not None and list(rows.values()) != expect:
+            raise StructureMismatch("%s 목록: 쪽 링크의 조회 값(%s)을 붙이면 첫 쪽 내용이 달라져 멈춤"
+                                    % (label, ", ".join(sorted(n for n, _ in adopt or ()))))
+        follow, recognised, unknown, mixed, shape = _classify_links(page, url, kind, list_path)
         if pages == 1 and not recognised:
+            pairs = shape.get("adopt") or set()
+            names = [n for n, _ in pairs]
+            if mixed and not unknown and adopt is None and pairs and len(names) == len(set(names)) and set(names) == mixed:
+                # 같은 이름에 값이 하나뿐일 때만: 그 값을 붙여 첫 쪽부터 다시 읽고 첫 쪽이 같아야 이어 간다
+                return _collect_list(opener, kind, max_pages, progress, adopt=pairs, expect=list(rows.values()))
             if unknown:
                 raise StructureMismatch(
                     "%s 목록: 쪽 이동으로 보이는 링크의 조회 이름(%s)을 알 수 없어 따라가지 않고 멈춤"

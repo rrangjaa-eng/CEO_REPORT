@@ -37,7 +37,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(860, 1010)
+        root.minsize(860, 1040)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -61,6 +61,14 @@ class Window(object):
         self.pick = tk.StringVar()
         ttk.Entry(days, textvariable=self.pick, width=12).pack(side="left", padx=4)
         ttk.Label(days, text="예: 2026-12-31", style="S.TLabel").pack(side="left")
+        # 주간 출금 목록 날짜 (사용자 2026-11-04: 금요일 고정이 아니라 넣은 날짜 기준)
+        days2 = ttk.Frame(outer)
+        days2.pack(fill="x", pady=(0, 6))
+        ttk.Label(days2, text="출금일 (주간 보고 ① 출금 목록)").pack(side="left")
+        self.payday = tk.StringVar()
+        ttk.Entry(days2, textvariable=self.payday, width=12).pack(side="left", padx=4)
+        ttk.Label(days2, text="비우면 기준일 뒤 첫 금요일 · 기준일보다 뒤 날짜 (출금 당일 아침이면 기준일을 전날로)",
+                  style="S.TLabel").pack(side="left")
 
         # ① 자료 준비
         f1 = ttk.LabelFrame(outer, text="① 자료 준비 — WEHAGO 엑셀·자금계획서를 수집\\위하고 폴더에 넣은 뒤", style="Sec.TLabelframe", padding=8)
@@ -258,11 +266,13 @@ class Window(object):
         uid, pw = self.uid.get(), self.pw.get()
         asof, pick = self.asof.get().strip(), self.pick.get().strip()
         nums = self.ev_nums.get().strip()
+        payday = self.payday.get().strip()
 
         def work():
             try:
                 rc, files = app.run_task(task, self.paths, self.say, asof=asof, pick=pick, collect=collect,
-                                         credentials=(lambda: (uid, pw)) if collect else None, nums=nums)
+                                         credentials=(lambda: (uid, pw)) if collect else None, nums=nums,
+                                         payday=payday)
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []

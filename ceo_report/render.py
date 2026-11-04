@@ -300,7 +300,7 @@ table.pt.ayt tr.gh td{font-weight:700;text-align:left;background:var(--soft);pad
 table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.pt.ayt td.yt{font-weight:700;background:#eef3fb}
 @media screen and (max-width:820px){.four{grid-template-columns:1fr 1fr}.prow{grid-template-columns:minmax(0,1fr) auto}.prow .bw{grid-column:1/-1;order:3}
 .xbox ul{columns:1}table.pt{display:block;overflow-x:auto}}
-@media print{.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
+@media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 @media print{.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
 @media print{.fs:not(.mon) svg{max-height:400px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
@@ -331,7 +331,7 @@ def evidence_index(R):
     """근거 번호 (사용자 2026-11-03): 대표용 숫자 옆 번호 → 경영관리용 근거 자리.
     번호 앞자리 = 대표용 절 번호. (번호, 대표용 항목, 'block' | 상세 장 id). block = 경영관리용 첫 화면 근거 묶음의 id='ev-번호'."""
     if R["kind"] == "weekly":
-        return [("1-1", "금요일 출금 목록 · 건별 원자료", "block"), ("1-2", "지난주 대비 · 건별", "block"),
+        return [("1-1", "출금 목록 · 건별 원자료", "block"), ("1-2", "지난주 대비 · 건별", "block"),
                 ("1-3", "다음 주 지급 예정 · 건별", "block"),
                 ("2-1", "매출·이익", "s4"), ("2-2", "행사 후 세금계산서 미발행", "s5"),
                 ("3-1", "현재 잔액·사용제한", "s1"), ("3-2", "기간별 가용자금·자금 흐름 (일정 건별)", "s2")]
@@ -410,7 +410,7 @@ def _avail_table(R, mode="mgmt"):
     head = ("<thead><tr><th>기간</th><th>그 기간 입금 예정</th><th>그 기간 지급 예정</th><th>기간 끝 예상 잔액</th><th>오늘부터 최저 잔액</th>"
             "<th class='av'>가용자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % esc(won(mc) if mc is not None else "설정 오류"))
     h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows(periods, s2)))
-    notes = ["입금·지급은 그 기간에 들어오고 나가는 금액" + (" (토~금 한 주: 금요일 출금 목록·다음 주 지급 예정과 같은 기간)"
+    notes = ["입금·지급은 그 기간에 들어오고 나가는 금액" + (" (한 주 = 출금일 다음 날부터 다음 출금일까지: 출금 목록·다음 주 지급 예정과 같은 기간)"
                                                     if R["kind"] == "weekly" else " (달별: 아래 월별 자금 흐름과 같은 기간)"),
              "가용자금 = 오늘부터 그 기간 끝까지의 최저 잔액 − 최소 보유현금. 기간 끝 잔액이 넉넉해도 그 사이 최저 잔액을 넘겨 쓰면 자금이 모자람.",
              "금액은 예상분 포함 기준 (확정분만은 가용자금 칸 아래)"]
@@ -783,8 +783,8 @@ def week_outflows(R):
     날짜 순, 같은 날은 금액 큰 순. 금액을 모르는 줄은 0으로 치지 않고 따로 센다."""
     from .calc import pay_friday
     asof = R["asof"]
-    fri = pay_friday(asof)
-    end = fri + dt.timedelta(days=7)   # 다음 주 = 토요일부터 다음 금요일까지 (사용자 2026-11-03)
+    fri = R.get("payday") or pay_friday(asof)   # 출금일 (사용자 2026-11-04: 창에서 따로 넣은 날짜, 비우면 기준일 뒤 첫 금요일)
+    end = fri + dt.timedelta(days=7)   # 다음 주 = 출금일 다음 날부터 7일 (사용자 2026-11-03)
     rows = []
     for e in R["events"]:
         if e["io"] != "out" or e["date"] is None or e["date"] > end:
@@ -828,6 +828,11 @@ def _prev_firm(R):
 
 def _md(d):
     return d2s(d)[5:].replace("-", "/")
+
+
+def _day(d):
+    """출금일 표시 '11/06(금)' (사용자 2026-11-04: 금요일 고정이 아니라 넣은 날짜)."""
+    return "%s(%s)" % (_md(d), "월화수목금토일"[d.weekday()])
 
 
 def _vs(c):
@@ -921,10 +926,10 @@ def _week_out_table(R):
     P = W_["pay"]
     C = compare(prev, [e for e in P["rows"] if not e["overdue"]], W_["start"], W_["fri"]) if prev else None
     md = _md
-    head = "<div class='fri'><span>금요일 %s 출금 합계</span><b>%s원</b><small>%d건%s</small></div>" % (
-        esc(md(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
+    head = "<div class='fri'><span>%s 출금 합계</span><b>%s원</b><small>%d건%s</small></div>" % (
+        esc(_day(W_["fri"])), esc(won(P["total"])), len(P["rows"]),
         esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
-    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R)]
+    h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "이 날 출금 없음", R)]
     E = W_["pay_est"]
     if E["rows"]:   # 목록 밖: 예상 지급과 금액 미확인 (사용자 2026-11-04: 금요일 목록은 금액 확정 건만)
         parts = []
@@ -951,12 +956,12 @@ def _week_out_table(R):
             parts.append("추가된 것 %d건 %s" % (len(new), sgn(diff(new))))
         if moved:
             parts.append("변동된 것 %d건 %s" % (len(moved), sgn(diff(moved))))
-        top = "지난주(%s) 확정 %s → 이번 금요일 %s (%s)" % (md(C["asof"]), won(C["prev_total"]), won(C["cur_total"]),
+        top = "지난주(%s) 확정 %s → 이번 출금 %s (%s)" % (md(C["asof"]), won(C["prev_total"]), won(C["cur_total"]),
                                                          sgn(C["cur_total"] - C["prev_total"]) if C["cur_total"] != C["prev_total"] else "변동 없음")
         h.append("<div class='wchg'>지난주 대비: %s%s</div>" % (esc(top), esc(" · " + " · ".join(parts)) if parts else ""))
     h.append("</div>")
-    h += ["<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s 토 ~ %s 금) · 항목별 요약</div>"
-          % (md(W_["fri"] + dt.timedelta(days=1)), md(W_["end"])), _next_week_summary(W_["next"]), "</div>"]
+    h += ["<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s ~ %s) · 항목별 요약</div>"
+          % (_day(W_["fri"] + dt.timedelta(days=1)), _day(W_["end"])), _next_week_summary(W_["next"]), "</div>"]
     return "".join(h)
 
 
@@ -1307,8 +1312,8 @@ def _decide_lines(R):
     lines = []
     if R["kind"] == "weekly":
         P = week_outflows(R)["pay"]
-        lines.append("금요일(%s) 출금 <b>%s원</b> 승인 · %d건%s" % (
-            esc(_md(week_outflows(R)["fri"])), esc(won(P["total"])), len(P["rows"]),
+        lines.append("%s 출금 <b>%s원</b> 승인 · %d건%s" % (
+            esc(_day(week_outflows(R)["fri"])), esc(won(P["total"])), len(P["rows"]),
             esc(", 금액 미확인 %d건 확인 후" % P["unknown_n"]) if P["unknown_n"] else ""))
     else:
         nxt = [e for e in R["events"] if e["io"] == "out" and e["amount"] is not None and e["date"]
@@ -1364,9 +1369,9 @@ def _ev_change_table(R):
     if not prev:
         return "<div class='note'>지난주 기록 없음 — 다음 주 보고부터 건별로 보임</div>"
     C = compare(prev, W_["pay"]["rows"], W_["start"], W_["fri"])
-    h = ["<div class='note'>지난주(%s) 기록 지급예정_%s.csv 와 이번 금요일 목록을 거래처·프로젝트·구분으로 맞춤</div>"
+    h = ["<div class='note'>지난주(%s) 기록 지급예정_%s.csv 와 이번 출금 목록을 거래처·프로젝트·구분으로 맞춤</div>"
          % (esc(_md(C["asof"])), esc(d2s(C["asof"]))),
-         "<table class='pt evt'><thead><tr><th>구분</th><th>거래처</th><th>프로젝트</th><th>지난주 예상</th><th>이번 금요일</th><th>차이</th></tr></thead><tbody>"]
+         "<table class='pt evt'><thead><tr><th>구분</th><th>거래처</th><th>프로젝트</th><th>지난주 예상</th><th>이번 출금</th><th>차이</th></tr></thead><tbody>"]
     name = {"빠짐": "빠진 것", "새로 생김": "추가된 것", "금액 확인됨": "추가된 것"}
     for c in C["changes"]:
         pv = "—" if c["prev"] is None and c["kind"] in ("새로 생김",) else ("미확인" if c["prev"] is None else won(c["prev"]))
@@ -1416,7 +1421,7 @@ def _evidence(R, base_no):
     blocks = []
     if R["kind"] == "weekly":
         W_ = week_outflows(R)
-        blocks += [_ev_block("1-1", "금요일(%s) 출금 목록 · 건별 원자료" % _md(W_["fri"]), _ev_rows(W_["pay"]["rows"], R)),
+        blocks += [_ev_block("1-1", "%s 출금 목록 · 건별 원자료" % _day(W_["fri"]), _ev_rows(W_["pay"]["rows"], R)),
                    _ev_block("1-2", "지난주 대비 · 건별", _ev_change_table(R)),
                    _ev_block("1-3", "다음 주 지급 예정 · 건별", _ev_rows(W_["next"]["rows"], R))]
     else:
@@ -1453,14 +1458,16 @@ def _first_screen(R, mode, per):
                   + [_acct_year_block(R)])
     else:
         wo = week_outflows(R)
-        blocks = ([("금요일(%s) 출금 목록" % _md(wo["fri"]), _week_out_table(R)),
+        blocks = ([("%s 출금 목록" % _day(wo["fri"]), _week_out_table(R)),
                    ("%s 실적" % ymt, _results(R, cum=True) + over)] + funds)
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
     if not monthly:
         h.append(_top_strip(R))
     for i, (title, body) in enumerate(blocks):
-        h.append("<div class='sec'>%s%s</div>" % (_q(i, title, _ev_tags(R, i + 1)), body))
+        # 주간 ① 출금 목록은 길면 쪽을 넘어 이어진다 (사용자 2026-11-04: 통째로 다음 쪽에 밀려 1쪽이 비던 것)
+        cls = "sec brk" if (not monthly and i == 0) else "sec"
+        h.append("<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body))
     h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.</div>")
     n = len(blocks)
     h.append(_mg(mode, _evidence(R, n) + "<div class='sec'>%s%s</div><div class='sec'>%s%s</div>" % (
@@ -1490,9 +1497,9 @@ def _top_strip(R):
         d0 = p["all"]["low_date"]
         return "" if d0 is None else ("오늘" if d0 == R["asof"] else _md(d0))
     pay = wo["pay"]
-    cells = [("금요일(%s) 출금" % _md(wo["fri"]), W(pay["total"]),
+    cells = [("%s 출금" % _day(wo["fri"]), W(pay["total"]),
               "%d건%s" % (len(pay["rows"]), " · 금액 미확인 %d건 별도" % pay["unknown_n"] if pay["unknown_n"] else "")),
-             ("이번 주 가용자금", av(ps[0]), "금요일 출금 뒤 · 최저 잔액일 %s" % low_day(ps[0])),
+             ("이번 주 가용자금", av(ps[0]), "출금일 출금 뒤 · 최저 잔액일 %s" % low_day(ps[0])),
              ("%s까지 가용자금" % ps[-1]["label"], av(ps[-1]), "%s까지 · 최저 잔액일 %s" % (_md(ps[-1]["end"]), low_day(ps[-1])))]
     if s5["in_missing"]:
         cells.append(("입금일 지난 미수금", _na("계산서 자료 없음"), ""))

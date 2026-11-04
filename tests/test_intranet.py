@@ -734,13 +734,45 @@ class TestStructureStops(unittest.TestCase):
         self.assertIn("pg2", str(exc))
         self.assertEqual([r for r in fake.requested() if "pg2" in r[1]], [])
 
-    def test_page_link_that_also_changes_a_filter_stops(self):
+    def test_page_links_with_two_years_stop_without_requesting_either(self):
+        """쪽 링크가 서로 다른 gyear 를 붙이면 어느 목록인지 알 수 없어 멈춘다."""
+        links = [("/payment/index?gyear=2026&page=2", "2"), ("/payment/index?gyear=2025&page=2", "작년")]
+        first = payment_page([prow(5101), prow(5102)], links=links)
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026&page=2"): (200, {}, payment_page([prow(5103)])),
+        })
+        exc, fake = collect_raises(self, routes)   # 같은 이름에 값이 둘이면 어느 것도 붙이지 않고 멈춤
+        self.assertIsInstance(exc, intranet().StructureMismatch)
+        self.assertEqual([r for r in fake.requested() if "gyear" in r[1]], [])
+
+    def test_page_link_adding_gyear_is_followed_when_first_page_is_the_same(self):
+        """실제 인트라넷 (2026-11-04): 쪽 링크에만 gyear=2026 이 붙음 → 그 값을 붙인 첫 쪽이 같으면 그 주소로 모든 쪽을 읽는다."""
+        links = [("/payment/index?gyear=2026&page=2", "2")]
+        first = payment_page([prow(5101), prow(5102)], links=links)
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026"): (200, {}, first),
+            ("GET", "/payment/index?gyear=2026&page=2"): (200, {}, payment_page(
+                [prow(5103)], links=[("/payment/index?gyear=2026&page=1", "1")])),
+        })
+        opener, fake = make_fake_opener(routes)
+        res = intranet().collect(opener, USER, PASSWORD)
+        self.assertEqual([r["번호"] for r in res.payments], ["5101", "5102", "5103"])
+        self.assertIn(("GET", "/payment/index?gyear=2026&page=2"), fake.requested())
+
+    def test_page_link_adding_gyear_stops_when_first_page_differs(self):
         module = intranet()
         links = [("/payment/index?gyear=2026&page=2", "2")]
-        exc, fake = collect_raises(self, self.payment_route(links=links))
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, payment_page([prow(5101), prow(5102)], links=links)),
+            ("GET", "/payment/index?gyear=2026"): (200, {}, payment_page([prow(5101)], links=links)),
+        })
+        exc, fake = collect_raises(self, routes)
         self.assertIsInstance(exc, module.StructureMismatch)
-        self.assertIn("gyear", str(exc))
-        self.assertEqual([r for r in fake.requested() if "gyear" in r[1]], [])
+        self.assertIn("첫 쪽 내용이 달라져", str(exc))
+        self.assertNotIn(("GET", "/payment/index?gyear=2026&page=2"), fake.requested())
 
     def test_login_page_without_form1(self):
         module = intranet()

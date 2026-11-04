@@ -161,6 +161,7 @@ def main(argv=None):
     ap.add_argument("--기준일", default=None, help="YYYY-MM-DD (기본: 오늘)")
     ap.add_argument("--시작일", default=None, help="집계 시작일 (기본: 주간=기준일-6일, 월간=그 달 1일)")
     ap.add_argument("--가용일", default=None, help="이 날짜까지의 가용자금 줄을 더함 YYYY-MM-DD (기준일 뒤)")
+    ap.add_argument("--출금일", default=None, help="주간 출금 목록을 만들 날짜 YYYY-MM-DD (기준일 뒤, 기본: 기준일 뒤 첫 금요일)")
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
@@ -185,6 +186,13 @@ def main(argv=None):
         if pick is None or pick <= asof:
             _say("가용일 형식 오류 또는 기준일보다 빠름: %s (YYYY-MM-DD, 기준일 %s 뒤)" % (a.가용일, asof))
             return 2
+    payday = None
+    if a.출금일:   # 사용자 2026-11-04: 금요일 고정이 아니라 넣은 날짜의 출금 목록
+        payday = parse_date(a.출금일)
+        if payday is None or payday <= asof:
+            _say("출금일 형식 오류 또는 기준일보다 빠름: %s (YYYY-MM-DD, 기준일 %s 뒤). "
+                 "출금하는 날 아침에 만들면 기준일을 그 전날로 넣으세요." % (a.출금일, asof))
+            return 2
     if not os.path.isdir(a.입력):
         _say(_input_help(a.입력))
         return 2
@@ -194,7 +202,7 @@ def main(argv=None):
         _say(_write_help(a.출력, e))
         return 7
     data = load(a.입력)
-    R = compute(data, kind, asof, start, pick)
+    R = compute(data, kind, asof, start, pick, payday)
     if kind == "monthly":
         # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
         from ceo_report.convert_xchk import load_xchk

@@ -74,7 +74,7 @@ def _add(a, b):
     return None if a is None or b is None else a + b
 
 
-def compute(d, kind, asof, start=None, pick=None):
+def compute(d, kind, asof, start=None, pick=None, payday=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
     issues.items = list(d.issues.items)
@@ -83,6 +83,8 @@ def compute(d, kind, asof, start=None, pick=None):
     in_missing = list(getattr(d, "in_missing", []))
     invs = [] if in_missing else [dict(v) for v in d.invoices]
     R = {"kind": kind, "asof": asof}
+    # 주간 출금 목록의 출금일 (사용자 2026-11-04: 날짜를 따로 넣으면 그 날 기준). 비우면 기준일 뒤 첫 금요일
+    R["payday"] = payday if payday is not None and payday > asof else pay_friday(asof)
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
     R["settings"] = dict(d.settings)
@@ -462,7 +464,7 @@ def compute(d, kind, asof, start=None, pick=None):
     attach(events, getattr(d, "pay_details", None) or [])
     R["events"] = events
 
-    week_ends = [pay_friday(asof) + 7 * i * DAY for i in range(4)]   # 금요일 출금 주 (토~금)
+    week_ends = [R["payday"] + 7 * i * DAY for i in range(4)]   # 출금일 단위 한 주 (기본 금요일, 토~금)
     buckets = []
     s = asof + DAY
     for i, we in enumerate(week_ends):
@@ -529,7 +531,7 @@ def compute(d, kind, asof, start=None, pick=None):
         mins[mode] = (low, low_d)
     four = buckets[:4]
     min_cash = R["settings_num"].get("위험_최소보유현금")
-    ends = period_ends(R["kind"], asof)
+    ends = period_ends(R["kind"], asof, R["payday"])
     if pick is not None:   # 보고서를 만들 때 정한 날짜 (--가용일): 문서라 읽는 사람이 날짜를 바꿀 수 없다 (사용자 2026-11-03)
         ends.append(("지정일", pick))
     periods = available_periods(start_cash, dated, ends, min_cash, asof)
@@ -765,11 +767,12 @@ def pay_friday(asof):
     return asof + ((PAY_WEEKDAY - asof.weekday() - 1) % 7 + 1) * DAY
 
 
-def period_ends(kind, asof):
-    """기간별 가용자금의 기간 (사용자 2026-11-03): 주간 = 기준일부터 1~4주, 월간 = 다음 1~3개월 말일."""
-    if kind == "weekly":   # 금요일 출금 주 단위 (사용자 2026-11-03: 다음 주 지급 목록과 같은 기간·같은 금액)
-        f = pay_friday(asof)
-        labs = ("이번 주", "다음 주", "3주째", "4주째", "5주째")[1 if asof.weekday() == PAY_WEEKDAY else 0:]
+def period_ends(kind, asof, payday=None):
+    """기간별 가용자금의 기간 (사용자 2026-11-03): 주간 = 기준일부터 1~4주, 월간 = 다음 1~3개월 말일.
+    주간 첫 주 끝 = 출금일 (사용자 2026-11-04: 따로 넣은 날짜, 비우면 기준일 뒤 첫 금요일)."""
+    if kind == "weekly":   # 출금일 단위 주 (사용자 2026-11-03: 다음 주 지급 목록과 같은 기간·같은 금액)
+        f = payday or pay_friday(asof)
+        labs = ("이번 주", "다음 주", "3주째", "4주째", "5주째")[1 if (f - asof).days >= 7 else 0:]
         return [(lab, f + 7 * i * DAY) for i, lab in enumerate(labs[:4])]
     return [("%d개월" % i, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 

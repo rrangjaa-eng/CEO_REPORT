@@ -145,6 +145,22 @@ class TestReportIsADocument(unittest.TestCase):
                     self.assertIn("@page{size:A4 portrait", html)
                     self.assertNotIn("landscape", html)
 
+    def test_payday_entered_makes_the_list_for_that_day(self):
+        """출금일을 따로 넣으면 그 날 기준 (사용자 2026-11-04). 자금 표 첫 주 끝도 그 날, 다음 주 = 그 다음 날부터 7일."""
+        from ceo_report.render import week_outflows
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31), payday=dt.date(2026, 11, 5))
+        W = week_outflows(R)
+        self.assertEqual(W["fri"], dt.date(2026, 11, 5))
+        self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]], [("2026-11-05", 1_200_000)])
+        self.assertTrue(all(dt.date(2026, 11, 6) <= e["date"] <= dt.date(2026, 11, 12) for e in W["next"]["rows"]))
+        self.assertEqual(R["s2"]["periods"][0]["end"], dt.date(2026, 11, 5))
+        fs = first_screen(render(R, "ceo"))
+        self.assertIn("11/05(목) 출금 목록", fs)
+        self.assertIn("11/05(목) 출금 합계", fs)
+        # 기준일 이전·당일 출금일은 쓰지 않고 기본(기준일 뒤 첫 금요일)
+        R2 = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31), payday=dt.date(2026, 10, 31))
+        self.assertEqual(R2["payday"], dt.date(2026, 11, 6))
+
     def test_weekly_lists_friday_payments_then_next_week(self):
         """매주 금요일 출금 (사용자 2026-11-03): ① 금요일 출금 목록, 그 아래 다음 주(토~다음 금) 지급 예정.
         금요일 목록은 금액이 확정된 건만 (사용자 2026-11-04 세 번 지적: 예상·금액 미확인 모두 뺌)."""
@@ -165,9 +181,9 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(W["pay"]["unknown_n"], 0)
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
-            self.assertIn("금요일(11/06) 출금 목록", fs)
-            self.assertIn("다음 주 지급 예정 (11/07 토 ~ 11/13 금)", fs)
-            self.assertLess(fs.index("금요일(11/06) 출금 목록"), fs.index("다음 주 지급 예정"))
+            self.assertIn("11/06(금) 출금 목록", fs)
+            self.assertIn("다음 주 지급 예정 (11/07(토) ~ 11/13(금))", fs)
+            self.assertLess(fs.index("11/06(금) 출금 목록"), fs.index("다음 주 지급 예정"))
             table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
             self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 2)   # 금액 확정 건만 (사용자 2026-11-04)
             self.assertNotIn("예상", table)
@@ -176,7 +192,7 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertNotIn("상세 미입력", table)
             self.assertIn("2건 · 합계 50,700,000</div>", fs)
             self.assertIn("확정 안 된 예상 지급 1건 1,845,735원 · 금액 미확인 1건은 목록에서 뺌", fs)
-            self.assertIn("<div class='lab'>금요일(11/06) 출금</div><div class='big'>50,700,000</div><div class='foot'>2건</div>", fs)
+            self.assertIn("<div class='lab'>11/06(금) 출금</div><div class='big'>50,700,000</div><div class='foot'>2건</div>", fs)
         self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                     dt.date(2026, 10, 31)), "ceo"))
 
@@ -391,7 +407,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
         ceo = render(R, "ceo")
         heads = [re.sub("<[^>]+>", "", h) for h in re.findall(r"<div class='q'>.*?</div>", ceo)]
-        self.assertEqual([h[1:].strip().split(" ")[0] for h in heads], ["금요일(11/06)", "10월", "지금"])
+        self.assertEqual([h[1:].strip().split(" ")[0] for h in heads], ["11/06(금)", "10월", "지금"])
         self.assertNotIn("class='prow'", ceo)
         self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
         self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
@@ -430,9 +446,13 @@ class TestSectionsDoNotSplit(unittest.TestCase):
         for kind in ("weekly", "monthly"):
             html = render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), kind, dt.date(2026, 10, 31)), "ceo")
             with self.subTest(kind):
-                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>"))
+                # 주간 ① 출금 목록만 쪽을 넘어 이어질 수 있다 (사용자 2026-11-04: 길면 통째로 밀려 1쪽이 비던 것)
+                brk = html.count("<div class='sec brk'><div class='q'>")
+                self.assertEqual(brk, 1 if kind == "weekly" else 0)
+                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertNotIn("break-inside:auto", html)
+                self.assertEqual(html.count("break-inside:auto"), 1)
+                self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 
 if __name__ == "__main__":
