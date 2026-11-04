@@ -78,3 +78,19 @@ class TestLoadUsesBookBank(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCardFeeDeductedAtSale(unittest.TestCase):
+    """2026-11-04 실제 자료: 카드 매출 전표는 매출채권을 수수료 뺀 금액만 잡고 수수료는 지급수수료 차변."""
+
+    def test_fee_goes_into_paid_so_nothing_left_owed(self):
+        from ceo_report import wehago
+
+        def ln(code, name, debit=None, credit=None, vendor="가카드"):
+            x = line(D(2026, 3, 2), code, name, debit, credit)
+            x["no"], x["vendor"], x["sort"] = "7", vendor, "매출전표"
+            return x
+        j = [ln("10800", "외상매출금", debit=1_078_000), ln("83100", "지급수수료(판)", debit=22_000),
+             ln("41200", "용역매출", credit=1_000_000), ln("25500", "부가세예수금", credit=100_000)]
+        _, sales = wehago.invoices_from_journal(j)
+        self.assertEqual((sales[0]["total"], sales[0]["deducted"]), (1_100_000, 22_000))

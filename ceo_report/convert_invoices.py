@@ -117,7 +117,8 @@ def _invoices(rows):
                     "supply": supply, "vat": vat, "source_total": r.get("total"),
                     "total": None if supply is None or vat is None else supply + vat,
                     "code": r.get("code"), "type": r.get("type") or "", "no": r.get("no") or "",
-                    "applied": 0, "paid_date": None, "project": "", "basis": "미연결", "why": ""})
+                    "applied": 0, "paid_date": None, "project": "", "basis": "미연결", "why": "",
+                    "deducted": r.get("deducted") or 0})   # 매출 때 바로 차감된 금액 (카드 수수료): 입금액에 넣는다
     return out
 
 
@@ -188,7 +189,7 @@ def _allocate(invoices, jr):
         if inv["total"] is None:
             skip_fifo.add(inv["vendor_norm"])
         if inv["total"] is not None and inv["total"] > 0 and inv["date"] is not None:
-            items[inv["vendor_norm"]].append({"inv": inv, "date": inv["date"], "remaining": inv["total"]})
+            items[inv["vendor_norm"]].append({"inv": inv, "date": inv["date"], "remaining": inv["total"] - inv["deducted"]})
     opening = {}
     if jr.opening_any:
         for vn, o in jr.opening.items():
@@ -209,7 +210,7 @@ def _allocate(invoices, jr):
         if r["date"] is None:
             continue
         for it in items.get(r["vn"], []):
-            if it["remaining"] == it["inv"]["total"] and it["remaining"] == r["amount"] and it["date"] <= r["date"]:
+            if it["remaining"] == it["inv"]["total"] - it["inv"]["deducted"] and it["remaining"] == r["amount"] and it["date"] <= r["date"]:
                 apply(it, r, r["amount"])
                 break
     # 2회전 (CR-05: 기초 줄이 없어도 돈다): 거래처마다 기초 미수 먼저, 그다음 오래된 계산서부터. 발행일 이후 입금만, 나눠 붙일 수 있다
@@ -299,15 +300,15 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             firm = (old.get("예정일확정") or "").strip()
             firm = firm if firm in _FIRM else ""
             prev_paid = num(old.get("입금액"))
-            now_paid = inv["applied"] if inv["total"] is not None else None
+            now_paid = inv["applied"] + inv["deducted"] if inv["total"] is not None else None
             if prev_paid is not None and prev_paid != now_paid:
                 mismatch.append("이전 계산서.csv와 입금 기록 다름: %s %s 이전 %s · WEHAGO %s" % (
                     inv["vendor"], _day(inv["date"]), won(prev_paid), won(now_paid)))
-        paid = inv["applied"] > 0
+        paid = inv["applied"] + inv["deducted"] > 0
         rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                      "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
                      "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                     "입금액": cell_amount(inv["applied"]) if paid else ""})
+                     "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else ""})
         bases.append(inv["basis"])
 
     # 대조 (원본 합계 대 CSV 합계)
@@ -360,7 +361,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             inv_unknown.add(inv["vendor_norm"])
         else:
             inv_total[inv["vendor_norm"]] += inv["total"]
-        inv_applied[inv["vendor_norm"]] += inv["applied"]
+        inv_applied[inv["vendor_norm"]] += inv["applied"] + inv["deducted"]
     left_by = collections.defaultdict(int)
     for r in leftover:
         left_by[r["vn"]] += r["left"]
@@ -405,6 +406,10 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         blind = "분개장에 전기이월·기초잔액 줄이 없고 %s — 기간 앞 미수의 입금인지 선입금인지 알 수 없음" % " · ".join(parts)
         notes.append("매출채권 잔액 대조 판단 불가: " + blind)
     checks.append(balance_check(c_all, rows, opening_left_all, blind))
+    ded = [inv for inv in invoices if inv["deducted"]]
+    if ded:
+        notes.append("매출 때 바로 차감된 금액(카드 수수료 등) %d건 %s → 입금액에 포함 (분개장 매출채권은 차감 뒤 금액)"
+                     % (len(ded), won(sum(inv["deducted"] for inv in ded))))
     notes.append("미배분 수금 %d건 %s" % (len(leftover), won(left_sum)))
     for r in leftover:
         notes.append("  미배분 수금 %s %s %s (전표 %s)" % (_day(r["date"]), r["vendor"], won(r["left"]), r["no"]))
@@ -412,13 +417,13 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     if fifo:
         notes.append("오래된 것부터(기초 미수 → 계산서) 배분한 입금 %d건 %s (금액이 계산서 하나와 같지 않은 입금: 분할·합산·수수료 차감 등)"
                      % (len(fifo), won(sum(r["amount"] for r in fifo))))
-    part = [inv for inv in order if inv["total"] is not None and 0 < inv["applied"] < inv["total"]]
+    part = [inv for inv in order if inv["total"] is not None and 0 < inv["applied"] < inv["total"] - inv["deducted"]]
     if part:
         notes.append("부분 입금 계산서 %d건 남은 금액 %s (수수료 차감 등도 자동으로 지우지 않음 — 미수로 둠)"
-                     % (len(part), won(sum(inv["total"] - inv["applied"] for inv in part))))
+                     % (len(part), won(sum(inv["total"] - inv["deducted"] - inv["applied"] for inv in part))))
     for inv in part:
         notes.append("  부분 입금 %s %s 합계 %s · 입금 %s · 남음 %s" % (
-            _day(inv["date"]), inv["vendor"], won(inv["total"]), won(inv["applied"]), won(inv["total"] - inv["applied"])))
+            _day(inv["date"]), inv["vendor"], won(inv["total"]), won(inv["applied"]), won(inv["total"] - inv["deducted"] - inv["applied"])))
     if jr.credits:
         notes.append("수정(계산서 감액) %d건 %s" % (len(jr.credits), won(credit_sum)))
     for r in jr.credits:

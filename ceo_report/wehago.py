@@ -533,6 +533,10 @@ def invoices_from_journal(journal):
                "code": code, "vendor_norm": norm_vendor(vendor)}
         if kind == "매출":
             row["type"] = ""
+            # 카드 매출: 매출채권은 수수료를 뺀 금액만 잡히고 수수료는 같은 전표 비용(지급수수료) 차변 (2026-11-04 실제 자료).
+            # 자산(1xxxx)이 아닌 차변 = 매출 때 이미 차감된 금액 → 계산서 입금액에 넣어 미수로 남지 않게 한다
+            row["deducted"] = sum(ln["debit"] or 0 for ln in lines
+                                  if ln["debit"] and not _squash(ln["account_code"]).startswith("1"))
             sales.append(row)
         else:
             buys.append(row)
@@ -736,7 +740,8 @@ def _sales_row(item):
     """세 원천의 행을 같은 모양으로 (원천에 없는 열은 빈 글자)."""
     return {"date": item["date"], "no": item.get("no", ""), "vendor": item["vendor"], "vendor_norm": item["vendor_norm"],
             "item": item["item"], "supply": item["supply"], "vat": item["vat"], "total": item["total"],
-            "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", "")}
+            "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", ""),
+            "deducted": item.get("deducted") or 0}
 
 
 def load_sales(folder, asof, books):
