@@ -213,7 +213,7 @@ def render(R, mode):
     st = R["settings"]
     p0, p1 = R["period"]
     kind = "주간" if R["kind"] == "weekly" else "월간"
-    who = "대표 보고" if mode == "ceo" else "경영관리 보고"
+    who = "보고" if mode == "ceo" else "경영관리 보고"   # 대표용 제목은 '주간 보고'·'월간 보고' (사용자 2026-11-04)
     s1, s2, s3, s4, s5, s6, s7 = (R[k] for k in ("s1", "s2", "s3", "s4", "s5", "s6", "s7"))
     per = "이번 주" if R["kind"] == "weekly" else "이번 달"
     h = []
@@ -224,8 +224,8 @@ def render(R, mode):
     if mode == "ceo" and R["kind"] == "weekly":   # 결재란: 대표가 서명해 회신 (사용자 2026-11-03)
         h.append("<table class='sign'><tr><th rowspan='3' class='sv'>결<br>재</th><th>담당</th><th>대표이사</th></tr>"
                  "<tr class='sg'><td></td><td></td></tr><tr class='sd'><td>/</td><td>/</td></tr></table>")
-    h.append("<h1>%s<span class='badge%s'>%s</span></h1>" % (esc(title), "" if mode == "ceo" else " m",
-                                                             "대표용" if mode == "ceo" else "경영관리용"))
+    # 대표용엔 '대표용' 표시를 붙이지 않음 (사용자 2026-11-04). 경영관리용만 표시
+    h.append("<h1>%s%s</h1>" % (esc(title), "" if mode == "ceo" else "<span class='badge m'>경영관리용</span>"))
     h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원<br>%s</div>"
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 esc("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"]))))

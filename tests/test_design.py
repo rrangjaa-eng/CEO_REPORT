@@ -145,6 +145,18 @@ class TestReportIsADocument(unittest.TestCase):
                     self.assertIn("@page{size:A4 portrait", html)
                     self.assertNotIn("landscape", html)
 
+    def test_ceo_title_is_plain_weekly_or_monthly_report_without_badge(self):
+        """사용자 2026-11-04: 대표용 제목은 '주간 보고'·'월간 보고', '대표용' 표시 없음. 경영관리용은 그대로."""
+        src = os.path.join(ROOT, "입력양식", "샘플")
+        for kind, word in (("weekly", "주간"), ("monthly", "월간")):
+            R = compute(load(src), kind, dt.date(2026, 10, 31))
+            ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+            h1 = re.search(r"<h1>(.*?)</h1>", ceo).group(1)
+            self.assertTrue(h1.endswith("%s 보고" % word), h1)
+            self.assertNotIn("대표용", h1)
+            self.assertNotIn("badge", h1)
+            self.assertIn("<span class='badge m'>경영관리용</span>", mgmt)
+
     def test_payday_entered_makes_the_list_for_that_day(self):
         """출금일을 따로 넣으면 그 날 기준 (사용자 2026-11-04). 자금 표 첫 주 끝도 그 날, 다음 주 = 그 다음 날부터 7일."""
         from ceo_report.render import week_outflows
