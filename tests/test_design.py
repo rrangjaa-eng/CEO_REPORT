@@ -251,14 +251,14 @@ class TestReportIsADocument(unittest.TestCase):
                 ["기획2팀", "81,000,000", "25,920,000", "32.0%", "7,500,000", "1,500,000", "16,920,000", "3명", "5,640,000", "2.3배", "3,890,000"],
                 ["기획본부 자체 비용", "", "", "", "4,000,000", "1,500,000", "−5,500,000", "1명", "", "", ""],
                 ["기획본부 합계", "180,000,000", "57,600,000", "32.0%", "20,500,000", "5,000,000", "32,100,000", "7명", "4,585,714", "1.6배", ""],
-                ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "180,000,000", "57,600,000", "32.0%", "23,500,000", "7,000,000", "27,100,000", "7명", "3,871,429", "1.2배", "3,871,429"]])
+                ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "180,000,000", "57,600,000", "32.0%", "23,500,000", "7,000,000", "27,100,000", "7명", "3,871,429", "1.2배", ""]])   # 회사 줄엔 공통비 나눈 뒤 칸 없음 (사용자 2026-11-04)
             ytd = [re.findall(r"<td[^>]*>(.*?)</td>", r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tables[1].split("<tbody>")[1])]
             # 누적 1인당 = 누적 순수익 ÷ 1~10월 평균 인원 (사용자 2026-11-03)
             self.assertEqual(ytd[0], ["기획1팀", "742,500,000", "237,600,000", "32.0%", "90,000,000", "20,000,000", "127,600,000", "3.0명",
                                       "42,533,333", "1.4배", "25,033,333"])   # 급여·판관비 따로, 급여 대비 (사용자 2026-11-03)
             self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "1,350,000,000"])
             self.assertEqual(ytd[3][6], "127,000,000")   # 기획본부 영업외 비용 500,000 × 10달 포함 (사용자 2026-11-04)
-            self.assertEqual(ytd[3][7:11], ["7.0명", "18,142,857", "0.5배", "18,142,857"])   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
+            self.assertEqual(ytd[3][7:11], ["7.0명", "18,142,857", "0.5배", ""])   # 회사 줄엔 공통비 나눈 뒤 칸 없음 (사용자 2026-11-04)   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
             self.assertEqual([c for c in ytd[-1] if c], ["세전 이익", "135,000,000"])
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_143_333 * 3 + 3_890_000 * 3, -2), 27_100_000)
@@ -445,10 +445,24 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         part_month = fs.split(heads[month])[1].split(heads[year])[0]
         self.assertNotIn("올해 누적", part_month)   # 이번 달 칸에는 누적 숫자를 섞지 않는다
         part_year = fs.split(heads[year])[1]
-        self.assertIn("<div class='ystrip'>", part_year)
-        self.assertIn("<span>누적 세전 이익</span><b>135,000,000</b>", part_year)   # 작년 감가상각비 12,000,000 먼저 뺌 (사용자 2026-11-04)
+        # 누적도 이번 달처럼 큰 숫자 칸 + 흰 카드 표 (사용자 2026-11-04)
+        self.assertIn("<div class='four c3'>", part_year)
+        self.assertIn("<div class='lab'>1월~10월 세전 이익</div><div class='big'>135,000,000</div>", part_year)
+        self.assertIn("<div class='card brk'><div class='lab'>1월~10월</div>", part_year)   # 작년 감가상각비 12,000,000 먼저 뺌 (사용자 2026-11-04)
         self.assertIn("+ 영업외 수익 (경영관리 2,000,000)", part_month)
         self.assertNotIn("<td>경영관리", part_month)
+
+    def test_monthly_prints_at_80_percent_and_weekly_does_not(self):
+        """월간은 표가 넓어 인쇄 때 80%로 줄여 A4 3쪽에 맞춘다. 넘치는 표로 브라우저가 몰래 줄이던 것 대신 (사용자 2026-11-04)."""
+        S = load(os.path.join(ROOT, "입력양식", "샘플"))
+        mon = render(compute(S, "monthly", dt.date(2026, 10, 31)), "ceo")
+        wk = render(compute(S, "weekly", dt.date(2026, 10, 31)), "ceo")
+        self.assertIn("<div class='wrap mon'>", mon)
+        self.assertIn("<div class='wrap'>", wk)
+        self.assertIn(".wrap.mon{zoom:.8}", mon)
+        # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
+        self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)
+
 
 
 class TestSectionsDoNotSplit(unittest.TestCase):

@@ -220,7 +220,9 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS))
+             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS,
+                                              # 월간은 인쇄 때 80%: 표가 넓어 A4 3쪽에 맞춤 (사용자 2026-11-04)
+                                              "" if R["kind"] == "weekly" else " mon"))
     if mode == "ceo" and R["kind"] == "weekly":   # 결재란: 대표가 서명해 회신 (사용자 2026-11-03)
         h.append("<table class='sign'><tr><th rowspan='3' class='sv'>결<br>재</th><th>담당</th><th>대표이사</th></tr>"
                  "<tr class='sg'><td></td><td></td></tr><tr class='sd'><td>/</td><td>/</td></tr></table>")
@@ -287,10 +289,6 @@ table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.f
 .keys{font-size:11.5px;color:var(--sub);display:flex;gap:12px;flex-wrap:wrap}.keys i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:3px}
 .ptot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:2px solid var(--ink);padding-top:8px;margin-top:4px;font-size:12px}
 .four{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.four .big{font-size:20px}
-.card.ytd{border-left:4px solid #6b3fa0;background:#faf8fd}
-.ystrip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:2px 0 8px}
-.ystrip div{border-bottom:1px solid var(--line);padding:2px 0 4px}.ystrip span{display:block;font-size:11.5px;color:var(--sub)}
-.ystrip b{font-size:16px;font-variant-numeric:tabular-nums}.ystrip small{font-size:11px;color:var(--sub);font-weight:400}
 small.nin{display:block;color:var(--in);font-size:10.5px}
 .xbox{background:#fff8e6;border:1px solid #f0dca8;border-radius:10px;padding:10px 16px}
 .xbox ul{margin:2px 0 0;padding-left:18px;columns:2;column-gap:28px}.xbox li{margin:2px 0;break-inside:avoid}
@@ -303,7 +301,7 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 @media print{.sec.brk,.sec.brk .frimain{break-inside:auto}.sec.brk table.pt.wo td{padding:2px 6px}.sec.brk table.pt.wo{font-size:11.5px}.sec.brk table.wo thead{display:table-header-group}.sec.brk .fri{break-after:avoid}.q{break-after:avoid}.fs .big{font-size:20px}.fs table.pt{font-size:11.5px}table.pt td{padding:5px 6px}table.pt.tm td,table.pt.tm th{padding:4px 5px}table.pt.tm{font-size:11px}
 .fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}.fs .card{padding:10px 14px}.fs .sec{margin-bottom:6px}table.pt.ayt{font-size:9px}table.pt.ayt td,table.pt.ayt th{padding:1.5px 2px}}
 @media print{.fs svg{max-height:200px}.fs.mon svg{max-height:290px}.fs.mon svg{max-height:290px}table.pt.ayt td,table.pt.ayt th{padding:2px}.fs .card{padding:8px 12px}.pg{min-height:0}}
-@media print{.fs:not(.mon) svg{max-height:300px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
+@media print{.wrap.mon{zoom:.8}.fs:not(.mon) svg{max-height:300px}.fs.mon svg{max-height:320px}.fs.mon .card table.pt.tm{font-size:11px}.fs.mon .card table.pt.tm td,.fs.mon .card table.pt.tm th{padding:4px 3px}}
 """
 
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
@@ -1021,12 +1019,13 @@ def _nonop_rows(N, before, after):
     def who(i):   # 어느 부서가 가져온 것인지 금액과 함께 (사용자 2026-11-03: 경영관리의 영업외 수익을 그 부서 실적으로 보이게)
         parts = ["%s %s" % (d, won(a if i == 1 else b)) for d, a, b in N["by_dept"] if (a if i == 1 else b)]
         return " (%s)" % " · ".join(parts) if parts else ""
+    # 줄 이름은 빈 칸들을 합친 넓은 칸에 쓴다: 첫 칸이 넓어져 숫자 칸이 좁아지지 않게 (사용자 2026-11-04)
     rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut")]
     if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
         rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
-    return "".join("<tr class='%s'><td>%s</td><td colspan='%d'></td><td>%s</td>%s</tr>"
-                   % (c, esc(label), before, W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
+    return "".join("<tr class='%s nonop'><td colspan='%d'>%s</td><td>%s</td>%s</tr>"
+                   % (c, before + 1, esc(label), W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
 
 
 def _team_table(R, part="month", mode="mgmt"):
@@ -1063,8 +1062,7 @@ def _team_table(R, part="month", mode="mgmt"):
             alloc = ""
             if r["kind"] == "team":
                 alloc = "미확인" if r.get("alloc") is None or not h else W(round(r["alloc"] / h))
-            elif r["kind"] == "company":   # 회사 영업이익은 이미 공통비를 다 뺀 값: 1인당 순수익과 같다 (사용자 2026-11-03)
-                alloc = per
+            # 회사 전체 줄에는 '공통비 나눈 뒤 1인당'을 넣지 않는다 (1인당 순수익과 같은 숫자, 사용자 2026-11-04)
             label = esc(r["label"])
             if r["kind"] == "company":   # 인원은 기획본부(팀+본부)만 (사용자 2026-11-03: 명시)
                 label += "<small>인원 = 기획본부만</small>"
@@ -1077,14 +1075,16 @@ def _team_table(R, part="month", mode="mgmt"):
     out.append("</div>")
     if part == "month":
         return "".join(out)
-    out = ["<div class='card brk ytd'>"]
+    # 누적도 이번 달과 같은 모양: 위에 큰 숫자 칸, 아래 흰 카드에 기간 이름과 표 (사용자 2026-11-04)
     Y = build(src["table"], dept, ym, True)
     if Y is not None:
         _dep_into(R, Y, True)
+        out = [_ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
+    else:
+        out = ["<div class='card brk'>"]
     if Y is not None:   # 누적은 줄인 표: 팀 · 본부 합계 · 회사 · 세전 이익. 공통비 나눈 뒤는 달마다 나눠 더한 값
         allocate(Y, basis)
         per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
-        out.append(_ytd_strip(Y, ym))
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th>"
                    "<th>급여</th><th>판관비</th><th>순수익</th><th>평균 인원</th><th>1인당 순수익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
                    "</tr></thead><tbody>")   # 이번 달 표와 같은 칸 (사용자 2026-11-03)
@@ -1096,8 +1096,6 @@ def _team_table(R, part="month", mode="mgmt"):
             if r["kind"] == "team":
                 a = per_month.get(r["label"])
                 alloc = "미확인" if a is None or not h else W(round(a / h))
-            elif r["kind"] == "company":
-                alloc = per
             ratio = "미확인" if r["net"] is None or not r["salary"] else "%.1f배" % (r["net"] / r["salary"])
             cells = [esc(r["label"]) + ("<small>인원 = 기획본부만</small>" if r["kind"] == "company" else ""),
                      W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
@@ -1234,12 +1232,18 @@ def _target_table(R, Y, ym):
 
 
 def _ytd_strip(Y, ym):
-    """올해 누적 핵심 숫자 한 줄: 매출 · 매출총이익(수익률) · 영업이익 · 세전 이익 (사용자 2026-11-03: 월별과 누적을 뚜렷이 나눔)."""
+    """올해 누적 큰 숫자 칸: 매출 · 영업이익 · 세전 이익. 이번 달 실적 칸과 같은 모양 (사용자 2026-11-04: 보기 편하게)."""
     c, N = Y["company"], Y["nonop"]
-    items = [("누적 매출", W(c["revenue"])), ("누적 매출총이익", "%s <small>%s</small>" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
-             ("누적 영업이익", W(c["net"], "확인 필요")), ("누적 세전 이익", W(N["pretax"], "확인 필요"))]
-    return "<div class='ystrip'>%s</div>" % "".join(
-        "<div><span>%s</span><b>%s</b></div>" % (esc(k), v) for k, v in items)
+    per = "1월~%s" % _ym_text(ym)
+    parts = ["영업외 수익 %s" % won(N["in"]), "영업외 비용 %s" % won(N["out"])]
+    if N.get("dep") is not None:
+        parts.append("감가상각비 예상 %s" % won(N["dep"]))
+    cards = [("%s 매출" % per, W(c["revenue"]), "매출총이익 %s (%s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
+             ("%s 영업이익" % per, W(c["net"], "확인 필요"), "이익률 %s" % esc(pct(c["net"], c["revenue"]))),
+             ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]
+    return "<div class='four c3'>%s</div>" % "".join(
+        "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
+        % (esc(a), b, f) for a, b, f in cards)
 
 
 def _team_notes(R, basis, dept, last, ym):
