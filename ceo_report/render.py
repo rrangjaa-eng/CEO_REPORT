@@ -272,7 +272,7 @@ table.pt{margin-top:8px;font-size:13px}table.pt th{background:#fff;border-bottom
 table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text-align:right;padding:7px 6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
-table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}.four.top{clear:both;margin:10px 0 2px}.four.top .card{border:1.5px solid var(--line)}.four.top .card:first-child{border-color:var(--out)}.four.top .big{font-size:19px}.four.top .foot{font-size:11px}ul.nl{margin:6px 0 0;padding-left:16px;font-size:11px;color:var(--sub)}ul.nl li{margin:1px 0}.card table.pt.tm{font-size:10px}table.pt.tx{font-size:11.5px}table.pt.tx td{text-align:right}table.pt.tx td:first-child{text-align:left}.card table.pt.tm td,.card table.pt.tm th{padding:3px 3px}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
+table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}.four.top{clear:both;margin:10px 0 2px}.four.top .card{border:1.5px solid var(--line)}.four.top .card:first-child{border-color:var(--out)}.four.top .big{font-size:19px}.four.top .foot{font-size:11px}ul.nl{margin:6px 0 0;padding-left:16px;font-size:11px;color:var(--sub)}ul.nl li{margin:1px 0}.card table.pt.tm{font-size:10px}table.pt.tx{font-size:11px}table.pt.tx td,table.pt.tx th{padding:2px 4px}table.pt.tx td{text-align:right}table.pt.tx td:first-child{text-align:left}.card table.pt.tm td,.card table.pt.tm th{padding:3px 3px}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -996,8 +996,10 @@ def _nonop_rows(N, before, after):
     def who(i):   # 어느 부서가 가져온 것인지 금액과 함께 (사용자 2026-11-03: 경영관리의 영업외 수익을 그 부서 실적으로 보이게)
         parts = ["%s %s" % (d, won(a if i == 1 else b)) for d, a, b in N["by_dept"] if (a if i == 1 else b)]
         return " (%s)" % " · ".join(parts) if parts else ""
-    rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut"),
-            ("세전 이익", N["pretax"], "tot")]
+    rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut")]
+    if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
+        rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
+    rows.append(("세전 이익", N["pretax"], "tot"))
     return "".join("<tr class='%s'><td>%s</td><td colspan='%d'></td><td>%s</td>%s</tr>"
                    % (c, esc(label), before, W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
 
@@ -1017,6 +1019,7 @@ def _team_table(R, part="month", mode="mgmt"):
     out, last = ["<div class='card brk'>"], None   # 쪽이 넘어가면 표 사이·줄 사이에서 나뉜다 (A4 세로 2쪽)
     T = build(src["table"], dept, ym, False)
     if T is not None:
+        _dep_into(R, T, False)
         last = allocate(T, basis)
         out.append("<div class='lab'>%s</div>" % esc(_ym_text(ym)))
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>수익률</th><th>급여</th>"
@@ -1055,6 +1058,8 @@ def _team_table(R, part="month", mode="mgmt"):
         return "".join(out)
     out = ["<div class='card brk ytd'>"]
     Y = build(src["table"], dept, ym, True)
+    if Y is not None:
+        _dep_into(R, Y, True)
     if Y is not None:   # 누적은 줄인 표: 팀 · 본부 합계 · 회사 · 세전 이익. 공통비 나눈 뒤는 달마다 나눠 더한 값
         allocate(Y, basis)
         per_month = build_ytd_alloc(src.get("by_month", []), dept, ym, basis)
@@ -1089,12 +1094,29 @@ def _team_table(R, part="month", mode="mgmt"):
     return "".join(out)
 
 
+def _dep_into(R, T, ytd):
+    """감가상각비 예상을 결산 줄에 넣고 세전 이익에서 뺀다 (사용자 2026-11-04). 작년 금액을 모르면 줄을 넣지 않는다."""
+    from .corptax import apply
+    dep = R.get("dep") or {}
+    amount = dep.get("extra" if ytd else "cur")
+    if amount is None:
+        return
+    apply(T["nonop"], amount)
+    src = "작년" if dep.get("source") == "작년 장부" else "입력"
+    if ytd:
+        T["nonop"]["dep_note"] = ", %s %s × %d/12" % (src, won(dep["annual"]), dep["months"]) if dep.get("mode") == "prorate" \
+            else ", %s 연간 %s" % (src, won(dep["annual"]))
+    else:
+        T["nonop"]["dep_note"] = ", %s %s ÷ 12" % (src, won(dep["annual"]))
+    if dep.get("booked"):
+        T["nonop"]["dep_note"] += " − 장부 반영 %s" % won(dep["booked"])
+
+
 def _corptax_table(R, Y, ym):
-    """법인세 예상 (사용자 2026-11-04): 누적 세전 이익으로 영업외 수익 뺀 것·넣은 것 두 가지. 감가상각비는 미리 뺀다."""
+    """법인세 예상 (사용자 2026-11-04): 누적 세전 이익(감가상각비 예상 뺀 값)으로 영업외 수익 뺀 것·넣은 것 두 가지."""
     from .corptax import brackets, estimate
-    dep = R.get("dep") or {"annual": None, "extra": None, "booked": 0, "months": int(ym[5:7]), "source": ""}
     N = Y["nonop"]
-    rows = estimate(N["pretax"], N["in"], dep, ym)
+    rows = estimate(N["pretax"], N["in"], ym)
     h = ["<div class='wsub'>법인세 예상 (1월~%s 누적 기준)</div>" % esc(_ym_text(ym)),
          "<table class='pt tx'><thead><tr><th>구분</th><th>과세표준 (어림)</th><th>법인세</th><th>지방소득세</th><th>합계</th>"
          "</tr></thead><tbody>"]
@@ -1102,16 +1124,10 @@ def _corptax_table(R, Y, ym):
         h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr>"
                  % (esc(r["label"]), W(r["base"]), W(r["corp"]), W(r["local"]), W(r["total"])))
     h.append("</tbody></table>")
-    if dep["annual"] is None:
-        d_txt = "감가상각비 모름 (작년 장부에 없음 · 창 '⑨ 감가상각비'에 연간 금액을 넣으면 뺌) → 빼지 않음"
-    else:
-        d_txt = "감가상각비 %s 미리 뺌 (연간 %s × %d/12%s, %s)" % (
-            won(dep["extra"]), won(dep["annual"]), dep["months"],
-            " − 장부에 이미 들어간 %s" % won(dep["booked"]) if dep["booked"] else "", dep["source"])
+    d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "감가상각비 모름, 빼지 않음 (창 ⑨에 연간 금액 입력)"
     rate = "·".join("%g%%" % (r * 100) for _, r in brackets(ym[:4])[:2])
     h.append("<div class='note'>%s</div>" % esc(
-        "과세표준 = 누적 세전 이익 − 감가상각비 예상. %s. 세율 %s년 %s (2억 원까지·그 위), 지방소득세 = 법인세의 10%%. "
-        "세무조정·세액공제·감면·중간예납은 빼지 않은 어림값, 신고·납부 %d년 3월 말" % (d_txt, ym[:4], rate, int(ym[:4]) + 1)))
+        "과세표준 = %s · 세율 %s, 지방세 10%% · 세무조정·공제·중간예납 미반영 · %d년 3월 납부" % (d_txt, rate, int(ym[:4]) + 1)))
     return "".join(h)
 
 

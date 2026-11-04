@@ -25,25 +25,33 @@ class TestDepreciation(unittest.TestCase):
     acc = [{"ym": "2025-12", "name": "감가상각비(판)", "amount": 12_000_000},
            {"ym": "2026-03", "name": "복리후생비(판)", "amount": 5}]
 
-    def test_last_year_prorated(self):
+    def test_last_year_full_amount_by_default(self):   # 사용자 2026-11-04: 작년 금액 전부
         d = corptax.depreciation(self.acc, {}, "2026-10")
-        self.assertEqual((d["annual"], d["extra"], d["source"]), (12_000_000, 10_000_000, "작년 장부"))
+        self.assertEqual((d["annual"], d["extra"], d["cur"], d["source"]), (12_000_000, 12_000_000, None, "작년 장부"))
+
+    def test_prorate_mode(self):
+        d = corptax.depreciation(self.acc, {}, "2026-10", "prorate")
+        self.assertEqual((d["extra"], d["cur"]), (10_000_000, 1_000_000))
 
     def test_manual_wins_and_booked_not_double_counted(self):
         acc = self.acc + [{"ym": "2026-06", "name": "감가상각비(판)", "amount": 4_000_000}]
         d = corptax.depreciation(acc, {"2026": 24_000_000}, "2026-10")
-        self.assertEqual((d["annual"], d["booked"], d["extra"], d["source"]), (24_000_000, 4_000_000, 16_000_000, "직접 입력"))
+        self.assertEqual((d["annual"], d["booked"], d["extra"], d["source"]), (24_000_000, 4_000_000, 20_000_000, "직접 입력"))
 
     def test_unknown(self):
         self.assertIsNone(corptax.depreciation([], {}, "2026-10")["extra"])
 
+    def test_apply_lowers_pretax(self):
+        N = corptax.apply({"pretax": 100}, 30)
+        self.assertEqual((N["pretax"], N["dep"]), (70, 30))
+        self.assertEqual(corptax.apply({"pretax": None}, 30)["pretax"], None)
+
 
 class TestEstimate(unittest.TestCase):
     def test_two_rows_without_and_with_nonop_income(self):
-        dep = {"extra": 10_000_000}
-        a, b = corptax.estimate(147_000_000, 20_000_000, dep, "2026-10")
-        self.assertEqual((a["base"], a["corp"], a["local"], a["total"]), (117_000_000, 11_700_000, 1_170_000, 12_870_000))
-        self.assertEqual((b["base"], b["total"]), (137_000_000, 15_070_000))
+        a, b = corptax.estimate(135_000_000, 20_000_000, "2026-10")
+        self.assertEqual((a["base"], a["corp"], a["local"], a["total"]), (115_000_000, 11_500_000, 1_150_000, 12_650_000))
+        self.assertEqual((b["base"], b["total"]), (135_000_000, 14_850_000))
 
 
 class TestSave(unittest.TestCase):
@@ -67,9 +75,10 @@ class TestReport(unittest.TestCase):
         for ed in ("ceo", "mgmt"):
             h = render(R, ed)
             self.assertIn("법인세 예상 (1월~10월 누적 기준)", h)
-            self.assertIn("12,870,000", h)
-            self.assertIn("15,070,000", h)
-            self.assertIn("감가상각비 10,000,000 미리 뺌", h)
+            self.assertIn("12,650,000", h)
+            self.assertIn("14,850,000", h)
+            self.assertIn("− 감가상각비 (예상, 작년 연간 12,000,000)", h)   # 누적 결산 줄에 비용으로 먼저 뺌
+            self.assertIn("누적 세전 이익</span><b>135,000,000", h.replace("\n", ""))
 
 
 if __name__ == "__main__":

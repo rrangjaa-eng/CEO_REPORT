@@ -226,7 +226,7 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "1,350,000,000"])
             self.assertEqual(ytd[3][6], "127,000,000")   # 기획본부 영업외 비용 500,000 × 10달 포함 (사용자 2026-11-04)
             self.assertEqual(ytd[3][7:11], ["7.0명", "18,142,857", "0.5배", "18,142,857"])   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
-            self.assertEqual([c for c in ytd[-1] if c], ["세전 이익", "147,000,000"])
+            self.assertEqual([c for c in ytd[-1] if c], ["세전 이익", "135,000,000"])
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_143_333 * 3 + 3_890_000 * 3, -2), 27_100_000)
             self.assertEqual(round((25_033_333 + 17_300_000) * 3, -2), 127_000_000)
@@ -413,7 +413,7 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         self.assertNotIn("올해 누적", part_month)   # 이번 달 칸에는 누적 숫자를 섞지 않는다
         part_year = fs.split(heads[year])[1]
         self.assertIn("<div class='ystrip'>", part_year)
-        self.assertIn("<span>누적 세전 이익</span><b>147,000,000</b>", part_year)
+        self.assertIn("<span>누적 세전 이익</span><b>135,000,000</b>", part_year)   # 작년 감가상각비 12,000,000 먼저 뺌 (사용자 2026-11-04)
         self.assertIn("+ 영업외 수익 (경영관리 2,000,000)", part_month)
         self.assertNotIn("<td>경영관리", part_month)
 
