@@ -10,9 +10,10 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk
 
-from . import app
+from . import app, editmode
 
 TITLE = "대표 보고"
 
@@ -36,7 +37,7 @@ class Window(object):
         self.busy = False
         self.buttons = []
         root.title(TITLE)
-        root.minsize(860, 960)
+        root.minsize(860, 1010)
         style = ttk.Style(root)
         for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
             style.configure(name, font=("Malgun Gothic", 10))
@@ -82,6 +83,15 @@ class Window(object):
         ttk.Label(ev, text="근거 번호").pack(side="left", padx=(6, 0))
         ttk.Entry(ev, textvariable=self.ev_nums, width=12).pack(side="left", padx=4)
         self._btn(ev, "근거자료 PDF", lambda: self.start("근거" + self.ev_kind.get()))
+
+        # 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기)
+        fe = ttk.LabelFrame(outer, text="②-1 수정 모드 — 가장 최근 대표 보고를 브라우저에서 바로 고치고 '_수정' PDF로 저장 (원래 보고서는 그대로)",
+                            style="Sec.TLabelframe", padding=8)
+        fe.pack(fill="x", pady=4)
+        self.e_kind = tk.StringVar(value="주간")
+        ttk.Combobox(fe, textvariable=self.e_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left", padx=(0, 8))
+        self._btn(fe, "수정 모드 열기", self.edit_report, big=True)
+        self.edit = None
 
         # ③ 지급 승인 검토
         f3 = ttk.LabelFrame(outer, text="③ 지급 승인 검토 — 인트라넷 지급요청을 읽어 승인 화면을 엽니다", style="Sec.TLabelframe", padding=8)
@@ -221,6 +231,11 @@ class Window(object):
                     self.log.configure(state="disabled")
                 elif kind == "done":
                     self.finish(*val)
+                elif kind == "edited":
+                    pdf, text = val
+                    self.say(text)
+                    if pdf:
+                        open_path(pdf)
         except queue.Empty:
             pass
         self.root.after(100, self.pump)
@@ -267,6 +282,32 @@ class Window(object):
         else:
             self.say("%s 끝 — 오류가 있습니다 (위 글을 확인하세요)" % task)
             self.set_busy(False, "%s 끝 — 오류 (종료코드 %s)" % (task, rc))
+
+    def edit_report(self):
+        """가장 최근 대표 보고(주간·월간)를 수정 모드로 연다. 이미 열려 있으면 그 주소를 다시 연다."""
+        if self.edit and self.edit.server:
+            webbrowser.open(self.edit.url)
+            self.say("수정 모드가 이미 열려 있습니다 — 브라우저 창을 다시 엽니다")
+            return
+        kind = self.e_kind.get()
+        orig, src = editmode.latest_report(self.paths.output, kind)
+        if not orig:
+            self.say("%s 대표 보고가 없습니다 — 먼저 '%s 보고'를 만드세요" % (kind, kind))
+            return
+        rep = app._module("보고서")
+
+        def make_pdf(html, pdf):
+            browser = rep.find_browser()
+            return rep.to_pdf(browser, html, pdf) if browser else "Edge·Chrome을 찾지 못함"
+
+        self.edit = editmode.Session(src, editmode.edited_path(orig), make_pdf,
+                                     on_saved=lambda pdf, text: self.q.put(("edited", (pdf, text))),
+                                     on_closed=lambda: self.q.put(("line", "수정 모드 끝")))
+        url = self.edit.start()
+        webbrowser.open(url)
+        self.say("──── 수정 모드: %s ────" % os.path.basename(src))
+        self.say("브라우저에서 고친 뒤 위쪽 '저장하고 PDF 만들기'를 누르세요 → %s" % os.path.basename(
+            os.path.splitext(editmode.edited_path(orig))[0] + ".pdf"))
 
     def archive(self):
         if self.busy:
