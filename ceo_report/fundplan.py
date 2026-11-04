@@ -194,7 +194,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     '예정일 지남', 아니면 '예정'. 분개장이 없으면 확인하지 못했다고 근거에 적는다 (지급을 빼지 않는다).
     rows 를 고쳐 쓰고 상태별 건수를 돌려준다.
     """
-    from .wehago import norm_vendor
+    from .wehago import norm_vendor, norm_code
     journal = books.journal if books is not None and books.state == "ok" else None
     ref = books.book_date if journal is not None else None
     used = set()
@@ -220,6 +220,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         found = None
         if journal is not None:
             key = norm_vendor(r["거래처"])
+            vcode = norm_code(r.get("거래처코드"))
             lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
             best = None
             for i, line in enumerate(journal):
@@ -228,8 +229,14 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 amount, named = kind(line, r["입출금"])
                 if amount != r["금액"]:
                     continue
-                # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인)
-                if not key or norm_vendor(line["vendor"]) != key:
+                # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인).
+                # 두 쪽에 거래처코드가 있으면 코드로만 본다 (사용자 2026-11-04: 글자 말고 코드로). 자금계획서 [000101] 의
+                # 앞 0을 떼면 분개장 거래처Code 00101 과 같다 (실제 파일 3개월 515줄 모두 같은 거래처). 한쪽이라도 코드가 없을 때만 이름으로.
+                lcode = norm_code(line.get("vendor_code"))
+                if vcode and lcode:
+                    if lcode != vcode:
+                        continue
+                elif not key or norm_vendor(line["vendor"]) != key:
                     continue
                 rank = (0 if named else 1, abs((line["date"] - due).days))
                 if best is None or rank < best[0]:
@@ -293,13 +300,16 @@ def apply(events, plan, asof, stale_days, problem=""):
     def find(p):
         io = "out" if p["io"] == "지급" else "in"
         key = norm_vendor(p["vendor"])
+        # 이미 지급·입금 줄은 맞는 기존 일정을 지운다: 거래처가 같을 때만 (2026-11-04 점검: 금액·날짜만 같은 다른 거래처
+        # 지급요청이 일정에서 사라지던 것). 예정 줄은 기존 일정을 바꿔 넣을 뿐이라 금액·날짜로도 맞춘다.
+        done = p["state"] in ("이미 지급", "이미 입금")
         best = None
         for i, ev in enumerate(events):
             if i in taken or ev["io"] != io or ev["amount"] != p["amount"] or ev.get("source") not in FLAG_SOURCES:
                 continue
             same = bool(key) and norm_vendor(ev.get("desc") or "") == key
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
-            if not (same or near):
+            if not (same or (near and not done)):
                 continue
             rank = (0 if same else 1, abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
             if best is None or rank < best[0]:
@@ -319,7 +329,8 @@ def apply(events, plan, asof, stale_days, problem=""):
         ev = {"date": p["date"], "io": io, "amount": p["amount"], "firm": True,
               "cat": "자금계획서 " + (p["cat"] or p["io"]), "desc": p["vendor"],
               "basis": "자금계획서 예정일 %s (%s)" % (p["date"].isoformat(), p["file"] or "자료일 %s" % p["stamp"]),
-              "project": old["project"] if old else "", "source": "자금계획서", "plan_state": p["state"]}
+              "project": old["project"] if old else "", "source": "자금계획서", "plan_state": p["state"],
+              "vendor_code": p.get("vendor_code") or ""}
         # 변환 때 '예정'이었어도 보고 기준일에 날짜가 지났으면 같은 규칙 (2026-11-03 검토: 그대로 두면 일정에서 빠져 자금이 커 보임)
         if p["state"] == "예정일 지남" or (p["state"] == "예정" and p["date"] <= asof):
             if io == "out":

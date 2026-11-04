@@ -245,7 +245,7 @@ class TestInvoiceFileUnusable(unittest.TestCase):
             # 첫 화면(2026-11-03 개편): 가용자금 표의 입금 칸마다 '계산서 자료 없음', 표 아래에 파일 이름. 잔액은 계산한다 (보수적)
             for cells in tr_avail_rows(fs):
                 self.assertIn("계산서 자료 없음", cells[1])
-                self.assertNotIn("확인 필요", cells[5])
+                self.assertNotIn("확인 필요", cells[3])
             self.assertIn("계산서 입금 예정 미반영 (자료 없음: 계산서.csv)", fs)
             self.assertIn(self.LABEL, text(fs.split("행사 후 세금계산서 미발행</div><div class='big'>")[1].split("</div>")[0]))
             self.assertNotIn("미수금 (세금계산서 발행 후)", fs)   # 주간엔 미수금 없음, 월간에만 (사용자 2026-11-03)

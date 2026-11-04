@@ -464,6 +464,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
     R["events"] = events
+    from .debts import compare as compare_debts   # 장부 미지급금·차입금 대 일정 (2026-11-04 점검 A1·A2)
+    R["debts"] = compare_debts(getattr(d, "debts", None), events, asof)
 
     week_ends = [R["payday"] + 7 * i * DAY for i in range(4)]   # 출금일 단위 한 주 (기본 금요일, 토~금)
     buckets = []
@@ -775,7 +777,8 @@ def period_ends(kind, asof, payday=None):
         f = payday or pay_friday(asof)
         labs = ("이번 주", "다음 주", "3주째", "4주째", "5주째")[1 if (f - asof).days >= 7 else 0:]
         return [(lab, f + 7 * i * DAY) for i, lab in enumerate(labs[:4])]
-    return [("%d개월" % i, _month_end(_add_months(asof, i))) for i in range(1, 4)]
+    # 기간 이름은 달 이름으로 (2026-11-04 이해도 점검 U6: '1개월' 대신 '11월')
+    return [("%d월" % _month_end(_add_months(asof, i)).month, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 
 
 def available_periods(start, dated, ends, min_cash, asof):

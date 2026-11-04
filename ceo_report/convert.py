@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "장부잔액.csv", "장부입출금.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -31,6 +31,8 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("common_mark", "(판)"),
     ("payable_codes", ("25300", "26200")),
     ("cash_codes", ("10300",)),
+    ("loan_codes", ("26000", "29300")),   # 단기차입금·장기차입금 (장부채무.csv, 2026-11-04 점검 A2)
+    ("deposit_codes", ("10500",)),        # 정기예금 (장부채무.csv: 만기일까지 쓸 수 없는 돈, 사용자 2026-11-04)
     ("vat_codes", ("13500",)),
     ("closing_sorts", ("결차", "결대", "결산전표", "잉여금관련전표")),   # 인쇄 분개장 유형: 결산전표(원가 대체·감가상각) · 잉여금관련전표(손익 대체), 2025 분개장 12/31
     ("link_days", 90),
@@ -123,6 +125,8 @@ CONFIG_ITEMS = (
     ("변환_공통비표시", "common_mark", "낱말"),
     ("변환_미지급계정", "payable_codes", "숫자목록"),
     ("변환_현금계정", "cash_codes", "숫자목록"),
+    ("변환_차입금계정", "loan_codes", "숫자목록"),
+    ("변환_정기예금계정", "deposit_codes", "숫자목록"),
     ("변환_부가세대급금계정", "vat_codes", "숫자목록"),
     ("변환_결산구분", "closing_sorts", "낱말목록"),
     ("변환_자동연결일수", "link_days", "일수"),
@@ -814,8 +818,16 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
     tables.append(build_tax(books, cfg, asof, input_dir))
     tables.extend(build_bank(books, cfg))
+    tables.append(build_debts(books, cfg))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
     return tables, states
+
+
+def build_debts(books, cfg):
+    """장부채무.csv (2026-11-04 점검 A1·A2): 분개장 미지급금·차입금 거래처코드별 잔액. 보고서가 자금 일정과 맞춰 본다."""
+    from . import debts
+    rows, note = debts.build(books, cfg)
+    return Table(debts.FILE, debts.KEYS, rows, notes=[note])
 
 
 def build_bank(books, cfg):

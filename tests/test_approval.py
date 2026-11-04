@@ -643,7 +643,7 @@ class TestApprovalRequests(unittest.TestCase):
         self.assertEqual((len(io(A["undated"], "out")), ssum_amounts(io(A["undated"], "out"))), (4, 105000000))
         self.assertEqual((len(io(A["past"], "in")), ssum_amounts(io(A["past"], "in"))), (1, 110000000))
         self.assertEqual(len(io(A["past"], "out")), 0)
-        self.assertEqual((len(io(A["beyond"], "in")), len(io(A["beyond"], "out"))), (1, 35))  # 남은 예산 매주 나눔: P26208 2027-02-26까지 중 8주 밖 9줄
+        self.assertEqual((len(io(A["beyond"], "in")), len(io(A["beyond"], "out"))), (1, 36))  # 남은 예산 매주 나눔: P26208 2027-02-26까지 중 8주 밖 9줄 + 원천세 장부 계산 차액 (A5)
         self.assertEqual(len(A["amount_unknown_events"]), 1)
 
     def test_screen_headline_and_notes(self):
@@ -909,7 +909,7 @@ class TestApprovalPanel(unittest.TestCase):
                 "지급요청일 지남·대기 중 1건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)",
                 "날짜 없는 예정 금액: 입금 1건 30,000,000 · 지급 4건 105,000,000",  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
                 "예정일이 잔액 기준일(2026-11-02) 이전 또는 당일인 미처리: 입금 1건 110,000,000 · 지급 0건",
-                "기간 밖(8주 이후): 입금 1건 · 지급 35건 · 대기 요청 0건",
+                "기간 밖(8주 이후): 입금 1건 · 지급 36건 · 대기 요청 0건",
                 "잔액 미확인 0계좌",
                 "부가세 미확인 일정 0건 (공급가액만 반영)"):
             self.assertIn(line, u)

@@ -64,7 +64,7 @@ PL_COLUMNS = ["출처", "연월", "단위", "대상", "매출", "직접비", "�
 
 def jl_sort(date, no, sort, code, account, debit, credit, vendor, memo):
     """구분(sort)을 고를 수 있는 분개장 한 줄 (_jl 은 구분이 늘 '대체')."""
-    return [serial(date), no, sort, code, account, debit, credit, vendor, "V000", memo]
+    return [serial(date), no, sort, code, account, debit, credit, vendor, "", memo]
 
 
 def write_convert_books(folder, stamp="20261031", journal=FAKE_PL_JOURNAL, **kw):
@@ -487,7 +487,7 @@ class TestConvertSafety(unittest.TestCase):
         self.assertIn("손대지 않은 파일: 없음", text)
         self.assertEqual(backup_dirs(input_dir), [])
         self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "계정별비용.csv", "변환결과.txt", "세금예상.csv", "손익.csv",
-                                                       "장부입출금.csv", "장부잔액.csv"])
+                                                       "장부입출금.csv", "장부잔액.csv", "장부채무.csv"])
 
     def test_backup_and_log_paths_are_git_ignored(self):
         for rel in ("입력/이전/20261102_000000/손익.csv", "입력/변환결과.txt"):
@@ -526,6 +526,7 @@ class TestConvertConfig(unittest.TestCase):
             "revenue_codes": ("41200",), "receivable_codes": ("10800",), "direct_prefixes": ("6",),
             "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
+            "loan_codes": ("26000", "29300"), "deposit_codes": ("10500",),   # 장부채무.csv (2026-11-04 점검 A1·A2)
             "closing_sorts": ("결차", "결대", "결산전표", "잉여금관련전표"), "link_days": 90, "card_words": ("카드",),
             "snapshot_days": 7, "salary_codes": ("80200",),
         "nonop_in_codes": ("90100", "92200", "93000"), "nonop_out_codes": ("93100", "96000"),
@@ -701,7 +702,7 @@ class TestConvertProvisional(unittest.TestCase):
         self.assertIsNone(company["ytd"]["revenue"])
 
     def test_a_line_without_a_date_is_listed_and_the_check_does_not_hide_it(self):
-        undated = [None, 94, "대체", "61101", "행사외주비(도)", 700000, None, "가상기타", "V000", "날짜 없음"]
+        undated = [None, 94, "대체", "61101", "행사외주비(도)", 700000, None, "가상기타", "", "날짜 없음"]
         tmp, input_dir, collect, wehago_dir, rc, out = converted(self, journal=FAKE_PL_JOURNAL + [undated])
         lines = read_result_lines(input_dir)
         self.assertEqual(rc, 0, out)

@@ -377,7 +377,7 @@ class TestUnknownBalance(unittest.TestCase):
         self.assertEqual(s1["available"], s1["total"] - s1["restricted"])
         self.assertEqual(s1["bal_unknown_restricted"], 30_000_000)
         self.assertEqual(R["s2"]["start"], 356_100_000)
-        self.assertIn("사용제한 30,000,000 · 은행 기준일", first_screen(html))
+        self.assertIn("사용제한 30,000,000 (확인 안 됨 1계좌) · 은행 기준일", first_screen(html))   # 빈칸을 0으로 단정하지 않음 (A6)
         self.assertIn("사용제한금액 빈칸 1계좌", first_screen(html))   # 0으로 계산, 경영관리용에 경고 (사용자 2026-11-04)
         self.assertIn(self.NOTE, first_screen(html))
         self.assertTrue(box_item(first_screen(html), "사용제한금액 빈칸").startswith("사용제한금액 빈칸 1계좌 (0으로 계산"))
@@ -498,7 +498,7 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual((s2["vat_unknown_n"], s2["vat_unknown_n4"], s2["vat_unknown_firm_n"]), (1, 1, 1))
         self.assertEqual(s2["out4_firm"], 170_100_000)
         self.assertEqual(s2["min"]["firm"], (23_800_000, dt.date(2027, 4, 25)))
-        self.assertEqual(s2["min"]["all"], (129_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
+        self.assertEqual(s2["min"]["all"], (126_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (A5)
         fs = first_screen(html)
         self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)  # 가용자금 표 아래
         self.assertEqual(box_item(fs, "부가세 미확인"), "부가세 미확인 지급 예정 1건 (공급가액만 반영)")
@@ -867,11 +867,11 @@ class TestUserRulesLocked(Base):
     def test_min_balance_firm_and_estimate(self):
         mn = self.R["s2"]["min"]
         self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
-        self.assertEqual(mn["all"], (125_585_000, dt.date(2027, 4, 25)))  # D-54: 남은 예산 7,700,000 + 15,015,000
+        self.assertEqual(mn["all"], (122_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (2026-11-04 A5)
         fs = first_screen(render(self.R, "mgmt"))
-        self.assertIn("오늘부터 최저 잔액", fs)
+        self.assertIn("오늘부터 가장 적을 때 잔액", fs)
         self.assertIn("확정분만", fs)
-        self.assertIn("예상분 포함", fs)
+        self.assertIn("확정 안 된 예상 금액도 포함", fs)
 
     def test_profit_and_cash_kept_apart(self):
         rows = {x["target"]: x for x in self.R["s4"]["sources"]["WEHAGO"]["table"]}
@@ -889,7 +889,7 @@ class TestUserRulesLocked(Base):
         self.assertIn("계좌 합계", cash)
         self.assertNotIn("이익", cash)   # 이익은 자금 칸에 섞지 않고 실적 칸에 따로
         self.assertIn("11월 실적", fs)
-        self.assertIn("11월 이익", fs)
+        self.assertIn("10월 영업이익 (지난달)", fs)   # 달 초(11/2)는 지난달 영업이익 (2026-11-04 이해도 점검 U4)
 
     def test_pl_sources_separate(self):
         self.assertEqual(list(self.R["s4"]["sources"]), ["WEHAGO", "인트라넷완료보고"])
@@ -1080,14 +1080,14 @@ class TestNoBalanceKnown(unittest.TestCase):
                 R = compute(load(folder), "weekly", ASOF)
                 html = render(R, "mgmt")
                 fs = first_screen(html)
-                self.assertIn("오늘 가용액 잔액 미확인", fs)
+                self.assertIn("오늘 쓸 수 있는 돈 잔액 미확인", fs)
                 self.assertIn("잔액 미확인", fs)
                 self.assertNotIn("<polyline", fs)
                 for cells in avail_rows(fs):
                     for val in cells[3:]:   # 예상 잔액 · 기간 중 최저 잔액 · 가용자금(확정분만 포함): 0에서 시작하지 않는다
                         self.assertIn("확인 필요", val)
                         self.assertNotRegex(val, r"\d")
-                    self.assertEqual(firm_avail(cells[5]), "확정분만 확인 필요")
+                    self.assertEqual(len(cells), 4)
                 s2h = section(html, 2)
                 self.assertIn("잔액 미확인", s2h)
                 self.assertNotIn("미확인원", s2h)

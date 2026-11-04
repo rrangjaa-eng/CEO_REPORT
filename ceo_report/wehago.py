@@ -58,6 +58,12 @@ def norm_vendor(name):
     return s.replace("(주)", "").replace("주식회사", "")
 
 
+def norm_code(code):
+    """거래처코드 정규화: 숫자 코드는 앞 0을 뗀다. 자금계획서 [000101] = 분개장 00101 (실제 파일 515줄 모두 확인, 2026-11-04)."""
+    s = "".join(str(code or "").split())
+    return (s.lstrip("0") or "0") if s.isdigit() else s
+
+
 def _amount(text):
     """엑셀 칸 글자 → 정수 금액. 빈칸·오류·정수가 아닌 값은 None (0이 아니다)."""
     if is_blank(text):
@@ -398,7 +404,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
             item = {"date": date, "no": txt(row, "전표번호"), "account_code": txt(row, "Code", 0),
                     "account": txt(row, "계정과목"), "debit": _amount(row[cols["차변"][0]]),
                     "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요"),
-                    "sort": txt(row, "구분")}
+                    "sort": txt(row, "구분"), "vendor_code": txt(row, "Code", 1).strip()}
             item["code"] = project_code(item["memo"])
             if "부서명" in cols:   # 관리항목 (사용자 2026-11-03). 칸이 없는 파일은 키도 없다 (부서별 비용을 만들지 않음)
                 item["dept"] = txt(row, "부서명").strip()

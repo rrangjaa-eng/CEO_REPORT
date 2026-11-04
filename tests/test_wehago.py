@@ -182,7 +182,7 @@ FAKE_EINVOICE = [
 ]
 
 
-def _jl(date, no, code, account, debit, credit, vendor, memo, vcode="V000"):
+def _jl(date, no, code, account, debit, credit, vendor, memo, vcode=""):
     return [serial(date) if isinstance(date, dt.date) else date, no, "대체", code, account, debit, credit, vendor,
             vcode, memo]
 
@@ -339,7 +339,9 @@ class TestWehagoHeaders(unittest.TestCase):
     def test_two_code_columns_map_by_order(self):
         rows, _ = read_kind(folder_with(self), "분개장")
         self.assertEqual(rows[0]["account_code"], "61101")
-        self.assertNotIn("V001", repr(rows))  # 두 번째 Code(거래처 코드)는 쓰지 않는다
+        # 두 번째 Code 는 거래처코드 (2026-11-04: 자금계획서·장부 채무를 거래처 이름 대신 코드로 맞춤)
+        self.assertEqual(rows[0]["vendor_code"], "V001")
+        self.assertNotEqual(rows[0]["account_code"], "V001")
 
     def test_missing_column_stops_the_read_and_names_it(self):
         w = mod("wehago")

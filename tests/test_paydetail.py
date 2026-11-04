@@ -57,8 +57,9 @@ class TestFridayList(unittest.TestCase):
     def test_project_request_shows_detail_in_category_column(self):
         """프로젝트 지급요청은 구분 자리에 상세 내역, 그 밖은 구분 + 아래 줄 상세 (사용자 2026-11-03). 지난주 대비·상태 칸 없음."""
         html = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
-        self.assertIn("<td><b class='vn'>전시제작사</b></td><td>C사 전시 부스</td><td>C사 전시 부스 목공·도장 잔금</td>", html)
-        self.assertIn("<td>구독료<small class='dt'>디자인 툴 월 구독</small></td>", html)
+        # 구분 칸은 쓰임새 + 아래 줄 상세 (2026-11-04 이해도 점검 U3)
+        self.assertIn("<td><b class='vn'>전시제작사</b></td><td>C사 전시 부스</td><td>행사 외주·제작비<small class='dt'>C사 전시 부스 목공·도장 잔금</small></td>", html)
+        self.assertIn("<td>사무실·운영비<small class='dt'>디자인 툴 월 구독</small></td>", html)
         self.assertNotIn("상세 미입력", html.split("<table class='pt wo'>")[1].split("</table>")[0])   # 금액 미확인 건은 목록에 없음 (2026-11-04)
         table = html[html.index("<table class='pt wo'>"):]
         table = table[:table.index("</thead>")]

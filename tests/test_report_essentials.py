@@ -39,12 +39,12 @@ class TestMonthFlowStartsOnTheFirst(unittest.TestCase):
         R = compute(load(SAMPLE), "monthly", D(2026, 10, 31))
         self.assertIn("10월(실적)", month_flow(R)["buckets"][0]["label"])
         html = render(R, "ceo")
-        self.assertIn("월별 자금 흐름 (10월 1일 가용액", html)
+        self.assertIn("월별 자금 흐름 (10월 1일 쓸 수 있는 돈", html)
         self.assertIn("월별 (첫 달은 1일부터)", html)
 
     def test_weekly_chart_is_unchanged(self):
         html = render(compute(load(SAMPLE), "weekly", D(2026, 10, 31)), "ceo")
-        self.assertIn("기간별 자금 흐름 (시작: 오늘 가용액", html)
+        self.assertIn("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈", html)
         self.assertNotIn("월별 자금 흐름", html)
 
 

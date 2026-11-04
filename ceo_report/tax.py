@@ -542,6 +542,9 @@ def _io(t):
 NOT_TAX = ("남은 예산", "프로젝트집행", "계산서")
 
 
+GAP_KINDS = ("부가세", "원천세", "법인세", "법인지방소득세")   # 장부 계산보다 작은 일정이면 차액을 넣는 세금 (카드는 명세서·결제 금액, 4대보험은 고지액이 우선)
+
+
 def merge(events, taxes):
     """세금 예상을 일정에 넣는다. 이미 일정(자금계획서·자금일정 등)에 같은 세금이 있으면 넣지 않고 그 금액과 비교만 한다.
 
@@ -583,6 +586,13 @@ def merge(events, taxes):
     for t, match in zip(taxes, found):
         diff = None if match is None or match["amount"] is None or t["amount"] is None else match["amount"] - t["amount"]
         info.append(dict(t, matched=match, diff=diff))
+        if diff is not None and diff < 0 and t["due"] is not None and t["kind"] in GAP_KINDS:
+            # 일정 금액이 장부 계산보다 작으면 모자란 만큼도 일정에 넣는다 (2026-11-04 점검: 작은 일정 금액만 쓰고 차이가 안 보이던 것).
+            # 지급을 줄이지 않는 쪽. ③ 부가세·원천세 표에 '장부 계산' 금액을 함께 보인다.
+            out.append({"date": match["date"], "io": _io(t), "amount": -diff, "firm": False,
+                        "cat": "%s (장부 계산 차액)" % t["kind"], "desc": "%s %s" % (t["kind"], t["period"]),
+                        "basis": "장부 계산 %s원 − 일정 %s원" % ("{:,}".format(t["amount"]), "{:,}".format(match["amount"])),
+                        "project": "", "source": "세금예상", "tax_gap": True})
         if match is None and t["due"] is not None and (t["amount"] is None or t["amount"] > 0):
             out.append({"date": t["due"], "io": _io(t), "amount": t["amount"], "firm": t["state"].startswith("확정"),
                         "cat": "%s (장부 계산)" % t["kind"], "desc": "%s %s" % (t["kind"], t["period"]), "basis": t["basis"],

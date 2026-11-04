@@ -474,7 +474,7 @@ class TestDatedUnknownPayments(unittest.TestCase):
         # 샘플: P26206 프로그램 진행비 요청미지급, 2026-11-05 확정, 금액 빈칸
         R, fs, s2 = self.screen()
         # 첫 화면(2026-11-03 개편): 가용자금 표 아래와 확인 상자에 일정 기간 안 건수
-        self.assertIn("금액 미확인 지급 예정 1건 (미반영)", fs)
+        self.assertIn("<li>금액을 모르는 지급 예정 1건</li>", fs)   # 여유 자금에 안 들어간 것 (A3)
         self.assertIn("<li>금액 미확인 지급 예정 1건</li>", fs)
         self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + FIRM_MIN))
         self.assertIn("금액 미확인 1건", _kv(s2, "기간 중 " + ALL_MIN))
@@ -491,7 +491,7 @@ class TestDatedUnknownPayments(unittest.TestCase):
             ]
         R, fs, s2 = self.screen(edit)
         self.assertEqual((R["s2"]["out_unknown_n4"], R["s2"]["out_unknown_firm_n"], R["s2"]["out_unknown_n"]), (3, 3, 4))
-        self.assertIn("금액 미확인 지급 예정 4건 (미반영)", fs)
+        self.assertIn("<li>금액을 모르는 지급 예정 4건</li>", fs)
         self.assertIn("금액 미확인 3건", _kv(s2, "기간 중 " + FIRM_MIN))
         self.assertIn("금액 미확인 4건", _kv(s2, "기간 중 " + ALL_MIN))
 

@@ -1,3 +1,4 @@
+import datetime as dt
 """입력 폴더의 CSV를 읽어 정리된 자료로 만든다."""
 import os
 
@@ -209,7 +210,8 @@ def load(folder):
             d.fundplan, bad = [], 0
             for r in rows:
                 f = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": r.get("입출금", ""), "cat": r.get("분류", ""),
-                     "vendor": r.get("거래처", ""), "amount": num(r.get("금액"), iss, r, "금액"), "ym": r.get("대상월", ""),
+                     "vendor": r.get("거래처", ""), "vendor_code": (r.get("거래처코드") or "").strip(),
+                     "amount": num(r.get("금액"), iss, r, "금액"), "ym": r.get("대상월", ""),
                      "stamp": date(r.get("자료일"), iss, r, "자료일"), "state": r.get("상태", "") or "예정",
                      "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r}
                 if f["date"] is None or f["amount"] is None or f["stamp"] is None or f["io"] not in ("지급", "입금"):
@@ -286,6 +288,39 @@ def load(folder):
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
                               "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None})
+
+    # 장부 채무 (변환.py 장부채무.csv, 2026-11-04 점검 A1·A2): 없으면 None
+    from .debts import load as load_debts
+    d.debts = load_debts(folder, iss)
+    # 분개장 정기예금 (사용자 2026-11-04): 계좌 합계에 넣고 같은 금액을 만기일까지 쓸 수 없는 돈으로 뺀다. 만기일에 들어올 돈.
+    # 계좌잔액.csv 에 정기예금을 손으로 적은 줄이 있으면 겹치지 않게 장부 정기예금은 넣지 않는다.
+    manual_dep = any("정기예금" in "%s %s" % (b["account"], b["reason"]) for b in d.balances)
+    for k, x in enumerate([x for x in (d.debts or []) if x["kind"] == "정기예금" and x["balance"]]):
+        row = {"_file": "장부채무.csv", "_line": "정기예금 %d" % (k + 1)}
+        if x["balance"] < 0:
+            iss.add(row["_file"], row["_line"], "정기예금 %s 이 올해 %s원 줄었는데 분개장에 전기이월이 없어 남은 금액을 모름 → 계좌잔액.csv 확인"
+                    % (x["vendor"] or x["account"], "{:,}".format(-x["balance"])))
+            continue
+        if manual_dep:
+            iss.add(row["_file"], row["_line"], "계좌잔액.csv 에 정기예금 줄이 있어 장부 정기예금 %s원은 넣지 않음" % "{:,}".format(x["balance"]))
+            continue
+        due = None
+        if x["due"]:
+            try:
+                due = dt.date(*[int(v) for v in x["due"].split("-")])
+            except ValueError:
+                due = None
+        if due is None:
+            iss.add(row["_file"], row["_line"], "정기예금 %s 만기일을 분개장 적요에서 찾지 못함 → 만기일 확인 필요 (쓸 수 없는 돈으로만 둠)"
+                    % (x["vendor"] or x["account"]))
+        try:
+            bdate = dt.date(*[int(v) for v in x["date"].split("-")])
+        except ValueError:
+            continue
+        d.balances.append({"date": bdate, "account": "정기예금 " + (x["vendor"] or x["account"]), "bank": x["vendor"],
+                           "balance": x["balance"], "restricted": x["balance"],
+                           "reason": "정기예금 (만기 %s%s)" % (due.isoformat() if due else "확인 필요",
+                                                           " 추정" if due and "추정" in x.get("due_basis", "") else ""), "row": row, "release": due})
 
     # 프로젝트
     d.projects = {}

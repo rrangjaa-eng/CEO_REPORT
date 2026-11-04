@@ -27,7 +27,7 @@ class TestPeriodEnds(unittest.TestCase):
 
     def test_monthly_three_month_ends(self):
         self.assertEqual(period_ends("monthly", D(2026, 10, 31)),
-                         [("1개월", D(2026, 11, 30)), ("2개월", D(2026, 12, 31)), ("3개월", D(2027, 1, 31))])
+                         [("11월", D(2026, 11, 30)), ("12월", D(2026, 12, 31)), ("1월", D(2027, 1, 31))])
 
 
 class TestAvailablePeriods(unittest.TestCase):

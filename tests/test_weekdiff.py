@@ -124,7 +124,7 @@ class TestWeeklyReport(unittest.TestCase):
         for r in rows:
             r["cat"] = "프로젝트 지급요청"
         html = _next_week_summary({"rows": rows, "total": 3_000})
-        self.assertIn("<td>프로젝트 지급요청</td><td>2건</td><td>11/09~11/12</td>", html)
+        self.assertIn("<td>행사 외주·제작비</td><td>2건</td><td>11/09~11/12</td>", html)
         self.assertIn("3,000", html)
 
     def test_without_last_week_record_says_so(self):

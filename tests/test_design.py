@@ -84,7 +84,7 @@ class TestAvailableFundsTable(unittest.TestCase):
     def test_rows_follow_calc_for_both_editions_and_modes(self):
         for kind, R in self.R.items():
             labels = [p["label"] for p in R["s2"]["periods"]]
-            self.assertEqual(labels, ["이번 주", "다음 주", "3주째", "4주째"] if kind == "weekly" else ["1개월", "2개월", "3개월"])
+            self.assertEqual(labels, ["이번 주", "다음 주", "3주째", "4주째"] if kind == "weekly" else ["12월", "1월", "2월"])
             for edition in ("ceo", "mgmt"):
                 html = render(R, edition)
                 with self.subTest(kind=kind, edition=edition):
@@ -95,9 +95,10 @@ class TestAvailableFundsTable(unittest.TestCase):
                         self.assertEqual(" ".join(cells[0][:len(p["label"].split())]), p["label"])
                         self.assertEqual(cells[1][0], "{:,}".format(r["pin"]))    # 그 기간 금액 (누적 아님)
                         self.assertEqual(cells[2][0], "{:,}".format(r["pout"]))
-                        self.assertEqual(cells[3][0], "{:,}".format(r["bal"]))
-                        self.assertEqual(cells[4][0], "{:,}".format(r["low"]))
-                        self.assertEqual(cells[5], ["{:,}".format(r["avail"]), "확정분만", "{:,}".format(p["firm"]["avail"])])
+                        # 두 판 같은 4칸 (2026-11-04 이해도 점검 U5): 여유 자금 칸 아래 '가장 적을 때 잔액 (날짜)'
+                        self.assertEqual(cells[3][:4], ["{:,}".format(r["avail"]), "가장", "적을", "때"])
+                        self.assertEqual(cells[3][4], "{:,}".format(r["low"]))
+                        self.assertEqual(len(cells), 4)
 
     def test_negative_available_is_red(self):
         import copy
@@ -116,7 +117,7 @@ class TestAvailableFundsTable(unittest.TestCase):
         os.remove(os.path.join(folder, "계좌잔액.csv"))
         html = render(compute(load(folder), "weekly", ASOF), "ceo")
         for cells in self.rows(html):
-            self.assertEqual(cells[5], ["확인", "필요", "확정분만", "확인", "필요"])
+            self.assertEqual(cells[3], ["확인", "필요"])
         self.assertNotIn("neg", first_screen(html).split("id='avail'>")[1].split("</table>")[0])
 
 
@@ -307,7 +308,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("지정일", rows[-1][0])
         self.assertIn(pick.isoformat(), rows[-1][0])
-        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][5])
+        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][3])
         self.assertEqual(len(same), 3)
 
     def test_no_pick_date_no_row(self):
