@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "장부잔액.csv", "장부입출금.csv", "변환결과.txt")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -813,8 +813,62 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
     tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
     tables.append(build_tax(books, cfg, asof, input_dir))
+    tables.extend(build_bank(books, cfg))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
     return tables, states
+
+
+def build_bank(books, cfg):
+    """분개장 보통예금(cfg cash_codes) 줄로 계좌별 잔액·입출금 (사용자 2026-11-04: 분개장 합계가 실제 통장 합계와 같음).
+
+    잔액 = 분개장 처음부터 차변 − 대변 누적 (회사 설립 2025-02-01부터 장부가 있어 기초 잔액 0). 계좌 = 거래처(은행).
+    장부잔액.csv: 달마다 말일과 장부 마지막 날의 계좌별 잔액. 장부입출금.csv: 입출금내역.csv 와 같은 열, 같은 전표에
+    보통예금 차변·대변이 함께 있으면 계좌간이체. 보고서는 이 두 파일이 있으면 계좌잔액.csv 에서 사용제한만 쓴다."""
+    import calendar
+    cash = set(wehago._squash(c) for c in cfg["cash_codes"])
+    lines = [ln for ln in books.journal if wehago._squash(ln.get("account_code")) in cash and ln["date"] is not None]
+    if not lines:
+        why = "분개장에 보통예금(%s) 줄 없음" % ",".join(cfg["cash_codes"])
+        return [Table(data.BOOK_BAL_FILE, data.BOOK_BAL_KEYS, [], written=False, reason=why),
+                Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], [], written=False, reason=why)]
+    lines.sort(key=lambda ln: (ln["date"], str(ln.get("no") or "")))
+    slips = collections.defaultdict(lambda: [False, False])
+    for ln in lines:
+        k = (ln["date"], ln.get("no"))
+        slips[k][0] |= bool(ln["debit"])
+        slips[k][1] |= bool(ln["credit"])
+    acct = lambda ln: (ln.get("vendor") or "").strip() or "보통예금 (거래처 없음)"
+    txns, bal, snaps = [], collections.OrderedDict(), []
+    last = lines[-1]["date"]
+
+    def snap(day):
+        for a, v in bal.items():
+            snaps.append(dict(zip(data.BOOK_BAL_KEYS, [day.isoformat(), a, "", str(v)])))
+    month_end = None
+    for ln in lines:
+        d = ln["date"]
+        while month_end is not None and d > month_end:
+            snap(month_end)
+            nxt = month_end + dt.timedelta(days=1)
+            month_end = nxt.replace(day=calendar.monthrange(nxt.year, nxt.month)[1])
+        if month_end is None:
+            month_end = d.replace(day=calendar.monthrange(d.year, d.month)[1])
+        a = acct(ln)
+        v = (ln["debit"] or 0) - (ln["credit"] or 0)
+        bal[a] = bal.get(a, 0) + v
+        if v:
+            both = slips[(d, ln.get("no"))]
+            txns.append(dict(zip(data.SCHEMA["입출금내역.csv"],
+                                 [d.isoformat(), a, "입금" if v > 0 else "출금", str(abs(v)),
+                                  data.TRANSFER if both[0] and both[1] else "", "", "", (ln.get("memo") or "").strip()])))
+    if month_end is not None and month_end < last:
+        snap(month_end)
+    snap(last)
+    note = ("보통예금 잔액 = 분개장 %s부터 차변−대변 누적 (기초 잔액 0) · 계좌 %d개 · %s 합계 %s"
+            % (lines[0]["date"].isoformat(), len(bal), last.isoformat(), won(sum(bal.values()))))
+    return [Table(data.BOOK_BAL_FILE, data.BOOK_BAL_KEYS, snaps, notes=[note]),
+            Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], txns,
+                  notes=["보통예금 입출금 %d줄 (같은 전표에 차변·대변 모두 있으면 계좌간이체)" % len(txns)])]
 
 
 def build_tax(books, cfg, asof, input_dir=None):

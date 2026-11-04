@@ -36,6 +36,12 @@ NO_DEPT = "부서 없음"
 STAFF_FILE = "사원급여.csv"
 STAFF_KEYS = ["연월", "부서", "사원명", "급여"]
 
+# 변환.py 가 분개장 보통예금으로 만드는 계좌 잔액·입출금 (사용자 2026-11-04: 분개장 합계 = 실제 통장 합계).
+# 있으면 계좌잔액.csv 는 사용제한(담보·전용 등)만 쓰고, 입출금내역.csv 대신 장부입출금.csv 를 쓴다.
+BOOK_BAL_FILE = "장부잔액.csv"
+BOOK_BAL_KEYS = ["기준일", "계좌명", "은행", "잔액"]
+BOOK_TXN_FILE = "장부입출금.csv"
+
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
 TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
@@ -128,6 +134,25 @@ def load(folder):
         if r.get("항목"):
             d.settings[r["항목"]] = r.get("값", "")
             d.settings_line[r["항목"]] = r["_line"]
+
+    # 장부잔액·장부입출금 (변환.py, 사용자 2026-11-04): 있으면 잔액·입출금은 분개장 보통예금, 계좌잔액.csv 는 사용제한만
+    d.book_bank = False
+    bpath, tpath = os.path.join(folder, BOOK_BAL_FILE), os.path.join(folder, BOOK_TXN_FILE)
+    if os.path.exists(bpath) and os.path.exists(tpath):
+        brows, bok = read_csv(bpath, BOOK_BAL_KEYS, iss, {})
+        trows, tok = read_csv(tpath, SCHEMA["입출금내역.csv"], iss, {})
+        if bok and tok and brows:
+            d.book_bank = True
+            for r in raw["계좌잔액.csv"]:
+                if (r.get("잔액") or "").strip():
+                    iss.add(r["_file"], r["_line"], "잔액은 분개장 보통예금(장부잔액.csv)으로 계산 → 이 줄은 사용제한만 씀")
+                r["잔액"] = "0"
+                r["계좌명"] = "사용제한: " + (r.get("계좌명") or r.get("제한사유") or "")
+            if raw["입출금내역.csv"]:
+                iss.add("입출금내역.csv", "-", "입출금은 분개장 보통예금(장부입출금.csv)으로 계산 → 이 파일은 쓰지 않음")
+            raw["계좌잔액.csv"] = brows + raw["계좌잔액.csv"]
+            raw["입출금내역.csv"] = trows
+            d.present["계좌잔액.csv"] = d.present["입출금내역.csv"] = True
 
     # 계좌잔액
     d.balances = []

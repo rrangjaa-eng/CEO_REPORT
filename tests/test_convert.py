@@ -486,7 +486,8 @@ class TestConvertSafety(unittest.TestCase):
             self.assertIn(name, text)
         self.assertIn("손대지 않은 파일: 없음", text)
         self.assertEqual(backup_dirs(input_dir), [])
-        self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "계정별비용.csv", "변환결과.txt", "세금예상.csv", "손익.csv"])
+        self.assertEqual(sorted(os.listdir(input_dir)), ["계산서.csv", "계정별비용.csv", "변환결과.txt", "세금예상.csv", "손익.csv",
+                                                       "장부입출금.csv", "장부잔액.csv"])
 
     def test_backup_and_log_paths_are_git_ignored(self):
         for rel in ("입력/이전/20261102_000000/손익.csv", "입력/변환결과.txt"):
