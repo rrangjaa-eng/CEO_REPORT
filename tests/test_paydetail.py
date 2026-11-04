@@ -59,7 +59,7 @@ class TestFridayList(unittest.TestCase):
         html = render(compute(load(SAMPLE), "weekly", dt.date(2026, 10, 31)), "ceo")
         self.assertIn("<td><b class='vn'>전시제작사</b></td><td>C사 전시 부스</td><td>C사 전시 부스 목공·도장 잔금</td>", html)
         self.assertIn("<td>구독료<small class='dt'>디자인 툴 월 구독</small></td>", html)
-        self.assertIn("상세 미입력", html)
+        self.assertNotIn("상세 미입력", html.split("<table class='pt wo'>")[1].split("</table>")[0])   # 금액 미확인 건은 목록에 없음 (2026-11-04)
         table = html[html.index("<table class='pt wo'>"):]
         table = table[:table.index("</thead>")]
         self.assertNotIn("상태", table)

@@ -813,14 +813,16 @@ def week_outflows(R):
     # 자금 표(예상분 포함)와 맞출 수 있게 목록 아래 한 줄로만 알린다.
     upto = [e for e in rows if e["date"] <= fri]
     return {"fri": fri, "start": asof, "end": end, "rows": rows,
-            "pay": sums([e for e in upto if e["firm"]]), "pay_est": sums([e for e in upto if not e["firm"]]),
+            # 금액이 확정된 건만 (사용자 2026-11-04 세 번째 지적: '금액 미확인'도 넣지 않는다). 나머지는 pay_est 로 한 줄 알림
+            "pay": sums([e for e in upto if e["firm"] and e["amount"] is not None]),
+            "pay_est": sums([e for e in upto if not (e["firm"] and e["amount"] is not None)]),
             "next": sums([e for e in rows if e["date"] > fri])}
 
 
 def _prev_firm(R):
     """지난주 기록도 확정 건만 비교한다 (금요일 출금 목록이 확정 건만이므로)."""
     prev = R.get("week_prev")
-    return dict(prev, rows=[r for r in prev["rows"] if r.get("firm")]) if prev else None
+    return dict(prev, rows=[r for r in prev["rows"] if r.get("firm") and r.get("amount") is not None]) if prev else None
 
 
 def _md(d):
@@ -923,9 +925,14 @@ def _week_out_table(R):
         esc(" · 금액 미확인 %d건 별도" % P["unknown_n"]) if P["unknown_n"] else "")
     h = ["<div class='card frimain'>", head, _out_rows_table(P, C, "금요일 출금 없음", R)]
     E = W_["pay_est"]
-    if E["rows"]:
-        h.append("<div class='note'>%s</div>" % esc("확정 안 된 예상 지급 %d건 %s원은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)"
-                                                    % (len(E["rows"]), won(E["total"]))))
+    if E["rows"]:   # 목록 밖: 예상 지급과 금액 미확인 (사용자 2026-11-04: 금요일 목록은 금액 확정 건만)
+        parts = []
+        n_est = len(E["rows"]) - E["unknown_n"]
+        if n_est:
+            parts.append("확정 안 된 예상 지급 %d건 %s원" % (n_est, won(E["total"])))
+        if E["unknown_n"]:
+            parts.append("금액 미확인 %d건" % E["unknown_n"])
+        h.append("<div class='note'>%s</div>" % esc("%s은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)" % " · ".join(parts)))
     if C is None:
         h.append("<div class='note'>지난주 기록 없음 — 다음 주 보고부터 지난주 대비를 보임</div>")
     else:

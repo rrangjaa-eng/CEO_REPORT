@@ -146,32 +146,37 @@ class TestReportIsADocument(unittest.TestCase):
                     self.assertNotIn("landscape", html)
 
     def test_weekly_lists_friday_payments_then_next_week(self):
-        """매주 금요일 출금 (사용자 2026-11-03): ① 금요일 출금 목록, 그 아래 다음 주(토~다음 금) 지급 예정. 금액 미확인도 줄로."""
+        """매주 금요일 출금 (사용자 2026-11-03): ① 금요일 출금 목록, 그 아래 다음 주(토~다음 금) 지급 예정.
+        금요일 목록은 금액이 확정된 건만 (사용자 2026-11-04 세 번 지적: 예상·금액 미확인 모두 뺌)."""
         from ceo_report.render import week_outflows
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
         W = week_outflows(R)
         self.assertEqual(W["fri"], dt.date(2026, 11, 6))
         self.assertEqual([(e["date"].isoformat(), e["amount"]) for e in W["pay"]["rows"]],
-                         [("2026-11-05", 1_200_000), ("2026-11-05", None), ("2026-11-06", 49_500_000)])
+                         [("2026-11-05", 1_200_000), ("2026-11-06", 49_500_000)])
+        self.assertTrue(all(e["amount"] is not None for e in W["pay"]["rows"]))
+        self.assertEqual(W["pay_est"]["unknown_n"], 1)   # 금액 미확인은 목록 밖 (한 줄 알림)
         # 금요일 출금 목록은 확정 건만 (사용자 2026-11-04). 남은 예산 매주 나눔(예상)은 pay_est 로 따로: P26207 962,500 + P26208 883,235
         self.assertTrue(all(e["firm"] for e in W["pay"]["rows"]))
         merged = W["pay_est"]["rows"][-1]
         self.assertEqual((merged["source"], len(merged["merged"]), merged["firm"]), ("남은 예산", 2, False))
         self.assertTrue(all(dt.date(2026, 11, 7) <= e["date"] <= dt.date(2026, 11, 13) for e in W["next"]["rows"]))
         self.assertTrue(W["next"]["rows"])
-        self.assertEqual(W["pay"]["unknown_n"], 1)
+        self.assertEqual(W["pay"]["unknown_n"], 0)
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
             self.assertIn("금요일(11/06) 출금 목록", fs)
             self.assertIn("다음 주 지급 예정 (11/07 토 ~ 11/13 금)", fs)
             self.assertLess(fs.index("금요일(11/06) 출금 목록"), fs.index("다음 주 지급 예정"))
             table = fs.split("<table class='pt wo'>")[1].split("</table>")[0]
-            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 3)   # 확정 건만 (사용자 2026-11-04)
+            self.assertEqual(table.count("<tr>") + table.count("<tr class='od'>"), 1 + 2)   # 금액 확정 건만 (사용자 2026-11-04)
             self.assertNotIn("예상", table)
             self.assertIn("전시제작사", table)
-            self.assertIn("금액 미확인", table)
-            self.assertIn("3건 · 합계 50,700,000 · 금액 미확인 1건", fs)
-            self.assertIn("확정 안 된 예상 지급 1건 1,845,735원은 목록에서 뺌", fs)
+            self.assertNotIn("금액 미확인", table)
+            self.assertNotIn("상세 미입력", table)
+            self.assertIn("2건 · 합계 50,700,000</div>", fs)
+            self.assertIn("확정 안 된 예상 지급 1건 1,845,735원 · 금액 미확인 1건은 목록에서 뺌", fs)
+            self.assertIn("<div class='lab'>금요일(11/06) 출금</div><div class='big'>50,700,000</div><div class='foot'>2건</div>", fs)
         self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                     dt.date(2026, 10, 31)), "ceo"))
 
