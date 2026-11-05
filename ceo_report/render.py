@@ -502,7 +502,7 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 @media print{table.pt.wo small.dt{display:inline}table.pt.wo small.dt::before{content:" · "}table.pt.wo td{padding-top:2px!important;padding-bottom:2px!important}}
 table.pt.xr th:nth-child(2),table.pt.tg th:last-child{text-align:left}
 table.pt.taxq th,table.pt.taxq td{text-align:right!important}table.pt.taxq th:first-child,table.pt.taxq td:first-child{text-align:left!important}table.pt.taxq th:nth-child(2),table.pt.taxq td:nth-child(2){text-align:center!important}
-.sec.flow{break-inside:auto}.sec.flow>.card,.sec.flow .avail>.tw,.sec.flow .avail>.lab{break-inside:avoid}.q{break-after:avoid}.fs:not(.mon) svg{max-height:215px}.evid{margin-top:4px;padding:3px 10px;font-size:10px;break-before:avoid}.fs.mon svg{max-height:300px}.fs.mon .card:not(.mchart) svg{max-height:190px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
+.sec.sflow{break-inside:auto}.sec.sflow>.card,.sec.sflow .avail>.tw,.sec.sflow .avail>.lab{break-inside:avoid}.q{break-after:avoid}.fs:not(.mon) svg{max-height:215px}.evid{margin-top:4px;padding:3px 10px;font-size:10px;break-before:avoid}.fs.mon svg{max-height:300px}.fs.mon .card:not(.mchart) svg{max-height:190px}.fs.mon .four .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs.mon table.pt.ayt{font-size:10.5px;zoom:.86}.fs.mon table.pt.ayt td,.fs.mon table.pt.ayt th{padding:2px 2px}.fs.mon table.pt.ayt td:first-child{max-width:150px}}
 .fs table.pt.wo tbody td:last-child,.fs table.pt.wn tbody td:nth-child(4){font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}.fs #avail tbody td.vin,.fs #avail tbody td.vout{font-size:13.5px;font-weight:700;font-variant-numeric:tabular-nums}.fs #avail td.av b{font-size:18px}.fs #avail td small,.fs table.pt.wo td small{font-weight:400}.fs ul.nl.one{list-style:none;padding-left:0;columns:1!important}
 """
 
@@ -2171,7 +2171,7 @@ def _first_screen(R, mode, per):
         # 주간 ① 출금 목록은 길면 쪽을 넘어 이어진다 (사용자 2026-11-04: 통째로 다음 쪽에 밀려 1쪽이 비던 것)
         cls = "sec brk" if (not monthly and i == 0) else "sec"
         if not monthly and i == 1:
-            cls = "sec flow pgb"   # 자금 현황은 2쪽 첫머리에서   # 주간 ③ 자금: 표와 그림 사이에서 쪽을 나눌 수 있게 (사용자 2026-11-05: 빈 곳 최소)
+            cls = "sec sflow pgb"   # 자금 현황은 2쪽 첫머리에서   # 주간 ③ 자금: 표와 그림 사이에서 쪽을 나눌 수 있게 (사용자 2026-11-05: 빈 곳 최소)
         if monthly and i == 5:
             cls += " pgb"   # 월간 ⑥ 누적 실적은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
         sec = "<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body)

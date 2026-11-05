@@ -516,7 +516,7 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ⑥: 새 쪽에서 통째로
                 self.assertEqual(pgb, 0 if kind == "weekly" else 1)
                 # 주간 ② 자금은 2쪽 첫머리에서, 표와 그림 사이에서만 나뉠 수 있다 (사용자 2026-11-05: 빈 곳 최소)
-                flow = html.count("<div class='sec flow pgb'><div class='q'>")
+                flow = html.count("<div class='sec sflow pgb'><div class='q'>")
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
                 self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
