@@ -228,7 +228,7 @@ table.pt.wo td{padding:5px 8px!important}
 .wchg{margin:8px 0 4px!important}
 .note{margin:6px 0!important}
 .avail>.lab{margin-bottom:6px}
-.card+.card,.avail+.card{margin-top:14px!important}
+.sec>div>.card+.card,.avail+.card{margin-top:14px!important}.sec .four>.card.card{margin-top:0!important}
 @media print{body{line-height:1.55}
 .q{margin:18px 0 8px!important}
 table.pt th,.fs table th{padding:5px 7px!important}
