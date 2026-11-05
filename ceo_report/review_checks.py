@@ -121,13 +121,13 @@ def duplicate_items(journal):
     for day, nos, total, why, ok in classify_duplicates(journal):
         if ok:
             continue
-        vend = ""
+        vend, vcode = "", ""
         for ln in journal:
             if ln.get("date") == day and str(ln.get("no") or "") == nos[0] and ln.get("vendor"):
-                vend = ln["vendor"]
+                vend, vcode = ln["vendor"], (ln.get("vendor_code") or "").strip()
                 break
         out.append({"id": "중복|%s|%s" % (day.isoformat(), ",".join(nos)), "kind": "중복 의심 전표", "date": day.isoformat(),
-                    "amount": total, "vendor": vend,
+                    "amount": total, "vendor": vend, "vcode": vcode,
                     "title": "같은 날·같은 계정·거래처·금액 전표 %d건 (전표번호만 다름)" % len(nos),
                     "detail": "전표 %s · 전표 금액 %s원 · %s" % (", ".join(nos), util.won(total), why),
                     "choices": ["이중 입력 — 위하고에서 고칠 것", "정상 (별개 거래)"]})

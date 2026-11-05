@@ -41,6 +41,14 @@ def won(v):
 
 
 # ───────────── 변환 때 만드는 항목 ─────────────
+def vendor_label(name, code):
+    """거래처명 [코드] (사용자 2026-11-05: 코드만으로는 모르니 둘 다). 하나만 있으면 있는 것만."""
+    name, code = (name or "").strip(), str(code or "").strip()
+    if name and code and code not in name:
+        return "%s [%s]" % (name, code)
+    return name or ("[%s]" % code if code else "")
+
+
 def convert_items(tables, cross, notes):
     """변환 대조 불일치 · 카드 전표 입력 전 알림 -> 항목."""
     from .convert import check_result
@@ -246,15 +254,15 @@ def _report_items(input_dir, asof):
             why = " · 자금계획서 예정 %d줄 (예정일 %s)" % (len(plans), ", ".join(ev["date"].isoformat() for ev in plans if ev["date"]))
         r = dict(r, why=why)
         out.append({"id": "미지급금예정|%s|%s|%s" % (r["vcode"] or r["vendor"], r["scheduled"], r["balance"]),
-                    "kind": "미지급금 예정 > 장부", "date": "", "amount": r["over"], "vendor": r["vendor"],
+                    "kind": "미지급금 예정 > 장부", "date": "", "amount": r["over"], "vendor": r["vendor"], "vcode": r["vcode"],
                     "title": "미지급금 지급 예정이 장부 잔액보다 큼%s" % (" (정확히 2배)" if r["balance"] and r["scheduled"] == 2 * r["balance"] else ""),
                     "detail": "지급 예정(자금계획서) %s원 · 장부 미지급금 %s원 · 더 큰 금액 %s원%s%s" % (
-                        won(r["scheduled"]), won(r["balance"]), won(r["over"]), (" · 거래처코드 %s" % r["vcode"]) if r["vcode"] else "",
+                        won(r["scheduled"]), won(r["balance"]), won(r["over"]), "",
                         r["why"]),
                     "choices": ["예정이 맞음 (장부 반영 전)", "장부가 맞음 — 자금계획서 고칠 것", "두 번 적힘 — 자금계획서에서 지울 것"]})
     for g in R.get("two_source") or []:
         out.append({"id": "두출처|%s|%s|%s" % (g["vendor"], g["month"], sum(g["sources"].values())), "kind": "두 출처 출금",
-                    "date": g["month"], "amount": sum(g["sources"].values()), "vendor": g["vendor"],
+                    "date": g["month"], "amount": sum(g["sources"].values()), "vendor": g["vendor"], "vcode": g.get("vcode") or "",
                     "title": "같은 거래처·같은 달 출금이 두 곳에 적힘 (같은 돈이면 두 번 빠짐)",
                     "detail": " · ".join("%s %s원" % (k, won(v)) for k, v in g["sources"].items()),
                     "choices": ["같은 돈 — 한 곳에서 지울 것", "다른 돈 (둘 다 나감)"]})
@@ -265,7 +273,7 @@ def _report_items(input_dir, asof):
             out.append({"id": "계좌|%s" % _h(",".join(sorted(m["code"] or m["vendor"] for m in miss))), "kind": "계좌 없는 이체 거래처",
                         "date": "", "amount": sum(m["amount"] for m in miss), "vendor": "",
                         "title": "다음 7일 지급할 거래처 %d곳에 계좌가 없음 (이체 파일에 못 넣음)" % len(miss),
-                        "detail": " · ".join("%s %s원" % (m["vendor"] or m["code"], won(m["amount"])) for m in miss)
+                        "detail": " · ".join("%s %s원" % (vendor_label(m["vendor"], m["code"]), won(m["amount"])) for m in miss)
                                   + " — ⑥ 이체 파일 만들기를 누르면 뜨는 창에서 바로 넣을 수 있음",
                         "choices": ["계좌 넣음", "이번엔 은행에서 직접 이체"]})
     except Exception:
@@ -416,6 +424,7 @@ def render(G, key="", mask=False):
             vend = it.get("vendor") or ""
             if mask and vend:
                 vend = vend[:1] + "○" * max(1, len(vend) - 1)
+            vend = vendor_label(vend, it.get("vcode"))
             amt = "" if it.get("amount") is None else "%s원" % won(it["amount"])
             ch = []
             for i, choice in enumerate(it.get("choices") or ["확인함"]):

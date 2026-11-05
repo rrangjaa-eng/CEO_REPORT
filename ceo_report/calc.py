@@ -101,7 +101,7 @@ def two_sources(events, asof):
         key = norm_code(ev.get("vendor_code")) or norm_vendor(ev.get("desc") or "")
         if not key:
             continue
-        g = groups.setdefault((key, ev["date"].strftime("%Y-%m")), {"vendor": ev.get("desc") or key,
+        g = groups.setdefault((key, ev["date"].strftime("%Y-%m")), {"vendor": ev.get("desc") or key, "vcode": norm_code(ev.get("vendor_code")),
                                                                      "month": ev["date"].strftime("%Y-%m"), "sources": OrderedDict()})
         g["sources"][src] = g["sources"].get(src, 0) + ev["amount"]
     out = [g for g in groups.values() if len(g["sources"]) > 1]

@@ -153,6 +153,11 @@ def compare(collect_dir, journal):
     if not got["매출"] and not got["매입"]:
         return {"notes": notes, "items": items}
     buys, sales = invoices_from_journal(journal)
+    codes = {}   # 거래처 이름 -> 분개장 거래처코드 (화면에 '이름 [코드]'로 보이려고, 사용자 2026-11-05)
+    for ln in journal:
+        c = (ln.get("vendor_code") or "").strip()
+        if c and ln.get("vendor"):
+            codes.setdefault(norm_vendor(ln["vendor"]), c)
     for side, ht, rows in (("매출", got["매출"], sales), ("매입", got["매입"], buys)):
         if not ht:
             continue
@@ -167,12 +172,13 @@ def compare(collect_dir, journal):
             notes.append("  홈택스에만 %s %s 승인번호 …%s %s원" % (side, h["date"].isoformat(), h["no"][-8:], "{:,}".format(h["total"])))
             items.append({"id": "홈택스|%s" % h["no"], "kind": "홈택스 대조", "date": h["date"].isoformat(), "amount": h["total"],
                           "title": "홈택스에는 있는데 장부에 없는 %s 계산서" % side, "vendor": h["vendor"],
+                          "vcode": codes.get(h["vendor_norm"], ""),
                           "detail": "작성일자 %s · 승인번호 %s · 공급가액 %s원 · 세액 %s원" % (
                               h["date"].isoformat(), h["no"], "{:,}".format(h["supply"]), "{:,}".format(h["vat"])),
                           "choices": ["위하고에 넣을 것", "장부에 다른 날짜·금액으로 있음", "취소·수정된 계산서"]})
         for b in only_books:
             items.append({"id": "홈택스장부|%s|%s" % (b["date"].isoformat(), b["no"]), "kind": "홈택스 대조",
                           "date": b["date"].isoformat(), "amount": b["total"], "title": "장부 매출에만 있는 계산서 (홈택스 목록에 없음)",
-                          "vendor": b["vendor"], "detail": "전표 %s %s · 합계 %s원" % (b["date"].isoformat(), b["no"], "{:,}".format(b["total"])),
+                          "vendor": b["vendor"], "vcode": codes.get(b.get("vendor_norm") or norm_vendor(b["vendor"]), ""), "detail": "전표 %s %s · 합계 %s원" % (b["date"].isoformat(), b["no"], "{:,}".format(b["total"])),
                           "choices": ["카드·현금 매출이라 정상", "발급 누락 — 계산서 발급할 것", "장부 잘못 — 고칠 것"]})
     return {"notes": notes, "items": items}
