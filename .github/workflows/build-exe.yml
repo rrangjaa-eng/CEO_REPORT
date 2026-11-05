@@ -1,0 +1,40 @@
+# 대표보고.exe (설치 없이 실행) 만들기 — Windows 에서만 만들 수 있어 GitHub 의 Windows 컴퓨터에서 묶는다 (사용자 2026-11-03)
+name: build-exe
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-jkflss, main]
+    paths: ["**.py", "대표보고.pyw", "입력양식/**", ".github/workflows/build-exe.yml"]
+permissions:
+  contents: read
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 테스트
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_app.py"
+      - name: PyInstaller 설치
+        run: python -m pip install pyinstaller==6.11.1
+      - name: exe 묶기
+        shell: pwsh
+        run: >
+          python -m PyInstaller --noconfirm --onefile --windowed --name 대표보고
+          --paths . --hidden-import 변환 --hidden-import 보고서 --hidden-import 승인검토
+          --add-data "입력양식;입력양식" 대표보고.pyw
+      - name: exe 점검 (창 없이 샘플로 주간 보고 만들기)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\대표보고.exe" -ArgumentList "--점검","$PWD\점검결과.txt" -Wait -PassThru
+          Get-Content -Encoding utf8 점검결과.txt
+          if ($p.ExitCode -ne 0) { throw "점검 실패: $($p.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 대표보고-exe
+          path: dist/대표보고.exe
+          retention-days: 30

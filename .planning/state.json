@@ -1,0 +1,33 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "보고 엔진 검증",
+      "status": "pending"
+    },
+    {
+      "number": "01.1",
+      "name": "지급 승인 검토 화면",
+      "status": "pending"
+    },
+    {
+      "number": "2",
+      "name": "원천자료 변환",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "배포",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:debug",
+    "label": "Debug the blocker",
+    "reason": "Blocked · 1 blocker(s) — resolve before continuing"
+  },
+  "updated_at": "2026-11-02T09:49:05.974Z"
+}

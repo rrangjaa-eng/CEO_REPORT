@@ -1,7 +1,11 @@
 """샘플 입력 자료(가상의 회사·프로젝트)와 빈 입력양식을 만든다.
 
-    python tools/make_sample.py
+    python tools/make_sample.py           ← 샘플을 입력양식/샘플 폴더에, 빈 양식을 입력양식 폴더에 쓴다
+    python tools/make_sample.py <폴더>    ← 샘플만 그 폴더에 쓴다 (테스트는 임시 폴더를 준다)
+    python 보고서.py 주간 --입력 입력양식/샘플 --기준일 2026-11-02   ← 샘플로 보고서 만들어 보기
+
 실제 회사 자료가 아니다. 프로그램 동작 확인용이다.
+실제 입력 폴더(입력)에는 쓰지 않는다: 그 폴더를 주면 아무것도 쓰지 않고 멈춘다.
 """
 import csv
 import os
@@ -9,21 +13,23 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from ceo_report.data import SCHEMA  # noqa: E402
+from ceo_report.data import ACCOUNT_FILE, ACCOUNT_KEYS, DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
+from ceo_report.tax import CARD_COLUMNS, CARD_FILE, COLUMNS as TAX_COLUMNS  # noqa: E402
 
 
-def write(folder, name, rows):
+def write(folder, name, rows, header=None):
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, name), "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
-        w.writerow(SCHEMA[name])
+        w.writerow(header or SCHEMA[name])
         for r in rows:
             w.writerow(r)
 
 
 S = {}
 S["설정.csv"] = [["회사명", "(샘플) 플랜트에이트"], ["첫화면_프로젝트_표시수", "6"], ["위험_최소보유현금", "100000000"],
-                ["위험_미수경과일", "30"], ["위험_미발행경과일", "30"], ["위험_자료경과일", "7"], ["위험_예산초과율", "100"]]
+                ["위험_미수경과일", "30"], ["위험_미발행경과일", "30"], ["위험_자료경과일", "7"], ["위험_예산초과율", "100"],
+                ["예산_원가율", "0.70"], ["승인검토_주수", "8"], ["승인검토_정기지출", "급여,임차료,카드대금,부가세"]]
 
 S["계좌잔액.csv"] = [
     ["2026-10-26", "운영계좌", "국민", "402,000,000", "0", ""],
@@ -139,6 +145,45 @@ pl += [
     ["인트라넷완료보고", "2026-10", "프로젝트", "P26206 F사 임직원 워크숍", "50,000,000", "", "", "Y"],
 ]
 S["손익.csv"] = pl
+# 부서별 급여·판관비 (변환.py 가 분개장 관리항목 부서명으로 만드는 선택 파일, 사용자 2026-11-03). 달마다 합계 = 공통비 30,000,000
+DEPT = []
+for m in range(1, 12):
+    # 영업외: 경영관리 정부지원금·이자수익 2,000,000, 기획본부 이자비용 500,000 (팀 순수익에는 넣지 않음)
+    for dept, sal, sga, heads, nin, nout in (("기획1팀", 9_000_000, 2_000_000, 3, 0, 0), ("기획2팀", 7_500_000, 1_500_000, 3, 0, 0),
+                                             ("기획본부", 4_000_000, 1_000_000, 1, 0, 500_000),
+                                             ("경영관리", 3_000_000, 2_000_000, 1, 2_000_000, 0)):
+        DEPT.append(["2026-%02d" % m, dept, "{:,}".format(sal), "{:,}".format(sga), str(heads), "{:,}".format(nin),
+                     "{:,}".format(nout)])
+S[DEPT_FILE] = DEPT
+# 세금·4대보험 납부 예상 (가상 금액, 변환.py 가 분개장으로 만드는 선택 파일, 사용자 2026-11-03). 4대보험 = 직원분 예수금 + 회사분
+S[TAX_FILE] = [
+    ["4대보험", "2026년 10월분", "2026-11-10", "5,250,000", "예상", "예수금 중 공단 거래처 대변(직원분) 2,500,000원 + 회사분 = 직원분 × 1.10"],
+    ["원천세", "2026년 하반기 (7~12월)", "2027-01-11", "6,000,000", "예상", "예수금 중 세무서·구청 거래처 대변 합계, 반기납부"],
+    ["부가세", "2026년 4분기 (10~12월)", "2027-01-25", "21,000,000", "예상", "부가세예수금 − 부가세대급금"],
+]
+# 계정과목별 달별 사용 금액 (가상, 변환.py 가 분개장으로 만드는 선택 파일, 사용자 2026-11-03: 월간 연간표).
+# 판매비와관리비 합계 = 달마다 공통비 30,000,000 (부서비용.csv 와 같음), 영업외비용 = 이자비용 500,000
+ACCOUNTS = []
+for m in range(1, 11):
+    ym = "2026-%02d" % m
+    for grp, code, name, amt in (("원가", "53300", "외주용역비", 40_000_000 + m * 3_000_000),
+                                 ("원가", "53500", "행사진행비", 12_000_000 + (m % 4) * 2_500_000),
+                                 ("판매비와관리비", "80200", "직원급여", 23_500_000),
+                                 ("판매비와관리비", "81100", "복리후생비", 1_800_000),
+                                 ("판매비와관리비", "81900", "임차료", 3_000_000),
+                                 ("판매비와관리비", "81400", "통신비", 300_000),
+                                 ("판매비와관리비", "83100", "지급수수료", 900_000),
+                                 ("판매비와관리비", "83000", "소모품비", 500_000),
+                                 ("영업외비용", "93100", "이자비용", 500_000)):
+        ACCOUNTS.append([ym, grp, code, name, "{:,}".format(amt)])
+S[ACCOUNT_FILE] = ACCOUNTS
+# 출금 상세 내역 (가상, 사용자 2026-11-03: 금요일 출금 목록). 창 '⑦ 출금 상세 내역'으로 넣음
+DETAIL_ROWS = [["전시제작사", "49500000", "C사 전시 부스 목공·도장 잔금", "수기"],
+               ["소프트웨어", "1200000", "디자인 툴 월 구독", "수기"]]
+# 팀 연간 목표 (가상, 사용자 2026-11-03: 월간 누적 실적 목표 대비). 창 '⑧ 팀 목표'로 넣음
+TARGET_ROWS = [["2026", "기획1팀", "900000000", "33"], ["2026", "기획2팀", "700000000", "30"]]
+# 카드사별 납부일·기산일 (사용자 2026-11-03). 창의 '⑤ 카드 납부일'로 고친다
+CARD_ROWS = [["롯데", "14", "1"], ["비씨", "25", "1"], ["신한", "15", "1"]]
 S["지급계획.csv"] = [
     ["2026-10-26", "P26201", "무대제작사", "11,000,000"],
     ["2026-10-26", "", "건물관리", "8,000,000"],
@@ -162,8 +207,59 @@ S["자료차이.csv"] = [
     ["P26206 원가", "인트라넷 완료보고", "26,000,000", "WEHAGO 프로젝트 원가", "26,000,000", "확인완료"],
 ]
 
-if __name__ == "__main__":
+REAL_INPUT = os.path.join(HERE, "입력")
+TEMPLATES = os.path.join(HERE, "입력양식")
+SAMPLE_DIR = os.path.join(TEMPLATES, "샘플")
+
+
+def is_real_input(folder):
+    """사용자의 실제 입력 폴더(<프로그램 폴더>/입력)이면 True."""
+    return os.path.normcase(os.path.realpath(folder)) == os.path.normcase(os.path.realpath(REAL_INPUT))
+
+
+def write_sample(folder, data=None):
+    """샘플 CSV 12개(+ 선택 파일 부서비용.csv·세금예상.csv)를 folder 에 쓴다. 실제 입력 폴더면 쓰지 않고 ValueError."""
+    if is_real_input(folder):
+        raise ValueError("실제 입력 폴더에는 샘플을 쓰지 않습니다: %s" % folder)
+    data = S if data is None else data
     for name in SCHEMA:
-        write(os.path.join(HERE, "입력"), name, S.get(name, []))
-        write(os.path.join(HERE, "입력양식"), name, S["설정.csv"] if name == "설정.csv" else [])
-    print("샘플 입력과 빈 양식을 만들었습니다.")
+        write(folder, name, data.get(name, []))
+    if DEPT_FILE in data:   # 선택 파일: 빈 입력양식은 만들지 않는다 (변환.py 가 만듦)
+        write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
+    if TAX_FILE in data:
+        write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
+    if ACCOUNT_FILE in data:
+        write(folder, ACCOUNT_FILE, data[ACCOUNT_FILE], ACCOUNT_KEYS)
+    from ceo_report.paydetail import DETAIL_COLUMNS, DETAIL_FILE
+    write(folder, DETAIL_FILE, DETAIL_ROWS, DETAIL_COLUMNS)
+    from ceo_report.targets import TARGET_COLUMNS, TARGET_FILE
+    write(folder, TARGET_FILE, TARGET_ROWS, TARGET_COLUMNS)
+    write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
+
+
+def write_templates(folder=TEMPLATES):
+    """빈 입력양식(머리글만, 설정.csv 는 기본 항목)을 folder 에 쓴다."""
+    for name in SCHEMA:
+        write(folder, name, S["설정.csv"] if name == "설정.csv" else [])
+    write(folder, CARD_FILE, CARD_ROWS, CARD_COLUMNS)
+
+
+def main(argv):
+    if len(argv) > 1:
+        print("사용법: python tools/make_sample.py [샘플을 쓸 폴더]")
+        return 2
+    if argv:
+        if is_real_input(argv[0]):
+            print("실제 입력 폴더(입력)에는 샘플을 쓰지 않습니다: %s" % argv[0])
+            return 2
+        write_sample(argv[0])
+        print("샘플 입력을 만들었습니다: %s" % argv[0])
+        return 0
+    write_sample(SAMPLE_DIR)
+    write_templates()
+    print("샘플 입력(%s)과 빈 양식(%s)을 만들었습니다." % (SAMPLE_DIR, TEMPLATES))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
