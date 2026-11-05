@@ -3,12 +3,18 @@ for (let i = 1; i <= 12; i++) $("months").add(new Option(String(i), String(i)));
 
 function line(info, what) {
   if (!info) return "아직 받은 적 없음";
-  let s = `마지막 저장: ${info.saved}<br>${what(info)}`;
+  let s = `마지막 저장: ${info.saved}<br>${what(info)}` + (info.where ? `<br>저장 위치: ${info.where}` : "");
   if (info.checked && info.checked !== info.saved) s += `<br>마지막 확인: ${info.checked} (바뀐 것 없음)`;
   return s;
 }
 
 async function show() {
+  try {
+    const dir = await getFolder();
+    const {pendingSaves = []} = await chrome.storage.local.get("pendingSaves");
+    $("fmsg").innerHTML = (dir ? `저장 폴더: <b>${dir.name}</b>` : `<span class="err">저장 폴더를 아직 고르지 않았습니다 (지금은 다운로드 폴더에 저장)</span>`)
+      + (pendingSaves.length ? `<br><span class="err">저장 허용 기다리는 파일 ${pendingSaves.length}개 — 아래 단추를 눌러 주세요</span>` : "");
+  } catch (e) { $("fmsg").textContent = ""; }
   const {status = {}, planMonths = 3} = await chrome.storage.local.get(["status", "planMonths"]);
   $("months").value = String(planMonths);
   $("jmsg").innerHTML = line(status["분개장"], (j) => `전표 ${j.slips}건 · ${j.rows}줄`);
@@ -33,5 +39,6 @@ async function run(btn, msgId, label, message) {
 $("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
 $("journal").onclick = () => run("journal", "jmsg", "받는 중… (1분 안쪽)", {type: "collectNow"});
 $("plan").onclick = () => run("plan", "pmsg", "받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectPlan", months: +$("months").value});
+$("folder").onclick = () => chrome.tabs.create({url: chrome.runtime.getURL("saver.html")});
 $("months").onchange = () => chrome.storage.local.set({planMonths: +$("months").value});
 show();

@@ -1,7 +1,8 @@
 // 대표보고 위하고 수집 — 배경. 화면에서 받은 분개장·자금계획을 다운로드 폴더 '위하고자동수집'에 JSON 으로 저장한다.
 // 사용자가 단추를 누를 때만 받는다 (2026-11-05: 30분 자동 확인 없음). 지난번과 내용이 같으면 새로 저장하지 않는다.
 // 위하고에는 날짜 고르기·[조회]·줄 고르기만 한다 (읽기 전용).
-const FOLDER = "위하고자동수집";
+importScripts("folder.js");
+const FOLDER = "위하고자동수집";   // 저장 폴더를 아직 고르지 않았을 때만 쓰는 크롬 다운로드 폴더 안 폴더
 const SCREEN = {"분개장": "SABK0113", "자금계획": "SAFM0102"};
 const PLAN_COLUMNS = ["date", "yn_inout", "cd_fitem", "nm_fitem", "cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
 let pending = null;   // 분개장: {kind, tabId, resolve, timer}
@@ -32,25 +33,48 @@ async function setStatus(patch) {
   chrome.action.setBadgeText({text: patch.badge || ""});
 }
 
-// 내용(hashSource)이 지난번과 같으면 저장하지 않는다.
+async function openSaver() {
+  const url = chrome.runtime.getURL("saver.html");
+  const tabs = await chrome.tabs.query({url: url + "*"});
+  if (tabs.length) { await chrome.windows.update(tabs[0].windowId, {focused: true}); await chrome.tabs.reload(tabs[0].id); return; }
+  await chrome.windows.create({url: url + "?auto=1", type: "popup", width: 560, height: 320, focused: true});
+}
+
+// 고른 저장 폴더(수집\위하고)에 바로 쓴다. 허용이 다시 필요하면 저장 창을 띄워 기다리게 두고, 폴더를 아직 안 골랐으면 다운로드 폴더에 둔다.
+async function writeOut(fname, text) {
+  const r = await writeToFolder(fname, text);
+  if (r === "ok") return "위하고 폴더";
+  if (r === "need") {
+    const {pendingSaves = []} = await chrome.storage.local.get("pendingSaves");
+    const rest = pendingSaves.filter((p) => p.name !== fname);
+    rest.push({name: fname, text});
+    await chrome.storage.local.set({pendingSaves: rest});
+    await openSaver();
+    return "허용 기다림";
+  }
+  await chrome.downloads.download({url: toDataUrl(text), filename: `${FOLDER}/${fname}`, conflictAction: "overwrite", saveAs: false});
+  return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
+}
+
+// 내용(hashSource)이 지난번과 같으면 저장하지 않는다 (지난번 것이 아직 허용 기다림이면 다시 저장).
 async function saveFile(kind, file, hashSource, summary) {
   const s = stamp();
   const hash = await sha(hashSource);
   const key = "last_" + kind;
   const prev = (await chrome.storage.local.get(key))[key];
-  if (prev && prev.hash === hash) {
+  if (prev && prev.hash === hash && prev.where !== "허용 기다림") {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
     await setStatus({[kind]: info, error: ""});
     return {saved: false, same: true};
   }
   file["수집시각"] = s.iso;
-  const name = `${FOLDER}/${s.ymd6} ${kind} 자동수집.json`;
-  await chrome.downloads.download({url: toDataUrl(JSON.stringify(file)), filename: name, conflictAction: "overwrite", saveAs: false});
-  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: name, changed: !!prev}, summary);
+  const fname = `${s.ymd6} ${kind} 자동수집.json`;
+  const where = await writeOut(fname, JSON.stringify(file));
+  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, changed: !!prev}, summary);
   await chrome.storage.local.set({[key]: info});
   await setStatus({[kind]: info, error: ""});
-  return {saved: true, file: name};
+  return {saved: true, file: fname, where};
 }
 
 async function saveJournal(msg) {
@@ -84,6 +108,23 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     return;
   }
+  if (msg.type === "folderSaved") {
+    (async () => {
+      const {status = {}} = await chrome.storage.local.get("status");
+      for (const kind of ["분개장", "자금계획"]) {
+        const key = "last_" + kind;
+        const info = (await chrome.storage.local.get(key))[key];
+        if (info && msg.names.includes(info.file)) {
+          info.where = "위하고 폴더";
+          await chrome.storage.local.set({[key]: info});
+          status[kind] = info;
+        }
+      }
+      await chrome.storage.local.set({status});
+    })();
+    return;
+  }
+  if (msg.type === "openSaver") { openSaver(); return; }
   if (msg.type === "collectNow") {
     collectJournal().then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
