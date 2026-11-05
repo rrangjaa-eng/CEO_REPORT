@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<style>
+ body{font:14px "Malgun Gothic",sans-serif;width:300px;margin:12px;color:#222}
+ h1{font-size:15px;margin:0 0 8px}
+ button{width:100%;padding:10px;font-size:15px;font-weight:bold;background:#2656c5;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ button:disabled{background:#999}
+ .row{margin:10px 0;line-height:1.5}
+ .err{color:#c62828}
+ .muted{color:#666;font-size:12px}
+ label{display:flex;gap:6px;align-items:center}
+</style></head>
+<body>
+<h1>대표보고 위하고 수집</h1>
+<button id="now">분개장 지금 받기</button>
+<div class="row" id="msg"></div>
+<label><input type="checkbox" id="auto"> 30분마다 바뀐 게 있으면 자동으로 받기</label>
+<div class="row muted">위하고에 로그인하고 SmartA(회계) 화면을 한 번 열어 두면 됩니다. 받은 파일은 다운로드 폴더의 '위하고자동수집'에 저장되고, 대표보고 프로그램이 실행할 때 가져갑니다. 위하고에서는 [조회]만 누르고 아무것도 바꾸지 않습니다.</div>
+<script src="popup.js"></script>
+</body></html>

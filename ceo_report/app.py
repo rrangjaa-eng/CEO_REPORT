@@ -159,6 +159,65 @@ def run_integrity(paths, say, asof=""):
     return rc, out
 
 
+# ───────────── 크롬 확장 자동수집 파일 가져오기 (2026-11-05) ─────────────
+AUTO_DIR = "위하고자동수집"   # 확장 '대표보고 위하고 수집'이 크롬 다운로드 폴더 안에 만드는 폴더
+AUTO_SUFFIX = "자동수집.json"
+
+
+def chrome_download_dirs(env=None):
+    """크롬 다운로드 폴더 후보: 각 크롬 프로필 설정의 download.default_directory, 그리고 사용자 '다운로드' 폴더.
+    외장하드의 프로그램을 어느 PC에서 열어도 그 PC 크롬의 폴더를 찾는다."""
+    import json
+    env = os.environ if env is None else env
+    out = []
+    local = env.get("LOCALAPPDATA")
+    if local:
+        base = os.path.join(local, "Google", "Chrome", "User Data")
+        try:
+            profiles = [n for n in os.listdir(base) if n == "Default" or n.startswith("Profile ")]
+        except OSError:
+            profiles = []
+        for prof in sorted(profiles):
+            try:
+                with open(os.path.join(base, prof, "Preferences"), encoding="utf-8") as f:
+                    d = (json.load(f).get("download") or {}).get("default_directory")
+            except (OSError, ValueError, AttributeError):
+                d = None
+            if d and d not in out:
+                out.append(d)
+    home = env.get("USERPROFILE") or env.get("HOME")
+    if home:
+        d = os.path.join(home, "Downloads")
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def import_auto(paths, say, dirs=None):
+    """크롬 다운로드 폴더의 위하고자동수집/*자동수집.json 을 수집/위하고 로 복사한다 (원본은 그대로). -> 복사한 파일 수.
+    같은 이름 파일이 이미 있으면 더 새로 받은 것만 덮어쓴다."""
+    n = 0
+    for base in (chrome_download_dirs() if dirs is None else dirs):
+        src_dir = os.path.join(base, AUTO_DIR)
+        try:
+            names = sorted(x for x in os.listdir(src_dir) if x.endswith(AUTO_SUFFIX))
+        except OSError:
+            continue
+        for name in names:
+            src, dst = os.path.join(src_dir, name), os.path.join(paths.wehago, name)
+            try:
+                if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+                    continue
+                os.makedirs(paths.wehago, exist_ok=True)
+                shutil.copy2(src, dst)
+            except OSError as e:
+                say("자동수집 파일을 가져오지 못함: %s (%s)" % (name, e.strerror or type(e).__name__))
+                continue
+            n += 1
+            say("크롬 자동수집 파일 가져옴: %s" % name)
+    return n
+
+
 def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday="", group="", only=""):
     """작업 하나를 돌리고 (종료코드, 새로 생긴 출력 파일 목록)을 돌려준다. 글은 say(한 줄)로 넘긴다.
 
@@ -172,6 +231,7 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
     if task in ("승인검토", "인트라넷") and collect:
         argv += ["--수집", "함"]
     if task == "변환":
+        import_auto(paths, say)
         backup_input(paths, say)
     started = time.time() - 1
     out = _Lines(say)
