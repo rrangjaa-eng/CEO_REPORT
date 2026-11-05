@@ -136,7 +136,7 @@ def chart(s2, H=260, simple=False):
         return ""
     # 주 막대 이름은 위 자금 표와 같게: 이번 주·다음 주·3주째·4주째 (사용자 2026-11-04 디자인 검토)
     wk_name = {p["end"]: p["label"] for p in s2.get("periods") or [] if not p.get("pick")}
-    Wd, pl, pr, pt, pb = 900, 52, 10, 14, 44
+    Wd, pl, pr, pt, pb = 900, 52, 10, 26, 56   # 위·아래는 막대 숫자 자리 (사용자 2026-11-05: 막대마다 실제 숫자)
     n = len(bs)
     gw = (Wd - pl - pr) / n
     has_bal = s2["start"] is not None and not s2["out_missing"]  # 시작 잔액·지급 자료를 모르면 계산 잔액 선을 그리지 않는다 (0에서 시작하지 않음)
@@ -167,7 +167,7 @@ def chart(s2, H=260, simple=False):
                    % (pl - 5, y(v) + 4, _axis(v)))
     out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#1d2433"/>' % (pl, Wd - pr, y(0), y(0)))
     bw = gw * 0.34
-    pts_f, pts_a = [], []
+    pts_f, pts_a, vals_txt = [], [], []   # vals_txt: 막대 숫자는 잔액 선 위에 그린다 (선에 가리지 않게)
     for i, b in enumerate(bs):
         x0 = pl + i * gw + gw * 0.14
         # 입금: 확정 아래, 추정 위에 쌓기
@@ -184,6 +184,13 @@ def chart(s2, H=260, simple=False):
             out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#9cc9b3"/>' % (x0, y_e, bw, y_f - y_e))
             out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#b5523b"/>' % (x1, y(0), bw, y_of - y(0)))
             out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#e2aa9b"/>' % (x1, y_of, bw, y_oe - y_of))
+        # 막대마다 실제 금액 (원 단위, 사용자 2026-11-05). 들어올 돈은 막대 위, 나갈 돈은 막대 아래. 0원 막대는 숫자도 없음
+        tin, tout = b["in_firm"] + b["in_est"], b["out_firm"] + b["out_est"]
+        lab_style = 'font-size="9.5" text-anchor="middle" fill="#1d2433" stroke="#fff" stroke-width="3" paint-order="stroke"'
+        if tin:
+            vals_txt.append('<text class="bv" x="%.1f" y="%.1f" %s>%s</text>' % (x0 + bw / 2, y_e - 4, lab_style, won(tin)))
+        if tout:
+            vals_txt.append('<text class="bv" x="%.1f" y="%.1f" %s>%s</text>' % (x1 + bw / 2, y_oe + 11, lab_style, won(tout)))
         cx = pl + i * gw + gw / 2
         if has_bal:
             pts_f.append("%.1f,%.1f" % (cx, y(b["bal_firm"])))
@@ -194,7 +201,7 @@ def chart(s2, H=260, simple=False):
         if b["type"] == "month":
             lab = lab.split(" ")[1]
         out.append('<text x="%.1f" y="%d" font-size="11.5" text-anchor="middle" fill="#1d2433">%s</text>'
-                   % (cx, H - pb + 14, esc(lab)))
+                   % (cx, H - pb + 27, esc(lab)))
     if mc:
         out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="6 4"/>'
                    % (pl, Wd - pr, y(mc), y(mc)))
@@ -218,6 +225,7 @@ def chart(s2, H=260, simple=False):
     else:
         out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">%s — 예상 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
                    % (pl + 6, pt + 12, "지급 자료 없음" if s2["out_missing"] else "잔액 미확인"))
+    out += vals_txt
     out.append(('<text x="%d" y="%d" font-size="9.5" fill="#5b6475">' + ("월별 (첫 달은 1일부터)" if all(b["type"] == "month" for b in bs) else "4주는 주별, 이후는 월별 (* 일부 기간)") + '</text>')
                % (pl, H - 8))
     out.append("</svg>")
