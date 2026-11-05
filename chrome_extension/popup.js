@@ -30,8 +30,8 @@ async function run(btn, msgId, label, message) {
   if (r && r.error) $(msgId).innerHTML += `<br><span class="err">${r.error}</span>`;
 }
 
-$("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중…", {type: "collectAll", months: +$("months").value});
+$("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
 $("journal").onclick = () => run("journal", "jmsg", "받는 중… (1분 안쪽)", {type: "collectNow"});
-$("plan").onclick = () => run("plan", "pmsg", "받는 중… (한 달에 몇 초)", {type: "collectPlan", months: +$("months").value});
+$("plan").onclick = () => run("plan", "pmsg", "받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectPlan", months: +$("months").value});
 $("months").onchange = () => chrome.storage.local.set({planMonths: +$("months").value});
 show();

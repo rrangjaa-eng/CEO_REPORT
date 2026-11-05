@@ -3,7 +3,7 @@
 const KEEP = ["da_date", "no_acct", "nm_yuh", "nm_gubun_bungae", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2",
   "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2"];
 const PLAN_KEEP = ["cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
-const BRIDGE_VERSION = 3;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
+const BRIDGE_VERSION = 4;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
 const planCap = [];   // {kind, date, cd_fitem, rows}
 
 window.addEventListener("message", (e) => {
@@ -90,7 +90,7 @@ async function collectMonth(ym) {
     const before = planCap.length;
     clickGridRow(canvas, i);
     const det = await waitFor(() => planCap.slice(before).find((c) => c.kind === "자금계획상세" && c.date === ym && c.cd_fitem === cat.cd_fitem), 10000);
-    if (!det) throw new Error(`${ym} ${cat.nm_fitem} 상세가 오지 않음`);
+    if (!det) throw new Error(`${ym} ${cat.nm_fitem} 상세가 오지 않음` + (document.visibilityState === "hidden" ? " (받는 중에 다른 탭으로 옮기면 안 됨)" : ""));
     for (const r of det.rows) {
       const day = String(r.da_fplan || "").padStart(2, "0");
       out.push([ym + day, cat.yn_inout, cat.cd_fitem, cat.nm_fitem].concat(PLAN_KEEP.map((k) => (r[k] === undefined || r[k] === null ? "" : r[k]))));

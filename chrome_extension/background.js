@@ -171,20 +171,24 @@ function planMonths(months, today = new Date()) {
 }
 
 async function runPlanTab(url, months) {
-  const tab = await chrome.tabs.create({url, active: false});
+  // 자금항목 표(RealGrid)는 숨은 탭에서는 그리지 않아 줄 클릭이 안 먹는다 (2026-11-05 실제 PC):
+  // 받는 동안만 탭을 앞에 띄우고, 끝나면 원래 보던 탭으로 돌아간다.
+  const [prev] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  const tab = await chrome.tabs.create({url, active: true, windowId: prev ? prev.windowId : undefined});
   await waitLoaded(tab.id, 30000);
   const result = await new Promise(async (resolve) => {
     const fail = () => { planRun = null; resolve({error: "응답이 멈춤", rows: [], done: [], errors: ["90초 동안 화면 응답 없음 (로그인이 풀렸거나 확장 새로고침이 필요할 수 있음)"]}); };
     planRun = {tabId: tab.id, resolve, fail, timer: setTimeout(fail, 90000)};
     try {
       const ack = await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", months});
-      if (!ack || (ack.v || 0) < 3) {
+      if (!ack || (ack.v || 0) < 4) {
         clearTimeout(planRun.timer); planRun = null;
         resolve({error: "확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요", rows: [], done: [], errors: ["확장 새로고침 필요"]});
       }
     } catch (e) { clearTimeout(planRun.timer); planRun = null; resolve({error: "화면과 연결하지 못함", rows: [], done: [], errors: ["화면과 연결하지 못함"]}); }
   });
   try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
+  if (prev) { try { await chrome.tabs.update(prev.id, {active: true}); } catch (e) { /* 닫힘 */ } }
   return result;
 }
 
