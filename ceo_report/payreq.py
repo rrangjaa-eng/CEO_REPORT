@@ -16,7 +16,7 @@ import re
 FILE = "지급요청서.csv"
 COLUMNS = ["키", "프로젝트", "업체명", "금액", "세부사항"]
 SOURCE = "지출결의서"
-_PID = re.compile(r"\[?\b([0-9]{5})\b\]?")
+_PID = re.compile(r"(?<![0-9])([0-9]{5})(?![0-9])")
 
 
 # 목록의 승인 칸 글자는 상태가 아니라 버튼 글자다 (2026-11-05 실제 화면 100건 확인, 관리팀 계정으로 볼 때):
@@ -168,9 +168,9 @@ def attach(events, reqs):
     n = 0
     outs = [e for e in events if e.get("io") == "out" and e.get("amount") is not None and pid_of(e.get("project"))
             and e.get("detail_source") != "수기"]
-    for e in sorted(outs, key=lambda e: (e["date"], -(e["amount"] or 0))):
+    for e in sorted(outs, key=lambda e: (e.get("date") is None, e.get("date") or 0, -(e["amount"] or 0))):   # 날짜 없는 줄은 뒤로
         pid = pid_of(e.get("project"))
-        cands = [i for i, r in enumerate(pool) if i not in used and r["project"] == pid]
+        cands = [i for i, r in enumerate(pool) if i not in used and pid_of(r["project"]) == pid]
         if not cands:
             continue
         pick = [i for i in cands if pool[i]["amount"] == e["amount"]]

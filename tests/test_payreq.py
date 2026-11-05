@@ -136,6 +136,12 @@ class TestAttach(unittest.TestCase):
         payreq.attach([e], [rq(300, "운송"), rq(500, "설치")])
         self.assertEqual(e["detail"], "운송 · 설치")
 
+    def test_undated_rows_and_prefixed_project_ids(self):
+        """날짜 없는 일정 줄이 있어도 멈추지 않고, 'P26101' 같은 번호도 5자리로 맞춤."""
+        a, b = ev(1000, project="P26101"), dict(ev(2000), date=None)
+        self.assertEqual(payreq.attach([a, b], [rq(1000, "가"), rq(2000, "나")]), 2)
+        self.assertEqual((a["detail"], b["detail"]), ("가", "나"))
+
     def test_manual_detail_wins_and_empty_note_skipped(self):
         e = ev(1000, detail="손으로 넣음", src="수기")
         e2 = ev(2000)
