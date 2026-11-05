@@ -394,3 +394,41 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             info["missing"].append(ev)
         new.append(ev)
     return new, info
+
+
+def fill_projects(events, execs):
+    """자금계획서 지급 줄에 프로젝트를 채운다 (사용자 2026-11-05: 주간 출금 목록에 프로젝트명이 비어 있음).
+
+    자금계획서에는 프로젝트 칸이 없다. 장부에서 아직 안 나간 원가 줄(프로젝트집행.csv 의 근거 'WEHAGO …', 상태 요청미지급·
+    카드사용미결제)은 프로젝트에 이어져 있으므로 같은 거래처 줄로 찾는다.
+      1) 부가세 포함 금액이 같은 줄이 하나의 프로젝트면 그 프로젝트
+      2) 아니면 그 거래처의 안 나간 줄이 모두 한 프로젝트면 그 프로젝트
+      3) 여러 프로젝트에 걸치면 짐작하지 않고 비워 둔다 (근거에 '여러 프로젝트' 적음)
+    급여·세금처럼 장부 원가 줄이 없는 거래처는 그대로 빈칸. 채운 건수를 돌려준다."""
+    from .wehago import norm_vendor
+    by_vendor = {}
+    for e in execs or []:
+        if not str(e.get("basis") or "").startswith("WEHAGO ") or e.get("state") not in ("요청미지급", "카드사용미결제"):
+            continue
+        if not str(e.get("project") or "").strip():
+            continue
+        k = norm_vendor(e.get("vendor") or "")
+        if k:
+            by_vendor.setdefault(k, []).append(e)
+    n = 0
+    for ev in events:
+        if ev.get("io") != "out" or ev.get("source") != "자금계획서" or ev.get("project"):
+            continue
+        cand = by_vendor.get(norm_vendor(ev.get("desc") or ""), [])
+        if not cand:
+            continue
+        total = lambda e: (e.get("supply") or 0) + (e.get("vat") or 0)
+        same = set(e["project"] for e in cand if total(e) == ev["amount"])
+        pool = same or set(e["project"] for e in cand)
+        if len(pool) == 1:
+            ev["project"] = pool.pop()
+            ev["basis"] = (ev.get("basis") or "") + ", 프로젝트는 장부 미지급 원가 줄로 찾음"
+            n += 1
+        else:
+            ev["basis"] = (ev.get("basis") or "") + ", 거래처 미지급이 여러 프로젝트 (%d개)" % len(pool)
+    return n

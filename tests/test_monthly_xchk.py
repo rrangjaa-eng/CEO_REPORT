@@ -655,7 +655,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
 
 # ───────────── Task 3: 파일 없음·읽을 수 없음, 오래된 장부 기준일, 콘솔 한 줄, 모든 탐침 입력 ─────────────
 NO_FILE_TEXT = "자료 없음 (위하고대조.csv — 대표보고 창의 '자료 변환'으로 만듦)"
-NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 보고 8번에 들어갑니다."
+NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '8. WEHAGO 기준 대조'에 들어갑니다."
 
 
 def section8_text(page):

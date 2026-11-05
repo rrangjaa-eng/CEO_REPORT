@@ -151,7 +151,7 @@ def run_integrity(paths, say, asof=""):
         lines = []
     keep = [ln for ln in lines if ln.startswith("#") or "← 바뀜" in ln or "바뀐 숫자" in ln or "확인 필요" in ln or "대조 " in ln
             or "점검 오류" in ln]
-    for ln in keep[:30]:
+    for ln in keep[:60]:
         say(ln)
     return rc, out
 

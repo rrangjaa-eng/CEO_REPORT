@@ -273,5 +273,24 @@ class TestWeekListGap(unittest.TestCase):
         self.assertEqual(W["gap"]["total"], 500)
 
 
+class TestFillProjects(unittest.TestCase):
+    def ex(self, vendor, project, supply, vat, basis="WEHAGO 2026-10-02 전표 1", state="요청미지급"):
+        return {"vendor": vendor, "project": project, "supply": supply, "vat": vat, "basis": basis, "state": state}
+
+    def ev(self, vendor, amount):
+        return {"io": "out", "source": "자금계획서", "desc": vendor, "amount": amount, "project": "", "basis": "자금계획서"}
+
+    def test_same_amount_then_single_project_then_many(self):
+        execs = [self.ex("가상음향", "26001", 1000, 100), self.ex("가상음향", "26002", 2000, 200),
+                 self.ex("가상조명", "26003", 500, 50), self.ex("가상조명", "26003", 700, 70),
+                 self.ex("가상무대", "26004", 100, 10), self.ex("가상무대", "26005", 300, 30),
+                 self.ex("가상인쇄", "26006", 100, 10, basis="지급요청 1")]
+        evs = [self.ev("가상음향", 2200), self.ev("가상조명", 1320), self.ev("가상무대", 440), self.ev("직원급여", 9),
+               self.ev("가상인쇄", 110)]
+        self.assertEqual(fundplan.fill_projects(evs, execs), 2)
+        self.assertEqual([e["project"] for e in evs], ["26002", "26003", "", "", ""])
+        self.assertIn("여러 프로젝트", evs[2]["basis"])
+
+
 if __name__ == "__main__":
     unittest.main()

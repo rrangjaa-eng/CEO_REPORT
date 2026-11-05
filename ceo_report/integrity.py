@@ -7,6 +7,7 @@ import collections
 import datetime as dt
 import os
 import shutil
+import re
 import tempfile
 
 from . import convert, wehago
@@ -149,8 +150,32 @@ def _report_checks(tmp, temp_input, asof, out):
             rc, files = "예외 %s" % type(e).__name__, []
         out.append("- %s %s: 종료 코드 %s, 파일 %d개" % (task, day, rc, len(files)))
         for ln in lines:
+            if "보고서 7번" in ln:
+                continue   # 점검 보고서는 임시 폴더라 남지 않는다: 아래에 내용을 바로 적는다 (사용자 2026-11-05 '7번이 어딨는데')
             if "확인 필요" in ln or "오류" in ln:
                 out.append("  · " + ln[:200])
+    out += issue_summary(temp_input, month_end)
+
+
+def issue_summary(temp_input, day):
+    """입력 자료 확인 필요 항목을 파일·내용별 건수로 (값·이름은 '…'로 가림). 점검 결과 창·파일에 바로 보인다."""
+    from . import calc, data
+    try:
+        items = calc.compute(data.load(temp_input), "monthly", day)["s7"]["issues"]
+    except Exception as e:
+        return ["- 입력 자료 확인 필요: 판단 불가 (%s)" % type(e).__name__]
+    if not items:
+        return ["- 입력 자료 확인 필요 없음"]
+    groups = collections.OrderedDict()
+    for it in items:
+        f, msg = (it[0], it[2]) if isinstance(it, (tuple, list)) else (it.get("file", ""), it.get("msg", ""))
+        k = (f, re.sub(r"'[^']*'", "'…'", re.sub(r"\([^)]*\)", "", str(msg))).strip())
+        groups[k] = groups.get(k, 0) + 1
+    out = ["- 입력 자료 확인 필요 %d건 (파일 · 내용 · 건수). 줄 번호까지 보려면 보고서를 만든 뒤 경영관리보고 맨 끝 "
+           "'7. 지난 보고 이후 변동과 자료 반영 범위' → '입력 자료 확인 필요' 표" % len(items)]
+    for (f, msg), n in sorted(groups.items(), key=lambda kv: -kv[1]):
+        out.append("  · 확인 필요: %s — %s (%d건)" % (f or "-", msg[:120], n))
+    return out
 
 
 KEYS_FILE = "정합성_기준값.json"   # 프로그램 폴더 (입력 폴더는 건드리지 않음): 지난 점검의 핵심 숫자
