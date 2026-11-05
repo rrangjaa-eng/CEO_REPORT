@@ -2320,7 +2320,8 @@ def _mon_strip(R):
     s1, s5 = R["s1"], R["s5"]
     ym = _ym_text(R["s4"]["ym"])
     ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
-    cells = [("%s말 통장 잔액" % ym, W(s1["end"]), "이번 달 입금 %s · 지급 %s" % (won(s1["in"]), won(s1["out"])))]
+    # 통장 잔액·영업이익 칸 아래 풀이는 ①·⑤와 겹쳐 뺌 (사용자 2026-11-05)
+    cells = [("%s말 통장 잔액" % ym, W(s1["end"]), "")]
     if ps:
         a = ps[-1]["firm"]["avail"]
         d0 = ps[-1]["firm"]["low_date"]
@@ -2329,7 +2330,7 @@ def _mon_strip(R):
                       "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a))),
                       "" if ea is None or ea == a else "예상 지급까지 빼면 %s" % won(ea)))
     rev, np_ = _month_rev_np(R)
-    cells.append(("%s 영업이익" % ym, W(np_, "확인 필요"), "매출 %s · 영업이익률 %s" % (won(rev) if rev is not None else "-", pct(np_, rev))))
+    cells.append(("%s 영업이익" % ym, W(np_, "확인 필요"), ""))
     cells.append(_overdue_cell(s5))
     return _strip(cells)
 
