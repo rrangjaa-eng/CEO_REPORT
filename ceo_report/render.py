@@ -563,6 +563,7 @@ table.pt tr.tot td,table.pt.ayt tr.tot td{font-weight:700!important}
 .fs #avail td.av small{font-size:10px!important}
 .chip{font-size:10px!important}
 .exprow>.mgonly{grid-column:1/-1}
+@media print{.fs.mon .sec.brk,.fs.mon .sec.brk *{break-inside:auto!important}.fs.mon .sec.brk tr{break-inside:avoid!important}.fs.mon .sec.brk .wsub{break-after:avoid}}
 .exp-c.tot .big{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:4px}
 @media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}.fs.mon .mchart svg{max-height:290px!important}}
 """
@@ -1950,7 +1951,7 @@ def _month_series(R):
     return out
 
 
-def _month_chart(R, H=215):
+def _month_chart(R, H=250):
     """월별 매출·매입(막대 두 개)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에, 매입 추가).
     매출·매입 = 증빙 작성일자 기준 공급가액, 영업이익 = 월별 실적 기준. 같은 원 단위라 축 하나."""
     ser = _month_series(R)
@@ -2222,18 +2223,17 @@ def _first_screen(R, mode, per):
         mf = month_flow(R)
         flow = (esc("월별 자금 흐름 (%d월 1일 쓸 수 있는 돈 %s에서 시작 · %d월은 통장 실적%s%s)"
                     % (mf["first"].month, _won_or_unknown(mf["start"]), mf["first"].month,
-                       "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf, H=310, simple=True))
+                       "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf, H=260, simple=True))
     else:
         flow = (esc("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=270, simple=True))
     funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
-        # 1쪽 자금(흐름·앞으로) · 2쪽 밀린 돈(지난 미처리)·나갈 세금 + 이번 달 실적 · 3쪽 누적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
+        # 1쪽 자금(흐름·앞으로) · 1쪽 끝 ③ 지난 미처리 · 2쪽 ④ 세금 + ⑤ 이번 달 실적(월별 흐름 그림 포함) · 3쪽 누적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
-                  # 월별 흐름(1월~이번 달) 그림은 누적과 같은 기간이라 ⑥ 끝에 (사용자 2026-11-05: 2쪽이 빡빡함)
-                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode)),
-                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _month_chart(R))]
+                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode))]
                   + [_acct_year_block(R, mode)])
     else:
         wo = week_outflows(R)
@@ -2248,8 +2248,10 @@ def _first_screen(R, mode, per):
         cls = "sec brk" if (not monthly and i == 0) else "sec"
         if not monthly and i == 1:
             cls = "sec sflow pgb"   # 자금 현황은 2쪽 첫머리에서   # 주간 ③ 자금: 표와 그림 사이에서 쪽을 나눌 수 있게 (사용자 2026-11-05: 빈 곳 최소)
-        if monthly and i in (2, 5):
-            cls += " pgb"   # 월간 ③ 지난 미처리·④ 세금은 2쪽 첫머리에 함께 (사용자 2026-11-05: 3·4번을 쪽에 나누지 말 것)   # 월간 ⑥ 누적 실적은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
+        if monthly and i == 2:
+            cls = "sec brk"   # 월간 ③ 지난 미처리는 1쪽 끝에서 시작 (사용자 2026-11-05: ④ 세금부터 2쪽). 건이 많으면 표 줄 사이에서 2쪽으로 이어짐
+        if monthly and i == 5:
+            cls += " pgb"   # 월간 ⑥ 누적 실적은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
         sec = "<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body)
         if monthly and i == 6:
             sec = _mg(mode, sec)   # 계정과목별 사용 금액은 경영관리용에만 (사용자 2026-11-04: 대표 보고에서 없앰)
