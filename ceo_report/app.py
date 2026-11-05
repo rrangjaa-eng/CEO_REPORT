@@ -311,6 +311,8 @@ def old_files(wehago_dir, asof):
             if y < top:
                 keep_year[y] = n   # 지난해 장부: 그 해 가장 새 파일
         keep = set([newest] + list(keep_year.values()))
+        if kind == "분개장":   # 부분 기간만 새로 받은 분개장이면 함께 쓰는 이전 파일도 남긴다 (2026-11-05)
+            keep.update(wehago.journal_layers(wehago_dir, ranked))
         for n in ranked:
             if n not in keep:
                 out.append((n, "%s 더 새 파일이 있음" % kind))

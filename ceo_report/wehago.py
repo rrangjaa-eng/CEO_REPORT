@@ -318,13 +318,18 @@ def read_journal_xls(path):
         grid = read_xls(path)
     except XlsError as e:
         raise WehagoError(str(e))
-    start, hdr = None, None
+    start, end, hdr = None, None, None
     for i, row in enumerate(grid[:40]):
         cells = [c for c in row if isinstance(c, str)]
         for c in cells:
-            m = re.search(r"기\s*간\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", c)
+            m = re.search(r"기\s*간\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일"
+                          r"(?:\s*~\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일)?", c)
             if m and start is None:
                 start = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                try:
+                    end = dt.date(int(m.group(4)), int(m.group(5)), int(m.group(6))) if m.group(4) else None
+                except ValueError:
+                    end = None
         if row and isinstance(row[0], str) and re.sub(r"\s+", "", row[0]) == "일자":
             hdr = i
             break
@@ -342,6 +347,7 @@ def read_journal_xls(path):
     out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요"]
                 + (["프로젝트명"] if proj_col is not None else []) + opt])
     out.known_extra = ("프로젝트명", "부서명", "사원명")
+    out.period = (start, end) if end is not None and end >= start else None   # 인쇄 '기 간' (부분 내려받기 겹치기에 씀)
     for row in grid[hdr + 1:]:
         row = list(row) + [""] * (len(names) - len(row))
         a = row[col["일자"]]
@@ -383,7 +389,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     out, last = [], None
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
             "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
-            "sales_rows": [], "slip_projects": {}}
+            "sales_rows": [], "slip_projects": {}, "period": getattr(rows, "period", None)}
     slips = {}   # (전표일자 ISO, 번호) -> 코드, 한 전표에 서로 다른 코드가 있으면 None (쓰지 않음)
     for row in rows[1:]:
         if not any(c.strip() for c in row):
@@ -599,6 +605,64 @@ def _years(rows):
     return set(r["date"].year for r in rows if r.get("date") is not None)
 
 
+def _in(d, spans):
+    return any(a <= d <= b for a, b in spans)
+
+
+def _gaps(spans):
+    """겹치기에 쓴 기간들 사이 빈 날 [(시작, 끝)]."""
+    out, cur = [], None
+    for a, b in sorted(spans):
+        if cur is not None and a > cur + dt.timedelta(days=1):
+            out.append((cur + dt.timedelta(days=1), a - dt.timedelta(days=1)))
+        cur = b if cur is None or b > cur else cur
+    return out
+
+
+def _same_year_layers(folder, names, rows, period, asof):
+    """부분 내려받기 겹치기 (사용자 2026-11-05: 한두 건 고칠 때마다 분개장 전체를 다시 받기 번거로움).
+
+    가장 새 분개장의 인쇄 '기 간'(period) 안 날짜는 그 파일 것만 쓰고, 그 밖의 같은 기수 날짜는 이전 분개장(새 것부터)에서
+    가져온다. 이전 파일도 자기 '기 간' 안 날짜만, 이미 더 새 파일이 맡은 기간은 빼고 쓴다. 기간을 모르는 파일과
+    가장 새 파일의 시작 해보다 앞선 해 파일(지난 기수)은 건드리지 않는다 (_prior_years 가 맡음).
+    -> (붙일 행, 쓴 파일, 남은 파일, 붙인 파일의 전표별 프로젝트 코드, 겹친 기간 목록)."""
+    spans, added, used, rest, slips = [period], [], [], [], {}
+    year0 = dt.date(period[0].year, 1, 1)
+    for n in names:
+        try:
+            more, info = read_book(os.path.join(folder, n), "분개장", _file_date(n), asof)
+        except Exception:
+            rest.append(n)
+            continue
+        p = info.get("period")
+        if p is None or p[1] < year0:
+            rest.append(n)
+            continue
+        keep = [r for r in more if r.get("date") is not None and p[0] <= r["date"] <= p[1] and not _in(r["date"], spans)]
+        spans.append(p)
+        if keep:
+            added.extend(keep)
+            used.append(n)
+            days = set(r["date"].isoformat() for r in keep)
+            slips.update((k, v) for k, v in info["slip_projects"].items() if k[0] in days)
+        else:
+            rest.append(n)
+    return added, used, rest, slips, spans
+
+
+def journal_layers(folder, ranked):
+    """app.old_files 용: 가장 새 분개장(ranked 마지막)이 부분 기간일 때 함께 쓰는 이전 같은 기수 파일 이름 목록."""
+    if not ranked:
+        return []
+    try:
+        rows, info = read_book(os.path.join(folder, ranked[-1]), "분개장", _file_date(ranked[-1]), None)
+    except Exception:
+        return []
+    if info.get("period") is None:
+        return []
+    return _same_year_layers(folder, ranked[-2::-1], rows, info["period"], None)[1]
+
+
 def _prior_years(folder, kind, names, rows, asof):
     """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
 
@@ -669,7 +733,7 @@ def load_books(folder, asof, stale_days):
             continue
         fdate = _file_date(name)
         entry = {"name": name, "file_date": fdate, "last_date": None, "ref_date": fdate, "rows": 0, "skipped": 0,
-                 "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": "", "prior": []}
+                 "undated": 0, "after_ref": 0, "extra_columns": [], "extra_note": "", "prior": [], "layers": []}
         books.files[kind] = entry
         try:
             rows, info = read_book(os.path.join(folder, name), kind, fdate, asof, keep_sales=kind == "매입매출장")
@@ -689,7 +753,21 @@ def load_books(folder, asof, stale_days):
             entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
-            prior_rows, entry["prior"], skipped, prior_slips = _prior_years(folder, kind, others.get(kind, []), rows, asof)
+            names_left, layer_slips = others.get(kind, []), {}
+            if kind == "분개장" and info.get("period") and names_left:
+                layer_rows, entry["layers"], names_left, layer_slips, spans = _same_year_layers(
+                    folder, names_left, rows, info["period"], asof)
+                if entry["layers"]:
+                    a, b = info["period"]
+                    rows = sorted(layer_rows + rows, key=lambda r: (r["date"] is None, r["date"] or dt.date.min))
+                    books.notes.append("분개장 %s~%s 는 %s, 그 밖의 날짜는 이전 파일(%s)" % (
+                        a.isoformat(), b.isoformat(), name, ", ".join(entry["layers"])))
+                    for g0, g1 in _gaps(spans):
+                        books.notes.insert(0, "[확인] 분개장 %s~%s 전표가 어느 파일에도 없음 — 그 기간 분개장을 받아 넣으세요"
+                                           % (g0.isoformat(), g1.isoformat()))
+            prior_rows, entry["prior"], skipped, prior_slips = _prior_years(folder, kind, names_left, rows, asof)
+            prior_slips = dict(prior_slips)
+            prior_slips.update(layer_slips)
             unused.extend(skipped)
             staged[kind] = prior_rows + rows
             if kind == "매입매출장":
