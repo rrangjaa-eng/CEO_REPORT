@@ -91,7 +91,7 @@ class TestAvailableFundsTable(unittest.TestCase):
                     got = self.rows(html)
                     self.assertEqual(len(got), len(R["s2"]["periods"]))
                     for p, cells in zip(R["s2"]["periods"], got):
-                        r = p["all"]
+                        r = p["firm"]   # 큰 숫자는 확정분만 (사용자 2026-11-05: 예상 자금은 따로 보게)
                         self.assertEqual(" ".join(cells[0][:len(p["label"].split())]), p["label"])
                         self.assertEqual(cells[1][0], "{:,}".format(r["pin"]))    # 그 기간 금액 (누적 아님)
                         self.assertEqual(cells[2][0], "{:,}".format(r["pout"]))
@@ -103,9 +103,19 @@ class TestAvailableFundsTable(unittest.TestCase):
     def test_negative_available_is_red(self):
         import copy
         R = copy.deepcopy(self.R["weekly"])
-        R["s2"]["periods"][0]["all"]["avail"] = -5_000_000
+        R["s2"]["periods"][0]["firm"]["avail"] = -5_000_000
         html = first_screen(render(R, "ceo"))
         self.assertRegex(html, r"<b class='neg'>[^<0-9]?5,000,000</b>")
+
+    def test_estimate_shown_apart_not_in_big_number(self):
+        """예상 지급(확정 전)은 큰 숫자에서 빼지 않고 칸 아래 '예상 지급까지 빼면'·'예상 − … 별도'로 따로 적는다 (사용자 2026-11-05)."""
+        R = self.R["weekly"]
+        html = first_screen(render(R, "ceo"))
+        for p in R["s2"]["periods"]:
+            f, a = p["firm"]["avail"], p["all"]["avail"]
+            self.assertIn("<b class='%s'>%s</b>" % ("neg" if f < 0 else "", "{:,}".format(f)), html)
+            if a != f:
+                self.assertIn("예상 지급까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0 else "예상 지급까지 빼면 {:,}".format(a), html)
 
     def test_unknown_balance_says_so(self):
         import shutil

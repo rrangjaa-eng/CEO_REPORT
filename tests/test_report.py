@@ -871,7 +871,7 @@ class TestUserRulesLocked(Base):
         fs = first_screen(render(self.R, "mgmt"))
         self.assertIn("오늘부터 가장 적을 때 잔액", fs)
         self.assertIn("확정분만", fs)
-        self.assertIn("확정 안 된 예상 금액도 포함", fs)
+        self.assertIn("여유 자금은 확정된 돈만으로 계산", fs)
 
     def test_profit_and_cash_kept_apart(self):
         rows = {x["target"]: x for x in self.R["s4"]["sources"]["WEHAGO"]["table"]}
