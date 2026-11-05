@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from ceo_report import app, checklist, hometax, review_checks, transfer  # noqa: E402
-from ceo_report.render import _group_small  # noqa: E402
+from ceo_report.render import _each_row  # noqa: E402
 
 D = dt.date
 
@@ -194,15 +194,14 @@ class TestBackup(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(base, kept[-1]))), ["손익.csv"])
 
 
-class TestGroupSmall(unittest.TestCase):
-    def test_welfare_rows_become_one(self):
+class TestEachRow(unittest.TestCase):
+    def test_every_payment_is_its_own_row(self):
+        """출금 목록은 건별 (사용자 2026-11-05): 같은 날 같은 쓰임새 여러 건도 합치지 않는다."""
         rows = [{"date": D(2026, 11, 6), "amount": 100000, "firm": True, "desc": "직원%d" % i, "cat": "복리후생비", "project": ""}
                 for i in range(4)] + [{"date": D(2026, 11, 6), "amount": 5, "firm": True, "desc": "가", "cat": "미지급금", "project": ""}]
-        out = _group_small(rows)
-        self.assertEqual(len(out), 2)
-        self.assertEqual(out[0]["amount"], 400000)
-        self.assertEqual(out[0]["desc"], "직원 4명")
-        self.assertEqual(len(_group_small(rows[:2] + rows[4:])), 3)
+        out = _each_row(rows)
+        self.assertEqual(len(out), 5)
+        self.assertEqual(sum(e["amount"] for e in out), 400005)
 
 
 if __name__ == "__main__":

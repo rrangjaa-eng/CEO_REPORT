@@ -1109,29 +1109,9 @@ def _cat_cell(e):
     return esc(_use_name(e, "")) + ("<small class='dt'>%s</small>" % esc(d) if d else "")
 
 
-GROUP_USES = ("직원 복리후생",)   # 같은 날 여러 사람에게 나가는 작은 지급은 한 줄로 (2026-11-05 사용자: 주간 2쪽)
-GROUP_MIN = 3
-
-
-def _group_small(rows):
-    """출금 표에 보일 줄: 같은 날·같은 쓰임새(GROUP_USES)가 GROUP_MIN 줄 이상이면 '직원 N명' 한 줄로 합친다 (합계·건수는 그대로)."""
-    groups = OrderedDict()
-    for e in rows:
-        use = _use_name(e, "")
-        key = (e["date"], use) if use in GROUP_USES and e["amount"] is not None else (id(e),)
-        groups.setdefault(key, []).append(e)
-    out = []
-    for key, es in groups.items():
-        if len(es) < GROUP_MIN:
-            out.extend(es)
-            continue
-        amts = set(e["amount"] for e in es)
-        each = " · 1인 %s원" % won(es[0]["amount"]) if len(amts) == 1 else ""
-        out.append({"date": key[0], "amount": sum(e["amount"] for e in es), "firm": all(e["firm"] for e in es),
-                    "desc": "직원 %d명" % len(es), "project": "", "cat": es[0].get("cat") or "",
-                    "detail": "%d건 한 줄로 합침%s" % (len(es), each), "grouped": es})
-    out.sort(key=lambda e: (e["date"], -(e["amount"] or 0)))
-    return out
+def _each_row(rows):
+    """출금 표에 보일 줄: 건마다 한 줄 (사용자 2026-11-05: 거래처·쓰임새별로 합치지 말고 건별로). 날짜 → 큰 금액 순."""
+    return sorted(rows, key=lambda e: (e["date"], -(e["amount"] or 0)))
 
 
 def _out_rows_table(G, C, empty, R=None):
@@ -1141,7 +1121,7 @@ def _out_rows_table(G, C, empty, R=None):
          "<th>금액</th></tr></thead><tbody>"]
     if not G["rows"]:
         h.append("<tr><td colspan='5'>%s</td></tr>" % empty)
-    for e in _group_small(G["rows"]):
+    for e in _each_row(G["rows"]):
         amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
         if not e["firm"]:
             amt += " <small class='est'>예상</small>"
