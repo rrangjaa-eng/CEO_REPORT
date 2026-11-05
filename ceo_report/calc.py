@@ -267,7 +267,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # ───────────── 3. 프로젝트별 예산·지급 ─────────────
     proj = OrderedDict()
     for pid in d.project_order:
-        proj[pid] = _blank_proj(d.projects[pid], R["settings_num"]["예산_원가율"])
+        proj[pid] = _blank_proj(d.projects[pid], _cost_rate_of(d.projects[pid], R["settings_num"]["예산_원가율"],
+                                                             getattr(d, "team_targets", None) or {}, asof))
     unlinked_exec = []
     prior_exec = []
     for e in d.execs:
@@ -386,7 +387,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                "remain_unknown": remain_unknown, "by_team": list(by_team.values()),
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
                "prior": prior_exec, "prior_total": ssum(e["supply"] for e in prior_exec)[0],
-               "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
+               "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n,
+               "team_rate_n": sum(1 for P in plist if P.get("cost_rate_source") == "팀 목표"
+                                 and P.get("cost_rate") != R["settings_num"]["예산_원가율"])}   # 기본과 다른 원가율을 쓴 프로젝트 수
     linked_lines = sum(len(P["lines"]) for P in plist)
     compare_only = 0 if INTRANET_IN_FUNDS else sum(1 for e in d.execs if from_intranet(e))
     counted = linked_lines + len(unlinked_exec) + compare_only + len(prior_exec)
@@ -1036,9 +1039,25 @@ def _net_credits(invs):
         c["credit_applied"], c["credit_left"] = credit - left, left
 
 
+def _cost_rate_of(p, default, targets, asof):
+    """프로젝트 원가율 = 1 − 그 팀의 그 해 목표 수익률 (사용자 2026-11-05: 추정 예산은 팀 목표 수익률 기준).
+    해 = 행사일(기간이면 끝난 날)의 해, 행사일이 없으면 기준일의 해. 팀 목표(목표수익률)가 없으면 설정.csv 예산_원가율.
+    -> (원가율, 출처 '팀 목표'|'기본')."""
+    if default is None:   # 설정 오류면 팀 목표가 있어도 계산하지 않는다 (D-16: 오류를 숨기지 않음)
+        return None, "기본"
+    ev = _event_date(p.get("event_date"))
+    year = str((ev or asof).year) if (ev or asof) else ""
+    t = targets.get((year, (p.get("team") or "").strip()))
+    if t and t.get("rate") is not None and 0 <= t["rate"] < 100:
+        return round(1 - t["rate"] / 100.0, 6), "팀 목표"
+    return default, "기본"
+
+
 def _blank_proj(p, rate):
     """프로젝트 한 건의 빈 집계 틀. 원가 예산 = 사전견적 x 원가율. 만들 수 없으면 예산은 None, 이유를 남긴다 (D-16)."""
     P = dict(p)
+    rate, P["cost_rate_source"] = rate if isinstance(rate, tuple) else (rate, "기본")
+    P["cost_rate"] = rate
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "paid_cash_reason": None, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
               "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
               # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다
