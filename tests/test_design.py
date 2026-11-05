@@ -441,7 +441,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
         ceo = render(R, "ceo")
         heads = [re.sub("<[^>]+>", "", h) for h in re.findall(r"<div class='q'>.*?</div>", ceo)]
-        self.assertEqual([h.split(" ", 1)[1].strip().split(" ")[0] for h in heads], ["11/06(금)", "10월", "자금"])
+        self.assertEqual([h.split(" ", 1)[1].strip().split(" ")[0] for h in heads], ["11/06(금)", "자금", "10월"])   # 주간: 출금 → 자금 → 실적 (사용자 2026-11-05 맥락 배치)
         self.assertNotIn("class='prow'", ceo)
         self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
         self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
@@ -515,9 +515,12 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 self.assertEqual(brk, 1 if kind == "weekly" else 0)
                 pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ⑥: 새 쪽에서 통째로
                 self.assertEqual(pgb, 0 if kind == "weekly" else 1)
-                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb)
+                # 주간 ② 자금은 2쪽 첫머리에서, 표와 그림 사이에서만 나뉠 수 있다 (사용자 2026-11-05: 빈 곳 최소)
+                flow = html.count("<div class='sec flow pgb'><div class='q'>")
+                self.assertEqual(flow, 1 if kind == "weekly" else 0)
+                self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertEqual(html.count("break-inside:auto"), 1)
+                self.assertEqual(html.count("break-inside:auto"), 2)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 

@@ -58,7 +58,8 @@ class TestCeoWordingAndTopStrip(unittest.TestCase):
         cls.ceo, cls.mgmt = render(cls.R, "ceo"), render(cls.R, "mgmt")
 
     def test_restriction_name(self):
-        self.assertIn("쓸 수 없는 돈 (담보·전용) 30,000,000", self.ceo)
+        # 대표용 여유 자금 제목 줄은 시작 금액만 (사용자 2026-11-05). 풀이(쓸 수 없는 돈 …)는 경영관리용에만
+        self.assertNotIn("계좌 합계", self.ceo.split("<div class='toc'>")[0])
         self.assertNotIn("사용제한", self.ceo.split("<div class='toc'>")[0].split("<body")[1])
         self.assertIn("− 사용제한 30,000,000", self.mgmt)
 
