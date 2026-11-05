@@ -553,7 +553,9 @@ TYPE_CSS = """
 .exp-h b{font-size:12.5px!important}
 .fs table.pt,.fs.mon table.pt.tg,.fs.mon .card table.pt.tm,.sec.brk table.pt.wo{font-size:11.5px!important}
 table.pt th,.fs table th{font-size:11px!important;font-weight:600!important}
-.fs table.pt.wo tbody td:last-child,.fs table.pt.wn tbody td:nth-child(4),.fs #avail tbody td.vin,.fs #avail tbody td.vout{font-size:12px!important;font-weight:600!important}
+.fs table.pt.wo tbody td:last-child,.fs table.pt.wn tbody td:nth-child(4){font-size:12px!important;font-weight:600!important}
+.fs #avail tbody td.vin,.fs #avail tbody td.vout{font-size:14px!important;font-weight:700!important}
+.fs #avail td small{font-size:10.5px!important}
 table.pt tr.tot td,table.pt.ayt tr.tot td{font-weight:700!important}
 .four .card .foot,.fs .foot{font-size:11px!important}
 .wchg{font-size:11px!important;font-weight:600!important}
@@ -561,7 +563,7 @@ table.pt tr.tot td,table.pt.ayt tr.tot td{font-weight:700!important}
 .fs #avail td.av small{font-size:10px!important}
 .chip{font-size:10px!important}
 .exprow>.mgonly{grid-column:1/-1}
-@media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}}
+@media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}.fs.mon .mchart svg{max-height:240px!important}}
 """
 
 CIRCLED = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.")   # 문서 절 번호 (2026-11-05)
@@ -948,14 +950,15 @@ def _results(R, cum=True):
                 cards.append(("%s 영업이익%s" % (esc(ym), tag), W(c["np"], "확인 필요"),
                               "영업이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"))))
         else:
-            cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
+            cmp_rev, cmp_np = _month_compare(R, src, c)
+            cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"]))) + cmp_rev))
             np_, foot = c["np"], ""
             if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (사용자 2026-11-04)
                 from .teamprofit import build as _tp_build
                 T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
                 if T is not None and T["company"]["net"] is not None:
                     np_ = T["company"]["net"]   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용은 영업외 비용 줄, 사용자 2026-11-04)
-            cards.append(("%s 영업이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot))))
+            cards.append(("%s 영업이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot)) + cmp_np))
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
         cards.append(("%s 매출" % ym, _na(why), ""))
@@ -968,8 +971,8 @@ def _results(R, cum=True):
     else:
         ar = _na("미확인 %d건" % s5["ar_unknown_n"]) if s5["ar"] is None else W(s5["ar"]) + (
             _na(" 외 미확인 %d건" % s5["ar_unknown_n"]) if s5["ar_unknown_n"] else "")
-        cards.append(("미수금 (세금계산서 발행 후)", ar,
-                      "그중 입금예정일 지남 <span class='neg'>%s</span> (%d건)" % (esc(won(s5["overdue_total"])), len(s5["overdue"]))))
+        # '그중 입금예정일 지남'은 맨 위 칸·④와 겹쳐 뺌 (사용자 2026-11-05)
+        cards.append(("미수금 (세금계산서 발행 후)", ar, ""))
     E = s5["event_unissued"]
     if E["missing"]:
         cards.append(("행사 후 세금계산서 미발행", _inv_na(s5), ""))
@@ -990,6 +993,52 @@ def _results(R, cum=True):
 
 
 EARLY_MONTH_DAYS = 10   # 주간: 달 초 이날까지는 지난달 영업이익을 보인다 (2026-11-04 이해도 점검 U4)
+
+
+def _month_pl_at(R, src, m):
+    """그 달 회사 (매출, 영업이익) 또는 None. 영업이익은 월간 ⑤ 칸과 같은 기준(부서 비용이 있으면 팀 표 회사 영업이익)."""
+    s4 = R["s4"]
+    for month, table in (src or {}).get("by_month", []) + (src or {}).get("by_month_prev", []):
+        if month != m:
+            continue
+        co = [r for r in table if r["unit"] == "회사"]
+        if not co or not co[0]["cur"]:
+            return None
+        c = co[0]["cur"]
+        np_ = c["np"]
+        if s4.get("dept") is not None:
+            from .teamprofit import build as _tp_build
+            T = _tp_build(table, s4["dept"], m, False)
+            if T is not None and T["company"]["net"] is not None:
+                np_ = T["company"]["net"]
+        return c["revenue"], np_
+    return None
+
+
+def _month_compare(R, src, c):
+    """월간 ⑤ 매출·영업이익 칸 아래 '지난달 대비 · 작년 같은 달 대비' 증감 (사용자 2026-11-05). 자료 없는 비교는 뺀다."""
+    ym = R["s4"]["ym"]
+    y, mo = int(ym[:4]), int(ym[5:])
+    pm = "%d-%02d" % ((y, mo - 1) if mo > 1 else (y - 1, 12))
+    ly = "%d-%02d" % (y - 1, mo)
+    cur = _month_pl_at(R, src, ym) or (c["revenue"], c["np"])
+    rev, nps = [], []
+    for lab, m in (("지난달", pm), ("작년 %d월" % mo, ly)):
+        old = _month_pl_at(R, src, m)
+        if old is None:
+            continue
+        if cur[0] is not None and old[0] is not None:
+            d = cur[0] - old[0]
+            rate = (" (%+.1f%%)" % (d * 100.0 / old[0])).replace("-", "−") if old[0] > 0 else ""
+            rev.append("%s 대비 %s%s" % (lab, _signed(d), rate))
+        if cur[1] is not None and old[1] is not None:
+            nps.append("%s 대비 %s" % (lab, _signed(cur[1] - old[1])))
+    f = lambda xs: "".join("<br>" + esc(x) for x in xs)
+    return f(rev), f(nps)
+
+
+def _signed(v):
+    return ("+" if v > 0 else "−" if v < 0 else "±") + won(abs(v))
 
 
 def _prev_month_pl(R, src):
@@ -1615,7 +1664,7 @@ def _team_table(R, part="month", mode="mgmt"):
     if T is not None:
         _dep_into(R, T, False)
         last = allocate(T, basis)
-        out.append("<div class='lab'>%s</div>" % esc(_ym_text(ym)))
+        # 표 위 '10월' 작은 제목은 절 제목과 겹쳐 뺌 (사용자 2026-11-05)
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>매출총이익률</th><th>급여</th>"
                    "<th>판관비</th><th>영업이익</th><th>인원</th><th>1인당 영업이익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
                    "</tr></thead><tbody>")
