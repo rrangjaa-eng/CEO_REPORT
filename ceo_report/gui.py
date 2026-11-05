@@ -2,7 +2,15 @@
 
 일은 app.py 가 하고, 여기서는 칸과 버튼만 놓는다. 작업은 따로 도는 스레드에서 하고 글은 오른쪽 진행 칸에 보인다.
 비밀번호 칸은 가려서 보이고, 작업이 끝나면 비운다. 비밀번호는 파일·글에 남기지 않는다.
+
+구성 (사용자 2026-11-05: 쓰기 편하게 다시 꾸미기, 목업 mockups/창_새구성):
+- 맨 위: 기준일·출금일·가용자금 볼 날짜 (두 탭이 같이 씀, 요일·형식 오류를 바로 보임, 달력 단추)
+- 탭 '이번 주 할 일': 1 자료 모으기 → 2 변환하고 확인 → 3 보고 만들기 (단계마다 상태, 지금 할 차례 강조)
+- 탭 '가끔 넣는 값': 지급·입금 예정, 통장 잔액, 카드 납부일, 이체 파일, 거래처 계좌, 팀 목표, 감가상각비
+- 오른쪽: 자료가 얼마나 최신인가 + 진행 상황 (결과 한 줄, 만든 보고 열기 단추)
+상태 계산은 winstate.py (tkinter 없이 시험).
 """
+import calendar
 import datetime as dt
 import os
 import queue
@@ -12,301 +20,519 @@ import threading
 import tkinter as tk
 import webbrowser
 from tkinter import font as tkfont
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
-from . import app, checklist, credstore, editmode
+from . import app, checklist, credstore, editmode, winstate
 
 TITLE = "대표 보고"
+
+# 색 (목업과 같게)
+C = {"bg": "#f3f4f6", "card": "#ffffff", "line": "#d7dbe2", "text": "#1f2430", "sub": "#5b6475",
+     "blue": "#2563eb", "blue_bg": "#f2f6ff", "green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "grey": "#9aa1ad",
+     "chip_ok": ("#dcfce7", "#166534"), "chip_now": ("#dbeafe", "#1e40af"), "chip_wait": ("#eef0f3", "#6b7280"),
+     "chip_warn": ("#fef3c7", "#92400e"), "chk_bg": "#fff7ed", "chk_line": "#fed7aa", "chk_text": "#c2410c"}
+DOT = {"g": C["green"], "y": C["amber"], "r": C["red"], "none": C["grey"]}
 
 
 def open_path(path):
     """파일·폴더를 Windows 기본 프로그램으로 연다 (다른 OS 는 시험용)."""
-    if not os.path.exists(path):
+    if not path or not os.path.exists(path):
         return False
     if os.name == "nt":
         os.startfile(path)   # noqa: S606 — 사용자가 누른 버튼, 프로그램 폴더 안 파일만
     else:
-        subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return False
     return True
 
 
 class Window(object):
-    def __init__(self, root, paths=None):
+    def __init__(self, root, paths=None, today=None):
         self.root = root
         self.paths = paths or app.Paths()
+        self.today = today or dt.date.today()
         self.q = queue.Queue()
         self.busy = False
         self.buttons = []
-        root.title(TITLE)
-        # 사용자 2026-11-04: 창이 너무 큼 → 한 화면에 다 보이게. 글꼴을 이름 있는 Font 로 두고, 화면보다 크면 줄인다 (fit_to_screen)
-        self.fonts = {
-            "base": tkfont.Font(root, family="Malgun Gothic", size=10),
-            "small": tkfont.Font(root, family="Malgun Gothic", size=9),
-            "head": tkfont.Font(root, family="Malgun Gothic", size=14, weight="bold"),
-            "big": tkfont.Font(root, family="Malgun Gothic", size=10, weight="bold"),
-            "sec": tkfont.Font(root, family="Malgun Gothic", size=10, weight="bold"),
-        }
-        F = self.fonts
-        style = ttk.Style(root)
-        for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
-            style.configure(name, font=F["base"])
-        style.configure("TButton", padding=(6, 2))
-        style.configure("H.TLabel", font=F["head"])
-        style.configure("S.TLabel", foreground="#5b6475", font=F["small"])
-        style.configure("Big.TButton", font=F["big"], padding=(10, 4))
-        style.configure("Sec.TLabelframe.Label", font=F["sec"])
-        root.option_add("*TCombobox*Listbox.font", F["base"])
         self.hints = []
-
-        # 정보 구조: 왼쪽 = 매일 하는 일(날짜 → ① 변환 → ② 보고 → ③ 승인 검토), 가운데 = 가끔 넣는 값(④~⑨), 오른쪽 = 진행 상황
-        main = ttk.Frame(root, padding=10)
-        main.pack(fill="both", expand=True)
-        colA = ttk.Frame(main)
-        colA.pack(side="left", fill="y", anchor="n")
-        colB = ttk.Frame(main, padding=(10, 0, 0, 0))
-        colB.pack(side="left", fill="y", anchor="n")
-        side = ttk.Frame(main, padding=(10, 0, 0, 0))
-        side.pack(side="left", fill="both", expand=True)
-
-        head = ttk.Frame(colA)
-        head.pack(fill="x")
-        ttk.Label(head, text=TITLE, style="H.TLabel").pack(side="left")
-        ttk.Label(head, text="  %s" % self.paths.root, style="S.TLabel").pack(side="left", pady=(6, 0))
-
-        # 날짜
-        fd = self._sec(colA, "날짜")
-        r = self._row(fd)
-        ttk.Label(r, text="기준일").pack(side="left")
-        self.asof = tk.StringVar(value=dt.date.today().isoformat())
-        ttk.Entry(r, textvariable=self.asof, width=11).pack(side="left", padx=(4, 12))
-        ttk.Label(r, text="출금일").pack(side="left")
-        self.payday = tk.StringVar()
-        ttk.Entry(r, textvariable=self.payday, width=11).pack(side="left", padx=(4, 0))
-        self._hint(fd, "출금일 = 주간 보고 ① 출금 목록의 날짜. 비우면 기준일 뒤 첫 금요일 (기준일보다 뒤 날짜만)")
-        r = self._row(fd)
-        ttk.Label(r, text="가용자금을 따로 볼 날짜 (선택)").pack(side="left")
-        self.pick = tk.StringVar()
-        ttk.Entry(r, textvariable=self.pick, width=11).pack(side="left", padx=4)
-        ttk.Label(r, text="예: 2026-12-31", style="S.TLabel").pack(side="left")
-
-        # 확인할 것 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력) · 정합성 점검 버튼
-        f0 = self._sec(colA, "확인할 것", "중복 의심 전표·지급 예정>장부·통장 대조·홈택스 대조 등. 브라우저 화면에서 건마다 결정을 고름")
-        r = self._row(f0)
-        self._btn(r, "확인할 것 화면", self.open_checklist, big=True)
-        self._btn(r, "정합성 점검", self.run_integrity)
-        self.check_now = tk.StringVar(value="")
-        ttk.Label(r, textvariable=self.check_now, style="S.TLabel").pack(side="left")
+        self.then = None          # 변환이 끝나면 이어서 할 보고 (주간·월간)
         self.check = None
-
-        # ① 자료 준비
-        f1 = self._sec(colA, "① 자료 변환", "WEHAGO 분개장·자금계획서를 수집\\위하고 폴더에 넣은 뒤")
-        r = self._row(f1)
-        self._btn(r, "자료 변환", lambda: self.start("변환"), big=True)
-        self._btn(r, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
-        self._btn(r, "예전 파일 지난자료로", self.archive)
-
-        # ② 보고서
-        f2 = self._sec(colA, "② 대표 보고", "만들면 PDF가 바로 열립니다")
-        r = self._row(f2)
-        self._btn(r, "주간 보고", lambda: self.start("주간"), big=True)
-        self._btn(r, "월간 보고", lambda: self.start("월간"), big=True)
-        self._btn(r, "출력 폴더 열기", lambda: self.open_dir(self.paths.output))
-        # 주간 출금 목록: 건별 / 같은 거래처 합침 (사용자 2026-11-05)
-        r = self._row(f2)
-        ttk.Label(r, text="주간 출금 목록").pack(side="left")
-        g0, o0 = app.load_merge(self.paths)
-        self.group = tk.StringVar(value=g0)
-        ttk.Combobox(r, textvariable=self.group, values=("건별", "거래처별"), width=8, state="readonly").pack(side="left", padx=4)
-        ttk.Label(r, text="합칠 거래처").pack(side="left", padx=(6, 0))
-        self.only = tk.StringVar(value=o0)
-        ttk.Entry(r, textvariable=self.only, width=22).pack(side="left", padx=4)
-        self._hint(f2, "거래처별 = 같은 날 같은 거래처 여러 건을 한 줄로. 합칠 거래처를 쉼표로 적으면 그곳만 합침 (비우면 전부)")
-        # 대표가 근거 번호로 요청하면: 같은 기준일 경영관리 보고에서 그 근거만 PDF로 (사용자 2026-11-03)
-        r = self._row(f2)
-        self.ev_kind, self.ev_nums = tk.StringVar(value="주간"), tk.StringVar()
-        ttk.Combobox(r, textvariable=self.ev_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left")
-        ttk.Label(r, text="근거 번호").pack(side="left", padx=(6, 0))
-        ttk.Entry(r, textvariable=self.ev_nums, width=10).pack(side="left", padx=4)
-        self._btn(r, "근거자료 PDF", lambda: self.start("근거" + self.ev_kind.get()))
-        # 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기)
-        r = self._row(f2)
-        self.e_kind = tk.StringVar(value="주간")
-        ttk.Combobox(r, textvariable=self.e_kind, values=("주간", "월간"), width=5, state="readonly").pack(side="left", padx=(0, 6))
-        self._btn(r, "수정 모드 열기", self.edit_report)
-        ttk.Label(r, text="최근 보고를 브라우저에서 고쳐 '_수정' PDF로", style="S.TLabel").pack(side="left")
         self.edit = None
+        root.title(TITLE)
+        root.configure(background=C["bg"])
+        # 사용자 2026-11-04: 한 화면에 다 보이게. 글꼴을 이름 있는 Font 로 두고, 화면보다 크면 줄인다 (fit_to_screen)
+        fam = "Malgun Gothic"
+        self.fonts = {
+            "base": tkfont.Font(root, family=fam, size=10),
+            "small": tkfont.Font(root, family=fam, size=9),
+            "head": tkfont.Font(root, family=fam, size=15, weight="bold"),
+            "big": tkfont.Font(root, family=fam, size=11, weight="bold"),
+            "sec": tkfont.Font(root, family=fam, size=10, weight="bold"),
+            "step": tkfont.Font(root, family=fam, size=12, weight="bold"),
+            "count": tkfont.Font(root, family=fam, size=14, weight="bold"),
+            "result": tkfont.Font(root, family=fam, size=10, weight="bold"),
+        }
+        self._style()
 
-        # ③ 인트라넷 자료 가져오기 (사용자 2026-11-04: 승인 검토는 안 함. 사전견적·팀장 승인 요청을 비교용으로 가져옴)
-        f3 = self._sec(colA, "③ 인트라넷 자료 가져오기", "프로젝트(사전견적)·지급요청을 모든 쪽 읽어 저장 (조회만 함). "
-                                                    "가져온 뒤 ① 자료 변환")
-        r = self._row(f3)
-        ttk.Label(r, text="인트라넷 ID").pack(side="left")
+        start = winstate.start_values(self.paths.input, self.today)
+        self.asof = tk.StringVar(value=start["asof"])
+        self.payday = tk.StringVar(value=start["payday"])
+        self.pick = tk.StringVar(value=start["pick"])
+
+        main = ttk.Frame(root, padding=(12, 8, 12, 10), style="Bg.TFrame")
+        main.pack(fill="both", expand=True)
+        self._top(main)
+        body = ttk.Frame(main, style="Bg.TFrame")
+        body.pack(fill="both", expand=True, pady=(8, 0))
+        side = ttk.Frame(body, style="Bg.TFrame")
+        side.pack(side="right", fill="y", padx=(10, 0))
+        self.nb = ttk.Notebook(body)
+        self.nb.pack(side="left", fill="both", expand=True)
+        tab1 = ttk.Frame(self.nb, padding=10, style="Card.TFrame")
+        tab2 = ttk.Frame(self.nb, padding=10, style="Card.TFrame")
+        self.nb.add(tab1, text="  이번 주 할 일  ")
+        self.nb.add(tab2, text="  가끔 넣는 값 (7)  ")
+        self._steps(tab1)
+        self._occasional(tab2)
+        self._side(side)
+
+        for v in (self.asof, self.payday, self.pick):
+            v.trace_add("write", lambda *a: self.dates_changed())
+        self.dates_changed()
+        self.fit_to_screen()
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.after(100, self.pump)
+        root.after(300, self.refresh_state)
+        root.after(500, self.refresh_checks)
+
+    # ───────────── 모양 ─────────────
+    def _style(self):
+        F = self.fonts
+        style = ttk.Style(self.root)
+        for name in ("TLabel", "TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox", "TNotebook.Tab"):
+            style.configure(name, font=F["base"])
+        style.configure("TFrame", background=C["card"])
+        style.configure("Bg.TFrame", background=C["bg"])
+        style.configure("Card.TFrame", background=C["card"])
+        style.configure("Bg.TLabel", background=C["bg"])
+        style.configure("TLabel", background=C["card"])
+        style.configure("TCheckbutton", background=C["card"])
+        style.configure("TRadiobutton", background=C["card"])
+        style.configure("TButton", padding=(6, 2))
+        style.configure("H.TLabel", font=F["head"], background=C["bg"])
+        style.configure("S.TLabel", foreground=C["sub"], font=F["small"], background=C["card"])
+        style.configure("SB.TLabel", foreground=C["sub"], font=F["small"], background=C["bg"])
+        style.configure("Bad.TLabel", foreground=C["red"], font=F["small"], background=C["bg"])
+        style.configure("Day.TLabel", foreground=C["sub"], font=F["small"], background=C["bg"])
+        style.configure("Sec.TLabel", font=F["sec"], background=C["card"])
+        style.configure("Big.TButton", font=F["big"], padding=(12, 7))
+        style.configure("Tiny.TButton", padding=(1, 0))
+        style.configure("Go.TButton", font=F["big"], padding=(12, 7), foreground="#ffffff", background=C["blue"])
+        style.map("Go.TButton", background=[("disabled", "#9db7f0"), ("active", "#1d4ed8"), ("!disabled", C["blue"])],
+                  foreground=[("disabled", "#eef2ff"), ("!disabled", "#ffffff")])
+        style.configure("Sec.TLabelframe", background=C["card"])
+        style.configure("Sec.TLabelframe.Label", font=F["sec"], background=C["card"])
+        style.configure("TNotebook", background=C["bg"])
+        style.configure("TNotebook.Tab", padding=(14, 5))
+        self.root.option_add("*TCombobox*Listbox.font", F["base"])
+
+    def _top(self, parent):
+        bar = ttk.Frame(parent, style="Bg.TFrame")
+        bar.pack(fill="x")
+        ttk.Label(bar, text=TITLE, style="H.TLabel").pack(side="left", padx=(0, 16))
+        self.asof_day = self._date_field(bar, "기준일", self.asof)
+        self.payday_day = self._date_field(bar, "출금일", self.payday)
+        self.pick_day = self._date_field(bar, "가용자금 볼 날짜", self.pick)
+        ttk.Label(bar, text=self.paths.root, style="SB.TLabel").pack(side="right")
+
+    def _date_field(self, parent, label, var):
+        ttk.Label(parent, text=label, style="Bg.TLabel").pack(side="left")
+        e = ttk.Entry(parent, textvariable=var, width=11)
+        e.pack(side="left", padx=(4, 0))
+        b = ttk.Button(parent, text="▾", width=2, style="Tiny.TButton", command=lambda: self.calendar(var, e))
+        b.pack(side="left", padx=(1, 2))
+        day = ttk.Label(parent, text="", style="Day.TLabel", width=13)
+        day.pack(side="left", padx=(0, 8))
+        return day
+
+    def _card(self, parent, title, sub="", row=0, col=0):
+        f = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6, 10, 8))
+        f.configure(borderwidth=1, relief="solid")
+        f.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
+        h = ttk.Frame(f, style="Card.TFrame")
+        h.pack(fill="x", pady=(0, 4))
+        ttk.Label(h, text=title, style="Sec.TLabel").pack(side="left")
+        lab = ttk.Label(h, text=sub, style="S.TLabel")
+        lab.pack(side="right")
+        f.sub = lab
+        return f
+
+    def _hint(self, parent, text, var=None, wrap=250):
+        lab = ttk.Label(parent, text=text, textvariable=var, style="S.TLabel", wraplength=wrap, justify="left")
+        lab.wrap = wrap
+        lab.pack(anchor="w", pady=(2, 0))
+        self.hints.append(lab)
+        return lab
+
+    def _row(self, parent, pady=(3, 0)):
+        r = ttk.Frame(parent, style="Card.TFrame")
+        r.pack(fill="x", pady=pady)
+        return r
+
+    def _btn(self, parent, text, cmd, style="TButton", side="left", full=False):
+        b = ttk.Button(parent, text=text, command=cmd, style=style)
+        if full:
+            b.pack(fill="x")
+        else:
+            b.pack(side=side, padx=(0, 6))
+        self.buttons.append(b)
+        return b
+
+    def _sep(self, parent, title):
+        ttk.Separator(parent).pack(fill="x", pady=(8, 4))
+        ttk.Label(parent, text=title, style="Sec.TLabel").pack(anchor="w")
+
+    def _chip(self, parent):
+        lab = tk.Label(parent, text="", font=self.fonts["small"], padx=8, pady=1)
+        lab.pack(side="right")
+        return lab
+
+    def _set_chip(self, chip, text, kind):
+        bg, fg = C["chip_" + kind]
+        chip.configure(text=text, background=bg, foreground=fg)
+
+    def _amount(self, entry, var):
+        """금액 칸: 치는 동안 쉼표 (사용자 2026-11-05 개선 2)."""
+        def fix(event=None):
+            v = var.get()
+            m = winstate.money(v)
+            if m != v:
+                var.set(m)
+                entry.icursor("end")
+        entry.bind("<KeyRelease>", fix)
+
+    def _enter(self, widgets, cmd):
+        """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7)."""
+        for w in widgets:
+            w.bind("<Return>", lambda e: cmd())
+
+    def _flash(self, card, text, keep=None):
+        """카드 오른쪽 위에 '저장됨'을 잠깐 보이고 원래 글(keep 함수가 돌려주는 글)로 돌아간다."""
+        card.sub.configure(text="✓ " + text, foreground=C["green"])
+
+        def back():
+            card.sub.configure(text=keep() if keep else "", foreground=C["sub"])
+        self.root.after(4000, back)
+
+    # ───────────── 탭 1: 이번 주 할 일 ─────────────
+    def _step(self, parent, col, num, title):
+        outer = tk.Frame(parent, background=C["line"], padx=1, pady=1)
+        outer.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 4, 0))
+        f = ttk.Frame(outer, style="Card.TFrame", padding=(10, 8, 10, 10))
+        f.pack(fill="both", expand=True)
+        h = ttk.Frame(f, style="Card.TFrame")
+        h.pack(fill="x", pady=(0, 6))
+        n = tk.Label(h, text=" %d " % num, font=self.fonts["step"], foreground="#ffffff", background=C["grey"])
+        n.pack(side="left", padx=(0, 6))
+        ttk.Label(h, text=title, font=self.fonts["step"], background=C["card"]).pack(side="left")
+        chip = self._chip(h)
+        f.outer, f.num, f.chip = outer, n, chip
+        return f
+
+    def _steps(self, tab):
+        tab.columnconfigure((0, 1, 2), weight=1, uniform="s")
+        tab.rowconfigure(0, weight=1)
+
+        # 1 자료 모으기 (사용자 2026-11-04: 승인 검토는 안 함. 사전견적·팀장 승인 요청을 비교용으로 가져옴)
+        s1 = self.s1 = self._step(tab, 0, 1, "자료 모으기")
+        self._btn(s1, "인트라넷 자료 가져오기", lambda: self.start("인트라넷", collect=True), style="Big.TButton", full=True)
+        r = self._row(s1, (6, 0))
+        ttk.Label(r, text="ID").pack(side="left")
         self.uid = tk.StringVar()
-        ttk.Entry(r, textvariable=self.uid, width=12).pack(side="left", padx=(4, 10))
+        ttk.Entry(r, textvariable=self.uid, width=10).pack(side="left", padx=(3, 6))
         ttk.Label(r, text="비밀번호").pack(side="left")
         self.pw = tk.StringVar()
-        ttk.Entry(r, textvariable=self.pw, width=12, show="●").pack(side="left", padx=(4, 0))
-        r = self._row(f3)
-        self._btn(r, "인트라넷 자료 가져오기", lambda: self.start("인트라넷", collect=True), big=True)
+        pw_entry = ttk.Entry(r, textvariable=self.pw, width=10, show="●")
+        pw_entry.pack(side="left", padx=(3, 0))
+        pw_entry.bind("<Return>", lambda e: self.start("인트라넷", collect=True))
+        r = self._row(s1)
         self.remember = tk.BooleanVar(value=False)
-        ttk.Checkbutton(r, text="계정 기억", variable=self.remember).pack(side="left", padx=(4, 4))
+        ttk.Checkbutton(r, text="계정 기억", variable=self.remember).pack(side="left", padx=(0, 6))
         self._btn(r, "기억 지우기", self.forget_account)
         saved = credstore.load(self.paths.input)
         if saved:
             self.uid.set(saved[0])
             self.pw.set(saved[1])
             self.remember.set(True)
+        self._hint(s1, "프로젝트(사전견적)·지급요청을 모든 쪽 읽어 저장합니다 (조회만)")
+        self._sep(s1, "위하고 파일 (분개장·자금계획서)")
+        r = self._row(s1)
+        self._btn(r, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
+        self._btn(r, "예전 파일 정리", self.archive)
+        self._hint(s1, "위하고에서 받은 파일을 수집\\위하고 에 넣습니다. 예전 파일 정리 = 쓰지 않는 파일을 지난자료로 옮김")
 
-        # ④ 예정 지출·입금
-        f4 = self._sec(colB, "④ 장부에 없는 지출·입금 예정", "자금일정에 들어가 가용자금에 바로 반영")
-        r = self._row(f4)
+        # 2 변환하고 확인 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력)
+        s2 = self.s2 = self._step(tab, 1, 2, "변환하고 확인")
+        self._btn(s2, "자료 변환", lambda: self.start("변환"), style="Go.TButton", full=True)
+        self.conv_info = tk.StringVar(value="")
+        self._hint(s2, "", self.conv_info)
+        self._sep(s2, "확인할 것")
+        box = tk.Frame(s2, background=C["chk_bg"], highlightbackground=C["chk_line"], highlightthickness=1, padx=8, pady=5)
+        box.pack(fill="x", pady=(4, 0))
+        self.check_n = tk.Label(box, text="…", font=self.fonts["count"], foreground=C["chk_text"], background=C["chk_bg"])
+        self.check_n.pack(side="left")
+        self.check_now = tk.StringVar(value="세는 중")
+        tk.Label(box, textvariable=self.check_now, font=self.fonts["small"], background=C["chk_bg"],
+                 foreground=C["text"], justify="left").pack(side="left", padx=(6, 0))
+        b = ttk.Button(box, text="화면 열기", command=self.open_checklist)
+        b.pack(side="right")
+        self.buttons.append(b)
+        self._hint(s2, "중복 의심 전표·지급 예정>장부·통장 대조·홈택스 대조 등. 브라우저에서 건마다 결정을 고릅니다")
+        r = self._row(s2, (6, 0))
+        self._btn(r, "정합성 점검", self.run_integrity)
+        self.integ_info = tk.StringVar(value="")
+        ttk.Label(r, textvariable=self.integ_info, style="S.TLabel").pack(side="left")
+
+        # 3 보고 만들기
+        s3 = self.s3 = self._step(tab, 2, 3, "보고 만들기")
+        r = self._row(s3, (0, 0))
+        r.columnconfigure((0, 1), weight=1, uniform="b")
+        for i, kind in enumerate(("주간", "월간")):
+            b = ttk.Button(r, text="%s 보고" % kind, command=lambda k=kind: self.report(k),
+                           style="Go.TButton" if kind == "주간" else "Big.TButton")
+            b.grid(row=0, column=i, sticky="ew", padx=(0, 6) if i == 0 else (0, 0))
+            self.buttons.append(b)
+        # 주간 출금 목록: 건별 / 같은 거래처 합침 (사용자 2026-11-05)
+        self._sep(s3, "주간 출금 목록")
+        g0, o0 = app.load_merge(self.paths)
+        self.group = tk.StringVar(value=g0)
+        self.only = tk.StringVar(value=o0)
+        r = self._row(s3)
+        ttk.Radiobutton(r, text="건별", value="건별", variable=self.group,
+                        command=self.merge_changed).pack(side="left", padx=(0, 10))
+        ttk.Radiobutton(r, text="거래처별 합침", value="거래처별", variable=self.group,
+                        command=self.merge_changed).pack(side="left")
+        r = self._row(s3)
+        self.merge_btn = self._btn(r, "합칠 거래처 고르기…", self.pick_merge)
+        self.merge_info = tk.StringVar(value="")
+        ttk.Label(r, textvariable=self.merge_info, style="S.TLabel").pack(side="left")
+        self._sep(s3, "만든 뒤")
+        r = self._row(s3)
+        self._btn(r, "출력 폴더", lambda: self.open_dir(self.paths.output))
+        self._btn(r, "수정 모드", self.edit_report)
+        self._btn(r, "근거자료 PDF…", self.pick_evidence)
+        self.rep_info = tk.StringVar(value="")
+        self._hint(s3, "", self.rep_info)
+        self._hint(s3, "수정 모드 = 방금 만든 대표 보고를 브라우저에서 고쳐 '_수정' PDF로. "
+                       "근거자료 PDF = 대표가 요청한 근거 번호만 따로")
+        self.merge_changed(save=False)
+
+    # ───────────── 탭 2: 가끔 넣는 값 ─────────────
+    def _occasional(self, tab):
+        tab.columnconfigure((0, 1), weight=1, uniform="o")
+
+        # 장부에 없는 지출·입금 예정
+        f = self.f_sched = self._card(tab, "장부에 없는 지급·입금 예정", "가용자금에 바로 반영", 0, 0)
+        r = self._row(f)
         self.s_day, self.s_io, self.s_amt = tk.StringVar(), tk.StringVar(value="지급"), tk.StringVar()
         self.s_firm, self.s_vendor, self.s_note = tk.StringVar(value="예상"), tk.StringVar(), tk.StringVar()
         ttk.Label(r, text="예정일").pack(side="left")
-        ttk.Entry(r, textvariable=self.s_day, width=11).pack(side="left", padx=(4, 8))
-        ttk.Combobox(r, textvariable=self.s_io, values=("지급", "입금"), width=5, state="readonly").pack(side="left", padx=(0, 8))
+        e_day = ttk.Entry(r, textvariable=self.s_day, width=11)
+        e_day.pack(side="left", padx=(3, 1))
+        ttk.Button(r, text="▾", width=2, style="Tiny.TButton", command=lambda: self.calendar(self.s_day, e_day)).pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(r, text="지급", value="지급", variable=self.s_io).pack(side="left")
+        ttk.Radiobutton(r, text="입금", value="입금", variable=self.s_io).pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(r, text="예상", value="예상", variable=self.s_firm).pack(side="left")
+        ttk.Radiobutton(r, text="확정", value="확정", variable=self.s_firm).pack(side="left")
+        r = self._row(f)
         ttk.Label(r, text="금액(원)").pack(side="left")
-        ttk.Entry(r, textvariable=self.s_amt, width=13).pack(side="left", padx=(4, 8))
-        ttk.Combobox(r, textvariable=self.s_firm, values=("예상", "확정"), width=5, state="readonly").pack(side="left")
-        r = self._row(f4)
+        e_amt = ttk.Entry(r, textvariable=self.s_amt, width=14)
+        e_amt.pack(side="left", padx=(3, 8))
+        self._amount(e_amt, self.s_amt)
         ttk.Label(r, text="거래처").pack(side="left")
-        ttk.Entry(r, textvariable=self.s_vendor, width=14).pack(side="left", padx=(4, 8))
+        e_v = ttk.Entry(r, textvariable=self.s_vendor, width=14)
+        e_v.pack(side="left", padx=(3, 0))
+        r = self._row(f)
         ttk.Label(r, text="내용").pack(side="left")
-        ttk.Entry(r, textvariable=self.s_note, width=20).pack(side="left", padx=(4, 0))
-        r = self._row(f4)
+        e_n = ttk.Entry(r, textvariable=self.s_note, width=22)
+        e_n.pack(side="left", padx=(3, 8))
         self._btn(r, "넣기", self.add_schedule)
-        self._btn(r, "자금일정 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
+        self._btn(r, "목록", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
+        self._enter((e_day, e_amt, e_v, e_n), self.add_schedule)
 
-        # ⑩ 통장 잔액 (사용자 2026-11-05: 편의 기능 4 — 통장 잔액을 넣으면 장부 보통예금과 대조)
-        fb = self._sec(colB, "⑩ 통장 잔액 대조", "은행 앱에서 본 그날 끝 통장 잔액 합계(모든 보통예금 계좌). 장부 보통예금과 맞춰 봄")
-        r = self._row(fb)
-        self.b_day = tk.StringVar(value=dt.date.today().isoformat())
+        # 통장 잔액 (사용자 2026-11-05: 편의 기능 4 — 통장 잔액을 넣으면 장부 보통예금과 대조)
+        f = self.f_bank = self._card(tab, "통장 잔액 대조", self.bank_sub(), 0, 1)
+        r = self._row(f)
+        self.b_day = tk.StringVar(value=self.asof.get())
         self.b_amt = tk.StringVar()
         ttk.Label(r, text="날짜").pack(side="left")
-        ttk.Entry(r, textvariable=self.b_day, width=11).pack(side="left", padx=(4, 8))
-        ttk.Label(r, text="통장 잔액 합계(원)").pack(side="left")
-        ttk.Entry(r, textvariable=self.b_amt, width=15).pack(side="left", padx=(4, 8))
+        e_bd = ttk.Entry(r, textvariable=self.b_day, width=11)
+        e_bd.pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="잔액 합계(원)").pack(side="left")
+        e_ba = ttk.Entry(r, textvariable=self.b_amt, width=15)
+        e_ba.pack(side="left", padx=(3, 8))
+        self._amount(e_ba, self.b_amt)
         self._btn(r, "저장·대조", self.save_bank)
+        self._enter((e_bd, e_ba), self.save_bank)
+        self._hint(f, "은행 앱에서 본 그날 끝 잔액 (모든 보통예금 계좌 합계). 장부 보통예금과 맞춰 봄", wrap=430)
 
-        # ⑤ 카드 납부일
-        f5 = self._sec(colB, "⑤ 카드 납부일", "카드사별 납부일·기산일(이용기간 시작일). 저장 후 '자료 변환'부터 반영")
-        r = self._row(f5)
+        # 카드 납부일
+        f = self.f_card = self._card(tab, "법인카드 납부일", "", 1, 0)
+        r = self._row(f)
         self.c_co, self.c_pay, self.c_start = tk.StringVar(), tk.StringVar(), tk.StringVar(value="1")
         ttk.Label(r, text="카드사").pack(side="left")
         ttk.Combobox(r, textvariable=self.c_co, values=("신한", "롯데", "비씨", "삼성", "현대", "국민", "하나", "우리", "농협"),
-                     width=6).pack(side="left", padx=(4, 8))
+                     width=6).pack(side="left", padx=(3, 8))
         ttk.Label(r, text="납부일").pack(side="left")
-        ttk.Entry(r, textvariable=self.c_pay, width=4).pack(side="left", padx=(4, 8))
+        e1 = ttk.Entry(r, textvariable=self.c_pay, width=4)
+        e1.pack(side="left", padx=(3, 8))
         ttk.Label(r, text="기산일").pack(side="left")
-        ttk.Entry(r, textvariable=self.c_start, width=4).pack(side="left", padx=(4, 8))
+        e2 = ttk.Entry(r, textvariable=self.c_start, width=4)
+        e2.pack(side="left", padx=(3, 8))
         self._btn(r, "저장", self.save_card)
-        self.cards_now = tk.StringVar(value="지금: " + app.card_list(self.paths.input))
-        self.hints.append(ttk.Label(f5, textvariable=self.cards_now, style="S.TLabel", wraplength=440, justify="left"))
-        self.hints[-1].pack(anchor="w")
+        self._enter((e1, e2), self.save_card)
+        self.cards_now = tk.StringVar(value="저장된 값: " + app.card_list(self.paths.input))
+        self._hint(f, "", self.cards_now, wrap=430)
 
-        # ⑥ 이체 파일
-        f6 = self._sec(colB, "⑥ 거래처 이체 파일", "신한 대량이체 양식 (급여·세금·카드 등 정기 지급은 뺌)")
-        r = self._row(f6)
-        today = dt.date.today()
-        self.t_from = tk.StringVar(value=(today + dt.timedelta(days=1)).isoformat())
-        self.t_to = tk.StringVar(value=(today + dt.timedelta(days=7)).isoformat())
+        # 이체 파일 (기간은 출금일이 끝인 한 주로 자동, 사용자 2026-11-05 개선 3)
+        f = self.f_tr = self._card(tab, "거래처 이체 파일", "신한 대량이체 양식", 1, 1)
+        r = self._row(f)
+        self.t_from, self.t_to = tk.StringVar(), tk.StringVar()
+        self.t_auto = True
         ttk.Label(r, text="지급일").pack(side="left")
-        ttk.Entry(r, textvariable=self.t_from, width=11).pack(side="left", padx=(4, 4))
+        ef = ttk.Entry(r, textvariable=self.t_from, width=11)
+        ef.pack(side="left", padx=(3, 3))
         ttk.Label(r, text="~").pack(side="left")
-        ttk.Entry(r, textvariable=self.t_to, width=11).pack(side="left", padx=(4, 8))
+        et = ttk.Entry(r, textvariable=self.t_to, width=11)
+        et.pack(side="left", padx=(3, 8))
+        for e in (ef, et):
+            e.bind("<Key>", lambda ev: setattr(self, "t_auto", False))
         self._btn(r, "이체 파일 만들기", self.make_transfer)
+        self._hint(f, "기간은 출금일 주간으로 자동으로 채워짐. 급여·세금·카드 등 정기 지급은 뺌", wrap=430)
 
-        # ⑦ 거래처 계좌 (사용자 2026-11-04: 출금 상세 내역 대신. 거래처는 위하고 거래처코드로 구분, 고르면 계좌를 넣을 수 있게)
-        f7 = self._sec(colB, "⑦ 거래처 계좌", "거래처를 골라 불러온 뒤 계좌를 넣고 저장. 목록은 '자료 변환' 때 "
-                                            "보통예금으로 지급한 매입 거래처가 자동으로 더해짐")
-        r = self._row(f7)
+        # 거래처 계좌 (사용자 2026-11-04: 거래처는 위하고 거래처코드로 구분, 고르면 계좌를 넣을 수 있게)
+        f = self.f_acc = self._card(tab, "거래처 계좌", "", 2, 0)
+        r = self._row(f)
         self.a_pick, self.a_code, self.a_name = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.a_bank, self.a_no, self.a_holder = tk.StringVar(), tk.StringVar(), tk.StringVar()
         ttk.Label(r, text="거래처").pack(side="left")
-        self.a_box = ttk.Combobox(r, textvariable=self.a_pick, width=30)
-        self.a_box.pack(side="left", padx=(4, 6))
+        self.a_box = ttk.Combobox(r, textvariable=self.a_pick, width=28)
+        self.a_box.pack(side="left", padx=(3, 6), fill="x", expand=True)
         self.a_box.bind("<KeyRelease>", self.filter_accounts)
         self.a_box.bind("<<ComboboxSelected>>", lambda e: self.load_account())
+        self.a_box.bind("<Return>", lambda e: self.load_account())
         self._btn(r, "불러오기", self.load_account)
-        r = self._row(f7)
+        r = self._row(f)
         ttk.Label(r, text="코드").pack(side="left")
-        ttk.Entry(r, textvariable=self.a_code, width=8).pack(side="left", padx=(4, 6))
+        ttk.Entry(r, textvariable=self.a_code, width=7).pack(side="left", padx=(3, 6))
         ttk.Label(r, text="은행").pack(side="left")
         ttk.Combobox(r, textvariable=self.a_bank, width=7,
                      values=("신한", "국민", "기업", "우리", "하나", "농협", "지역농·축협", "SC제일", "한국씨티", "수협", "신협",
                              "새마을금고", "우체국", "아이엠뱅크", "부산", "경남", "광주", "전북", "제주", "KDB산업",
-                             "카카오뱅크", "케이뱅크", "토스뱅크")).pack(side="left", padx=(4, 6))
+                             "카카오뱅크", "케이뱅크", "토스뱅크")).pack(side="left", padx=(3, 6))
         ttk.Label(r, text="계좌번호").pack(side="left")
-        ttk.Entry(r, textvariable=self.a_no, width=16).pack(side="left", padx=(4, 0))
-        r = self._row(f7)
+        e_no = ttk.Entry(r, textvariable=self.a_no, width=16)
+        e_no.pack(side="left", padx=(3, 0))
+        r = self._row(f)
         ttk.Label(r, text="예금주").pack(side="left")
-        ttk.Entry(r, textvariable=self.a_holder, width=12).pack(side="left", padx=(4, 8))
+        e_h = ttk.Entry(r, textvariable=self.a_holder, width=12)
+        e_h.pack(side="left", padx=(3, 8))
         self._btn(r, "저장", self.save_account)
         self._btn(r, "지우기", self.delete_account)
-        self._btn(r, "목록 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, "거래처계좌.csv")))
+        self._btn(r, "목록 파일", lambda: self.open_dir(os.path.join(self.paths.input, "거래처계좌.csv")))
+        self._enter((e_no, e_h), self.save_account)
         self.account_rows = []
         self.refresh_accounts()
 
-        # ⑧ 팀 목표 (사용자 2026-11-03: 월간 누적 실적에서 목표 대비)
-        f8 = self._sec(colB, "⑧ 팀 목표", "연간 매출 목표와 목표 수익률(매출총이익률). 월간 누적 실적에 목표 대비로 보임")
-        r = self._row(f8)
-        self.g_year, self.g_team = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
+        # 팀 목표 (사용자 2026-11-03: 월간 누적 실적에서 목표 대비)
+        f = self.f_goal = self._card(tab, "팀 목표", "월간 누적 실적에 쓰임", 2, 1)
+        r = self._row(f)
+        self.g_year, self.g_team = tk.StringVar(value=str(self.today.year)), tk.StringVar()
         self.g_rev, self.g_rate = tk.StringVar(), tk.StringVar()
         ttk.Label(r, text="연도").pack(side="left")
-        ttk.Entry(r, textvariable=self.g_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Entry(r, textvariable=self.g_year, width=6).pack(side="left", padx=(3, 8))
         ttk.Label(r, text="팀").pack(side="left")
-        ttk.Combobox(r, textvariable=self.g_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(4, 0))
-        r = self._row(f8)
+        ttk.Combobox(r, textvariable=self.g_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(3, 0))
+        r = self._row(f)
         ttk.Label(r, text="매출 목표(원)").pack(side="left")
-        ttk.Entry(r, textvariable=self.g_rev, width=14).pack(side="left", padx=(4, 8))
+        e_r = ttk.Entry(r, textvariable=self.g_rev, width=15)
+        e_r.pack(side="left", padx=(3, 8))
+        self._amount(e_r, self.g_rev)
         ttk.Label(r, text="수익률(%)").pack(side="left")
-        ttk.Entry(r, textvariable=self.g_rate, width=5).pack(side="left", padx=(4, 8))
+        e_t = ttk.Entry(r, textvariable=self.g_rate, width=5)
+        e_t.pack(side="left", padx=(3, 8))
         self._btn(r, "저장", self.save_target)
+        self._enter((e_r, e_t), self.save_target)
+        self.goal_now = tk.StringVar(value=self.goal_text())
+        self._hint(f, "", self.goal_now, wrap=430)
 
-        # ⑨ 감가상각비 (사용자 2026-11-04: 법인세 예상. 장부엔 12월 결산 때 한 번에 들어감)
-        f9 = self._sec(colB, "⑨ 감가상각비", "법인세 예상에 쓸 올해 연간 금액. 비우고 저장하면 작년 장부 금액을 씀")
-        r = self._row(f9)
-        self.v_year, self.v_amt = tk.StringVar(value=str(dt.date.today().year)), tk.StringVar()
+        # 감가상각비 (사용자 2026-11-04: 법인세 예상. 장부엔 12월 결산 때 한 번에 들어감)
+        f = self.f_dep = self._card(tab, "감가상각비", "법인세 예상에 쓰임", 3, 0)
+        r = self._row(f)
+        self.v_year, self.v_amt = tk.StringVar(value=str(self.today.year)), tk.StringVar()
         ttk.Label(r, text="연도").pack(side="left")
-        ttk.Entry(r, textvariable=self.v_year, width=6).pack(side="left", padx=(4, 8))
+        ttk.Entry(r, textvariable=self.v_year, width=6).pack(side="left", padx=(3, 8))
         ttk.Label(r, text="연간 금액(원)").pack(side="left")
-        ttk.Entry(r, textvariable=self.v_amt, width=14).pack(side="left", padx=(4, 8))
+        e_d = ttk.Entry(r, textvariable=self.v_amt, width=15)
+        e_d.pack(side="left", padx=(3, 8))
+        self._amount(e_d, self.v_amt)
         self._btn(r, "저장", self.save_dep)
+        self._enter((e_d,), self.save_dep)
+        self.dep_now = tk.StringVar(value=self.dep_text())
+        self._hint(f, "", self.dep_now, wrap=430)
 
-        # 진행
-        ttk.Label(side, text="진행 상황", style="Sec.TLabelframe.Label").pack(anchor="w", pady=(0, 2))
+    # ───────────── 오른쪽: 자료 상태 · 진행 ─────────────
+    def _side(self, side):
+        f = ttk.Frame(side, style="Card.TFrame", padding=(10, 8, 10, 8))
+        f.configure(borderwidth=1, relief="solid")
+        f.pack(fill="x")
+        ttk.Label(f, text="자료가 얼마나 최신인가", style="Sec.TLabel").pack(anchor="w", pady=(0, 4))
+        self.fresh_rows = []
+        grid = ttk.Frame(f, style="Card.TFrame")
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        for i in range(5):
+            dot = tk.Label(grid, text="●", font=self.fonts["small"], background=C["card"], foreground=C["grey"])
+            dot.grid(row=i, column=0, sticky="w")
+            name = ttk.Label(grid, text="")
+            name.grid(row=i, column=1, sticky="w", padx=(4, 8), pady=1)
+            when = ttk.Label(grid, text="")
+            when.grid(row=i, column=2, sticky="e")
+            self.fresh_rows.append((dot, name, when))
+        leg = ttk.Frame(f, style="Card.TFrame")
+        leg.pack(anchor="w", pady=(4, 0))
+        for k, t in (("g", "7일 안"), ("y", "8~30일"), ("r", "30일 넘음")):
+            tk.Label(leg, text="●", font=self.fonts["small"], foreground=DOT[k], background=C["card"]).pack(side="left")
+            ttk.Label(leg, text=t + "  ", style="S.TLabel").pack(side="left")
+        ttk.Label(leg, text="(기준일 기준)", style="S.TLabel").pack(side="left")
+
+        g = ttk.Frame(side, style="Card.TFrame", padding=(10, 8, 10, 8))
+        g.configure(borderwidth=1, relief="solid")
+        g.pack(fill="both", expand=True, pady=(8, 0))
+        ttk.Label(g, text="진행 상황", style="Sec.TLabel").pack(anchor="w")
         self.status = tk.StringVar(value="준비됨")
-        ttk.Label(side, textvariable=self.status, style="S.TLabel").pack(anchor="w", pady=(0, 4))
-        box = ttk.Frame(side)
+        self.status_lab = tk.Label(g, textvariable=self.status, font=self.fonts["result"], background=C["card"],
+                                   foreground=C["text"], wraplength=250, justify="left", anchor="w")
+        self.status_lab.pack(fill="x", pady=(2, 4))
+        self.bar = ttk.Progressbar(g, mode="indeterminate")
+        self.bar.pack(fill="x")
+        self.bar.pack_forget()
+        self.open_row = ttk.Frame(g, style="Card.TFrame")
+        self.open_row.pack(fill="x", pady=(2, 4))
+        self.open_ceo = ttk.Button(self.open_row, text="대표용 열기", command=lambda: self.open_report("대표"))
+        self.open_mgmt = ttk.Button(self.open_row, text="경영관리용 열기", command=lambda: self.open_report("경영관리"))
+        box = ttk.Frame(g, style="Card.TFrame")
         box.pack(fill="both", expand=True)
-        self.log = tk.Text(box, width=40, height=12, wrap="word", font=F["base"], state="disabled",
-                           background="#f7f8fa")
-        bar = ttk.Scrollbar(box, command=self.log.yview)
-        self.log.configure(yscrollcommand=bar.set)
+        self.log = tk.Text(box, width=30, height=8, wrap="word", font=self.fonts["small"], state="disabled",
+                           background="#f7f8fa", relief="flat", highlightthickness=1, highlightbackground=C["line"])
+        sb = ttk.Scrollbar(box, command=self.log.yview)
+        self.log.configure(yscrollcommand=sb.set)
         self.log.pack(side="left", fill="both", expand=True)
-        bar.pack(side="right", fill="y")
-        self.fit_to_screen()
-        root.after(100, self.pump)
-        root.after(500, self.refresh_checks)
+        sb.pack(side="right", fill="y")
 
-    def _sec(self, parent, title, hint=""):
-        f = ttk.LabelFrame(parent, text=title, style="Sec.TLabelframe", padding=(8, 4, 8, 6))
-        f.pack(fill="x", pady=3)
-        if hint:
-            self._hint(f, hint)
-        return f
-
-    def _hint(self, parent, text):
-        lab = ttk.Label(parent, text=text, style="S.TLabel", wraplength=440, justify="left")
-        lab.pack(anchor="w", pady=(0, 2))
-        self.hints.append(lab)
-        return lab
-
-    def _row(self, parent):
-        r = ttk.Frame(parent)
-        r.pack(fill="x", pady=(2, 0))
-        return r
-
+    # ───────────── 화면 맞춤 ─────────────
     def screen_size(self):
         """쓸 수 있는 화면 크기 (작업 표시줄·제목 줄 몫을 뺌)."""
         return self.root.winfo_screenwidth() - 16, self.root.winfo_screenheight() - 90
@@ -326,20 +552,172 @@ class Window(object):
             for k, f in self.fonts.items():
                 f.configure(size=max(7, int(round(base[k] * scale))))
             for lab in self.hints:
-                lab.configure(wraplength=int(440 * scale))
+                lab.configure(wraplength=int(lab.wrap * scale))
         root.update_idletasks()
         w, h = min(root.winfo_reqwidth(), sw), min(root.winfo_reqheight(), sh)
         root.minsize(min(w, 900), min(h, 560))
         root.geometry("%dx%d+%d+%d" % (w, h, max(0, (sw - w) // 2), max(0, (sh - h) // 3)))
         self.scale = scale
 
-    def _btn(self, parent, text, cmd, big=False):
-        b = ttk.Button(parent, text=text, command=cmd, style="Big.TButton" if big else "TButton")
-        b.pack(side="left", padx=(0, 8))
-        self.buttons.append(b)
-        return b
+    # ───────────── 날짜 ─────────────
+    def _day(self, var, fallback=None):
+        """칸의 날짜 (틀리면 fallback)."""
+        d = winstate.parse_day(var.get())
+        return d if d is not None else fallback
 
-    # 글
+    def asof_date(self):
+        return self._day(self.asof)
+
+    _asof_date = lambda self: self._day(self.asof, self.today)   # noqa: E731 — 확인할 것 화면이 씀
+
+    def payday_date(self):
+        """출금일 칸, 비면 기준일 뒤 첫 금요일."""
+        asof = self.asof_date()
+        return self._day(self.payday) or (winstate.next_friday(asof) if asof else None)
+
+    def dates_changed(self):
+        """기준일·출금일이 바뀌면 요일 표시, 출금일 빈칸 안내, 이체 기간·통장 날짜를 같이 바꾼다 (사용자 2026-11-05 개선 1·8)."""
+        asof = self.asof_date()
+        for var, lab, empty in ((self.asof, self.asof_day, "넣으세요"),
+                                (self.payday, self.payday_day, ""),
+                                (self.pick, self.pick_day, "선택")):
+            text, bad = winstate.day_label(var.get(), empty)
+            if var is self.payday and not var.get().strip() and asof:
+                d = winstate.next_friday(asof)
+                text = "비우면 %d/%d(금)" % (d.month, d.day)
+            if var is self.payday and not bad and asof and self._day(self.payday) and self._day(self.payday) <= asof:
+                text, bad = "기준일보다 뒤로", True
+            lab.configure(text=text, style="Bad.TLabel" if bad else "Day.TLabel")
+        pay = self.payday_date()
+        if pay and self.t_auto:
+            a, b = winstate.transfer_range(pay, asof)
+            self.t_from.set(a.isoformat())
+            self.t_to.set(b.isoformat())
+        if asof and hasattr(self, "b_day") and not self.b_amt.get().strip():
+            self.b_day.set(asof.isoformat())
+        winstate.save(self.paths.input, payday=self.payday.get().strip(), pick=self.pick.get().strip())
+        self.merge_changed(save=False)
+
+    def calendar(self, var, anchor):
+        """작은 달력 (사용자 2026-11-05 개선 1). 날짜를 누르면 칸에 들어간다."""
+        top = tk.Toplevel(self.root)
+        top.title("날짜 고르기")
+        top.transient(self.root)
+        top.resizable(False, False)
+        cur = self._day(var) or self.asof_date() or self.today
+        state = {"y": cur.year, "m": cur.month}
+        frm = ttk.Frame(top, padding=8)
+        frm.pack()
+        head = ttk.Frame(frm)
+        head.pack(fill="x")
+        title = ttk.Label(head, text="", font=self.fonts["sec"], anchor="center")
+        grid = ttk.Frame(frm)
+        grid.pack(pady=(6, 0))
+
+        def move(k):
+            m = state["m"] + k
+            state["y"], state["m"] = state["y"] + (m - 1) // 12, (m - 1) % 12 + 1
+            draw()
+
+        def pick(d):
+            var.set(d.isoformat())
+            top.destroy()
+
+        def draw():
+            for w in grid.winfo_children():
+                w.destroy()
+            title.configure(text="%d년 %d월" % (state["y"], state["m"]))
+            for i, w in enumerate("월화수목금토일"):
+                ttk.Label(grid, text=w, width=4, anchor="center",
+                          foreground=C["blue"] if w == "금" else C["sub"]).grid(row=0, column=i)
+            for r, week in enumerate(calendar.Calendar().monthdatescalendar(state["y"], state["m"]), start=1):
+                for c, d in enumerate(week):
+                    b = tk.Button(grid, text=str(d.day), width=3, relief="flat", font=self.fonts["base"],
+                                  foreground=C["text"] if d.month == state["m"] else C["grey"],
+                                  background="#dbeafe" if d == cur else ("#eef2ff" if d == self.today else "#ffffff"),
+                                  command=lambda d=d: pick(d))
+                    b.grid(row=r, column=c, padx=1, pady=1)
+        ttk.Button(head, text="◀", width=3, command=lambda: move(-1)).pack(side="left")
+        title.pack(side="left", expand=True, fill="x")
+        ttk.Button(head, text="▶", width=3, command=lambda: move(1)).pack(side="right")
+        r = ttk.Frame(frm)
+        r.pack(fill="x", pady=(6, 0))
+        ttk.Button(r, text="오늘", command=lambda: pick(self.today)).pack(side="left")
+        ttk.Button(r, text="비우기", command=lambda: (var.set(""), top.destroy())).pack(side="right")
+        draw()
+        top.update_idletasks()
+        top.geometry("+%d+%d" % (anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height() + 2))
+        top.grab_set()
+
+    # ───────────── 상태 새로 고침 ─────────────
+    def refresh_state(self):
+        """단계 상태·자료 최신 표·최근 보고 (파일 시각만 봐서 빠름)."""
+        asof = self.asof_date() or self.today
+        try:
+            F = winstate.freshness(self.paths, asof)
+            S = winstate.steps(self.paths)
+        except Exception as e:   # 창이 멈추지 않게
+            self.say("상태를 읽지 못함 (%s)" % type(e).__name__)
+            return
+        for (dot, name, when), f in zip(self.fresh_rows, F):
+            dot.configure(foreground=DOT[f["level"]])
+            name.configure(text=f["name"])
+            when.configure(text=f["text"])
+        runs = winstate.load(self.paths.input).get("runs") or {}
+
+        def short(t):
+            return "%d/%d %s" % (t.month, t.day, t.strftime("%H:%M")) if t else ""
+        # 1단계
+        if S["collect"]:
+            self._set_chip(self.s1.chip, "받음 " + short(S["collect"]), "ok")
+        else:
+            self._set_chip(self.s1.chip, "자료 없음", "now")
+        # 2단계
+        if S["convert"] is None:
+            self.conv_info.set("아직 변환하지 않았습니다")
+            self._set_chip(self.s2.chip, "지금 할 차례" if S["now"] == 2 else "모은 뒤", "now" if S["now"] == 2 else "wait")
+        elif S["new_since"]:
+            self.conv_info.set("마지막 변환 %s · 그 뒤 새 자료: %s → 다시 변환하세요" % (short(S["convert"]), ", ".join(S["new_since"])))
+            self._set_chip(self.s2.chip, "다시 변환", "warn")
+        else:
+            self.conv_info.set("마지막 변환 %s · 그 뒤 새 자료 없음" % short(S["convert"]))
+            self._set_chip(self.s2.chip, "완료 " + short(S["convert"]), "ok")
+        ig = runs.get("정합성")
+        self.integ_info.set(("마지막 %s %s" % (ig["at"][5:].replace("-", "/"), "끝" if ig["ok"] else "오류")) if ig else "")
+        # 3단계
+        rep = S["report"]
+        self.last_rep = rep
+        if rep:
+            self.rep_info.set("최근: %s (%s)" % (rep["name"], short(rep["at"])))
+        else:
+            self.rep_info.set("아직 만든 보고가 없습니다")
+        if S["now"] == 3:
+            fresh = rep and S["convert"] and rep["at"] >= S["convert"]
+            self._set_chip(self.s3.chip, ("완료 " + short(rep["at"])) if fresh else "지금 할 차례", "ok" if fresh else "now")
+        else:
+            self._set_chip(self.s3.chip, "변환 뒤", "wait")
+        for i, s in enumerate((self.s1, self.s2, self.s3), start=1):
+            on = i == S["now"]
+            s.outer.configure(background=C["blue"] if on else C["line"], padx=2 if on else 1, pady=2 if on else 1)
+            s.num.configure(background=C["blue"] if on else (C["green"] if i < S["now"] else C["grey"]))
+        self.show_open_buttons(rep)
+        self.state = S
+
+    def show_open_buttons(self, rep):
+        for b in (self.open_ceo, self.open_mgmt):
+            b.pack_forget()
+        if rep:
+            if rep.get("대표"):
+                self.open_ceo.pack(side="left", padx=(0, 6))
+            if rep.get("경영관리"):
+                self.open_mgmt.pack(side="left")
+
+    def open_report(self, who):
+        rep = winstate.latest_reports(self.paths.output)
+        if not open_path(rep.get(who)):
+            self.say("열 %s 보고가 없습니다" % who)
+
+    # ───────────── 글 ─────────────
     def say(self, text):
         self.q.put(("line", text))
 
@@ -355,44 +733,85 @@ class Window(object):
                 elif kind == "done":
                     self.finish(*val)
                 elif kind == "checks":
-                    self.check_now.set(val)
+                    n, text = val
+                    self.check_n.configure(text=n)
+                    self.check_now.set(text)
                 elif kind == "edited":
                     pdf, text = val
                     self.say(text)
                     if pdf:
                         open_path(pdf)
+                elif kind == "call":
+                    val()
         except queue.Empty:
             pass
         self.root.after(100, self.pump)
 
-    def set_busy(self, busy, text):
+    def set_busy(self, busy, text, ok=None):
         self.busy = busy
         for b in self.buttons:
             b.state(["disabled"] if busy else ["!disabled"])
         self.status.set(text)
+        self.status_lab.configure(foreground=C["text"] if ok is None else (C["green"] if ok else C["red"]))
+        if busy:
+            self.bar.pack(fill="x", before=self.open_row)
+            self.bar.start(12)
+        else:
+            self.bar.stop()
+            self.bar.pack_forget()
+            self.merge_changed(save=False)
 
-    # 작업
+    # ───────────── 작업 ─────────────
+    def report(self, kind):
+        """보고 만들기. 변환 뒤 새 자료가 있으면 변환부터 할지 묻는다 (사용자 2026-11-05 개선 9)."""
+        if self.busy:
+            return
+        S = getattr(self, "state", None) or winstate.steps(self.paths)
+        if S["convert"] is None or S["new_since"]:
+            what = ", ".join(S["new_since"]) if S["new_since"] else "변환한 자료 없음"
+            ans = messagebox.askyesnocancel(
+                "변환부터 할까요?", "마지막 변환 뒤 새 자료가 있습니다 (%s).\n\n예: 자료 변환 후 %s 보고\n아니오: 지금 자료로 %s 보고"
+                % (what, kind, kind), parent=self.root)
+            if ans is None:
+                return
+            if ans:
+                self.then = kind
+                self.start("변환")
+                return
+        self.start(kind)
+
     def start(self, task, collect=False):
         if self.busy:
             return
         if task in ("승인검토", "인트라넷") and collect and not (self.uid.get().strip() and self.pw.get()):
-            self.say("인트라넷 ID와 비밀번호를 넣고 다시 누르세요")
+            self.set_busy(False, "인트라넷 ID와 비밀번호를 넣고 다시 누르세요", ok=False)
+            return
+        asof = self.asof_date()
+        if asof is None:
+            self.set_busy(False, "기준일 형식이 틀렸습니다 (예: 2026-11-06)", ok=False)
+            return
+        if self.payday.get().strip() and (self._day(self.payday) is None or self._day(self.payday) <= asof):
+            self.set_busy(False, "출금일은 기준일보다 뒤 날짜여야 합니다", ok=False)
+            return
+        if self.pick.get().strip() and (self._day(self.pick) is None or self._day(self.pick) <= asof):
+            self.set_busy(False, "가용자금 볼 날짜는 기준일보다 뒤 날짜여야 합니다", ok=False)
             return
         self.say("──── %s 시작 (%s) ────" % (task, dt.datetime.now().strftime("%H:%M:%S")))
         self.set_busy(True, "%s 중… 끝나면 결과가 여기에 보입니다" % task)
         uid, pw = self.uid.get(), self.pw.get()
-        asof, pick = self.asof.get().strip(), self.pick.get().strip()
-        nums = self.ev_nums.get().strip()
-        payday = self.payday.get().strip()
+        pick = self._day(self.pick).isoformat() if self.pick.get().strip() else ""
+        nums = getattr(self, "ev_nums", "")
+        payday = self._day(self.payday).isoformat() if self.payday.get().strip() else ""
         group, only = self.group.get(), self.only.get().strip()
         if task == "주간":
             app.save_merge(self.paths, group, only)
+        ev_task = task.startswith("근거")
 
         def work():
             try:
-                rc, files = app.run_task(task, self.paths, self.say, asof=asof, pick=pick, collect=collect,
-                                         credentials=(lambda: (uid, pw)) if collect else None, nums=nums,
-                                         payday=payday, group=group, only=only)
+                rc, files = app.run_task(task, self.paths, self.say, asof=asof.isoformat(), pick=pick, collect=collect,
+                                         credentials=(lambda: (uid, pw)) if collect else None,
+                                         nums=nums if ev_task else "", payday=payday, group=group, only=only)
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []
@@ -402,10 +821,13 @@ class Window(object):
     def finish(self, task, rc, files):
         if task in ("승인검토", "인트라넷"):
             self.after_collect(rc)
+        winstate.remember_run(self.paths.input, task, rc == 0)
         if task in ("변환", "정합성"):
             self.refresh_checks()
+        ok, line = winstate.rc_message(task, rc)
         if task == "정합성":
-            self.set_busy(False, "정합성 점검 끝 (종료코드 %s)" % rc)
+            self.set_busy(False, line, ok=ok)
+            self.refresh_state()
             self.open_checklist()
             return
         if rc == 0:
@@ -414,31 +836,32 @@ class Window(object):
             if pdfs:
                 open_path(pdfs[-1])
                 self.say("열었음: %s" % os.path.basename(pdfs[-1]))
-            self.set_busy(False, "%s 끝 — 완료" % task)
         else:
             self.say("%s 끝 — 오류가 있습니다 (위 글을 확인하세요)" % task)
-            self.set_busy(False, "%s 끝 — 오류 (종료코드 %s)" % (task, rc))
+        self.set_busy(False, line, ok=ok)
+        self.refresh_state()
+        nxt, self.then = self.then, None
+        if nxt and task == "변환":
+            if rc == 0:
+                self.start(nxt)
+            else:
+                self.say("변환이 끝나지 않아 %s 보고는 만들지 않았습니다" % nxt)
 
-    # 확인할 것 · 정합성 · 통장 잔액
-    def _asof_date(self):
-        try:
-            return dt.date.fromisoformat(self.asof.get().strip())
-        except ValueError:
-            return dt.date.today()
-
+    # ───────────── 확인할 것 · 정합성 · 통장 잔액 ─────────────
     def refresh_checks(self):
-        """확인할 것 건수를 버튼 옆에 (계산이 있어 따로 도는 스레드에서)."""
+        """확인할 것 건수 (계산이 있어 따로 도는 스레드에서)."""
         asof = self._asof_date()
 
         def work():
             try:
                 G = checklist.gather(self.paths.root, self.paths.input, asof)
                 c = G["counts"]
-                text = "결정할 것 %d건 · 고치기 기다림 %d건" % (c["open"], c["fix"])
+                n = "%d건" % c["open"]
+                text = "결정 필요" + (" · 고치기 기다림 %d건" % c["fix"] if c["fix"] else "")
                 self.q.put(("line", checklist.summary_line(G) + " — '확인할 것 화면'에서 결정"))
             except Exception as e:
-                text = "건수를 못 셈 (%s)" % type(e).__name__
-            self.q.put(("checks", text))
+                n, text = "?", "건수를 못 셈 (%s)" % type(e).__name__
+            self.q.put(("checks", (n, text)))
         threading.Thread(target=work, daemon=True).start()
 
     def open_checklist(self):
@@ -454,8 +877,8 @@ class Window(object):
         if self.busy:
             return
         self.say("──── 정합성 점검 시작 (%s) — 입력 폴더는 바꾸지 않음, 1~2분 ────" % dt.datetime.now().strftime("%H:%M:%S"))
-        self.set_busy(True, "정합성 점검 중…")
-        asof = self.asof.get().strip()
+        self.set_busy(True, "정합성 점검 중… 1~2분 걸립니다")
+        asof = self._asof_date().isoformat()
 
         def work():
             try:
@@ -466,6 +889,13 @@ class Window(object):
             self.q.put(("done", ("정합성", rc, [])))
         threading.Thread(target=work, daemon=True).start()
 
+    def bank_sub(self):
+        rows = checklist.read_bank(self.paths.input)
+        if not rows:
+            return "아직 넣은 잔액 없음"
+        d = max(rows)
+        return "마지막 %d/%d · %s원" % (d.month, d.day, "{:,}".format(rows[d][0]))
+
     def save_bank(self):
         try:
             day, amt = checklist.save_bank(self.paths.input, self.b_day.get(), self.b_amt.get())
@@ -474,6 +904,8 @@ class Window(object):
             return
         self.say("통장 잔액 저장: %s %s원 — %s" % (day.isoformat(), "{:,}".format(amt), checklist.bank_line(self.paths.input, day)))
         self.b_amt.set("")
+        self._flash(self.f_bank, "저장됨", self.bank_sub)
+        self.refresh_state()
 
     def after_collect(self, rc):
         """계정 기억 (사용자 2026-11-04): 체크했으면 로그인에 성공한 계정을 외장하드 입력 폴더 파일에 둔다. 아니면 비밀번호를 비운다."""
@@ -494,16 +926,136 @@ class Window(object):
         self.pw.set("")
         self.say("기억한 계정을 지웠습니다" if gone else "기억한 계정이 없습니다")
 
+    # ───────────── 합칠 거래처 고르기 (사용자 2026-11-05) ─────────────
+    def merge_changed(self, save=True):
+        if not hasattr(self, "merge_info"):
+            return
+        names = [x.strip() for x in self.only.get().split(",") if x.strip()]
+        if self.group.get() != "거래처별":
+            self.merge_info.set("건마다 한 줄")
+            self.merge_btn.state(["disabled"])
+        else:
+            self.merge_info.set(("고른 곳 %d곳" % len(names)) if names else "고른 곳 없음 = 모두 합침")
+            if not self.busy:
+                self.merge_btn.state(["!disabled"])
+        if save:
+            app.save_merge(self.paths, self.group.get(), self.only.get().strip())
+
+    def pick_merge(self):
+        """그 출금일 목록에서 2건 이상 나가는 거래처를 체크해서 고른다."""
+        asof, pay = self.asof_date(), self.payday_date()
+        if asof is None or pay is None or pay <= asof:
+            self.set_busy(False, "기준일·출금일을 먼저 바르게 넣으세요", ok=False)
+            return
+        top = tk.Toplevel(self.root)
+        top.title("합칠 거래처 고르기")
+        top.transient(self.root)
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="%d/%d(%s) 출금 목록에서 2건 이상 나가는 거래처입니다. 체크한 곳만 한 줄로 합칩니다."
+                  % (pay.month, pay.day, winstate.WEEKDAYS[pay.weekday()]), wraplength=460).pack(anchor="w")
+        wait = ttk.Label(frm, text="목록을 만드는 중… (몇 초)", foreground=C["sub"])
+        wait.pack(anchor="w", pady=8)
+        body = ttk.Frame(frm)
+        body.pack(fill="both", expand=True)
+        picked = [x.strip() for x in self.only.get().split(",") if x.strip()]
+
+        def show(C_, err):
+            wait.destroy()
+            if err:
+                ttk.Label(body, text="목록을 만들지 못함 (%s). 자료 변환을 먼저 하세요." % err, foreground=C["red"]).pack(anchor="w")
+                return
+            from .render import _vkey
+            keys = {_vkey(p) for p in picked}
+            rows = list(C_)
+            have = {_vkey(g["name"]) for g in rows}
+            for p in picked:   # 지난번에 고른 곳이 이번 출금일엔 1건 이하일 때도 보이게
+                if _vkey(p) not in have:
+                    rows.append({"name": p, "code": "", "n": 0, "total": 0, "gone": True})
+            if not rows:
+                ttk.Label(body, text="이 출금일에는 2건 이상 나가는 거래처가 없습니다.").pack(anchor="w")
+            vars_ = []
+            for g in rows:
+                v = tk.BooleanVar(value=_vkey(g["name"]) in keys)
+                text = (g["name"] + " · 이번 출금일엔 1건 이하") if g.get("gone") else winstate.merge_label(g)
+                ttk.Checkbutton(body, text=text, variable=v).pack(anchor="w", pady=1)
+                vars_.append((v, g["name"]))
+            r = ttk.Frame(frm)
+            r.pack(fill="x", pady=(10, 0))
+            ttk.Label(r, text="고른 것은 저장돼 다음 주에도 유지", foreground=C["sub"]).pack(side="left")
+
+            def apply():
+                self.only.set(", ".join(n for v, n in vars_ if v.get()))
+                self.group.set("거래처별")
+                self.merge_changed()
+                top.destroy()
+            ttk.Button(r, text="확인", command=apply, style="Go.TButton").pack(side="right")
+            ttk.Button(r, text="모두 해제", command=lambda: [v.set(False) for v, _ in vars_]).pack(side="right", padx=6)
+            ttk.Button(r, text="전부 선택", command=lambda: [v.set(True) for v, _ in vars_]).pack(side="right")
+
+        def work():
+            try:
+                res, err = winstate.merge_candidates(self.paths.input, asof, pay), None
+            except Exception as e:
+                res, err = [], type(e).__name__
+            self.q.put(("call", lambda: show(res, err) if top.winfo_exists() else None))
+        threading.Thread(target=work, daemon=True).start()
+
+    # ───────────── 근거자료 고르기 (사용자 2026-11-05 개선 4) ─────────────
+    def pick_evidence(self):
+        rep = winstate.latest_reports(self.paths.output)
+        kind = rep.get("kind") or "주간"
+        top = tk.Toplevel(self.root)
+        top.title("근거자료 PDF")
+        top.transient(self.root)
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        kv = tk.StringVar(value=kind)
+        r = ttk.Frame(frm)
+        r.pack(fill="x")
+        body = ttk.Frame(frm)
+        vars_ = []
+
+        def load():
+            for w in body.winfo_children():
+                w.destroy()
+            vars_.clear()
+            name, rows = winstate.evidence_choices(self.paths.output, kv.get(), self.asof_date())
+            if not rows:
+                ttk.Label(body, text="%s 경영관리 보고가 없습니다. 먼저 %s 보고를 만드세요." % (kv.get(), kv.get())).pack(anchor="w")
+                return
+            ttk.Label(body, text="%s 에서 고릅니다" % name, foreground=C["sub"]).pack(anchor="w", pady=(0, 4))
+            for n, t in rows:
+                v = tk.BooleanVar(value=False)
+                ttk.Checkbutton(body, text="근거 %s  %s" % (n, t[:40]), variable=v).pack(anchor="w")
+                vars_.append((v, n))
+        for k in ("주간", "월간"):
+            ttk.Radiobutton(r, text=k, value=k, variable=kv, command=load).pack(side="left", padx=(0, 10))
+        body.pack(fill="both", expand=True, pady=(8, 0))
+
+        def make():
+            nums = [n for v, n in vars_ if v.get()]
+            if not nums:
+                return
+            self.ev_nums = ", ".join(nums)
+            top.destroy()
+            self.start("근거" + kv.get())
+        b = ttk.Frame(frm)
+        b.pack(fill="x", pady=(10, 0))
+        ttk.Button(b, text="고른 근거로 PDF 만들기", command=make, style="Go.TButton").pack(side="right")
+        load()
+
+    # ───────────── 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기) ─────────────
     def edit_report(self):
-        """가장 최근 대표 보고(주간·월간)를 수정 모드로 연다. 이미 열려 있으면 그 주소를 다시 연다."""
+        """가장 최근에 만든 대표 보고(주간·월간 중 나중 것)를 수정 모드로 연다. 이미 열려 있으면 그 주소를 다시 연다."""
         if self.edit and self.edit.server:
             webbrowser.open(self.edit.url)
             self.say("수정 모드가 이미 열려 있습니다 — 브라우저 창을 다시 엽니다")
             return
-        kind = self.e_kind.get()
+        kind = winstate.latest_reports(self.paths.output).get("kind") or "주간"
         orig, src = editmode.latest_report(self.paths.output, kind)
         if not orig:
-            self.say("%s 대표 보고가 없습니다 — 먼저 '%s 보고'를 만드세요" % (kind, kind))
+            self.set_busy(False, "고칠 대표 보고가 없습니다. 먼저 주간 또는 월간 보고를 만드세요", ok=False)
             return
         rep = app._module("보고서")
 
@@ -523,25 +1075,28 @@ class Window(object):
     def archive(self):
         if self.busy:
             return
-        try:
-            asof = dt.date.fromisoformat(self.asof.get().strip())
-        except ValueError:
-            self.say("기준일 형식 오류: %s (예: 2026-11-30)" % self.asof.get())
+        asof = self.asof_date()
+        if asof is None:
+            self.set_busy(False, "기준일 형식이 틀렸습니다 (예: 2026-11-06)", ok=False)
             return
         self.say("──── 예전 파일 정리 ────")
         app.archive_old(self.paths.wehago, asof, self.say)
+        self.refresh_state()
 
+    # ───────────── 가끔 넣는 값 ─────────────
     def add_schedule(self):
         try:
             row = app.add_schedule(self.paths.input, self.s_day.get(), self.s_io.get(), self.s_amt.get(), self.s_firm.get(),
                                    self.s_vendor.get(), memo=self.s_note.get())
         except (ValueError, OSError) as e:
             self.say("넣지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self.f_sched.sub.configure(text="넣지 못함 (진행 상황 참고)", foreground=C["red"])
             return
         self.say("자금일정에 넣음: %s %s %s원 (%s) %s — 보고서를 다시 만들면 가용자금에 반영됩니다"
                  % (row["예정일"], row["입출금"], row["금액"], row["확정여부"], row["거래처"]))
         for v in (self.s_amt, self.s_vendor, self.s_note):
             v.set("")
+        self._flash(self.f_sched, "넣음: %s %s원" % (row["거래처"], row["금액"]), lambda: "가용자금에 바로 반영")
 
     def save_card(self):
         try:
@@ -549,18 +1104,42 @@ class Window(object):
         except (ValueError, OSError) as e:
             self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
-        self.cards_now.set("지금: " + app.card_list(self.paths.input))
+        self.cards_now.set("저장된 값: " + app.card_list(self.paths.input))
         self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
                  % " · ".join("%s %d일(기산 %d일)" % r for r in rows))
+        self._flash(self.f_card, "저장됨 — 자료 변환부터 반영")
 
-    # ⑦ 거래처 계좌
+    def goal_text(self):
+        from . import targets
+        y = self.g_year.get().strip() if hasattr(self, "g_year") else str(self.today.year)
+        rows = sorted((t, v) for (yy, t), v in targets.read(self.paths.input).items() if yy == y)
+        if not rows:
+            return "저장된 값: %s년 없음" % y
+
+        def one(t, v):
+            rev = "{:,}원".format(v["revenue"]) if v["revenue"] is not None else "-"
+            rate = ("%s%%" % v["rate"]) if v["rate"] is not None else "-"
+            return "%s %s · %s" % (t, rev, rate)
+        return "저장된 값 (%s년): " % y + " / ".join(one(t, v) for t, v in rows)
+
+    def dep_text(self):
+        from . import corptax
+        y = self.v_year.get().strip() if hasattr(self, "v_year") else str(self.today.year)
+        v = corptax.read(self.paths.input).get(y)
+        return "저장된 값: %s년 %s" % (y, "{:,}원".format(v) if v is not None else "없음 (작년 장부 금액을 씀)")
+
+    # 거래처 계좌
     def refresh_accounts(self):
         from . import transfer
         self.account_rows = transfer.account_choices(self.paths.input)
         self.a_box["values"] = [c[0] for c in self.account_rows]
+        n = sum(1 for c in self.account_rows if c[3])
+        self.f_acc.sub.configure(text="계좌 있는 거래처 %d곳" % n)
 
     def filter_accounts(self, event=None):
         """글자를 치면 이름·코드에 그 글자가 든 거래처만 목록에 보인다."""
+        if event is not None and event.keysym == "Return":
+            return
         text = self.a_pick.get().strip().replace(" ", "")
         self.a_box["values"] = [c[0] for c in self.account_rows if not text or text in c[0].replace(" ", "")]
 
@@ -602,6 +1181,7 @@ class Window(object):
         self.refresh_accounts()
         for v in (self.a_bank, self.a_no, self.a_holder):
             v.set("")
+        self._flash(self.f_acc, "%s: %s" % (action, name or code), lambda: "계좌 있는 거래처 %d곳" % sum(1 for c in self.account_rows if c[3]))
 
     def delete_account(self):
         self.save_account(delete=True)
@@ -614,6 +1194,8 @@ class Window(object):
             return
         self.say("팀 목표 저장: %s년 %s 매출 %s원 · 수익률 %s%% (그 해 %d팀) — 다음 월간 보고부터 반영"
                  % (self.g_year.get().strip(), self.g_team.get().strip(), self.g_rev.get().strip(), self.g_rate.get().strip(), n))
+        self.goal_now.set(self.goal_text())
+        self._flash(self.f_goal, "저장됨", lambda: "월간 누적 실적에 쓰임")
 
     def save_dep(self):
         try:
@@ -624,14 +1206,13 @@ class Window(object):
         amt = self.v_amt.get().strip()
         self.say("감가상각비 저장: %s년 %s — 다음 월간 보고 법인세 예상부터 반영 (저장된 해 %d개)"
                  % (self.v_year.get().strip(), amt + "원" if amt else "비움 (작년 장부 금액 사용)", n))
+        self.dep_now.set(self.dep_text())
+        self._flash(self.f_dep, "저장됨", lambda: "법인세 예상에 쓰임")
 
     def make_transfer(self):
         from . import transfer
-        try:
-            start = dt.date.fromisoformat(self.t_from.get().strip())
-            end = dt.date.fromisoformat(self.t_to.get().strip())
-            asof = dt.date.fromisoformat(self.asof.get().strip())
-        except ValueError:
+        start, end, asof = self._day(self.t_from), self._day(self.t_to), self.asof_date()
+        if None in (start, end, asof):
             self.say("날짜 형식 오류 (예: 2026-11-30)")
             return
         if end < start:
@@ -652,6 +1233,16 @@ class Window(object):
             self.ask_splits(multi)       # 예금주가 다른 계좌가 여럿: 사람별 금액을 받고 다시 만든다 (사용자 2026-11-05)
         elif path:
             self.open_dir(self.paths.output)
+
+    def close(self):
+        winstate.save(self.paths.input, payday=self.payday.get().strip(), pick=self.pick.get().strip())
+        for s in (self.check, self.edit):
+            try:
+                if s and s.server:
+                    s.stop()
+            except Exception:
+                pass
+        self.root.destroy()
 
     def ask_splits(self, multi):
         """계좌가 여럿(예금주 다름)인 거래처 창: 예금주마다 금액 → 합계가 맞으면 나눠서 이체 파일 다시 만들기."""
