@@ -1246,6 +1246,9 @@ def _week_out_table(R, mode="ceo"):
     G = W_["gap"]
     if G["rows"]:
         days = sorted(set(e["gap"] for e in G["rows"]))
+        if mode != "mgmt":   # 대표용 한 줄 (사용자 2026-11-05 점검: 출금 합계와 자금 표 '이번 주 나갈 돈'이 왜 다른지)
+            h.append("<div class='note'>%s</div>" % esc("예정일 지난 장부 미확인 지급 %d건 %s원은 목록에서 빼고 자금 표에만 포함"
+                                                      % (len(G["rows"]), won(G["total"]))))
         h.append(_mg(mode, "<div class='note'>%s</div>" % esc(
             "예정일(%s)이 지났지만 장부·통장 자료에 아직 없는 지급 %d건 %s원은 목록에서 뺌 — 이미 나간 돈이면 계좌잔액(통장 입출금내역)을 "
             "새로 넣으면 ③ 자금 표에서도 빠짐 (지금은 아직 나갈 돈으로 포함)" % (", ".join(_md(x) for x in days), len(G["rows"]), won(G["total"])))))
