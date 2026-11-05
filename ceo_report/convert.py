@@ -999,13 +999,39 @@ def _read_dept_prev(input_dir):
     return [dict((k, r.get(k, "")) for k in data.DEPT_KEYS + data.DEPT_OPTIONAL) for r in rows]
 
 
+def fundplan_opening_checks(openings, books, cfg):
+    """현금대비잔액의 '전월이월'(전월말 보통예금)과 분개장 보통예금 잔액 대조 (2026-11-05: 실제 10/31 원 단위 일치 확인).
+    분개장이 처음부터 있지 않으면(작년 분개장 없음) 잔액을 셀 수 없어 대조하지 않는다."""
+    if not openings:
+        return []
+    if not getattr(books, "from_start", True):
+        return ["자금계획서 전월이월 대조 안 함: 작년 분개장이 없어 보통예금 잔액을 셀 수 없음"]
+    cash = set(wehago._squash(c) for c in cfg["cash_codes"])
+    out = []
+    for (y, m), amount, name in openings:
+        first = dt.date(y, m, 1)
+        if books.book_date is not None and books.book_date < first - dt.timedelta(days=1):
+            out.append("%s 전월이월 대조 안 함: 분개장이 %s까지라 전월말 잔액을 모름" % (name, books.book_date.isoformat()))
+            continue
+        bal = sum((ln.get("debit") or 0) - (ln.get("credit") or 0) for ln in books.journal
+                  if ln.get("date") is not None and ln["date"] < first and wehago._squash(ln.get("account_code")) in cash)
+        if bal == amount:
+            out.append("%s 전월이월 %s원 = 분개장 %s 보통예금 잔액 (일치)" % (name, "{:,}".format(amount),
+                                                                 (first - dt.timedelta(days=1)).isoformat()))
+        else:
+            out.append("[확인] %s 전월이월 %s원 ≠ 분개장 %s 보통예금 잔액 %s원 (차이 %s원) — 자금계획서와 분개장 받은 시점이 다르거나 "
+                       "장부가 바뀜" % (name, "{:,}".format(amount), (first - dt.timedelta(days=1)).isoformat(),
+                                    "{:,}".format(bal), "{:,}".format(amount - bal)))
+    return out
+
+
 def build_fundplan(books, cfg, wehago_dir, asof):
-    """자금계획서 지출입금현황(.xls) -> 자금계획.csv 표 (D-55). 쓸 파일이 없으면 만들지 않고 기존 파일을 그대로 둔다."""
+    """자금계획서 현금대비잔액·지출입금현황(.xls) -> 자금계획.csv 표 (D-55, 현금대비잔액 2026-11-05). 쓸 파일이 없으면 만들지 않고 기존 파일을 그대로 둔다."""
     from . import fundplan
     res = fundplan.load(wehago_dir)
     notes = list(res["notes"])
     if not res["rows"]:
-        reason = ("자금계획서 지출입금현황 파일 없음 (기존 파일 그대로)" if not notes
+        reason = ("자금계획서(현금대비잔액·지출입금현황) 파일 없음 (기존 파일 그대로)" if not notes
                   else "쓸 수 있는 자금계획서 없음 (기존 파일 그대로): " + " / ".join(notes))
         return Table("자금계획.csv", fundplan.COLUMNS, [], written=False, reason=reason)
     counts = fundplan.settle(res["rows"], books, asof, cfg["payable_codes"], cfg["receivable_codes"], cfg["cash_codes"])
@@ -1015,6 +1041,7 @@ def build_fundplan(books, cfg, wehago_dir, asof):
         ", ".join(d.isoformat() for d in stamps), books.book_date.isoformat(),
         " — 그 사이 %d일의 지급·입금은 분개장으로 확인 못함" % gap if gap > 0 else ""))
     notes.append("분개장 대조: " + " · ".join("%s %d" % (k, counts[k]) for k in fundplan.STATES))
+    notes.extend(fundplan_opening_checks(res.get("openings") or [], books, cfg))
     for r in res["rows"]:
         if r["상태"] != "예정":
             notes.append("  %s %s %s %s %s원 — %s" % (r["상태"], r["예정일"], r["입출금"], r["거래처"],

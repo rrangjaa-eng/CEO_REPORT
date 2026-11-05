@@ -169,6 +169,13 @@ class TestOneWindow(unittest.TestCase):
                        "--점검", "입력양식;입력양식"):
             self.assertIn(needle, text)
 
+    def test_window_draws_sharp_text(self):
+        """글자 번짐 (사용자 2026-11-05): Tk 를 만들기 전에 화면 배율 인식을 켠다."""
+        with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("SetProcessDpiAwareness", text)
+        self.assertLess(text.index("    sharp_text()\n    root = tk.Tk()"), len(text))
+
     def test_window_module_has_no_password_logging(self):
         with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
             text = f.read()

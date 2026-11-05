@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<style>
+ body{font:14px "Malgun Gothic",sans-serif;width:320px;margin:12px;color:#222}
+ h1{font-size:15px;margin:0 0 10px}
+ .box{border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:10px}
+ h2{font-size:14px;margin:0 0 8px}
+ button{width:100%;padding:9px;font-size:14px;font-weight:bold;background:#2656c5;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ button:disabled{background:#999}
+ .row{margin-top:8px;line-height:1.5;font-size:13px}
+ .err{color:#c62828}
+ .muted{color:#666;font-size:12px;line-height:1.5}
+ label{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+ select{font-size:14px;padding:2px 4px}
+</style></head>
+<body>
+<h1>대표보고 위하고 수집</h1>
+<button id="all" style="margin-bottom:10px;background:#1b3f94">모두 받기</button>
+<div class="row" id="amsg" style="margin:-4px 0 10px"></div>
+<div class="box">
+  <h2>분개장</h2>
+  <button id="journal">분개장 받기</button>
+  <div class="row" id="jmsg"></div>
+</div>
+<div class="box">
+  <h2>자금계획</h2>
+  <label>이번 달부터 <select id="months"></select> 개월치</label>
+  <button id="plan">자금계획 받기</button>
+  <div class="row" id="pmsg"></div>
+</div>
+<div class="box"><h2>저장 폴더</h2><div class="row" id="fmsg" style="margin:0 0 8px"></div><button id="folder" style="background:#555">저장 폴더 고르기·확인</button></div>
+<div class="muted">위하고에 로그인하고 SmartA(회계) 화면을 한 번 열어 두면 됩니다. 받은 파일은 고른 저장 폴더(F:\CLAUDE\CEO_REPORT\수집\위하고)에 바로 저장됩니다. 지난번과 같으면 새 파일을 만들지 않습니다. 위하고에서는 달 고르기·[조회]만 하고 아무것도 바꾸지 않습니다.</div>
+<script src="folder.js"></script>
+<script src="popup.js"></script>
+</body></html>
