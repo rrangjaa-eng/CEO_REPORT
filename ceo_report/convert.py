@@ -13,7 +13,7 @@ import os
 import re
 import shutil
 
-from . import data, linking, snapshot, util, wehago
+from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
@@ -399,8 +399,12 @@ def read_latest_snapshot(collect_dir):
         snap = snapshot.read_snapshot(path)
     except (snapshot.SnapshotError, OSError) as e:
         return None, "인트라넷 스냅숏: 읽지 못함 — %s" % e
-    return snap, "인트라넷 스냅숏: %s (수집 %s) · 지급요청 %d건 · 프로젝트 %d건" % (
+    snap.old = old_intranet.load(collect_dir)   # 예전 인트라넷 (2025~2026.3, 사용자 2026-11-05)
+    line = "인트라넷 스냅숏: %s (수집 %s) · 지급요청 %d건 · 프로젝트 %d건" % (
         os.path.basename(snap.path), snap.collected_at.strftime(snapshot.TIME_FORMAT), len(snap.payments), len(snap.projects))
+    if snap.old.files:
+        line += " · 예전 인트라넷 지급요청 %d건 · 프로젝트 %d건 (연결 참고용)" % (len(snap.old.payments), len(snap.old.projects))
+    return snap, line
 
 
 def snapshot_lines(snap, snap_line, asof, cfg):
@@ -430,8 +434,12 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     requests = linking.requests_of(snap, asof, now)
     projects = linking.projects_of(snap)
     overrides, notes = linking.read_links(input_dir)
-    costs = linking.link_costs(books, requests, projects, overrides, cfg["link_days"], cfg["direct_prefixes"],
-                               cfg["direct_mark"], cfg["vat_codes"])
+    old = getattr(snap, "old", None)
+    if old is not None:
+        notes = list(notes) + old.notes
+    # 예전 인트라넷 지급요청은 원가 줄 연결에만 (requests 에는 넣지 않음: 요청미지급·요청 누계는 지금 인트라넷만)
+    costs = linking.link_costs(books, requests + linking.old_requests(old, asof, now), projects, overrides, cfg["link_days"],
+                               cfg["direct_prefixes"], cfg["direct_mark"], cfg["vat_codes"])
     revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])
     unused = linking.unused_links(books, overrides, costs["used"] | revenue["used"])
     return {"costs": costs, "revenue": revenue, "projects": projects, "snapshot": snap is not None,

@@ -44,27 +44,50 @@ def requests_of(snap, asof, now):
     return out
 
 
-def projects_of(snap):
-    """스냅숏 프로젝트 목록 -> OrderedDict 키 -> 프로젝트. 키 = 행사명 맨 앞 [코드] 또는 번호. 겹치면 첫 줄만 두고 dup=True."""
+def old_requests(old, asof, now):
+    """예전 인트라넷(2025~2026.3) 지급요청 -> requests_of 와 같은 모양. 원가 줄 연결에만 쓴다 (나갈 돈으로 넣지 않음)."""
+    if not old or not old.payments:
+        return []
+    from .old_intranet import as_snapshot
+    out = requests_of(as_snapshot(old), asof, now)
+    for rq in out:
+        rq["id"], rq["old"] = "o" + rq["id"], True
+    return out
+
+
+def projects_of(snap, old=None):
+    """스냅숏 프로젝트 목록 -> OrderedDict 키 -> 프로젝트. 키 = 행사명 맨 앞 [코드] 또는 번호. 겹치면 첫 줄만 두고 dup=True.
+
+    old: 예전 인트라넷(old_intranet.load). 지금 인트라넷에 없는 번호만 뒤에 더하고 old=True (사용자 2026-11-05)."""
     out = OrderedDict()
-    if snap is None:
-        return out
-    for p in _masked(snap.projects):
+    if old is None:
+        old = getattr(snap, "old", None)
+    if snap is not None:
+        _add_projects(out, _masked(snap.projects), False)
+    if old is not None and old.projects:
+        from .old_intranet import as_snapshot
+        _add_projects(out, _masked(as_snapshot(old).projects), True)
+    return out
+
+
+def _add_projects(out, rows, is_old):
+    for p in rows:
         title = p.get("행사명", "")
         key = project_code(title) or norm_project(p.get("번호", ""))
         if not key:
             continue
         if key in out:
+            if is_old:
+                continue   # 지금 인트라넷(또는 앞 해 예전 목록)에 있는 번호: 그쪽이 맞음
             out[key]["dup"] = True
             continue
-        out[key] = {"key": key, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),
+        out[key] = {"key": key, "old": is_old, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),
                     "client": p.get("클라이언트", ""), "client_norm": norm_vendor(p.get("클라이언트", "")),
                     "estimate": num(p.get("사전견적")), "quote": num(p.get("견적금액")), "budget": num(p.get("실행가")),
                     "event_date": parse_date(p.get("행사일")), "dup": False,
                     # 읽기 전 글자 (프로젝트.csv 를 만드는 쪽이 '숫자 아님'과 빈칸을 구별하고 행사일을 글자 그대로 쓴다)
                     "estimate_text": (p.get("사전견적") or "").strip(), "budget_text": (p.get("실행가") or "").strip(),
                     "event_text": (p.get("행사일") or "").strip()}
-    return out
 
 
 # ───────────── 줄 열쇠 ─────────────

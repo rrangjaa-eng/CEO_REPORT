@@ -465,7 +465,7 @@ def _link_notes(notes, issues):
         issues.add("프로젝트연결.csv", m.group(1) if m else "-", m.group(2) if m else rest)
 
 
-def _link_costs(books, req_all, snap, input_dir, issues):
+def _link_costs(books, req_all, snap, input_dir, issues, asof=None, now=None):
     """D-47: 월간 보고(변환.py)와 같은 linking.link_costs. 입력 폴더가 있으면 수동 지정(프로젝트연결.csv)과 설정.csv 변환_* 네 값을
     변환.py 와 같은 읽기(linking.read_links, convert.read_config)로 쓴다. 입력 폴더가 없으면 수동 지정 없이 linking 의 기본값이다.
     (linking·convert 는 이 모듈을 가져오므로 순환을 피해 함수 안에서 불러온다.)
@@ -481,7 +481,9 @@ def _link_costs(books, req_all, snap, input_dir, issues):
             if note.startswith("설정 "):   # '설정.csv 없음 / 읽지 못함'은 화면이 따로 알린다 (01.1 건수를 바꾸지 않음)
                 issues.add("설정.csv", "-", note[len("설정 "):])
         settings = dict((k, cfg[k]) for k in ("link_days", "direct_prefixes", "direct_mark", "vat_codes"))
-    return linking.link_costs(books, req_all, linking.projects_of(snap), overrides, **settings)
+    now = now or dt.datetime.now()
+    old = linking.old_requests(getattr(snap, "old", None), asof or now.date(), now)   # 예전 인트라넷: 연결에만 (사용자 2026-11-05)
+    return linking.link_costs(books, req_all + old, linking.projects_of(snap), overrides, **settings)
 
 
 def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
@@ -686,7 +688,7 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
             "est_in": est_in, "requests": data_requests, "no_calc": no_calc}
     projects, unrequested, unlinked, over_requested = _projects(_masked(snap.projects), req_all)
     # D-47: 프로젝트 (도) 원가는 월간 보고와 같은 D-38 연결로 (수동 → [코드] → 자동 → 미연결). 장부가 ok 가 아니면 연결하지 않는다 (A-4)
-    links = _link_costs(books, req_all, snap, input_dir, issues) if books.state == "ok" else None
+    links = _link_costs(books, req_all, snap, input_dir, issues, asof, now) if books.state == "ok" else None
     lists = {"requests_all": req_all, "amount_unknown": amount_unknown, "date_unknown": date_unknown,
              "status_unknown": status_unknown, "amount_unknown_events": amount_unknown_events, "undated": undated,
              "past": past, "beyond": beyond, "beyond_requests": beyond_requests,

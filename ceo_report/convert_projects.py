@@ -11,6 +11,7 @@ import re
 
 from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
+from .old_intranet import OLD_LAST_DAY
 from .wehago import norm_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
@@ -161,6 +162,7 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
         else:
             linked_elsewhere.append(ln["amount"])
     rows, period_total = [], {}
+    old_done = 0
     for key in keys:
         p = projects[key]
         if p.get("dup"):
@@ -181,8 +183,15 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
                          % (key, ", ".join(x.get("프로젝트번호", "") for x in same)))
         for column in CARRIED:
             row[column] = _carry_cell(column, old.get(column), key, notes)
+        if p.get("old") and not row["상태"] and (p["event_date"] is None or p["event_date"] <= OLD_LAST_DAY):
+            row["상태"] = "완료"   # 예전 인트라넷 행사는 끝난 건 (남은 예산을 지급 예정으로 만들지 않음, 사용자 2026-11-05)
+            old_done += 1
         rows.append(row)
     snap_rows = list(rows)
+    n_old = sum(1 for k in keys if projects[k].get("old"))
+    if n_old:
+        notes.append("예전 인트라넷 프로젝트 %d건 더함 (지금 인트라넷에 없는 번호) · 그중 %s 이전 행사 %d건은 상태 '완료'"
+                     % (n_old, OLD_LAST_DAY.isoformat(), old_done))
     columns = data.SCHEMA["프로젝트.csv"] + PROJECT_EXTRA
     only_prev = _prev_only(prev_rows, keys)
     order = sorted(only_prev, key=lambda k: (_digits(k) == "", int(_digits(k) or 0), k))   # 이전 파일 줄 순서와 무관하게

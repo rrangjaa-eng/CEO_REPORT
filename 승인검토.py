@@ -174,6 +174,8 @@ def make_screen(input_dir, out_dir, snap_path, asof, now, collected_now, wehago_
         wehago_dir = os.path.join(os.path.dirname(os.path.abspath(snap_path)), "위하고")
     d = load(input_dir)
     snap = read_snapshot(snap_path)
+    from ceo_report import old_intranet   # 예전 인트라넷 (2025~2026.3): 원가 연결·프로젝트 목록 참고 (사용자 2026-11-05)
+    snap.old = old_intranet.load(os.path.dirname(os.path.abspath(snap_path)))
     A = build(d, snap, asof, now, wehago_dir, input_dir=input_dir)
     page = render_approval(A, collected_now)
     os.makedirs(out_dir, exist_ok=True)
