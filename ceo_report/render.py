@@ -563,6 +563,9 @@ table.pt tr.tot td,table.pt.ayt tr.tot td{font-weight:700!important}
 .fs #avail td.av small{font-size:10px!important}
 .chip{font-size:10px!important}
 .exprow>.mgonly{grid-column:1/-1}
+.exp-c.tot{background:var(--navy-t);border-left:4px solid var(--navy);border-radius:4px;padding:6px 12px}
+.exp-c.tot .lab{color:var(--navy)!important;font-weight:700!important}
+.exp-c.tot .big{font-size:22px!important;color:var(--navy)!important}
 @media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}.fs.mon .mchart svg{max-height:290px!important}}
 """
 
@@ -1934,12 +1937,12 @@ def _expected_strip(R, mode="ceo", Y=None):
     add = E["past"] + E["this_year"]
     total = None if rev is None else rev + add
 
-    def cell(lab, val, sub=""):
-        return ("<div class='exp-c'><div class='lab'>%s</div><div class='big'>%s%s</div></div>"
-                % (esc(lab), val, " <small>%s</small>" % esc(sub) if sub else ""))
+    def cell(lab, val, sub="", cls=""):
+        return ("<div class='exp-c%s'><div class='lab'>%s</div><div class='big'>%s%s</div></div>"
+                % (cls, esc(lab), val, " <small>%s</small>" % esc(sub) if sub else ""))
     top = [cell("1월~%s 누적 매출" % ymt, W(rev, "확인 필요")),
            cell("+ 앞으로 들어올 매출", W(add), "%d건" % (E["past_n"] + E["this_year_n"])),
-           cell("= %d년 매출 예상" % y, W(total, "확인 필요"))]
+           cell("= %d년 매출 예상" % y, W(total, "확인 필요"), cls=" tot")]   # 결론 칸은 눈에 띄게 (사용자 2026-11-05)
     bot = "앞으로 들어올 매출 = 사전견적 − 이미 발행한 계산서 · 행사 끝남(미발행) %s (%d건) + %d년 남은 행사 %s (%d건)" % (
         won(E["past"]), E["past_n"], y, won(E["this_year"]), E["this_year_n"])
     # 풀이 줄(계산식·뺀 것)은 경영관리용에만 (사용자 2026-11-05: 월간 대표 보고 안내 최소)
