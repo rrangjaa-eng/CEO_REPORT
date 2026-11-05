@@ -60,7 +60,8 @@ def _event_date(text):
 
 
 BUDGET_VAT = 0.1      # 남은 예산은 공급가 기준이므로 지급(현금)은 부가세 10%를 더한다 (적게 보이지 않게)
-DONE_STATES = ("완료",)
+DONE_STATES = ("완료", "완료(예전 인트라넷)")
+OLD_STATE = "완료(예전 인트라넷)"   # old_intranet.OLD_STATE: 원가·매출 줄 연결에만 쓰고 프로젝트 표·미발행·예상 매출에서 뺀다
 
 
 def _month_end(d):
@@ -301,7 +302,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]
         P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
         P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
-    plist = list(proj.values())
+    plist = [P for P in proj.values() if (P.get("state") or "").strip() != OLD_STATE]   # 예전 인트라넷 끝난 행사 (사용자 2026-11-05)
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
     tot["budget"], tot["budget_missing"] = ssum(P["budget"] for P in plist)
@@ -516,8 +517,10 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                                "project": P["id"], "source": "남은 예산", "split": (k + 1, n)})
     R["intranet_only"] = {"requests": (len(skipped_requests), sum(x for x in skipped_requests if x)),
                           "budget": (len(skipped_budget), sum(skipped_budget))}
+    known = [a["date"] for a in R["s1"]["accounts"] if a["balance"] is not None]
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
-                                           int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""))
+                                           int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""),
+                                           cash_date=min(known) if known else None, txns=d.txns)
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax
     events, R["tax"] = merge_tax(events, getattr(d, "tax", None))

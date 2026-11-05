@@ -219,6 +219,59 @@ class TestSettle(unittest.TestCase):
         self.assertEqual([r["상태"] for r in rows], ["예정일 지남", "예정"])
         self.assertTrue(all("확인 못함" in r["근거"] for r in rows))
 
+    def test_due_after_book_date_is_not_called_overdue(self):
+        # 분개장이 11/2 까지만 있으면 11/3 예정은 '안 나감'으로 단정하지 않는다 (사용자 2026-11-05 급여)
+        rows = [plan_row("2026-11-03", "지급", "직원급여", 35102733)]
+        fundplan.settle(rows, books_with([]), dt.date(2026, 11, 3))
+        self.assertEqual(rows[0]["상태"], "예정")
+        self.assertIn("장부 기준일 2026-11-02 뒤", rows[0]["근거"])
+
+
+def plan_ev(due, state, basis, amount=35102733, io="지급"):
+    return {"date": dt.date(*map(int, due.split("-"))), "io": io, "cat": "인건비", "vendor": "직원급여", "vendor_code": "",
+            "amount": amount, "ym": due[:7], "stamp": dt.date(2026, 11, 4), "state": state, "basis": basis, "file": ""}
+
+
+class TestApplyBookGap(unittest.TestCase):
+    ASOF = dt.date(2026, 11, 5)
+
+    def test_paid_day_inside_bank_balance_is_not_listed_again(self):
+        plan = [plan_ev("2026-11-05", "예정일 지남", "분개장에 출금 없음 (장부 기준일 2026-11-04)")]
+        new, info = fundplan.apply([], plan, self.ASOF, 7, cash_date=dt.date(2026, 11, 5), txns=[])
+        self.assertEqual(new, [])
+        self.assertEqual(info["done"][0]["plan"]["state"], "통장 잔액에 반영")
+        self.assertEqual(info["moved"], [])
+
+    def test_same_amount_in_bank_lines_is_named(self):
+        plan = [plan_ev("2026-11-05", "예정", "장부 기준일 2026-11-04 뒤 예정일: 분개장으로 출금 확인 못함", amount=990000)]
+        txns = [{"date": dt.date(2026, 11, 5), "io": "출금", "amount": 990000}]
+        _, info = fundplan.apply([], plan, self.ASOF, 7, cash_date=dt.date(2026, 11, 5), txns=txns)
+        self.assertIn("통장 2026-11-05 출금 같은 금액", info["done"][0]["plan"]["basis"])
+
+    def test_bank_balance_older_than_due_still_moves_to_friday(self):
+        plan = [plan_ev("2026-11-05", "예정", "장부 기준일 2026-11-04 뒤 예정일: 분개장으로 출금 확인 못함")]
+        new, info = fundplan.apply([], plan, self.ASOF, 7, cash_date=dt.date(2026, 11, 4), txns=[])
+        self.assertEqual(new[0]["date"], dt.date(2026, 11, 6))
+        self.assertIn("이미 나갔으면 빼도 됨", new[0]["basis"])
+
+    def test_books_covering_due_keep_overdue(self):
+        plan = [plan_ev("2026-11-03", "예정일 지남", "분개장에 출금 없음 (장부 기준일 2026-11-04)")]
+        new, info = fundplan.apply([], plan, self.ASOF, 7, cash_date=dt.date(2026, 11, 5), txns=[])
+        self.assertEqual(len(info["moved"]), 1)
+        self.assertEqual(info["done"], [])
+
+
+class TestWeekListGap(unittest.TestCase):
+    def test_gap_payment_is_not_on_payday_list(self):
+        from ceo_report.render import week_outflows
+        ev = lambda day, amt, **k: dict({"date": day, "io": "out", "amount": amt, "firm": True, "cat": "자금계획서 인건비",
+                                         "desc": "직원급여", "project": "", "source": "자금계획서"}, **k)
+        R = {"asof": dt.date(2026, 11, 5), "payday": dt.date(2026, 11, 6),
+             "events": [ev(dt.date(2026, 11, 6), 500, gap=dt.date(2026, 11, 5)), ev(dt.date(2026, 11, 6), 70)]}
+        W = week_outflows(R)
+        self.assertEqual(W["pay"]["total"], 70)
+        self.assertEqual(W["gap"]["total"], 500)
+
 
 if __name__ == "__main__":
     unittest.main()

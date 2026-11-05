@@ -21,6 +21,7 @@ from .snapshot import PAYMENT_COLUMNS, PROJECT_COLUMNS
 
 FOLDER = "예전인트라넷"
 OLD_LAST_DAY = dt.date(2026, 3, 31)   # 예전 인트라넷을 쓴 마지막 날 (사용자 2026-11-05: 2026년 3월까지)
+OLD_STATE = "완료(예전 인트라넷)"   # 예전 인트라넷 끝난 행사: 보고서 프로젝트·미발행·예상 매출에서 뺀다 (사용자 2026-11-05)
 NO_PREFIX = "구"                       # 지급요청 번호가 지금 인트라넷 번호와 겹치지 않게 앞에 붙인다
 _PROJECT_RE = re.compile(r"^old_projects_\d{4}\.csv$", re.I)
 _PAYMENT_RE = re.compile(r"^old_payments_\d{4}\.csv$", re.I)

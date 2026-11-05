@@ -1003,8 +1003,12 @@ def week_outflows(R):
                 "total": sum(e["amount"] for e in known), "unknown_n": len(rs) - len(known)}
     # 금요일 출금 목록은 확정된 건만 (사용자 2026-11-04 재지적: 예상은 넣지 않는다). 예상 건은 pay_est 로 따로 두어
     # 자금 표(예상분 포함)와 맞출 수 있게 목록 아래 한 줄로만 알린다.
+    # 예정일이 지났는데 장부·통장 자료가 그날 전까지만 있어 나갔는지 모르는 지급: 출금일 목록에 싣지 않고 한 줄로 알린다
+    # (사용자 2026-11-05: 11/5 에 나간 급여가 11/6 출금 목록에 나옴). 자금 표에는 아직 나갈 돈으로 남는다.
+    gap = [e for e in rows if e.get("gap")]
+    rows = [e for e in rows if not e.get("gap")]
     upto = [e for e in rows if e["date"] <= fri]
-    return {"fri": fri, "start": asof, "end": end, "rows": rows,
+    return {"fri": fri, "start": asof, "end": end, "rows": rows, "gap": sums(gap),
             # 금액이 확정된 건만 (사용자 2026-11-04 세 번째 지적: '금액 미확인'도 넣지 않는다). 나머지는 pay_est 로 한 줄 알림
             "pay": sums([e for e in upto if e["firm"] and e["amount"] is not None]),
             "pay_est": sums([e for e in upto if not (e["firm"] and e["amount"] is not None)]),
@@ -1176,6 +1180,12 @@ def _week_out_table(R):
         if E["unknown_n"]:
             parts.append("금액 미확인 %d건" % E["unknown_n"])
         h.append("<div class='note'>%s</div>" % esc("%s은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)" % " · ".join(parts)))
+    G = W_["gap"]
+    if G["rows"]:
+        days = sorted(set(e["gap"] for e in G["rows"]))
+        h.append("<div class='note'>%s</div>" % esc(
+            "예정일(%s)이 지났지만 장부·통장 자료에 아직 없는 지급 %d건 %s원은 목록에서 뺌 — 이미 나간 돈이면 계좌잔액(통장 입출금내역)을 "
+            "새로 넣으면 ③ 자금 표에서도 빠짐 (지금은 아직 나갈 돈으로 포함)" % (", ".join(_md(x) for x in days), len(G["rows"]), won(G["total"]))))
     if C is None:
         h.append("<div class='note'>지난주 기록 없음 — 다음 주 보고부터 지난주 대비를 보임</div>")
     else:

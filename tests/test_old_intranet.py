@@ -101,7 +101,7 @@ class TestOldProjectsDone(unittest.TestCase):
                       "budget_text": "1", "event_text": "2026-01-02"}}
         t = convert_projects.build_projects(projects, {"lines": []}, [])
         state = dict((r["프로젝트번호"], r["상태"]) for r in t.rows)
-        self.assertEqual(state, {"93": "완료", "26001": "", "26002": ""})
+        self.assertEqual(state, {"93": "완료(예전 인트라넷)", "26001": "", "26002": ""})
 
 
 if __name__ == "__main__":

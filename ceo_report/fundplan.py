@@ -247,6 +247,10 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             line = journal[found]
             r["상태"] = "이미 지급" if r["입출금"] == "지급" else "이미 입금"
             r["근거"] = "분개장 %s 전표 %s %s" % (line["date"].isoformat(), line["no"], line["account"])
+        elif due <= asof and journal is not None and ref is not None and due > ref:
+            # 분개장이 예정일 전까지만 있으면 '안 나감'이라 단정하지 않는다 (사용자 2026-11-05: 11/5 급여가 11/6 목록에 나옴)
+            r["상태"] = "예정"
+            r["근거"] = "장부 기준일 %s 뒤 예정일: 분개장으로 %s 확인 못함" % (ref.isoformat(), "출금" if r["입출금"] == "지급" else "입금")
         elif due <= asof:
             r["상태"] = "예정일 지남"
             r["근거"] = ("분개장에 %s 없음 (장부 기준일 %s)" % ("출금" if r["입출금"] == "지급" else "입금", ref.isoformat())
@@ -267,7 +271,35 @@ def _next_friday(asof):
     return asof + dt.timedelta(days=(4 - asof.weekday()) % 7 or 7)
 
 
-def apply(events, plan, asof, stale_days, problem=""):
+_REF = re.compile(r"장부 기준일 (\d{4}-\d{2}-\d{2})")
+
+
+def _unverified(p):
+    """분개장이 예정일을 덮지 못해 나갔는지(들어왔는지) 모르는 줄: '예정' 이거나, 예전 변환의 '예정일 지남' 중 근거의 장부 기준일이 예정일 앞."""
+    if p["state"] == "예정":
+        return True
+    m = _REF.search(p.get("basis") or "")
+    return p["state"] == "예정일 지남" and bool(m) and dt.date(*[int(x) for x in m.group(1).split("-")]) < p["date"]
+
+
+def _in_balance(p, cash_date, txns):
+    """예정일이 지났고 장부로 확인 못한 줄이 통장 잔액에 이미 들어 있으면 그 근거 글자, 아니면 None.
+
+    계좌 잔액은 입출금내역으로 cash_date 까지 굴린 값이라 그날까지 나간·들어온 돈은 이미 빠져(더해져) 있다.
+    같은 금액 거래가 통장내역에 있으면 그 날짜를, 없으면 (급여처럼 여러 건으로 나뉘어 나감) 잔액 기준일을 근거로 적는다.
+    """
+    if cash_date is None or p["date"] > cash_date:
+        return None
+    io = "출금" if p["io"] == "지급" else "입금"
+    lo = p["date"] - dt.timedelta(days=3)
+    hit = [t for t in (txns or []) if t.get("io") == io and t.get("amount") == p["amount"]
+           and t.get("date") is not None and lo <= t["date"] <= cash_date]
+    if hit:
+        return "통장 %s %s 같은 금액 → 이미 %s (분개장 미반영)" % (min(t["date"] for t in hit).isoformat(), io, "지급" if io == "출금" else "입금")
+    return "예정일이 통장 잔액 기준일 %s 이전 → 잔액에 이미 반영된 것으로 봄 (분개장은 그 전까지만 있음)" % cash_date.isoformat()
+
+
+def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
     """자금계획서 줄로 일정을 바꾼다 (D-55 '자금계획서 기준'). -> (새 일정 목록, 설명 dict 또는 None).
 
     plan: data.load 의 d.fundplan (없으면 None -> 기존 일정 그대로, 설명 None).
@@ -325,6 +357,11 @@ def apply(events, plan, asof, stale_days, problem=""):
         if p["state"] in ("이미 지급", "이미 입금"):
             info["done"].append({"plan": p, "old": old})
             continue
+        if p["date"] <= asof and _unverified(p):
+            why = _in_balance(p, cash_date, txns)
+            if why is not None:   # 장부 기준일 뒤·통장 잔액 기준일 이전 예정일: 다음 금요일 목록에 다시 넣지 않는다 (사용자 2026-11-05)
+                info["done"].append({"plan": dict(p, state="통장 잔액에 반영", basis=why), "old": old})
+                continue
         io = "out" if p["io"] == "지급" else "in"
         ev = {"date": p["date"], "io": io, "amount": p["amount"], "firm": True,
               "cat": "자금계획서 " + (p["cat"] or p["io"]), "desc": p["vendor"],
@@ -336,6 +373,9 @@ def apply(events, plan, asof, stale_days, problem=""):
             if io == "out":
                 ev["date"] = _next_friday(asof)
                 ev["basis"] += ", 예정일 지난 미지급 → 다음 금요일"
+                if _unverified(p):
+                    ev["basis"] += " (장부·통장 자료가 예정일 전까지만 있음: 이미 나갔으면 빼도 됨)"
+                    ev["gap"] = p["date"]   # 주간 출금 목록에는 싣지 않고 따로 알린다 (사용자 2026-11-05: 11/5 급여가 11/6 목록에)
                 info["moved"].append(ev)
             else:
                 ev["firm"] = False
