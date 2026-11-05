@@ -563,7 +563,7 @@ table.pt tr.tot td,table.pt.ayt tr.tot td{font-weight:700!important}
 .fs #avail td.av small{font-size:10px!important}
 .chip{font-size:10px!important}
 .exprow>.mgonly{grid-column:1/-1}
-@media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}.fs.mon .mchart svg{max-height:240px!important}}
+@media print{.fs.mon .card:not(.mchart) svg{max-height:250px!important}.fs.mon .mchart svg{max-height:290px!important}}
 """
 
 CIRCLED = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.")   # 문서 절 번호 (2026-11-05)
@@ -1996,13 +1996,18 @@ def _month_series(R):
     return out
 
 
-def _month_chart(R, H=300):
+def _month_chart(R, H=250):
     """월별 매출·매입(막대 두 개)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에, 매입 추가).
     매출·매입 = 증빙 작성일자 기준 공급가액, 영업이익 = 월별 실적 기준. 같은 원 단위라 축 하나."""
     ser = _month_series(R)
     if len(ser) < 2:
         return ""
-    Wd, pl, pr, pt, pb = 900, 52, 10, 22, 30
+    ev_on = R.get("evid_month") is not None
+    # 달마다 숫자 줄 (사용자 2026-11-05: "차트에 숫자가 안 보인다") — 막대 위에 원 단위 숫자를 다 넣으면 겹쳐서, 그림 밑에 표처럼 줄로 둔다
+    rows = [("매출", 1)] + ([("매입", 2)] if ev_on else []) + [("영업이익", 3)]
+    RH = 18
+    Wd, pl, pr, pt, pb = 900, 74, 10, 22, 30 + RH * len(rows) + 6
+    H = H + RH * len(rows) + 6
     vals = [0] + [v for _, r, k, p in ser for v in (r, k, p) if v is not None]
     step = _nice_step((max(vals) - min(vals)) / 4 or 1)
     hi = step * math.ceil(max(vals) / step)
@@ -2037,8 +2042,14 @@ def _month_chart(R, H=300):
         cx = pl + i * gw + gw / 2
         bar(cx - bw - 1, rev, "#6b98dc", "매출", m)       # 막대 사이 2px
         bar(cx + 1, cost, "#d8964a", "매입", m)
-        out.append('<text x="%.1f" y="%d" font-size="14" text-anchor="middle" fill="#5b6475">%s</text>'
-                   % (cx, H - 10, esc(_ym_text(m))))
+        base = y(lo) + 20
+        out.append('<text x="%.1f" y="%.1f" font-size="14" text-anchor="middle" fill="#5b6475">%s</text>'
+                   % (cx, base, esc(_ym_text(m))))
+        rec = (m, rev, cost, np_)
+        for j, (_, k) in enumerate(rows):
+            v = rec[k]
+            out.append('<text x="%.1f" y="%.1f" font-size="12.5" text-anchor="middle" fill="%s">%s</text>'
+                       % (cx, base + 8 + RH * (j + 1), "#a8432f" if (v or 0) < 0 else "#1d2433", esc(won(v, "-")) if v is not None else "-"))
         if np_ is not None:
             pts.append((cx, y(np_), m, np_))
     if pts:
@@ -2047,8 +2058,10 @@ def _month_chart(R, H=300):
         for x, yy, m, v in pts:
             out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="#fff" stroke-width="2"><title>%s 영업이익 %s</title></circle>'
                        % (x, yy, "#b5523b" if v < 0 else "#1f4e8c", esc(_ym_text(m)), esc(won(v))))
-        x, yy, m, v = pts[-1]   # 마지막 달만 값 표시 (점마다 숫자 넣지 않음)
-        out.append('<text x="%.1f" y="%.1f" font-size="14" text-anchor="end" fill="#1d2433">%s</text>' % (x - 6, yy - 8, esc(won(v))))
+    base = y(lo) + 20
+    out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#e6e9ef"/>' % (8, Wd - pr, base + 7, base + 7))
+    for j, (lab, _) in enumerate(rows):
+        out.append('<text x="%d" y="%.1f" font-size="12.5" fill="#5b6475" font-weight="600">%s</text>' % (8, base + 8 + RH * (j + 1), lab))
     out.append("</svg>")
     ev = R.get("evid_month") is not None
     leg = ("<div class='legend'><span><i style='background:#6b98dc'></i>%s</span>%s"

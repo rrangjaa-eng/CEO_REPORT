@@ -49,6 +49,10 @@ class TestMonthChart(unittest.TestCase):
         self.assertIn("class='legend'", h)
         self.assertEqual(h.count('fill="#d8964a"'), 2)      # 매입 0인 3월은 막대 없음
         self.assertIn("증빙 작성일자 기준", h)
+        # 달마다 숫자 줄: 매출·매입·영업이익 (사용자 2026-11-05: "차트에 숫자가 안 보인다")
+        for lab in ("매출</text>", "매입</text>", "영업이익</text>"):
+            self.assertIn(lab, h)
+        self.assertIn(">−40</text>", h)
         self.assertNotIn("<polyline", rd._month_chart({"s4": {"ym": "2026-01", "dept": None, "sources": {}}}))
 
     def test_one_month_no_chart(self):
