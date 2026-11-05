@@ -951,15 +951,14 @@ def _results(R, cum=True):
                 cards.append(("%s 영업이익%s" % (esc(ym), tag), W(c["np"], "확인 필요"),
                               "영업이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"))))
         else:
-            cmp_rev, cmp_np = _month_compare(R, src, c)
-            cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"]))) + cmp_rev))
+            cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
             np_, foot = c["np"], ""
             if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (사용자 2026-11-04)
                 from .teamprofit import build as _tp_build
                 T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
                 if T is not None and T["company"]["net"] is not None:
                     np_ = T["company"]["net"]   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용은 영업외 비용 줄, 사용자 2026-11-04)
-            cards.append(("%s 영업이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot)) + cmp_np))
+            cards.append(("%s 영업이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot))))
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
         cards.append(("%s 매출" % ym, _na(why), ""))
@@ -994,52 +993,6 @@ def _results(R, cum=True):
 
 
 EARLY_MONTH_DAYS = 10   # 주간: 달 초 이날까지는 지난달 영업이익을 보인다 (2026-11-04 이해도 점검 U4)
-
-
-def _month_pl_at(R, src, m):
-    """그 달 회사 (매출, 영업이익) 또는 None. 영업이익은 월간 ⑤ 칸과 같은 기준(부서 비용이 있으면 팀 표 회사 영업이익)."""
-    s4 = R["s4"]
-    for month, table in (src or {}).get("by_month", []) + (src or {}).get("by_month_prev", []):
-        if month != m:
-            continue
-        co = [r for r in table if r["unit"] == "회사"]
-        if not co or not co[0]["cur"]:
-            return None
-        c = co[0]["cur"]
-        np_ = c["np"]
-        if s4.get("dept") is not None:
-            from .teamprofit import build as _tp_build
-            T = _tp_build(table, s4["dept"], m, False)
-            if T is not None and T["company"]["net"] is not None:
-                np_ = T["company"]["net"]
-        return c["revenue"], np_
-    return None
-
-
-def _month_compare(R, src, c):
-    """월간 ⑤ 매출·영업이익 칸 아래 '지난달 대비 · 작년 같은 달 대비' 증감 (사용자 2026-11-05). 자료 없는 비교는 뺀다."""
-    ym = R["s4"]["ym"]
-    y, mo = int(ym[:4]), int(ym[5:])
-    pm = "%d-%02d" % ((y, mo - 1) if mo > 1 else (y - 1, 12))
-    ly = "%d-%02d" % (y - 1, mo)
-    cur = _month_pl_at(R, src, ym) or (c["revenue"], c["np"])
-    rev, nps = [], []
-    for lab, m in (("지난달", pm), ("작년 %d월" % mo, ly)):
-        old = _month_pl_at(R, src, m)
-        if old is None:
-            continue
-        if cur[0] is not None and old[0] is not None:
-            d = cur[0] - old[0]
-            rate = (" (%+.1f%%)" % (d * 100.0 / old[0])).replace("-", "−") if old[0] > 0 else ""
-            rev.append("%s 대비 %s%s" % (lab, _signed(d), rate))
-        if cur[1] is not None and old[1] is not None:
-            nps.append("%s 대비 %s" % (lab, _signed(cur[1] - old[1])))
-    f = lambda xs: "".join("<br>" + esc(x) for x in xs)
-    return f(rev), f(nps)
-
-
-def _signed(v):
-    return ("+" if v > 0 else "−" if v < 0 else "±") + won(abs(v))
 
 
 def _prev_month_pl(R, src):

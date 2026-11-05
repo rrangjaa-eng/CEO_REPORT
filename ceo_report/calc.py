@@ -681,12 +681,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         by_month = [(m, [{"unit": unit, "target": target, "cur": _pl_sum([p for p in ps if p["ym"] == m]), "ytd": None}
                          for (unit, target), ps in units.items()])
                     for m in months if m[:4] == year and m <= ym]
-        # 작년 달마다의 표: 월간 ⑤ '작년 같은 달 대비' (사용자 2026-11-05). 올해 표(by_month)를 쓰는 누적 계산과 섞이지 않게 따로 둔다
-        by_month_prev = [(m, [{"unit": unit, "target": target, "cur": _pl_sum([p for p in ps if p["ym"] == m]), "ytd": None}
-                              for (unit, target), ps in units.items()])
-                         for m in months if m[:4] == str(int(year) - 1)]
-        pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months, "by_month": by_month,
-                       "by_month_prev": by_month_prev}
+        pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months, "by_month": by_month}
     R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
                "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
                "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None),
