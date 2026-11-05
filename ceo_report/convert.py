@@ -900,6 +900,10 @@ def build_bank(books, cfg):
         slips[k][0] |= bool(ln["debit"])
         slips[k][1] |= bool(ln["credit"])
     acct = lambda ln: (ln.get("vendor") or "").strip() or "보통예금 (거래처 없음)"
+    others = collections.defaultdict(list)   # 전표별 보통예금 아닌 줄 (상대 거래처)
+    for o in books.journal:
+        if o.get("date") is not None and wehago._squash(o.get("account_code")) not in cash:
+            others[(o["date"], o.get("no"))].append(o)
     txns, bal, snaps = [], collections.OrderedDict(), []
     last = lines[-1]["date"]
 
@@ -920,9 +924,19 @@ def build_bank(books, cfg):
         bal[a] = bal.get(a, 0) + v
         if v:
             both = slips[(d, ln.get("no"))]
-            txns.append(dict(zip(data.SCHEMA["입출금내역.csv"],
-                                 [d.isoformat(), a, "입금" if v > 0 else "출금", str(abs(v)),
-                                  data.TRANSFER if both[0] and both[1] else "", "", "", (ln.get("memo") or "").strip()])))
+            cat = data.TRANSFER if both[0] and both[1] else ""
+            memo = (ln.get("memo") or "").strip()
+            # 거래처 칸 (사용자 2026-11-05 지난주 대비): 같은 전표의 상대 줄 거래처. 상대 거래처가 여럿이고 금액 합이 맞으면 거래처별로 나눈다
+            side = "debit" if v < 0 else "credit"
+            party = [o for o in others.get((d, ln.get("no")), []) if o[side] and (o.get("vendor") or "").strip()]
+            if not cat and len(party) > 1 and sum(o[side] for o in party) == abs(v):
+                parts = [((o.get("vendor") or "").strip(), o[side]) for o in party]
+            else:
+                names = sorted(set((o.get("vendor") or "").strip() for o in party))
+                parts = [(names[0] if len(names) == 1 else "", abs(v))]
+            for vend, amt in parts:
+                txns.append(dict(zip(data.SCHEMA["입출금내역.csv"],
+                                     [d.isoformat(), a, "입금" if v > 0 else "출금", str(amt), cat, "", vend, memo])))
     if month_end is not None and month_end < last:
         snap(month_end)
     snap(last)

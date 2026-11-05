@@ -233,6 +233,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertIn("결<br>재", box)
         self.assertIn("담당", box)
         self.assertIn("대표이사", box)
+        self.assertNotIn("class='sd'", box)   # 날짜 줄 없음 (사용자 2026-11-05)
         self.assertNotIn("<table class='sign'>", render(R, "mgmt"))
         self.assertNotIn("<table class='sign'>", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                                 dt.date(2026, 10, 31)), "ceo"))

@@ -792,8 +792,22 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["evid_month"] = getattr(d, "evid_month", None)   # 증빙 작성일자 기준 달별 매출·매입 (월간 흐름 그림)
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
+    R["last_pay"] = last_payday_out(d.txns, R["payday"])
     R["risks"] = risks(R)
     return R
+
+
+def last_payday_out(txns, payday):
+    """지난주 출금일(이번 출금일 − 7일)에 통장에서 실제로 나간 돈 (사용자 2026-11-05: 지난주 대비는 진짜 지난주 금요일과 비교).
+
+    장부입출금(분개장 보통예금) 또는 입출금내역의 그날 출금, 계좌 간 이체는 뺀다. 입출금 자료가 그날까지 오지 않았으면 None."""
+    day = payday - 7 * DAY
+    if not txns or max(t["date"] for t in txns) < day:
+        return None
+    rows = [{"vendor": (t.get("vendor") or "").strip() or (t.get("memo") or "").strip() or "(거래처 없음)",
+             "amount": t["amount"], "memo": t.get("memo") or ""}
+            for t in txns if t["date"] == day and t["io"] == "출금" and t["cat"] != TRANSFER]
+    return {"date": day, "rows": rows, "total": sum(r["amount"] for r in rows)}
 
 
 ACCOUNT_GROUP_ORDER = ("원가", "판매비와관리비", "영업외비용")

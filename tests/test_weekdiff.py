@@ -89,34 +89,45 @@ class TestCompare(unittest.TestCase):
 
 
 class TestWeeklyReport(unittest.TestCase):
-    def test_outflow_list_is_first_and_shows_change_from_last_week(self):
+    """지난주 대비 (사용자 2026-11-05): 지난주 출금일(이번 출금일 − 7일)에 통장에서 실제 나간 돈과 비교.
+    대표용은 한 줄(빠진 것·추가된 것·변동된 것 건수와 금액), 건별 표는 경영관리용에만."""
+
+    def R(self, rows):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
-        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 6), 45_000_000, "샘플 지급")]}
+        R["last_pay"] = {"date": D(2026, 10, 30), "rows": rows, "total": sum(r["amount"] for r in rows)}
+        return R
+
+    def test_outflow_list_is_first_and_shows_change_from_last_week(self):
+        R = self.R([{"vendor": "샘플 지급처", "amount": 45_000_000, "memo": ""}])
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
             self.assertLess(fs.index("출금 목록"), fs.index("지금 자금은?"))
-            self.assertIn("지난주 대비:", fs)
-            self.assertIn("45,000,000", fs)
+            self.assertIn("지난주 대비: 지난주(10/30) 출금 45,000,000 → 이번 출금", fs)
 
-    def test_change_line_has_only_dropped_added_changed(self):
-        """금요일 목록 표 + 다음 주 항목별 요약 표. 아래 한 줄엔 빠진 것·추가된 것·변동된 것만 (사용자 2026-11-03)."""
-        R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
-        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [ev(D(2026, 11, 6), 8_800_000, "샘플 빠진 지급"),
-                                                            ev(D(2026, 11, 9), 1_000_000, "다음 주 것")]}
-        fs = first_screen(render(R, "ceo"))
-        part = fs[fs.index("출금 목록"):fs.index("10월 실적")]
-        # 비교 줄은 금요일 출금 카드 안 (다음 주 요약 표 앞): 지난주가 이번 금요일까지로 본 금액 vs 이번 금요일 (사용자 2026-11-03)
-        self.assertLess(part.index("지난주 대비:"), part.index("다음 주 지급 예정"))
-        self.assertEqual(part.count("<table"), 2)   # 금요일 출금 + 다음 주 항목별 요약
-        self.assertIn("항목별 요약", part)
+    def test_change_line_has_only_counts_and_detail_is_mgmt_only(self):
+        from ceo_report.render import week_outflows
+        R = self.R([{"vendor": "샘플 빠진 지급", "amount": 8_800_000, "memo": ""}])
+        cur = week_outflows(R)["pay"]
+        ceo, mg = first_screen(render(R, "ceo")), first_screen(render(R, "mgmt"))
+        part = ceo[ceo.index("출금 목록"):]
         line = part[part.index("지난주 대비:"):]
         line = line[:line.index("</div>")]
-        self.assertIn("빠진 것 1건 −8,800,000 (샘플 빠진 지급)", line)
-        self.assertIn("추가된 것", line)
-        self.assertIn("지난주(10/24) 확정 8,800,000 → 이번 출금", line)   # 다음 주(11/09) 것은 비교에 넣지 않음
-        self.assertNotIn("다음 주 것", line)
-        for wordy in ("일정에서 없어짐", "= 지금"):
-            self.assertNotIn(wordy, line)
+        self.assertIn("빠진 것 1건 −8,800,000", line)
+        self.assertIn("추가된 것 %d건" % len(cur["rows"]), line)
+        self.assertNotIn("샘플 빠진 지급", ceo)          # 건별 이름은 대표용에 없음
+        self.assertIn("대비 건별", mg)
+        self.assertIn("샘플 빠진 지급", mg)
+        self.assertLess(part.index("지난주 대비:"), part.index("다음 주 지급 예정"))
+
+    def test_same_vendor_is_a_change_not_drop_and_add(self):
+        from ceo_report.render import week_outflows
+        e = week_outflows(self.R([]))["pay"]["rows"][0]
+        R = self.R([{"vendor": "㈜ " + (e.get("desc") or ""), "amount": (e["amount"] or 0) + 100, "memo": ""}])
+        ceo = first_screen(render(R, "ceo"))
+        line = ceo[ceo.index("지난주 대비:"):]
+        line = line[:line.index("</div>")]
+        self.assertIn("변동된 것 1건 −100", line)
+        self.assertNotIn("빠진 것", line)
 
     def test_next_week_is_summed_by_item(self):
         from ceo_report.render import _next_week_summary
@@ -127,32 +138,23 @@ class TestWeeklyReport(unittest.TestCase):
         self.assertIn("<td>행사 외주·제작비</td><td>2건</td><td>11/09~11/12</td>", html)
         self.assertIn("3,000", html)
 
-    def test_without_last_week_record_says_so(self):
+    def test_without_last_week_bank_data_says_so(self):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
+        R["last_pay"] = None
         fs = first_screen(render(R, "ceo"))
-        self.assertIn("지난주 기록 없음", fs)
+        self.assertIn("지난주(10/30) 출금 자료 없음", fs)
         self.assertNotIn("지난주 대비", render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo"))
 
 
-class TestCli(unittest.TestCase):
-    def test_second_week_compares_with_record_left_by_first_week(self):
-        import contextlib
-        import importlib.util
-        import io
-        spec = importlib.util.spec_from_file_location("report_cli", os.path.join(ROOT, "보고서.py"))
-        cli = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cli)
-        out = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, out, True)
-        for day in ("2026-10-26", "2026-11-02"):
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(cli.main(["주간", "--기준일", day, "--입력", SAMPLE, "--출력", out, "--pdf", "안함"]), 0)
-        self.assertEqual(sorted(os.listdir(os.path.join(out, weekdiff.RECORD_DIR))),
-                         ["지급예정_2026-10-26.csv", "지급예정_2026-11-02.csv"])
-        with open(os.path.join(out, "2026-11-02_주간_대표보고.html"), encoding="utf-8") as f:
-            self.assertIn("지난주 대비:", f.read())
-        with open(os.path.join(out, "2026-10-26_주간_대표보고.html"), encoding="utf-8") as f:
-            self.assertIn("지난주 기록 없음", f.read())
+class TestLastPayday(unittest.TestCase):
+    def test_bank_outflows_on_last_payday_without_transfers(self):
+        from ceo_report.calc import last_payday_out
+        t = lambda d, io, amt, cat="", v="가": {"date": d, "io": io, "amount": amt, "cat": cat, "vendor": v, "memo": ""}
+        txns = [t(D(2026, 10, 30), "출금", 100), t(D(2026, 10, 30), "출금", 50, "계좌간이체"), t(D(2026, 10, 30), "입금", 7),
+                t(D(2026, 10, 29), "출금", 9), t(D(2026, 11, 2), "출금", 1)]
+        L = last_payday_out(txns, D(2026, 11, 6))
+        self.assertEqual((L["date"], L["total"], len(L["rows"])), (D(2026, 10, 30), 100, 1))
+        self.assertIsNone(last_payday_out([t(D(2026, 10, 20), "출금", 1)], D(2026, 11, 6)))   # 그날까지 자료 없음
 
 
 if __name__ == "__main__":

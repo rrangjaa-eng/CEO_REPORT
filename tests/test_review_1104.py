@@ -67,7 +67,7 @@ class TestCeoWordingAndTopStrip(unittest.TestCase):
         strip = self.ceo[self.ceo.index("<div class='four top'>"):]
         strip = strip[:strip.index("<div class='sec'>")]
         p = [x for x in self.R["s2"]["periods"] if not x.get("pick")]
-        for v in (week_outflows(self.R)["pay"]["total"], p[0]["all"]["avail"], p[-1]["all"]["avail"],
+        for v in (week_outflows(self.R)["pay"]["total"], p[0]["firm"]["avail"], p[-1]["firm"]["avail"],
                   self.R["s5"]["overdue_total"]):
             self.assertIn("{:,}".format(v), strip)
         self.assertIn("입금일 지난 미수금", strip)
