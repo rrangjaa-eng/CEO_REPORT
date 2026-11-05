@@ -167,7 +167,7 @@ def attach(events, reqs):
     used = set()
     n = 0
     outs = [e for e in events if e.get("io") == "out" and e.get("amount") is not None and pid_of(e.get("project"))
-            and e.get("detail_source") != "수기"]
+            and e.get("detail_source") != "수기" and e.get("source") != "남은 예산"]   # 예상(미요청 예산 나눔)에는 붙이지 않음
     for e in sorted(outs, key=lambda e: (e.get("date") is None, e.get("date") or 0, -(e["amount"] or 0))):   # 날짜 없는 줄은 뒤로
         pid = pid_of(e.get("project"))
         cands = [i for i, r in enumerate(pool) if i not in used and pid_of(r["project"]) == pid]

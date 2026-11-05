@@ -142,6 +142,11 @@ class TestAttach(unittest.TestCase):
         self.assertEqual(payreq.attach([a, b], [rq(1000, "가"), rq(2000, "나")]), 2)
         self.assertEqual((a["detail"], b["detail"]), ("가", "나"))
 
+    def test_estimates_never_get_a_note(self):
+        e = dict(ev(1000), source="남은 예산", firm=False)
+        payreq.attach([e], [rq(1000, "가")])
+        self.assertNotIn("detail", e)
+
     def test_manual_detail_wins_and_empty_note_skipped(self):
         e = ev(1000, detail="손으로 넣음", src="수기")
         e2 = ev(2000)

@@ -1077,6 +1077,11 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
                                % (len(reqs), sum(1 for r in reqs if r["note"])))
             except OSError:
                 summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
+        else:   # 최근 수집에 지급 요청서가 없으면 예전 것을 남기지 않는다 (지난 세부사항이 새 출금에 붙지 않게)
+            try:
+                os.remove(os.path.join(input_dir, payreq.FILE))
+            except OSError:
+                pass
     if books.state == "ok":
         from . import review_checks
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
