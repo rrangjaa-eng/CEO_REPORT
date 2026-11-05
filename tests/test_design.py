@@ -512,15 +512,15 @@ class TestSectionsDoNotSplit(unittest.TestCase):
             with self.subTest(kind):
                 # 주간 ① 출금 목록만 쪽을 넘어 이어질 수 있다 (사용자 2026-11-04: 길면 통째로 밀려 1쪽이 비던 것)
                 brk = html.count("<div class='sec brk'><div class='q'>")
-                self.assertEqual(brk, 1)   # 월간은 ③ 지난 미처리 (1쪽 끝에서 시작, 길면 이어짐 — 사용자 2026-11-05)
+                self.assertEqual(brk, 1 if kind == "weekly" else 0)
                 pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ⑥: 새 쪽에서 통째로
-                self.assertEqual(pgb, 0 if kind == "weekly" else 1)
+                self.assertEqual(pgb, 0 if kind == "weekly" else 2)   # 월간 ③(2쪽 첫머리)·⑥
                 # 주간 ② 자금은 2쪽 첫머리에서, 표와 그림 사이에서만 나뉠 수 있다 (사용자 2026-11-05: 빈 곳 최소)
                 flow = html.count("<div class='sec sflow pgb'><div class='q'>")
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
                 self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertEqual(html.count("break-inside:auto"), 3)   # 월간 ③ 지난 미처리 이어짐 규칙 하나 더 (2026-11-05)
+                self.assertEqual(html.count("break-inside:auto"), 2)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 
