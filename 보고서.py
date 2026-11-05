@@ -317,9 +317,10 @@ def main(argv=None):
     pdf_failed = False
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
+        page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
-                f.write(render(R, mode))
+                f.write(page)
         except OSError as e:
             _say(_write_help(a.출력, e))
             return 7

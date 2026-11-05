@@ -1941,33 +1941,12 @@ def _ev_rows(rows, R):
 
 
 def _ev_change_table(R):
-    W_ = week_outflows(R)
-    prev = _prev_firm(R)
-    if not prev:
-        return "<div class='note'>지난주 기록 없음 — 다음 주 보고부터 건별로 보임</div>"
-    C = compare(prev, W_["pay"]["rows"], W_["start"], W_["fri"])
-    h = ["<div class='note'>지난주(%s) 기록 지급예정_%s.csv 와 이번 출금 목록을 거래처·프로젝트·구분으로 맞춤</div>"
-         % (esc(_md(C["asof"])), esc(d2s(C["asof"]))),
-         "<table class='pt evt'><thead><tr><th>구분</th><th>거래처</th><th>프로젝트</th><th>지난주 예상</th><th>이번 출금</th><th>차이</th></tr></thead><tbody>"]
-    name = {"빠짐": "빠진 것", "새로 생김": "추가된 것", "금액 확인됨": "추가된 것"}
-    for c in C["changes"]:
-        pv = "—" if c["prev"] is None and c["kind"] in ("새로 생김",) else ("미확인" if c["prev"] is None else won(c["prev"]))
-        cv = "—" if c["kind"] == "빠짐" else ("미확인" if c["cur"] is None else won(c["cur"]))
-        if c["kind"] == "날짜 바뀜":
-            pv += " (%s)" % _md(c["prev_date"])
-            cv += " (%s)" % _md(c["cur_date"])
-        d = "미확인" if (c["cur"] is None and c["kind"] != "빠짐") or (c["prev"] is None and c["kind"] not in ("새로 생김", "금액 확인됨")) else (
-            (c["cur"] or 0) - (c["prev"] or 0))
-        dtxt = d if isinstance(d, str) else ("날짜만" if d == 0 else ("+" if d > 0 else "−") + won(abs(d)))
-        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
-            esc(name.get(c["kind"], "변동된 것 (%s)" % c["kind"])), esc(c["desc"]), esc(_pname(R, c["project"])),
-            esc(pv), esc(cv), esc(dtxt)))
-    if not C["changes"]:
-        h.append("<tr><td colspan='6'>변동 없음</td></tr>")
-    h.append("<tr class='tot'><td>합계</td><td></td><td></td><td>%s</td><td>%s</td><td>%s</td></tr></tbody></table>" % (
-        esc(won(C["prev_total"])), esc(won(C["cur_total"])),
-        esc("미확인" if C["diff"] is None else ("+" if C["diff"] >= 0 else "−") + won(abs(C["diff"])))))
-    return "".join(h)
+    """근거 1-2 지난주 대비 · 건별: 첫 화면 한 줄과 같은 기준 (지난 출금일 통장 출금 vs 이번 출금 목록, 사용자 2026-11-05)."""
+    h = _vs_last_week(R, week_outflows(R)["pay"], "mgmt")
+    a, b = "<div class='mgonly'>", "</div><!-- /mgonly -->"
+    if a in h and b in h:   # 건별 표만 (근거 묶음은 이미 경영관리용 안이라 한 번 더 감싸지 않음)
+        return h[h.index(a) + len(a):h.rindex(b)]
+    return "<div class='note'>지난주 대비 건별 차이 없음 (또는 지난주 출금 자료 없음)</div>"
 
 
 def _ev_targets(R):

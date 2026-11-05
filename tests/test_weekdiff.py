@@ -104,6 +104,14 @@ class TestWeeklyReport(unittest.TestCase):
             self.assertLess(fs.index("출금 목록"), fs.index("지금 자금은?"))
             self.assertIn("지난주 대비: 지난주(10/30) 출금 45,000,000 → 이번 출금", fs)
 
+    def test_renders_when_last_week_record_exists(self):
+        """지난주 보고 기록(지급예정_*.csv)이 있어도 두 판 모두 만들어짐 (11/5 PC에서 NameError 'compare')."""
+        R = self.R([{"vendor": "샘플 지급처", "amount": 45_000_000, "memo": ""}])
+        R["week_prev"] = {"asof": D(2026, 10, 24), "rows": [{"date": D(2026, 10, 30), "desc": "샘플 지급처", "project": "",
+                                                            "cat": "미지급금", "amount": 45_000_000, "firm": True}]}
+        for edition in ("ceo", "mgmt"):
+            self.assertIn("지난주 대비", render(R, edition))
+
     def test_change_line_has_only_counts_and_detail_is_mgmt_only(self):
         from ceo_report.render import week_outflows
         R = self.R([{"vendor": "샘플 빠진 지급", "amount": 8_800_000, "memo": ""}])
