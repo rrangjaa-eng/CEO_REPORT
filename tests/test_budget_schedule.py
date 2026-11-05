@@ -41,10 +41,12 @@ class TestBudgetDue(unittest.TestCase):
         self.assertEqual(budget_due(dt.date(2026, 12, 3), ASOF), dt.date(2027, 1, 29))
         self.assertEqual(budget_due(dt.date(2027, 1, 20), ASOF), dt.date(2027, 2, 26))
 
-    def test_past_due_moves_to_next_friday(self):
-        # 9월 행사 → 10월 30일(금)은 기준일 이전 → 기준일 다음 금요일
-        self.assertEqual(budget_due(dt.date(2026, 9, 18), ASOF), dt.date(2026, 11, 6))
-        self.assertEqual(budget_due(dt.date(2026, 9, 18), dt.date(2026, 11, 6)), dt.date(2026, 11, 13))
+    def test_past_due_spreads_to_month_end_friday(self):
+        # 9월 행사 → 10월 30일(금)은 기준일 이전 → 그달 남은 금요일에 나눔: 끝 = 11월 마지막 금요일 (사용자 2026-11-05 결정)
+        self.assertEqual(budget_due(dt.date(2026, 9, 18), ASOF), dt.date(2026, 11, 27))
+        self.assertEqual(budget_due(dt.date(2026, 9, 18), dt.date(2026, 11, 6)), dt.date(2026, 11, 27))
+        # 그달 남은 금요일이 하나뿐이면 다음 달 마지막 금요일까지
+        self.assertEqual(budget_due(dt.date(2026, 9, 18), dt.date(2026, 11, 23)), dt.date(2026, 12, 25))
 
     def test_unknown_event_date(self):
         self.assertIsNone(budget_due(None, ASOF))

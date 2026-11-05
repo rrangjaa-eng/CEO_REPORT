@@ -46,8 +46,18 @@ def budget_due(event_date, asof):
     due = _month_end(nxt)
     due -= (due.weekday() - 4) % 7 * DAY
     if due <= asof:
-        due = asof + ((4 - asof.weekday()) % 7 or 7) * DAY
+        # 기한이 지난 남은 예산은 다음 금요일 한 주에 몰지 않고 그달 남은 금요일에 나눈다 (사용자 2026-11-05 결정 카드 권장안:
+        # 11월 출금 예상에는 그대로 두되 한 주에 1.1억이 몰려 가용자금이 마이너스로 보이던 것). 남은 금요일이 하나뿐이면 다음 달 말까지.
+        first = asof + ((4 - asof.weekday()) % 7 or 7) * DAY
+        due = _last_friday(first)
+        if due <= first:
+            due = _last_friday(_add_months(dt.date(first.year, first.month, 1), 1))
     return due
+
+
+def _last_friday(d):
+    e = _month_end(d)
+    return e - (e.weekday() - 4) % 7 * DAY
 
 
 def _event_date(text):
