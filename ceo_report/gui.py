@@ -129,9 +129,6 @@ class Window(object):
         style.configure("Sec.TLabel", font=F["sec"], background=C["card"])
         style.configure("Big.TButton", font=F["big"], padding=(12, 7))
         style.configure("Tiny.TButton", padding=(1, 0))
-        style.configure("Go.TButton", font=F["big"], padding=(12, 7), foreground="#ffffff", background=C["blue"])
-        style.map("Go.TButton", background=[("disabled", "#9db7f0"), ("active", "#1d4ed8"), ("!disabled", C["blue"])],
-                  foreground=[("disabled", "#eef2ff"), ("!disabled", "#ffffff")])
         style.configure("Sec.TLabelframe", background=C["card"])
         style.configure("Sec.TLabelframe.Label", font=F["sec"], background=C["card"])
         style.configure("TNotebook", background=C["bg"])
@@ -181,8 +178,15 @@ class Window(object):
         r.pack(fill="x", pady=pady)
         return r
 
+    def _go(self, parent, text, cmd):
+        """파란 주 단추. Windows 기본 테마(ttk)는 단추 바탕색을 바꿀 수 없어 흰 글자가 안 보이므로 tk.Button 으로 그린다
+        (사용자 2026-11-05: '자료 변환·주간 보고 글자가 안 보여')."""
+        return tk.Button(parent, text=text, command=cmd, font=self.fonts["big"], foreground="#ffffff",
+                         background=C["blue"], activeforeground="#ffffff", activebackground="#1d4ed8",
+                         disabledforeground="#dbe4ff", relief="flat", borderwidth=0, padx=12, pady=6, cursor="hand2")
+
     def _btn(self, parent, text, cmd, style="TButton", side="left", full=False):
-        b = ttk.Button(parent, text=text, command=cmd, style=style)
+        b = self._go(parent, text, cmd) if style == "Go" else ttk.Button(parent, text=text, command=cmd, style=style)
         if full:
             b.pack(fill="x")
         else:
@@ -275,7 +279,7 @@ class Window(object):
 
         # 2 변환하고 확인 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력)
         s2 = self.s2 = self._step(tab, 1, 2, "변환하고 확인")
-        self._btn(s2, "자료 변환", lambda: self.start("변환"), style="Go.TButton", full=True)
+        self._btn(s2, "자료 변환", lambda: self.start("변환"), style="Go", full=True)
         self.conv_info = tk.StringVar(value="")
         self._hint(s2, "", self.conv_info)
         self._sep(s2, "확인할 것")
@@ -300,8 +304,9 @@ class Window(object):
         r = self._row(s3, (0, 0))
         r.columnconfigure((0, 1), weight=1, uniform="b")
         for i, kind in enumerate(("주간", "월간")):
-            b = ttk.Button(r, text="%s 보고" % kind, command=lambda k=kind: self.report(k),
-                           style="Go.TButton" if kind == "주간" else "Big.TButton")
+            cmd = (lambda k=kind: self.report(k))
+            b = self._go(r, "%s 보고" % kind, cmd) if kind == "주간" else \
+                ttk.Button(r, text="%s 보고" % kind, command=cmd, style="Big.TButton")
             b.grid(row=0, column=i, sticky="ew", padx=(0, 6) if i == 0 else (0, 0))
             self.buttons.append(b)
         # 주간 출금 목록: 건별 / 같은 거래처 합침 (사용자 2026-11-05)
@@ -750,7 +755,10 @@ class Window(object):
     def set_busy(self, busy, text, ok=None):
         self.busy = busy
         for b in self.buttons:
-            b.state(["disabled"] if busy else ["!disabled"])
+            if isinstance(b, ttk.Widget):
+                b.state(["disabled"] if busy else ["!disabled"])
+            else:
+                b.configure(state="disabled" if busy else "normal", background="#9db7f0" if busy else C["blue"])
         self.status.set(text)
         self.status_lab.configure(foreground=C["text"] if ok is None else (C["green"] if ok else C["red"]))
         if busy:
@@ -989,7 +997,7 @@ class Window(object):
                 self.group.set("거래처별")
                 self.merge_changed()
                 top.destroy()
-            ttk.Button(r, text="확인", command=apply, style="Go.TButton").pack(side="right")
+            self._go(r, "확인", apply).pack(side="right")
             ttk.Button(r, text="모두 해제", command=lambda: [v.set(False) for v, _ in vars_]).pack(side="right", padx=6)
             ttk.Button(r, text="전부 선택", command=lambda: [v.set(True) for v, _ in vars_]).pack(side="right")
 
@@ -1042,7 +1050,7 @@ class Window(object):
             self.start("근거" + kv.get())
         b = ttk.Frame(frm)
         b.pack(fill="x", pady=(10, 0))
-        ttk.Button(b, text="고른 근거로 PDF 만들기", command=make, style="Go.TButton").pack(side="right")
+        self._go(b, "고른 근거로 PDF 만들기", make).pack(side="right")
         load()
 
     # ───────────── 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기) ─────────────
