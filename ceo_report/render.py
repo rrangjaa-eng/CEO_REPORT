@@ -139,6 +139,49 @@ table.pt td.av b{color:#111!important;font-size:15px!important}
 """
 
 
+# 가독성 다듬기 (사용자 2026-11-05 "더 가독성 좋고 예쁘게"): 문서 양식은 그대로, 강조색 하나(남색)로 단계를 만든다.
+# 제목 > 절 제목 > 요약 숫자 > 표 순으로 크기·굵기 차이를 두고, 표 줄 간격을 넓히고 옅은 줄무늬로 줄을 따라가기 쉽게.
+DOC2_CSS = """
+:root{--navy:#1f3a5f;--navy-t:#eaf0f7;--navy-l:#c9d6e6;--zebra:#f8fafc}
+.doc-h h1{color:var(--navy);border-bottom:3px double var(--navy);margin-bottom:12px!important}
+.doc-h h1 .co{color:#555}
+table.dinfo th{background:var(--navy-t)!important;color:var(--navy)}
+table.dinfo th,table.dinfo td,table.sign,table.sign th,table.sign td{border-color:var(--navy)!important}
+table.sign th{color:var(--navy)!important}
+.q{color:var(--navy)!important;border-bottom:2px solid var(--navy)!important;font-size:15px!important}
+.four.top{border:0!important;border-top:2px solid var(--navy)!important;border-bottom:1px solid var(--navy)!important}
+.four.top .card{border-left:1px solid var(--navy-l)!important}
+.four.top .card .lab{background:var(--navy-t)!important;color:var(--navy)!important;border-bottom:1px solid var(--navy-l)!important}
+.four.top .card .big{font-size:19px!important;color:#111}
+.four:not(.top){border:0!important;border-top:2px solid var(--navy)!important;border-bottom:1px solid var(--navy)!important}
+.four:not(.top)>.card{border-left:1px solid var(--navy-l)!important}
+.four:not(.top)>.card .lab{color:var(--navy)!important}
+.fs .foot{color:#666}
+.fri span{color:var(--navy)}.fri b{color:var(--navy)!important;font-size:20px!important}
+table.pt,.fs table{border-top:2px solid var(--navy)!important;border-bottom:1px solid var(--navy)!important}
+table.pt th,.fs table th{background:var(--navy-t)!important;color:var(--navy)!important;border-bottom:1px solid var(--navy-l)!important}
+table.pt td{border-bottom:1px solid #e3e8ef!important;padding-top:5px;padding-bottom:5px}
+table.pt tbody tr:nth-child(even) td{background:var(--zebra)}
+table.pt tr.tot td,tr.tot td{background:var(--navy-t)!important;color:var(--navy);border-top:1px solid var(--navy)!important}
+table.pt td.av b{color:var(--navy)!important}
+.wchg{color:#333}.wsub{color:var(--navy)!important}
+.q .ev{color:#8a96a8!important}
+.dsrc{color:#777}
+.legend span{color:#555}
+/* 번져 보임 줄이기 (사용자 2026-11-05): 옅은 회색 글자를 진하게, 아주 작은 글자를 키움, 글자 테두리(흰 띠) 없앰 */
+body{color:#000;text-rendering:geometricPrecision}
+.note,.scope,.evid,.dsrc,.fs .foot,.legend span,.kpi .s,small,.q .ev{color:#3a3a3a!important}
+table.pt.wo small.dt.na,table.pt.wo .dt.na,table.pt.wo small.est,.na{color:#6a5200!important}
+svg text{stroke:none!important}
+svg text[fill="#5b6475"]{fill:#333}
+@media print{body{font-size:11px}table{font-size:11px}.note,.evid,.dsrc{font-size:10px!important}
+table.pt.wo small.dt,table.pt td small,table.pt.wo small.est{font-size:10px!important}}
+@media print{.q{font-size:13px!important}.four.top .card .big{font-size:16.5px!important}.fri b{font-size:17px!important}
+table.pt td{padding-top:4px;padding-bottom:4px}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+"""
+
+
 def _na(text):
     return '<span class="na">%s</span>' % esc(text)
 
@@ -320,7 +363,7 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS,
+             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS + DOC2_CSS,
                                               # 월간은 인쇄 때 80%: 표가 넓어 A4 3쪽에 맞춤 (사용자 2026-11-04)
                                               "" if R["kind"] == "weekly" else " mon"))
     # 문서 머리 (사용자 2026-11-05: 진짜 문서처럼): 가운데 제목, 왼쪽 문서 정보 표, 오른쪽 결재란
@@ -1247,7 +1290,7 @@ def _proj_cell(R, e):
 def _out_rows_table(G, C, empty, R=None):
     """금요일 출금 표 (사용자 2026-11-03: 지난주 대비·상태 칸 없음, 프로젝트 지급요청은 구분 자리에 상세 내역).
     지난주 대비는 표 아래 한 줄로만. C는 받아 두되 표에는 쓰지 않는다."""
-    h = ["<table class='pt wo'><thead><tr><th>예정일</th><th>거래처</th><th>프로젝트</th><th>쓰임새 · 상세 내역</th>"
+    h = ["<table class='pt wo'><thead><tr><th>예정일</th><th>거래처</th><th>프로젝트</th><th>내역</th>"
          "<th>금액</th></tr></thead><tbody>"]
     if not G["rows"]:
         h.append("<tr><td colspan='5'>%s</td></tr>" % empty)
@@ -1273,7 +1316,7 @@ def _next_week_summary(G):
     groups = OrderedDict()
     for e in G["rows"]:
         groups.setdefault(_use_name(e), []).append(e)
-    h = ["<table class='pt wn'><thead><tr><th>쓰임새</th><th>건수</th><th>예정일</th><th>금액</th><th>상태</th></tr></thead><tbody>"]
+    h = ["<table class='pt wn'><thead><tr><th>구분</th><th>건수</th><th>예정일</th><th>금액</th><th>상태</th></tr></thead><tbody>"]
     if not groups:
         h.append("<tr><td colspan='5'>다음 주 지급 예정 없음</td></tr>")
     for cat, rs in sorted(groups.items(), key=lambda kv: -sum(e["amount"] or 0 for e in kv[1])):
