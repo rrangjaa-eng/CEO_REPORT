@@ -292,5 +292,13 @@ class TestFillProjects(unittest.TestCase):
         self.assertIn("여러 프로젝트", evs[2]["basis"])
 
 
+class TestEventRange(unittest.TestCase):
+    def test_range_event_date_is_its_last_day(self):
+        from ceo_report.calc import _event_date
+        self.assertEqual(_event_date("2026.04.06-2026.04.08"), dt.date(2026, 4, 8))
+        self.assertEqual(_event_date("2026-04-06 ~ 2026-04-09"), dt.date(2026, 4, 9))
+        self.assertEqual(_event_date("2026.04.06"), dt.date(2026, 4, 6))
+
+
 if __name__ == "__main__":
     unittest.main()

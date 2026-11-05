@@ -53,6 +53,11 @@ def budget_due(event_date, asof):
 def _event_date(text):
     if isinstance(text, dt.date):
         return text
+    import re
+    # 기간으로 적힌 행사일 '2026.04.06-2026.04.08'·'…~…' 은 끝난 날로 본다 (사용자 2026-11-05 미발행 '확인 필요 1건')
+    m = re.match(r"^\s*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})\s*[~\-–]\s*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})\s*$", str(text or ""))
+    if m:
+        text = m.group(2)
     try:
         return parse_date(text)
     except Exception:  # 해석할 수 없는 행사일은 날짜 없는 지급 예정으로 둔다
