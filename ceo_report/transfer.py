@@ -326,6 +326,26 @@ def build(events, accounts, start, end):
     return rows, blocked, skipped
 
 
+def missing_accounts(events, accounts, start, end):
+    """[start, end] 거래처 지급 중 계좌가 없어 이체 파일에 못 넣는 곳 (사용자 2026-11-05: 그 자리에서 계좌 입력)
+    -> [{vendor, code, amount, date, why}] (금액 미확인·계좌 여러 개는 빼고, 계좌·예금주가 없는 곳만)."""
+    picked, _ = pick(events, start, end)
+    out = []
+    for k, ln in picked:
+        if ln["unknown"] or ln["amount"] <= 0:
+            continue
+        acc, why = find_account(accounts, ln)
+        if acc is not None:
+            if acc.get("예금주") and acc.get("계좌번호"):
+                continue
+            why = "예금주 없음" if not acc.get("예금주") else "계좌번호 없음"
+        elif "계좌 정보 없음" not in (why or ""):
+            continue
+        out.append({"vendor": ln["vendor"], "code": ln["code"], "amount": ln["amount"],
+                    "date": min(ln["dates"]).isoformat(), "why": why})
+    return out
+
+
 def _col(i):
     return chr(ord("A") + i)
 
@@ -367,8 +387,9 @@ def write_xlsx(path, rows):
     os.replace(tmp, path)
 
 
-def make_file(input_dir, output_dir, start, end, say, asof=None):
-    """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None."""
+def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None):
+    """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None.
+    missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게)."""
     from .calc import compute
     from .data import load
     d = load(input_dir)
@@ -377,6 +398,8 @@ def make_file(input_dir, output_dir, start, end, say, asof=None):
     for n in notes:
         say(n)
     rows, blocked, skipped = build(R["events"], accounts, start, end)
+    if missing is not None:
+        missing.extend(missing_accounts(R["events"], accounts, start, end))
     say("이체 대상 %s ~ %s: 파일에 넣음 %d건 %s원, 못 넣음 %d건, 정기 지급 %d건은 뺌" % (
         start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
     for vendor, amount, why in blocked:

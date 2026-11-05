@@ -145,6 +145,10 @@ def chart(s2, H=260, simple=False):
         vals += [b["in_firm"] + b["in_est"], -(b["out_firm"] + b["out_est"])]
         if has_bal:
             vals += [b["bal_firm"], b["bal_all"]]
+    # 최소 보유현금 선 (2026-11-05 사용자: 대표 보고 디자인 제안 3) — 예상 잔액이 이 선 밑이면 점을 빨갛게
+    mc = s2.get("min_cash") if has_bal else None
+    if mc:
+        vals.append(mc)
     step = _nice_step((max(vals) - min(vals)) / 4 or 1)
     hi = step * math.ceil(max(vals) / step)
     lo = step * math.floor(min(vals) / step)
@@ -191,18 +195,26 @@ def chart(s2, H=260, simple=False):
             lab = lab.split(" ")[1]
         out.append('<text x="%.1f" y="%d" font-size="11.5" text-anchor="middle" fill="#1d2433">%s</text>'
                    % (cx, H - pb + 14, esc(lab)))
+    if mc:
+        out.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="6 4"/>'
+                   % (pl, Wd - pr, y(mc), y(mc)))
+        out.append('<text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#c0392b">최소 보유현금 %s</text>'
+                   % (Wd - pr - 2, y(mc) - 4, _axis(mc)))
+    key = "bal_all" if simple else "bal_firm"
+
+    def dots(pts):
+        for b, p in zip(bs, pts):
+            x_, y_ = p.split(",")
+            low = mc and b[key] < mc
+            out.append('<circle cx="%s" cy="%s" r="%s" fill="%s"/>' % (x_, y_, "4" if low else "2.5", "#c0392b" if low else "#1f4e8c"))
     if has_bal and simple:
         out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join(pts_a))
-        for p in pts_a:
-            x_, y_ = p.split(",")
-            out.append('<circle cx="%s" cy="%s" r="2.5" fill="#1f4e8c"/>' % (x_, y_))
+        dots(pts_a)
     elif has_bal:
         out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join(pts_f))
         out.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="1.5" stroke-dasharray="4 3"/>'
                    % " ".join(pts_a))
-        for p in pts_f:
-            x_, y_ = p.split(",")
-            out.append('<circle cx="%s" cy="%s" r="2.5" fill="#1f4e8c"/>' % (x_, y_))
+        dots(pts_f)
     else:
         out.append('<text x="%d" y="%d" font-size="11" fill="#8a5a00">%s — 예상 잔액 선은 그리지 않음 (입금·지급 예정만 표시)</text>'
                    % (pl + 6, pt + 12, "지급 자료 없음" if s2["out_missing"] else "잔액 미확인"))
@@ -212,7 +224,8 @@ def chart(s2, H=260, simple=False):
     if simple:
         legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>들어올 돈</span>'
                   '<span><i style="background:#b5523b"></i>나갈 돈</span>'
-                  + ('<span><i style="background:#1f4e8c"></i>예상 잔액</span>' if has_bal else "") + "</div>")
+                  + ('<span><i style="background:#1f4e8c"></i>예상 잔액</span>' if has_bal else "")
+                  + ('<span><i style="background:#c0392b"></i>최소 보유현금 밑 (빨간 점)</span>' if mc else "") + "</div>")
         return "".join(out) + legend
     legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정분</span>'
               '<span><i style="background:#9cc9b3"></i>입금 예상분</span><span><i style="background:#b5523b"></i>지급 확정분</span>'
@@ -220,6 +233,8 @@ def chart(s2, H=260, simple=False):
     if has_bal:
         legend += ('<span><i style="background:#1f4e8c"></i>예상 잔액(확정분만)</span>'
                    '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>예상 잔액(예상분 포함)</span>')
+    if mc:
+        legend += '<span><i style="background:#c0392b"></i>최소 보유현금 밑 (빨간 점)</span>'
     legend += "</div>"
     return "".join(out) + legend
 
@@ -1065,6 +1080,31 @@ def _cat_cell(e):
     return esc(_use_name(e, "")) + ("<small class='dt'>%s</small>" % esc(d) if d else "")
 
 
+GROUP_USES = ("직원 복리후생",)   # 같은 날 여러 사람에게 나가는 작은 지급은 한 줄로 (2026-11-05 사용자: 주간 2쪽)
+GROUP_MIN = 3
+
+
+def _group_small(rows):
+    """출금 표에 보일 줄: 같은 날·같은 쓰임새(GROUP_USES)가 GROUP_MIN 줄 이상이면 '직원 N명' 한 줄로 합친다 (합계·건수는 그대로)."""
+    groups = OrderedDict()
+    for e in rows:
+        use = _use_name(e, "")
+        key = (e["date"], use) if use in GROUP_USES and e["amount"] is not None else (id(e),)
+        groups.setdefault(key, []).append(e)
+    out = []
+    for key, es in groups.items():
+        if len(es) < GROUP_MIN:
+            out.extend(es)
+            continue
+        amts = set(e["amount"] for e in es)
+        each = " · 1인 %s원" % won(es[0]["amount"]) if len(amts) == 1 else ""
+        out.append({"date": key[0], "amount": sum(e["amount"] for e in es), "firm": all(e["firm"] for e in es),
+                    "desc": "직원 %d명" % len(es), "project": "", "cat": es[0].get("cat") or "",
+                    "detail": "%d건 한 줄로 합침%s" % (len(es), each), "grouped": es})
+    out.sort(key=lambda e: (e["date"], -(e["amount"] or 0)))
+    return out
+
+
 def _out_rows_table(G, C, empty, R=None):
     """금요일 출금 표 (사용자 2026-11-03: 지난주 대비·상태 칸 없음, 프로젝트 지급요청은 구분 자리에 상세 내역).
     지난주 대비는 표 아래 한 줄로만. C는 받아 두되 표에는 쓰지 않는다."""
@@ -1072,7 +1112,7 @@ def _out_rows_table(G, C, empty, R=None):
          "<th>금액</th></tr></thead><tbody>"]
     if not G["rows"]:
         h.append("<tr><td colspan='5'>%s</td></tr>" % empty)
-    for e in G["rows"]:
+    for e in _group_small(G["rows"]):
         amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
         if not e["firm"]:
             amt += " <small class='est'>예상</small>"
@@ -1701,7 +1741,8 @@ def month_flow(R):
         bf += b["in_firm"] - b["out_firm"]
         ba += b["in_firm"] + b["in_est"] - b["out_firm"] - b["out_est"]
         b["bal_firm"], b["bal_all"] = bf, ba
-    return {"buckets": bs, "start": start, "out_missing": s2["out_missing"], "first": first}
+    return {"buckets": bs, "start": start, "out_missing": s2["out_missing"], "first": first,
+            "min_cash": s2.get("min_cash")}
 
 
 def _over_line(R):
@@ -1894,7 +1935,7 @@ def _first_screen(R, mode, per):
             sec = _mg(mode, sec)   # 계정과목별 사용 금액은 경영관리용에만 (사용자 2026-11-04: 대표 보고에서 없앰)
         h.append(sec)
     h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.</div>")
-    h.append(_glossary(R))   # 첫 화면 쪽 안에 (쪽 나눔 뒤로 밀려 빈 쪽이 생기지 않게)
+    h.append(_mg(mode, _glossary(R)))   # 용어 풀이는 경영관리용에만 (2026-11-05 사용자: 대표 보고 디자인 제안 4). 첫 화면 쪽 안에 (쪽 나눔 뒤로 밀려 빈 쪽이 생기지 않게)
     n = len(blocks)
     h.append(_mg(mode, _evidence(R, n) + "<div class='sec'>%s%s</div><div class='sec'>%s%s</div>" % (
         _q(n + 1, "프로젝트별 원가 예산·집행"), _project_bars(R, per, active_only=not monthly),

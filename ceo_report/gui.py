@@ -14,7 +14,7 @@ import webbrowser
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from . import app, credstore, editmode
+from . import app, checklist, credstore, editmode
 
 TITLE = "대표 보고"
 
@@ -89,6 +89,15 @@ class Window(object):
         ttk.Entry(r, textvariable=self.pick, width=11).pack(side="left", padx=4)
         ttk.Label(r, text="예: 2026-12-31", style="S.TLabel").pack(side="left")
 
+        # 확인할 것 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력) · 정합성 점검 버튼
+        f0 = self._sec(colA, "확인할 것", "중복 의심 전표·지급 예정>장부·통장 대조·홈택스 대조 등. 브라우저 화면에서 건마다 결정을 고름")
+        r = self._row(f0)
+        self._btn(r, "확인할 것 화면", self.open_checklist, big=True)
+        self._btn(r, "정합성 점검", self.run_integrity)
+        self.check_now = tk.StringVar(value="")
+        ttk.Label(r, textvariable=self.check_now, style="S.TLabel").pack(side="left")
+        self.check = None
+
         # ① 자료 준비
         f1 = self._sec(colA, "① 자료 변환", "WEHAGO 분개장·자금계획서를 수집\\위하고 폴더에 넣은 뒤")
         r = self._row(f1)
@@ -157,6 +166,17 @@ class Window(object):
         r = self._row(f4)
         self._btn(r, "넣기", self.add_schedule)
         self._btn(r, "자금일정 파일 열기", lambda: self.open_dir(os.path.join(self.paths.input, app.SCHED_FILE)))
+
+        # ⑩ 통장 잔액 (사용자 2026-11-05: 편의 기능 4 — 통장 잔액을 넣으면 장부 보통예금과 대조)
+        fb = self._sec(colB, "⑩ 통장 잔액 대조", "은행 앱에서 본 그날 끝 통장 잔액 합계(모든 보통예금 계좌). 장부 보통예금과 맞춰 봄")
+        r = self._row(fb)
+        self.b_day = tk.StringVar(value=dt.date.today().isoformat())
+        self.b_amt = tk.StringVar()
+        ttk.Label(r, text="날짜").pack(side="left")
+        ttk.Entry(r, textvariable=self.b_day, width=11).pack(side="left", padx=(4, 8))
+        ttk.Label(r, text="통장 잔액 합계(원)").pack(side="left")
+        ttk.Entry(r, textvariable=self.b_amt, width=15).pack(side="left", padx=(4, 8))
+        self._btn(r, "저장·대조", self.save_bank)
 
         # ⑤ 카드 납부일
         f5 = self._sec(colB, "⑤ 카드 납부일", "카드사별 납부일·기산일(이용기간 시작일). 저장 후 '자료 변환'부터 반영")
@@ -257,6 +277,7 @@ class Window(object):
         bar.pack(side="right", fill="y")
         self.fit_to_screen()
         root.after(100, self.pump)
+        root.after(500, self.refresh_checks)
 
     def _sec(self, parent, title, hint=""):
         f = ttk.LabelFrame(parent, text=title, style="Sec.TLabelframe", padding=(8, 4, 8, 6))
@@ -323,6 +344,8 @@ class Window(object):
                     self.log.configure(state="disabled")
                 elif kind == "done":
                     self.finish(*val)
+                elif kind == "checks":
+                    self.check_now.set(val)
                 elif kind == "edited":
                     pdf, text = val
                     self.say(text)
@@ -366,6 +389,12 @@ class Window(object):
     def finish(self, task, rc, files):
         if task in ("승인검토", "인트라넷"):
             self.after_collect(rc)
+        if task in ("변환", "정합성"):
+            self.refresh_checks()
+        if task == "정합성":
+            self.set_busy(False, "정합성 점검 끝 (종료코드 %s)" % rc)
+            self.open_checklist()
+            return
         if rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
@@ -376,6 +405,62 @@ class Window(object):
         else:
             self.say("%s 끝 — 오류가 있습니다 (위 글을 확인하세요)" % task)
             self.set_busy(False, "%s 끝 — 오류 (종료코드 %s)" % (task, rc))
+
+    # 확인할 것 · 정합성 · 통장 잔액
+    def _asof_date(self):
+        try:
+            return dt.date.fromisoformat(self.asof.get().strip())
+        except ValueError:
+            return dt.date.today()
+
+    def refresh_checks(self):
+        """확인할 것 건수를 버튼 옆에 (계산이 있어 따로 도는 스레드에서)."""
+        asof = self._asof_date()
+
+        def work():
+            try:
+                G = checklist.gather(self.paths.root, self.paths.input, asof)
+                c = G["counts"]
+                text = "결정할 것 %d건 · 고치기 기다림 %d건" % (c["open"], c["fix"])
+                self.q.put(("line", checklist.summary_line(G) + " — '확인할 것 화면'에서 결정"))
+            except Exception as e:
+                text = "건수를 못 셈 (%s)" % type(e).__name__
+            self.q.put(("checks", text))
+        threading.Thread(target=work, daemon=True).start()
+
+    def open_checklist(self):
+        if self.check and self.check.server:
+            self.check.stop()
+        self.check = checklist.Session(self.paths.root, self.paths.input, self._asof_date(),
+                                       on_saved=lambda text: self.q.put(("line", text)))
+        url = self.check.start()
+        webbrowser.open(url)
+        self.say("──── 확인할 것 화면을 브라우저로 엽니다 (모으는 데 몇 초 걸림) ────")
+
+    def run_integrity(self):
+        if self.busy:
+            return
+        self.say("──── 정합성 점검 시작 (%s) — 입력 폴더는 바꾸지 않음, 1~2분 ────" % dt.datetime.now().strftime("%H:%M:%S"))
+        self.set_busy(True, "정합성 점검 중…")
+        asof = self.asof.get().strip()
+
+        def work():
+            try:
+                rc, _ = app.run_integrity(self.paths, self.say, asof)
+            except Exception as e:
+                self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
+                rc = 7
+            self.q.put(("done", ("정합성", rc, [])))
+        threading.Thread(target=work, daemon=True).start()
+
+    def save_bank(self):
+        try:
+            day, amt = checklist.save_bank(self.paths.input, self.b_day.get(), self.b_amt.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.say("통장 잔액 저장: %s %s원 — %s" % (day.isoformat(), "{:,}".format(amt), checklist.bank_line(self.paths.input, day)))
+        self.b_amt.set("")
 
     def after_collect(self, rc):
         """계정 기억 (사용자 2026-11-04): 체크했으면 로그인에 성공한 계정을 외장하드 입력 폴더 파일에 둔다. 아니면 비밀번호를 비운다."""
@@ -540,13 +625,76 @@ class Window(object):
             self.say("지급일 끝이 시작보다 앞섭니다")
             return
         self.say("──── 이체 파일 ────")
+        missing = []
         try:
-            path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof)
+            path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing)
         except Exception as e:   # 트레이스백 대신 글로
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             return
-        if path:
+        if missing:
+            self.ask_accounts(missing)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
+        elif path:
             self.open_dir(self.paths.output)
+
+    def ask_accounts(self, missing):
+        """계좌 없는 거래처 창: 줄마다 거래처코드·은행·계좌번호·예금주 → 저장하고 이체 파일 다시 만들기."""
+        from . import transfer
+        top = tk.Toplevel(self.root)
+        top.title("계좌 없는 거래처 %d곳" % len(missing))
+        top.transient(self.root)
+        frm = ttk.Frame(top, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="이체 파일에 넣지 못한 거래처입니다. 아는 곳만 넣고 '저장하고 다시 만들기'를 누르세요. "
+                            "비운 줄은 그대로 둡니다 (은행에서 직접 이체).", style="S.TLabel", wraplength=640).grid(
+            row=0, column=0, columnspan=6, sticky="w", pady=(0, 6))
+        for c, t in enumerate(("거래처", "금액", "거래처코드", "은행", "계좌번호", "예금주")):
+            ttk.Label(frm, text=t).grid(row=1, column=c, sticky="w", padx=3)
+        banks = ("신한", "국민", "기업", "우리", "하나", "농협", "SC제일", "한국씨티", "수협", "신협", "새마을금고", "우체국",
+                 "아이엠뱅크", "부산", "경남", "광주", "전북", "제주", "KDB산업", "카카오뱅크", "케이뱅크", "토스뱅크")
+        rows = []
+        box = ttk.Frame(frm)
+        box.grid(row=2, column=0, columnspan=6, sticky="nsew")
+        canvas = tk.Canvas(box, height=min(32 * len(missing), 360), width=700, highlightthickness=0)
+        bar = ttk.Scrollbar(box, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        for i, m in enumerate(missing):
+            v = {k: tk.StringVar() for k in ("code", "bank", "no", "holder")}
+            v["code"].set(m.get("code") or "")
+            ttk.Label(inner, text=(m["vendor"] or "-")[:18], width=18).grid(row=i, column=0, sticky="w", padx=3, pady=2)
+            ttk.Label(inner, text="{:,}".format(m["amount"]), width=11, anchor="e").grid(row=i, column=1, padx=3)
+            ttk.Entry(inner, textvariable=v["code"], width=8).grid(row=i, column=2, padx=3)
+            ttk.Combobox(inner, textvariable=v["bank"], values=banks, width=8).grid(row=i, column=3, padx=3)
+            ttk.Entry(inner, textvariable=v["no"], width=16).grid(row=i, column=4, padx=3)
+            ttk.Entry(inner, textvariable=v["holder"], width=10).grid(row=i, column=5, padx=3)
+            rows.append((m, v))
+        inner.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def save_all():
+            n = 0
+            for m, v in rows:
+                if not (v["bank"].get().strip() or v["no"].get().strip()):
+                    continue
+                try:
+                    transfer.save_account(self.paths.input, v["code"].get(), m["vendor"], v["bank"].get(), v["no"].get(),
+                                          v["holder"].get())
+                    n += 1
+                except (ValueError, OSError) as e:
+                    self.say("계좌 저장 못함 %s: %s" % (m["vendor"], e if isinstance(e, ValueError) else type(e).__name__))
+                    return
+            self.say("계좌 %d곳 저장 — 이체 파일을 다시 만듭니다" % n)
+            top.destroy()
+            self.refresh_accounts()
+            self.make_transfer()
+
+        r = ttk.Frame(frm)
+        r.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        ttk.Button(r, text="저장하고 다시 만들기", command=save_all, style="Big.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(r, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
 
     def open_dir(self, path):
         if not open_path(path):

@@ -102,6 +102,60 @@ def _module(name):
     return m
 
 
+BACKUP_DIR = "입력_백업"
+BACKUP_KEEP = 10
+
+
+def backup_input(paths, say=None, keep=BACKUP_KEEP, now=None):
+    """변환 전에 입력 폴더를 통째로 입력_백업\날짜_시각 에 복사하고 최근 keep 개만 남긴다 (사용자 2026-11-05: 편의 기능 6).
+    입력\이전(변환이 바꾼 파일 보관)과 인트라넷 계정 파일은 복사하지 않는다. -> 만든 폴더 또는 None."""
+    from . import credstore
+    if not os.path.isdir(paths.input):
+        return None
+    base = os.path.join(paths.root, BACKUP_DIR)
+    stamp = (now or dt.datetime.now()).strftime("%Y%m%d_%H%M%S")
+    dest = os.path.join(base, stamp)
+    k = 2
+    while os.path.exists(dest):
+        dest = os.path.join(base, "%s_%d" % (stamp, k))
+        k += 1
+    try:
+        os.makedirs(base, exist_ok=True)
+        shutil.copytree(paths.input, dest, ignore=shutil.ignore_patterns("이전", credstore.CRED_FILE, "*.tmp", "~$*"))
+    except OSError as e:
+        if say:
+            say("입력 폴더 백업을 못 함 (%s) — 변환은 계속합니다" % (e.strerror or type(e).__name__))
+        return None
+    olds = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)) and n[:8].isdigit())
+    for n in olds[:-keep] if keep and len(olds) > keep else []:
+        shutil.rmtree(os.path.join(base, n), ignore_errors=True)
+    if say:
+        say("입력 폴더 백업: %s (최근 %d개만 남김)" % (os.path.join(BACKUP_DIR, os.path.basename(dest)), keep))
+    return dest
+
+
+def run_integrity(paths, say, asof=""):
+    """정합성 점검 (사용자 2026-11-05: 창에 버튼). 입력 폴더는 바꾸지 않는다. -> (종료코드, 결과 파일)."""
+    from . import integrity
+    try:
+        day = _check_day(asof, "기준일")
+    except ValueError as e:
+        say(str(e))
+        return 2, None
+    out = os.path.join(paths.root, "정합성점검.txt")
+    rc = integrity.run(paths.root, out, day)
+    try:
+        with open(out, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    keep = [ln for ln in lines if ln.startswith("#") or "← 바뀜" in ln or "바뀐 숫자" in ln or "확인 필요" in ln or "대조 " in ln
+            or "점검 오류" in ln]
+    for ln in keep[:30]:
+        say(ln)
+    return rc, out
+
+
 def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday=""):
     """작업 하나를 돌리고 (종료코드, 새로 생긴 출력 파일 목록)을 돌려준다. 글은 say(한 줄)로 넘긴다.
 
@@ -114,6 +168,8 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
         return 2, []
     if task in ("승인검토", "인트라넷") and collect:
         argv += ["--수집", "함"]
+    if task == "변환":
+        backup_input(paths, say)
     started = time.time() - 1
     out = _Lines(say)
     mod = _module(name)

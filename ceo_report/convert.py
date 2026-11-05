@@ -17,7 +17,7 @@ from . import data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt", "확인할것.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -1050,8 +1050,13 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
         dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
-        listings = tidy + overlap + dups + checks
-        summary = ([tidy[0]] if tidy else []) + [overlap[0], dups[0], checks[0]]
+        from . import checklist, hometax
+        ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
+        listings = tidy + overlap + dups + ht["notes"] + checks
+        summary = ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
+        items = (review_checks.duplicate_items(books.journal) + ht["items"]
+                 + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
+        checklist.save_convert_items(input_dir, items, now)
     snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
     lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
                          snap_warning)

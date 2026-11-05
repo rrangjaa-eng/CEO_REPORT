@@ -52,13 +52,85 @@ def duplicate_slips(journal):
     return out
 
 
+CONTROL = {"매입전표": ("25300", "debit"), "매출전표": ("10800", "credit")}   # 거래처 상대 계정, 정산 쪽
+CANCEL_DAYS = 31
+
+
+def classify_duplicates(journal):
+    """중복 의심 묶음을 장부로 더 따져 본다 (사용자 2026-11-05: 확인할 것이 최소한으로).
+
+    정상으로 보는 것 (확인할 것에 올리지 않음):
+      · 적요나 프로젝트가 전표마다 다름 → 다른 물건·다른 행사
+      · 같은 거래처 같은 금액의 취소(−) 전표가 앞뒤 31일 안에 있음 → 취소 후 다시 발행
+      · 전표 수만큼 같은 금액이 정산됨(미지급금 지급·외상매출금 입금) → 각각 실제로 오간 돈
+    -> [(날짜, [전표번호], 금액, 판단 글, 정상 여부)] 금액 큰 순."""
+    slips = collections.defaultdict(list)
+    for ln in journal:
+        if ln.get("date") is not None:
+            slips[(ln["date"], str(ln.get("no") or ""))].append(ln)
+    out = []
+    for day, nos, total in duplicate_slips(journal):
+        lines = slips[(day, nos[0])]
+        sort = next(((ln.get("type") or ln.get("sort") or "").strip() for ln in lines
+                     if (ln.get("type") or ln.get("sort") or "").strip() in CONTROL), "")
+        memos = set(tuple(sorted(set(_sq(ln.get("memo")) for ln in slips[(day, n)]))) for n in nos)
+        projs = set(tuple(sorted(set(_sq(ln.get("project_name")) for ln in slips[(day, n)]))) for n in nos)
+        why, ok = "", False
+        if len(memos) > 1 or len(projs) > 1:
+            why, ok = "적요·프로젝트가 전표마다 다름 → 다른 거래로 봄", True
+        elif sort:
+            code, side = CONTROL[sort]
+            other = "credit" if side == "debit" else "debit"
+            party = [ln for ln in lines if _sq(ln.get("account_code")) == code]
+            amt = (party[0].get(other) or 0) if party else 0
+            vn = (party[0].get("vendor_norm") or norm_vendor(party[0].get("vendor"))) if party else ""
+            same_v = [ln for ln in journal if ln.get("date") is not None and _sq(ln.get("account_code")) == code
+                      and (ln.get("vendor_norm") or norm_vendor(ln.get("vendor"))) == vn]
+            cancel = [ln for ln in same_v if (ln.get(other) or 0) == -amt and amt and abs((ln["date"] - day).days) <= CANCEL_DAYS]
+            settled = [ln for ln in same_v if (ln.get(side) or 0) == amt and amt and ln["date"] >= day]
+            if cancel:
+                why, ok = "취소(−) 전표 %s 있음 → 취소 후 다시 발행으로 봄" % ", ".join(sorted(str(c.get("no") or "") for c in cancel)), True
+            elif len(settled) >= len(nos):
+                why, ok = "같은 금액 %s %d번 → 각각 실제로 오간 돈으로 봄" % ("지급" if sort == "매입전표" else "입금", len(settled)), True
+            else:
+                why = "적요·프로젝트 같음 · 같은 금액 %s %d번 (전표 %d건) → 이중 입력 가능성 높음" % (
+                    "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
+        else:
+            why = "적요·프로젝트 같음 → 이중 입력 가능성"
+        out.append((day, nos, total, why, ok))
+    return out
+
+
 def duplicate_lines(journal, limit=20):
-    dups = duplicate_slips(journal)
-    out = ["중복 입력 의심 전표 %d묶음 (같은 날짜·계정·거래처·금액, 전표번호만 다름 — 이중 입력인지 위하고에서 확인)" % len(dups)]
-    for day, nos, total in dups[:limit]:
-        out.append("  중복 의심 %s 전표 %s · 전표 금액 %s" % (day.isoformat(), ", ".join(nos), util.won(total)))
-    if len(dups) > limit:
-        out.append("  … 그 밖 %d묶음" % (len(dups) - limit))
+    cls = classify_duplicates(journal)
+    sus = [c for c in cls if not c[4]]
+    out = ["중복 입력 의심 전표 %d묶음 (같은 날짜·계정·거래처·금액, 전표번호만 다름 · 장부로 따져 정상으로 본 %d묶음은 뺌 — 남은 것은 확인할 것 화면)"
+           % (len(sus), len(cls) - len(sus))]
+    for day, nos, total, why, ok in sus[:limit]:
+        out.append("  중복 의심 %s 전표 %s · 전표 금액 %s · %s" % (day.isoformat(), ", ".join(nos), util.won(total), why))
+    if len(sus) > limit:
+        out.append("  … 그 밖 %d묶음" % (len(sus) - limit))
+    for day, nos, total, why, ok in [c for c in cls if c[4]][:limit]:
+        out.append("  정상으로 봄 %s 전표 %s · %s · %s" % (day.isoformat(), ", ".join(nos), util.won(total), why))
+    return out
+
+
+def duplicate_items(journal):
+    """확인할 것 화면용 (사용자 2026-11-05: 화면에서 보고 결정 입력)."""
+    out = []
+    for day, nos, total, why, ok in classify_duplicates(journal):
+        if ok:
+            continue
+        vend = ""
+        for ln in journal:
+            if ln.get("date") == day and str(ln.get("no") or "") == nos[0] and ln.get("vendor"):
+                vend = ln["vendor"]
+                break
+        out.append({"id": "중복|%s|%s" % (day.isoformat(), ",".join(nos)), "kind": "중복 의심 전표", "date": day.isoformat(),
+                    "amount": total, "vendor": vend,
+                    "title": "같은 날·같은 계정·거래처·금액 전표 %d건 (전표번호만 다름)" % len(nos),
+                    "detail": "전표 %s · 전표 금액 %s원 · %s" % (", ".join(nos), util.won(total), why),
+                    "choices": ["이중 입력 — 위하고에서 고칠 것", "정상 (별개 거래)"]})
     return out
 
 
