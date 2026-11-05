@@ -347,7 +347,7 @@ def load(folder):
         out["notes"].append("%s %s: 지급 %d줄 %s원 · 입금 %d줄 %s원 (%s)" % (
             ym, n, sum(1 for it in res["items"] if it["io"] == "out"), "{:,}".format(sums["out"]),
             sum(1 for it in res["items"] if it["io"] == "in"), "{:,}".format(sums["in"]),
-            "위하고 자금계획입력 날짜별 조회" if res["form"] == "자동수집" else "소계·계와 맞음"))
+            "위하고 자금계획입력 계획월 조회" if res["form"] == "자동수집" else "소계·계와 맞음"))
         if res.get("settled"):
             out["notes"].append("%s %s: 위하고가 이미 반제한 줄 %d건 (금액 없음, 일정에 넣지 않음)" % (ym, n, len(res["settled"])))
     out["unused"].sort()
