@@ -33,7 +33,7 @@ CASH_DETAIL_RE = re.compile(r"^예정일\s*:\s*(\d{4})\.(\d{1,2})\.(\d{8})\s*-\s
 CASH_HEAD = ("일자", "항목명", "입금액", "지출액", "현금잔액")
 
 
-# 크롬 확장 '대표보고 위하고 수집'이 자금계획입력(SAFM0102) 화면에서 날짜별로 받은 자금계획 (2026-11-05 사용자 결정).
+# 크롬 확장 '대표보고 위하고 수집'이 자금계획입력(SAFM0102) 화면 '계획월' 보기에서 달마다 받은 자금계획 (2026-11-05 사용자 결정).
 # 현금대비잔액과 같은 원전표 단위·미반제 건만 (11월 74줄 원 단위 일치 확인). 반제 0원 줄과 전월이월은 없다.
 AUTO_PLAN_SUFFIX = "자금계획 자동수집.json"
 
@@ -45,8 +45,7 @@ def is_auto_plan_name(name):
 
 def parse_auto(path):
     """자동수집 자금계획(.json) -> [(달 res, 자료일)] (달마다 parse_cash 와 같은 모양, form '자동수집').
-    그 달 모든 날을 받은 달만 ok (한 날이라도 못 받았으면 쓰지 않음 — 빠진 날을 0원으로 보지 않는다)."""
-    import calendar
+    받은 달(조회한달)만 ok (못 받은 달은 쓰지 않음 — 빠진 달을 0원으로 보지 않는다)."""
     import json
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
@@ -62,7 +61,7 @@ def parse_auto(path):
         stamp = dt.date(*[int(x) for x in taken.split("-")])
     except (TypeError, ValueError):
         stamp = None
-    done = set(str(d) for d in doc.get("조회한날") or [])
+    done = set(str(d) for d in doc.get("조회한달") or [])
     period = doc.get("기간") or {}
     months = []
     try:
@@ -93,11 +92,9 @@ def parse_auto(path):
                                              "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount})
     out = []
     for mo in months:
-        days = ["%d%02d%02d" % (mo[0], mo[1], d) for d in range(1, calendar.monthrange(*mo)[1] + 1)]
-        missing = [d for d in days if d not in done]
         reason = ""
-        if missing:
-            reason = "%d일 못 받음 (%s~)" % (len(missing), missing[0])
+        if "%d%02d" % mo not in done:
+            reason = "이 달은 받지 못함"
         elif bad:
             reason = "읽지 못한 줄 %d개" % bad
         out.append(({"month": mo, "items": items[mo], "checks": [], "ok": not reason, "reason": reason,

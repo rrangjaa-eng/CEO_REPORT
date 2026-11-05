@@ -38,34 +38,6 @@ async function waitFor(fn, ms, step = 100) {
   return null;
 }
 
-// 자금계획입력 화면의 '계획일자' 달력에서 날짜를 고른다 (달력 단추만 누름).
-async function pickDate(y, m, d) {
-  const dp = document.querySelector(".WSC_LUXDatePicker");
-  if (!dp) throw new Error("계획일자 칸을 찾지 못함");
-  let cal = document.querySelector(".WSC_LUXCalendar");
-  if (!cal || !cal.offsetParent) {
-    dp.querySelector("button.WSC_LUXButton").click();
-    cal = await waitFor(() => { const c = document.querySelector(".WSC_LUXCalendar"); return c && c.offsetParent ? c : null; }, 3000);
-    if (!cal) throw new Error("달력이 열리지 않음");
-  }
-  const ym = () => cal.querySelector(".date_day_title").textContent.trim().split(".").map(Number);
-  for (let i = 0; i < 30; i++) {
-    const [cy, cm] = ym();
-    const diff = (y - cy) * 12 + (m - cm);
-    if (!diff) break;
-    cal.querySelector(diff > 0 ? ".btn_next_mon" : ".btn_prev_mon").click();
-    await sleep(150);
-  }
-  const [cy, cm] = ym();
-  if (cy !== y || cm !== m) throw new Error(`달력을 ${y}.${m} 로 옮기지 못함 (기수 범위 밖일 수 있음)`);
-  const tds = [...cal.querySelectorAll("td")];
-  const first = tds.findIndex((t) => t.textContent.trim() === "1");
-  const td = tds.slice(first).find((t) => t.textContent.trim() === String(d));
-  if (!td) throw new Error(`${y}.${m}.${d} 칸이 없음`);
-  td.querySelector("button").click();
-  await sleep(250);
-}
-
 function clickGridRow(canvas, i) {
   // 왼쪽 자금항목 표(그림 표)의 i번째 줄을 누른다: 머리글 28px, 줄 28px
   const r = canvas.getBoundingClientRect();
@@ -77,46 +49,67 @@ function clickGridRow(canvas, i) {
   }
 }
 
-async function collectDate(key) {
-  const y = +key.slice(0, 4), m = +key.slice(4, 6), d = +key.slice(6, 8);
+// 자금계획입력 화면 '0. 계획월' 보기에서 달을 고른다 (달 목록에서 '2026년 12월' 같은 줄만 누름).
+async function pickMonth(y, m) {
+  const mp = document.querySelector(".WSC_LUXMonthPicker");
+  if (!mp) throw new Error("'계획월' 칸을 찾지 못함 (자금계획입력 화면 보기가 '0. 계획월'이 아님)");
+  const label = `${y}년 ${String(m).padStart(2, "0")}월`;
+  const find = () => [...document.querySelectorAll("li a, li")].find((e) => e.textContent.trim() === label);
+  let item = find();
+  if (!item) {
+    mp.querySelector("button.WSC_LUXButton").click();
+    item = await waitFor(find, 3000);
+  }
+  if (!item) throw new Error(`달 목록에서 ${label} 을 찾지 못함 (기수 범위 밖일 수 있음)`);
+  item.click();
+  await sleep(300);
+}
+
+// 한 달치: [조회] → 자금항목 목록 → 항목 줄마다 상세(그 달 전체). 줄: [YYYYMMDD, 입금/지급, 항목코드, 항목명, ...PLAN_KEEP]
+async function collectMonth(ym) {
+  const y = +ym.slice(0, 4), m = +ym.slice(4, 6);
   const start = planCap.length;
-  await pickDate(y, m, d);
+  await pickMonth(y, m);
   const q = findQueryButton();
   if (!q) throw new Error("[조회] 버튼을 찾지 못함");
   const mark = planCap.length;
   q.click();
-  const got = await waitFor(() => planCap.slice(mark).some((c) => c.kind === "자금계획목록" && c.date === key), 8000);
-  if (!got) throw new Error(`${key} 자금항목 목록이 오지 않음`);
-  await sleep(400);   // 날짜를 고를 때 오는 목록 응답까지 다 받은 뒤 마지막 것을 쓴다
-  const lists = planCap.slice(start).filter((c) => c.kind === "자금계획목록" && c.date === key);
+  const got = await waitFor(() => planCap.slice(mark).some((c) => c.kind === "자금계획목록" && c.date === ym), 10000);
+  if (!got) throw new Error(`${ym} 자금항목 목록이 오지 않음`);
+  await sleep(500);   // 달을 고를 때 오는 목록 응답까지 다 받은 뒤 마지막 것을 쓴다
+  const lists = planCap.slice(start).filter((c) => c.kind === "자금계획목록" && c.date === ym);
   const cats = lists[lists.length - 1].rows;
   const out = [];
   if (!cats.length) return out;
   const canvas = document.querySelectorAll("canvas")[1];
   if (!canvas) throw new Error("자금항목 표를 찾지 못함");
+  if (42 + 28 * cats.length > canvas.getBoundingClientRect().height) throw new Error(`${ym} 자금항목이 ${cats.length}개라 표에 다 안 보임`);
   for (let i = 0; i < cats.length; i++) {
     const cat = cats[i];
     const before = planCap.length;
     clickGridRow(canvas, i);
-    const det = await waitFor(() => planCap.slice(before).find((c) => c.kind === "자금계획상세" && c.date === key && c.cd_fitem === cat.cd_fitem), 8000);
-    if (!det) throw new Error(`${key} ${cat.nm_fitem} 상세가 오지 않음`);
-    for (const r of det.rows) out.push([key, cat.yn_inout, cat.cd_fitem, cat.nm_fitem].concat(PLAN_KEEP.map((k) => (r[k] === undefined || r[k] === null ? "" : r[k]))));
+    const det = await waitFor(() => planCap.slice(before).find((c) => c.kind === "자금계획상세" && c.date === ym && c.cd_fitem === cat.cd_fitem), 10000);
+    if (!det) throw new Error(`${ym} ${cat.nm_fitem} 상세가 오지 않음`);
+    for (const r of det.rows) {
+      const day = String(r.da_fplan || "").padStart(2, "0");
+      out.push([ym + day, cat.yn_inout, cat.cd_fitem, cat.nm_fitem].concat(PLAN_KEEP.map((k) => (r[k] === undefined || r[k] === null ? "" : r[k]))));
+    }
   }
   return out;
 }
 
-async function collectPlan(dates) {
-  await waitFor(() => document.querySelector(".WSC_LUXDatePicker") && document.querySelectorAll("canvas")[1], 20000);
+async function collectPlan(months) {
+  await waitFor(() => document.querySelector(".WSC_LUXMonthPicker, .WSC_LUXDatePicker") && document.querySelectorAll("canvas")[1], 20000);
   const rows = [], done = [], errors = [];
-  for (const key of dates) {
+  for (const ym of months) {
     try {
-      rows.push(...await collectDate(key));
-      done.push(key);
+      rows.push(...await collectMonth(ym));
+      done.push(ym);
     } catch (e) {
       errors.push(String(e.message || e));
-      break;   // 한 날이라도 못 받으면 그 달은 쓰지 않는다 (빠진 날을 0원으로 보지 않음)
+      break;   // 못 받은 달은 쓰지 않는다 (빠진 달을 0원으로 보지 않음)
     }
-    chrome.runtime.sendMessage({type: "planProgress", date: key, rows: rows.length});
+    chrome.runtime.sendMessage({type: "planProgress", date: ym, rows: rows.length});
   }
   const title = document.title || "";
   chrome.runtime.sendMessage({type: "planResult", rows, done, errors, company: (title.split(" - ")[1] || "").trim()});
@@ -129,7 +122,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     reply({ok: !!b});
   }
   if (msg && msg.type === "collectPlan") {
-    collectPlan(msg.dates);
+    collectPlan(msg.months);
     reply({ok: true});
   }
 });

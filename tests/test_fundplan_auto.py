@@ -10,11 +10,11 @@ COLS = ["date", "yn_inout", "cd_fitem", "nm_fitem", "cd_trade", "nm_trade", "mn_
 
 def doc(rows, done, frm="20261101", to="20261231", taken="2026-11-05 10:00:00"):
     return {"종류": "자금계획", "형식": 1, "수집시각": taken, "회사": "주식회사 플랜트8",
-            "기간": {"from": frm, "to": to, "months": 2}, "조회한날": done, "오류": [], "줄수": len(rows), "열": COLS, "줄": rows}
+            "기간": {"from": frm, "to": to, "months": 2}, "조회한달": done, "오류": [], "줄수": len(rows), "열": COLS, "줄": rows}
 
 
 def days(y, m, n):
-    return ["%d%02d%02d" % (y, m, d) for d in range(1, n + 1)]
+    return ["%d%02d" % (y, m)]
 
 
 ROWS = [["20261120", "지급", "102", "미지급금 지급", "0000001425", "주식회사 스탯트라", 8141040, "매입 - ...", "매입매출", "20"],
@@ -39,10 +39,10 @@ class AutoPlanTest(unittest.TestCase):
 
     def test_partial_month_not_used(self):
         with tempfile.TemporaryDirectory() as t:
-            self.write(t, "261105 자금계획 자동수집.json", doc(ROWS, days(2026, 11, 30) + days(2026, 12, 3)))
+            self.write(t, "261105 자금계획 자동수집.json", doc(ROWS, days(2026, 11, 30)))
             res = fundplan.load(t)
         self.assertEqual([m[0] for m in res["months"]], ["2026-11"])
-        self.assertTrue(any("2026-12" in n and "못 받음" in n for n in res["notes"]))
+        self.assertTrue(any("2026-12" in n and "받지 못함" in n for n in res["notes"]))
 
     def test_newer_auto_beats_older(self):
         with tempfile.TemporaryDirectory() as t:

@@ -76,7 +76,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (!(planRun && sender.tab && planRun.tabId === sender.tab.id)) return;
     clearTimeout(planRun.timer);
     if (msg.type === "planProgress") {
-      planRun.timer = setTimeout(planRun.fail, 60000);
+      planRun.timer = setTimeout(planRun.fail, 90000);
       setStatus({progress: `자금계획 ${msg.date} 까지 받음 (${msg.rows}줄)`});
     } else {
       const p = planRun; planRun = null;
@@ -103,6 +103,7 @@ async function findSmartaTab() {
   return tabs.find((t) => /[?&]cno=/.test(t.url)) || null;
 }
 
+// 자금계획은 searchDate 없이 열어야 '0. 계획월' 보기(달 단위 조회)로 열린다.
 // 열린 SmartA 탭 주소의 회사 값(cno·cd_com…)을 그대로 쓰고 화면 번호(그리고 필요하면 기수·연도)만 바꾼다.
 function screenUrl(fromUrl, screen, year) {
   const u = new URL(fromUrl);
@@ -158,26 +159,25 @@ async function collectJournal() {
   return result;
 }
 
-// 이번 달 1일부터 months 개월치 날짜 (연도별로 나눔: 기수가 연도마다 다름)
-function planDates(months, today = new Date()) {
+// 이번 달부터 months 개월 (연도별로 나눔: 기수가 연도마다 다름) -> {2026: ["202611", "202612"], 2027: ["202701"]}
+function planMonths(months, today = new Date()) {
   const byYear = {};
-  const d = new Date(today.getFullYear(), today.getMonth(), 1);
-  const end = new Date(today.getFullYear(), today.getMonth() + months, 1);
-  for (; d < end; d.setDate(d.getDate() + 1)) {
+  for (let i = 0; i < months; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
     const y = d.getFullYear();
-    (byYear[y] = byYear[y] || []).push(`${y}${pad(d.getMonth() + 1)}${pad(d.getDate())}`);
+    (byYear[y] = byYear[y] || []).push(`${y}${pad(d.getMonth() + 1)}`);
   }
   return byYear;
 }
 
-async function runPlanTab(url, dates) {
+async function runPlanTab(url, months) {
   const tab = await chrome.tabs.create({url, active: false});
   await waitLoaded(tab.id, 30000);
   const result = await new Promise(async (resolve) => {
     const fail = () => { planRun = null; resolve({error: "응답이 멈춤 (로그인이 풀렸을 수 있음)", rows: [], done: [], errors: ["시간 초과"]}); };
-    planRun = {tabId: tab.id, resolve, fail, timer: setTimeout(fail, 60000)};
+    planRun = {tabId: tab.id, resolve, fail, timer: setTimeout(fail, 90000)};
     try {
-      await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", dates});
+      await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", months});
     } catch (e) { clearTimeout(planRun.timer); planRun = null; resolve({error: "화면과 연결하지 못함", rows: [], done: [], errors: ["화면과 연결하지 못함"]}); }
   });
   try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
@@ -189,7 +189,7 @@ async function collectPlan(months) {
   months = Math.max(1, Math.min(12, +months || 3));
   await chrome.storage.local.set({planMonths: months});
   const src = await sourceTab();
-  const byYear = planDates(months);
+  const byYear = planMonths(months);
   const rows = [], done = [], errors = [];
   let company = "";
   const t0 = Date.now();
@@ -204,14 +204,14 @@ async function collectPlan(months) {
   const all = Object.values(byYear).flat();
   const file = {"종류": "자금계획", "형식": 1, "수집시각": "", "회사": company,
                 "기간": {"from": all[0], "to": all[all.length - 1], "months": months},
-                "조회한날": done, "오류": errors, "줄수": rows.length, "열": PLAN_COLUMNS, "줄": rows};
+                "조회한달": done, "오류": errors, "줄수": rows.length, "열": PLAN_COLUMNS, "줄": rows};
   await setStatus({progress: ""});
   if (!done.length) {
     await setStatus({error: errors[0] || "받은 날이 없음", badge: "!"});
     return {error: errors[0] || "받은 날이 없음"};
   }
   const r = await saveFile("자금계획", file, JSON.stringify([file["기간"], done, errors, rows]),
-                           {rows: rows.length, days: done.length, seconds: Math.round((Date.now() - t0) / 1000), errors: errors.length});
+                           {rows: rows.length, months: done.length, seconds: Math.round((Date.now() - t0) / 1000), errors: errors.length});
   if (errors.length) {
     await setStatus({error: `${done[done.length - 1] || ""} 까지만 받음 — ${errors[0]}`, badge: "!"});
     r.error = `일부만 받음: ${errors[0]}`;
