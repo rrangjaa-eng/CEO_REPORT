@@ -174,10 +174,14 @@ async function runPlanTab(url, months) {
   const tab = await chrome.tabs.create({url, active: false});
   await waitLoaded(tab.id, 30000);
   const result = await new Promise(async (resolve) => {
-    const fail = () => { planRun = null; resolve({error: "응답이 멈춤 (로그인이 풀렸을 수 있음)", rows: [], done: [], errors: ["시간 초과"]}); };
+    const fail = () => { planRun = null; resolve({error: "응답이 멈춤", rows: [], done: [], errors: ["90초 동안 화면 응답 없음 (로그인이 풀렸거나 확장 새로고침이 필요할 수 있음)"]}); };
     planRun = {tabId: tab.id, resolve, fail, timer: setTimeout(fail, 90000)};
     try {
-      await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", months});
+      const ack = await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", months});
+      if (!ack || (ack.v || 0) < 3) {
+        clearTimeout(planRun.timer); planRun = null;
+        resolve({error: "확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요", rows: [], done: [], errors: ["확장 새로고침 필요"]});
+      }
     } catch (e) { clearTimeout(planRun.timer); planRun = null; resolve({error: "화면과 연결하지 못함", rows: [], done: [], errors: ["화면과 연결하지 못함"]}); }
   });
   try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
@@ -207,8 +211,8 @@ async function collectPlan(months) {
                 "조회한달": done, "오류": errors, "줄수": rows.length, "열": PLAN_COLUMNS, "줄": rows};
   await setStatus({progress: ""});
   if (!done.length) {
-    await setStatus({error: errors[0] || "받은 날이 없음", badge: "!"});
-    return {error: errors[0] || "받은 날이 없음"};
+    await setStatus({error: errors[0] || "받은 달이 없음", badge: "!"});
+    return {error: errors[0] || "받은 달이 없음"};
   }
   const r = await saveFile("자금계획", file, JSON.stringify([file["기간"], done, errors, rows]),
                            {rows: rows.length, months: done.length, seconds: Math.round((Date.now() - t0) / 1000), errors: errors.length});

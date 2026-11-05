@@ -3,6 +3,7 @@
 const KEEP = ["da_date", "no_acct", "nm_yuh", "nm_gubun_bungae", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2",
   "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2"];
 const PLAN_KEEP = ["cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
+const BRIDGE_VERSION = 3;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
 const planCap = [];   // {kind, date, cd_fitem, rows}
 
 window.addEventListener("message", (e) => {
@@ -122,7 +123,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     reply({ok: !!b});
   }
   if (msg && msg.type === "collectPlan") {
-    collectPlan(msg.months);
-    reply({ok: true});
+    collectPlan(msg.months).catch((e) => chrome.runtime.sendMessage({type: "planResult", rows: [], done: [], errors: [String(e.message || e)]}));
+    reply({ok: true, v: BRIDGE_VERSION});
   }
 });
