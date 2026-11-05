@@ -1482,7 +1482,7 @@ def _person_table(R, src, dept, ym, basis):
     for p in P["people"] + [None]:
         if team is not None and (p is None or p["team"] != team):
             t = P["teams"][team]
-            h.append("<tr class='hq'><td>%s 합계</td><td></td><td></td><td>%s</td><td></td><td>%s</td><td></td></tr>"
+            h.append("<tr class='hq'><td>%s 합계</td><td></td><td></td><td>%s</td><td>%s</td><td></td></tr>"
                      % (esc(team), W(None if t["cur"] is None else round(t["cur"])), W(None if t["ytd"] is None else round(t["ytd"]))))
         if p is None:
             break
@@ -1504,14 +1504,20 @@ def _target_table(R, Y, ym):
     teams = [r for r in Y["rows"] if r["kind"] == "team"]
     pace = int(ym[5:7]) / 12.0
     h = ["<div class='wsub'>목표 대비 (진도 기준 %d월/12 = %.0f%%)</div>" % (int(ym[5:7]), pace * 100),
-         "<table class='pt tg'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>누적 매출</th><th>달성률</th><th>목표 수익률</th>"
-         "<th>실제 수익률</th><th>판정</th></tr></thead><tbody>"]
+         "<table class='pt tg'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>누적 매출</th><th>달성률</th>"
+         "<th>누적 수익금<br><small>매출총이익</small></th><th>수익률<br><small>실제 / 목표</small></th>"
+         "<th>판정</th></tr></thead><tbody>"]
     sum_t, sum_r, all_t = 0, 0, True
+    sum_g, g_known = 0, True   # 팀별 달성 수익금 = 누적 매출총이익 (사용자 2026-11-05)
     for r in teams:
         t = T.get(r["label"]) or {}
         tr, rate = t.get("revenue"), t.get("rate")
         rev, gp = r["revenue"], r["gp"]
         act_rate = None if not rev or gp is None else gp * 100.0 / rev
+        if gp is None:
+            g_known = False
+        else:
+            sum_g += gp
         if tr and rev is not None:
             ach = rev / tr
             bar = "<span class='tbar'><i style='width:%d%%'></i><s style='left:%d%%'></s></span>" % (min(ach, 1) * 100, pace * 100)
@@ -1526,12 +1532,13 @@ def _target_table(R, Y, ym):
         if rate is not None and act_rate is not None:
             verdict.append(("수익률 달성", "c-ok") if act_rate >= rate else ("수익률 미달", "c-over"))
         chips = "".join("<span class='chip %s'>%s</span>" % (c, esc(v)) for v, c in verdict) or "—"
-        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
-                 % (esc(r["label"]), W(tr, "목표 없음"), W(rev), ach_txt, "—" if rate is None else "%g%%" % rate,
-                    "—" if act_rate is None else "%.1f%%" % act_rate, chips))
+        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s / %s</td><td>%s</td></tr>"
+                 % (esc(r["label"]), W(tr, "목표 없음"), W(rev), ach_txt, W(gp),
+                    "—" if act_rate is None else "%.1f%%" % act_rate, "—" if rate is None else "%g%%" % rate, chips))
     if teams and all_t and sum_t:
-        h.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%.1f%%</td><td></td><td></td><td></td></tr>"
-                 % (W(sum_t), W(sum_r), sum_r * 100.0 / sum_t))
+        h.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%.1f%%</td><td>%s</td><td>%s</td><td></td></tr>"
+                 % (W(sum_t), W(sum_r), sum_r * 100.0 / sum_t, W(sum_g if g_known else None),
+                    "%.1f%%" % (sum_g * 100.0 / sum_r) if g_known and sum_r else ""))
     h.append("</tbody></table>")
     if not T:
         h.append("<div class='note'>팀 목표 없음 — 대표보고 창 '⑧ 팀 목표'에 연간 매출 목표와 목표 수익률을 넣으면 보입니다</div>")
