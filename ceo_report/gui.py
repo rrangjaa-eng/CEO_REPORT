@@ -496,7 +496,7 @@ class Window(object):
 
         def make_pdf(html, pdf):
             browser = rep.find_browser()
-            return rep.to_pdf(browser, html, pdf) if browser else "Edge·Chrome을 찾지 못함"
+            return rep.fit_pdf(browser, html, pdf, rep.ceo_pages(html)) if browser else "Edge·Chrome을 찾지 못함"
 
         self.edit = editmode.Session(src, editmode.edited_path(orig), make_pdf,
                                      on_saved=lambda pdf, text: self.q.put(("edited", (pdf, text))),

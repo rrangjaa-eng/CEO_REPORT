@@ -1647,3 +1647,59 @@ def tearDownModule():  # noqa: F811
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFitPdfPages(unittest.TestCase):
+    """대표 보고 PDF 가 쪽 수 상한을 넘으면 인쇄 글자를 줄여 다시 만든다 (사용자 2026-11-05: 수정 뒤 안내 한 줄만 다음 쪽으로)."""
+
+    def setUp(self):
+        import tempfile
+        import shutil
+        self.cli = load_cli()
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.html = os.path.join(self.tmp, "2026-11-05_주간_대표보고_수정.html")
+        with open(self.html, "w", encoding="utf-8") as f:
+            f.write("<html><head></head><body>x</body></html>")
+        self.pdf = os.path.splitext(self.html)[0] + ".pdf"
+
+    def fake(self, pages_for):
+        calls = []
+
+        def to_pdf(browser, h, p):
+            with open(h, encoding="utf-8") as f:
+                page = f.read()
+            calls.append(page)
+            n = pages_for(page)
+            with open(p, "wb") as f:
+                f.write(b"%PDF-1.4\n" + b"<< /Type /Page >>\n" * n + b"<< /Type /Pages >>\n%%EOF")
+            return None
+        return to_pdf, calls
+
+    def test_limits_by_name(self):
+        self.assertEqual(self.cli.ceo_pages(self.html), 2)
+        self.assertEqual(self.cli.ceo_pages("x/2026-10-31_월간_대표보고.html"), 3)
+        self.assertIsNone(self.cli.ceo_pages("x/2026-10-31_주간_경영관리보고.html"))
+
+    def test_shrinks_until_it_fits_and_cleans_up(self):
+        to_pdf, calls = self.fake(lambda page: 2 if "zoom:0.94" in page else 3)
+        with mock.patch.object(self.cli, "to_pdf", side_effect=to_pdf):
+            self.assertIsNone(self.cli.fit_pdf("b", self.html, self.pdf, 2))
+        self.assertEqual(self.cli.pdf_pages(self.pdf), 2)
+        self.assertEqual(len(calls), 3)   # 원래 + 0.97 + 0.94
+        self.assertEqual(sorted(os.listdir(self.tmp)), sorted([os.path.basename(self.html), os.path.basename(self.pdf)]))
+        with open(self.html, encoding="utf-8") as f:
+            self.assertNotIn("zoom", f.read())   # HTML 은 그대로
+
+    def test_keeps_original_when_nothing_fits(self):
+        to_pdf, calls = self.fake(lambda page: 3 if "zoom" not in page else 4)
+        with mock.patch.object(self.cli, "to_pdf", side_effect=to_pdf):
+            self.cli.fit_pdf("b", self.html, self.pdf, 2)
+        self.assertEqual(self.cli.pdf_pages(self.pdf), 3)
+        self.assertEqual(len(calls), 1 + len(self.cli.FIT_ZOOMS))
+
+    def test_no_retry_when_it_fits(self):
+        to_pdf, calls = self.fake(lambda page: 2)
+        with mock.patch.object(self.cli, "to_pdf", side_effect=to_pdf):
+            self.cli.fit_pdf("b", self.html, self.pdf, 2)
+        self.assertEqual(len(calls), 1)

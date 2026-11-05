@@ -14,6 +14,7 @@ import argparse
 import datetime as dt
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -142,6 +143,71 @@ def to_pdf(browser, html_path, pdf_path):
     return "PDF 실패 (브라우저가 파일을 만들지 않음)"
 
 
+CEO_PAGES = {"주간": 2, "월간": 3}   # 대표 보고 쪽 수 상한 (사용자 2026-11-03)
+FIT_ZOOMS = (0.97, 0.94, 0.91, 0.88, 0.85)
+
+
+def pdf_pages(pdf_path):
+    """PDF 쪽 수 (Edge·Chrome 이 만든 PDF 의 쪽 객체 수). 읽지 못하면 None."""
+    try:
+        with open(pdf_path, "rb") as f:
+            return len(re.findall(rb"/Type\s*/Page[^s]", f.read()))
+    except OSError:
+        return None
+
+
+def ceo_pages(html_path):
+    """대표 보고 파일 이름으로 쪽 수 상한. 대표 보고가 아니면 None."""
+    name = os.path.basename(html_path)
+    if "대표보고" not in name:
+        return None
+    for k, n in CEO_PAGES.items():
+        if "_%s_" % k in name:
+            return n
+    return None
+
+
+def fit_pdf(browser, html_path, pdf_path, max_pages=None):
+    """PDF 를 만들고, 쪽 수가 상한을 넘으면 인쇄 글자를 조금씩 줄여 다시 만든다 (사용자 2026-11-05:
+    수정해서 줄이 늘면 맨 끝 안내 한 줄만 다음 쪽으로 넘어감). HTML 은 그대로 두고 PDF 만 바꾼다.
+    끝까지 안 맞으면 처음 PDF 를 그대로 둔다."""
+    err = to_pdf(browser, html_path, pdf_path)
+    if err or not max_pages:
+        return err
+    n = pdf_pages(pdf_path)
+    if n is None or n <= max_pages:
+        return None
+    try:
+        with open(html_path, encoding="utf-8") as f:
+            page = f.read()
+    except OSError:
+        return None
+    base = os.path.splitext(html_path)[0] + "_쪽맞춤"
+    tmp_html, tmp_pdf = base + ".html", base + ".pdf"
+    try:
+        for z in FIT_ZOOMS:
+            style = "<style>@media print{body{zoom:%s}}</style>" % z
+            i = page.lower().rfind("</head>")
+            with open(tmp_html, "w", encoding="utf-8") as f:
+                f.write(page[:i] + style + page[i:] if i >= 0 else style + page)
+            if to_pdf(browser, tmp_html, tmp_pdf):
+                break
+            m = pdf_pages(tmp_pdf)
+            if m is not None and m <= max_pages:
+                try:
+                    os.replace(tmp_pdf, pdf_path)
+                except OSError:
+                    pass
+                break
+    finally:
+        for t in (tmp_html, tmp_pdf):
+            try:
+                os.remove(t)
+            except OSError:
+                pass
+    return None
+
+
 def _evidence(a, kind, asof):
     """근거자료만 따로 (사용자 2026-11-03): 보고서를 다시 만들지 않고, 대표에게 낸 그 경영관리 보고에서 뽑는다 (같은 숫자)."""
     from ceo_report import evidence
@@ -254,7 +320,7 @@ def main(argv=None):
             return 7
         made.append(base + ".html")
         if browser:
-            err = to_pdf(browser, base + ".html", base + ".pdf")
+            err = fit_pdf(browser, base + ".html", base + ".pdf", ceo_pages(base + ".html"))
             if err:
                 _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
                 pdf_failed = True
