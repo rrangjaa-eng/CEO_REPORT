@@ -95,9 +95,9 @@ class TestAvailableFundsTable(unittest.TestCase):
                         self.assertEqual(" ".join(cells[0][:len(p["label"].split())]), p["label"])
                         self.assertEqual(cells[1][0], "{:,}".format(r["pin"]))    # 그 기간 금액 (누적 아님)
                         self.assertEqual(cells[2][0], "{:,}".format(r["pout"]))
-                        # 두 판 같은 4칸 (2026-11-04 이해도 점검 U5): 여유 자금 칸 아래 '가장 적을 때 잔액 (날짜)'
-                        self.assertEqual(cells[3][:4], ["{:,}".format(r["avail"]), "가장", "적을", "때"])
-                        self.assertEqual(cells[3][4], "{:,}".format(r["low"]))
+                        # 두 판 같은 4칸. 여유 자금 칸엔 큰 숫자만 (사용자 2026-11-05: '가장 적을 때' 안내는 경영관리용 근거 표에만)
+                        self.assertEqual(cells[3][0], "{:,}".format(r["avail"]))
+                        self.assertNotIn("가장", cells[3])
                         self.assertEqual(len(cells), 4)
 
     def test_negative_available_is_red(self):

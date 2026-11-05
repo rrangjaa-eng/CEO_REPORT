@@ -561,8 +561,8 @@ def _avail_rows_ceo(periods, s2=None):
         r = p["firm"]
         a = r["avail"]
         big = _na("확인 필요") if a is None else "<b class='%s'>%s</b>" % ("neg" if a < 0 else "", esc(won(a)))
-        low = ("" if r["low"] is None else "<small class='firm'>가장 적을 때 %s (%s)</small>" % (
-            esc(won(r["low"])), esc("오늘" if r["low_date"] == p.get("asof") else _md(r["low_date"])))) + _est_note(p)
+        # 가장 적을 때 잔액·날짜는 경영관리용 근거 표(avail-mg)에만 (사용자 2026-11-05: 여유 자금 칸의 필요 없는 안내 제외)
+        low = _est_note(p)
         xin, xout = _est_extra(p, "pin"), _est_extra(p, "pout")
         rng = ("오늘~" + d2s(p["end"]) if p.get("pick") or not p.get("from")
                else "%s~%s" % (_md(p["from"]), _md(p["end"])))
@@ -693,7 +693,7 @@ def _avail_table(R, mode="mgmt"):
     mc_txt = esc(mc_txt_plain)
     # 두 판 같은 4칸 (2026-11-04 이해도 점검 U5). 확정분만·기간 끝 잔액은 경영관리용 근거 표에만 (두 판 숫자 비교는 mgonly 를 뺀다)
     head = ("<thead><tr><th>기간</th><th>들어올 돈</th><th>나갈 돈</th>"
-            "<th class='av'>여유 자금<br><small>가장 적을 때 잔액 − 최소 보유현금 %s</small></th></tr></thead>" % mc_txt)
+            "<th class='av'>여유 자금</th></tr></thead>")
     h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows_ceo(periods, s2)))
     head_mg = ("<thead><tr><th>기간</th><th>그 기간 들어올 돈</th><th>그 기간 나갈 돈</th><th>기간 끝 예상 잔액</th><th>오늘부터 가장 적을 때 잔액</th>"
                "<th class='av'>여유 자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % mc_txt)
