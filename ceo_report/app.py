@@ -70,7 +70,7 @@ def _check_day(text, label):
     return d
 
 
-def task_argv(task, paths, asof="", pick="", nums="", payday=""):
+def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=""):
     """작업 이름 -> (모듈 이름, argv). 날짜는 비우면 오늘. 근거주간·근거월간은 nums(근거 번호, 예: 1-1,3-2)가 있어야 한다."""
     _check_day(asof, "기준일")
     _check_day(pick, "가용자금 볼 날짜")
@@ -80,7 +80,10 @@ def task_argv(task, paths, asof="", pick="", nums="", payday=""):
         return "변환", day + ["--입력", paths.input, "--수집폴더", paths.collect]
     if task in ("주간", "월간"):
         return "보고서", ([task] + day + (["--가용일", pick] if pick else [])
-                        + (["--출금일", payday] if payday and task == "주간" else []) + ["--입력", paths.input, "--출력", paths.output])
+                        + (["--출금일", payday] if payday and task == "주간" else [])
+                        + (["--출금목록", group] if group and task == "주간" else [])
+                        + (["--합칠거래처", only] if only and group == "거래처별" and task == "주간" else [])
+                        + ["--입력", paths.input, "--출력", paths.output])
     if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
         from .evidence import parse_nums
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
@@ -156,13 +159,13 @@ def run_integrity(paths, say, asof=""):
     return rc, out
 
 
-def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday=""):
+def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday="", group="", only=""):
     """작업 하나를 돌리고 (종료코드, 새로 생긴 출력 파일 목록)을 돌려준다. 글은 say(한 줄)로 넘긴다.
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
     try:
-        name, argv = task_argv(task, paths, asof, pick, nums, payday)
+        name, argv = task_argv(task, paths, asof, pick, nums, payday, group, only)
     except ValueError as e:
         say(str(e))
         return 2, []
@@ -190,6 +193,27 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
         if name == "승인검토":
             mod.CREDENTIALS = old_cred
     return rc, new_files(paths.output, started)
+
+
+MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' 칸 값 (다음에 열 때 그대로, 사용자 2026-11-05)
+
+
+def load_merge(paths):
+    try:
+        with open(os.path.join(paths.input, MERGE_FILE), encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return "건별", ""
+    group = lines[0].strip() if lines and lines[0].strip() in ("건별", "거래처별") else "건별"
+    return group, (lines[1].strip() if len(lines) > 1 else "")
+
+
+def save_merge(paths, group, only):
+    try:
+        with open(os.path.join(paths.input, MERGE_FILE), "w", encoding="utf-8") as f:
+            f.write("%s\n%s\n" % (group, only))
+    except OSError:
+        pass
 
 
 def new_files(folder, since):

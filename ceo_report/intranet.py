@@ -70,6 +70,9 @@ EMPTY_ONLY_NAMES = {
     "project": frozenset(["client", "client_kor", "writer", "invoice", "confirm", "start_date", "end_date", "po_number"]),
 }
 _BAD_VALUE_FRAGMENTS = ("/confirm", "/logout", "://", "javascript:", "<", ">")
+# 지급 요청서 미리보기 (사용자 2026-11-05: 관리팀 승인 건의 '세부사항' 첫 줄을 출금 목록 상세 내역에)
+PREVIEW_PATH = "/preview/paymentwrite"
+PREVIEW_QUERY = re.compile(r"^pro_num=[0-9]{1,9}&quo_num=[0-9]{1,9}(?:,[0-9]{1,9}){0,49}&cmd=check$")
 _LIST_RE = re.compile(r"^/(payment|project)/index(?:/([0-9]+))?/?$")   # 실제 프로젝트 쪽 링크: /project/index/?page=10
 _DIGITS = re.compile(r"^[0-9]*$")
 
@@ -96,7 +99,8 @@ def check_url(method, url):
     """허용된 요청이면 조각(#...)을 뗀 주소를 돌려주고, 아니면 BlockedRequest.
 
     허용: GET / · POST /login/submit · GET /payment/index[/숫자] · GET /project/index[/숫자]
-    (알려진 조회·쪽 이름만) · GET /project/payment?pro_num=숫자. 그 밖은 모두 막는다.
+    (알려진 조회·쪽 이름만) · GET /project/payment?pro_num=숫자
+    · GET /preview/paymentwrite?pro_num=숫자&quo_num=숫자[,숫자]&cmd=check (지급 요청서 보기). 그 밖은 모두 막는다.
     """
     method = (method or "").upper()
     url = str(url)
@@ -141,6 +145,9 @@ def check_url(method, url):
         elif path == "/project/payment":
             if not re.match(r"^pro_num=[0-9]+$", query):
                 _block(method, path, "pro_num 숫자 하나만 허용")
+        elif path == PREVIEW_PATH:
+            if not PREVIEW_QUERY.match(query):
+                _block(method, path, "지급 요청서 미리보기는 pro_num·quo_num 숫자와 cmd=check 만 허용")
         else:
             _block(method, path, "허용 경로 아님")
     else:
@@ -372,11 +379,13 @@ class _PageParser(html.parser.HTMLParser):
                            "span": int(span) if span.isdigit() and 0 < int(span) < 50 else 1}
         elif tag == "br" and self._stack and self._stack[-1]["cell"] is not None:
             self._stack[-1]["cell"]["text"].append(" ")
-        elif tag == "a" and "href" in a:
+        if tag == "a" and "href" in a:
             self._anchor = [a["href"], []]
             if self._stack and self._stack[-1]["cell"] is not None:
                 self._stack[-1]["cell"]["hrefs"].append(a["href"])
-        elif tag == "form":
+        if PREVIEW_PATH in a.get("onclick", "") and self._stack and self._stack[-1]["cell"] is not None:
+            self._stack[-1]["cell"]["hrefs"].append(a["onclick"])   # 지급 요청서 보기 (href 아닌 onclick 에 있을 때)
+        if tag == "form":
             self._form = {"name": a.get("name", ""), "id": a.get("id", ""),
                           "action": a.get("action", ""), "method": a.get("method", ""), "inputs": []}
             self.page.forms.append(self._form)
@@ -448,7 +457,7 @@ def _has_login_form(page):
 
 CollectResult = collections.namedtuple(
     "CollectResult", ["payments", "projects", "payment_pages", "project_pages", "login_info",
-                      "project_skipped", "diag"], defaults=(0, None))
+                      "project_skipped", "diag", "requests"], defaults=(0, None, None))
 
 
 def login(opener, user_id, password):
@@ -532,9 +541,26 @@ def _pro_num(row):
     return ""
 
 
+_PREVIEW_IN = re.compile(r"/preview/paymentwrite\?pro_num=([0-9]{1,9})&(?:amp;)?quo_num=([0-9]{1,9}(?:,[0-9]{1,9}){0,49})&(?:amp;)?cmd=check")
+
+
+def preview_query(row):
+    """목록 줄의 '지급 요청서' 보기 링크 → 'pro_num=N&quo_num=N[,N]&cmd=check' (없으면 '')."""
+    for hrefs in row.hrefs:
+        for href in hrefs:
+            m = _PREVIEW_IN.search(urllib.parse.unquote(href))
+            if m:
+                return "pro_num=%s&quo_num=%s&cmd=check" % (m.group(1), m.group(2))
+    return ""
+
+
 def _map_payment(row):
     # 주민번호 모양 값은 읽는 곳에서 가린다: 스냅숏 CSV·화면·stdout 어디에도 나가지 않는다 (D-36, CR-02)
-    return dict(zip(PAYMENT_KEYS, [mask_rrn(c) for c in row.cells[:len(PAYMENT_KEYS)]]))
+    mapped = dict(zip(PAYMENT_KEYS, [mask_rrn(c) for c in row.cells[:len(PAYMENT_KEYS)]]))
+    preview = preview_query(row)
+    if preview:
+        mapped["_preview"] = preview   # 스냅숏 열 아님: 같은 수집에서 지급 요청서를 읽을 때만 쓴다
+    return mapped
 
 
 def _map_project(row):
@@ -883,7 +909,38 @@ def collect(opener, user_id, password, max_pages=300, progress=None, diag=None):
     info = login(opener, user_id, password)
     payments, payment_pages, _ = _collect_list(opener, "payment", max_pages, progress, diag=diag)
     projects, project_pages, skipped = _collect_list(opener, "project", max_pages, progress, diag=diag)
-    return CollectResult(payments, projects, payment_pages, project_pages, info, skipped, diag)
+    try:
+        requests = collect_requests(opener, payments, progress, diag)
+    except (LoginFailed, BlockedRequest):
+        raise
+    except Exception as e:   # 지급 요청서를 못 읽어도 목록 수집은 살린다
+        diag.append("지급 요청서 읽기 실패 (%s) — 세부사항 없이 저장" % type(e).__name__)
+        requests = None
+    return CollectResult(payments, projects, payment_pages, project_pages, info, skipped, diag, requests)
+
+
+def collect_requests(opener, payments, progress=None, diag=None):
+    """관리팀 승인·사장님 승인 전 페이먼트의 지급 요청서를 읽어 세부사항 첫 줄을 가져온다 (사용자 2026-11-05).
+    -> [{'key','project','vendor','amount','note'}] · 구조가 달라 못 읽으면 None (목록 수집은 그대로 쓴다)."""
+    from .payreq import wanted, parse_preview
+    if diag is None:
+        diag = []
+    out = []
+    todo = [p for p in payments if wanted(p)]
+    for i, p in enumerate(todo):
+        url = check_url("GET", BASE + PREVIEW_PATH + "?" + p["_preview"])
+        _, _, text = opener.get(url)
+        if _has_login_form(_parse(text)):
+            raise LoginFailed("로그인이 풀려 지급 요청서를 읽지 못함")
+        r = parse_preview(text)
+        if r["amount"] is None and not r["project"]:
+            diag.append("지급 요청서 %d건째: 금액·프로젝트를 못 읽음 — 화면 구조가 달라 세부사항 가져오기를 멈춤" % (i + 1))
+            return None
+        r["key"] = p["_preview"]
+        out.append(r)
+    diag.append("지급 요청서: 관리팀 승인·사장님 승인 전 %d건 읽음 · 세부사항 있는 것 %d건"
+                % (len(out), sum(1 for r in out if r["note"])))
+    return out
 
 
 def _paging_stop(label, recognised, unknown, mixed):

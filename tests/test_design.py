@@ -220,7 +220,8 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertNotIn("금액 미확인", table)
             self.assertNotIn("상세 미입력", table)
             self.assertIn("2건 · 합계 50,700,000</div>", fs)
-            self.assertIn("확정 안 된 예상 지급 1건 1,845,735원 · 금액 미확인 1건은 목록에서 뺌", fs)
+            # 사용자 2026-11-05: 이 안내는 경영관리용에만
+            (self.assertIn if edition == "mgmt" else self.assertNotIn)("확정 안 된 예상 지급 1건 1,845,735원 · 금액 미확인 1건은 목록에서 뺌", fs)
             self.assertIn("<div class='lab'>11/06(금) 출금</div><div class='big'>50,700,000</div><div class='foot'>2건</div>", fs)
         self.assertNotIn("출금 목록", render(compute(load(os.path.join(ROOT, "입력양식", "샘플")), "monthly",
                                                     dt.date(2026, 10, 31)), "ceo"))

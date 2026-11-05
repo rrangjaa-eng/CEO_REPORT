@@ -111,6 +111,16 @@ class Window(object):
         self._btn(r, "주간 보고", lambda: self.start("주간"), big=True)
         self._btn(r, "월간 보고", lambda: self.start("월간"), big=True)
         self._btn(r, "출력 폴더 열기", lambda: self.open_dir(self.paths.output))
+        # 주간 출금 목록: 건별 / 같은 거래처 합침 (사용자 2026-11-05)
+        r = self._row(f2)
+        ttk.Label(r, text="주간 출금 목록").pack(side="left")
+        g0, o0 = app.load_merge(self.paths)
+        self.group = tk.StringVar(value=g0)
+        ttk.Combobox(r, textvariable=self.group, values=("건별", "거래처별"), width=8, state="readonly").pack(side="left", padx=4)
+        ttk.Label(r, text="합칠 거래처").pack(side="left", padx=(6, 0))
+        self.only = tk.StringVar(value=o0)
+        ttk.Entry(r, textvariable=self.only, width=22).pack(side="left", padx=4)
+        self._hint(f2, "거래처별 = 같은 날 같은 거래처 여러 건을 한 줄로. 합칠 거래처를 쉼표로 적으면 그곳만 합침 (비우면 전부)")
         # 대표가 근거 번호로 요청하면: 같은 기준일 경영관리 보고에서 그 근거만 PDF로 (사용자 2026-11-03)
         r = self._row(f2)
         self.ev_kind, self.ev_nums = tk.StringVar(value="주간"), tk.StringVar()
@@ -374,12 +384,15 @@ class Window(object):
         asof, pick = self.asof.get().strip(), self.pick.get().strip()
         nums = self.ev_nums.get().strip()
         payday = self.payday.get().strip()
+        group, only = self.group.get(), self.only.get().strip()
+        if task == "주간":
+            app.save_merge(self.paths, group, only)
 
         def work():
             try:
                 rc, files = app.run_task(task, self.paths, self.say, asof=asof, pick=pick, collect=collect,
                                          credentials=(lambda: (uid, pw)) if collect else None, nums=nums,
-                                         payday=payday)
+                                         payday=payday, group=group, only=only)
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []

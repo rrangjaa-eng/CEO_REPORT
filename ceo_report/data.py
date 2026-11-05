@@ -284,6 +284,8 @@ def load(folder):
     # 출금 상세 내역 (선택, 사용자 2026-11-03): 창에서 손으로 넣거나 인트라넷 지출결의서에서 가져옴
     from .paydetail import read as read_details
     d.pay_details = read_details(folder)
+    from .payreq import read as read_reqs   # 인트라넷 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05)
+    d.pay_requests = read_reqs(folder)
     from .targets import read as read_targets   # 팀별 연간 목표 (사용자 2026-11-03)
     d.team_targets = read_targets(folder)
     from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)

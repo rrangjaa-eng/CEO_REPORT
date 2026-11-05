@@ -257,6 +257,9 @@ def main(argv=None):
     ap.add_argument("--시작일", default=None, help="집계 시작일 (기본: 주간=기준일-6일, 월간=그 달 1일)")
     ap.add_argument("--가용일", default=None, help="이 날짜까지의 가용자금 줄을 더함 YYYY-MM-DD (기준일 뒤)")
     ap.add_argument("--출금일", default=None, help="주간 출금 목록을 만들 날짜 YYYY-MM-DD (기준일 뒤, 기본: 기준일 뒤 첫 금요일)")
+    ap.add_argument("--출금목록", default="건별", choices=["건별", "거래처별"],
+                    help="주간 출금 목록: 건별(기본) 또는 같은 날 같은 거래처를 한 줄로 합침")
+    ap.add_argument("--합칠거래처", default="", help="거래처별일 때 합칠 거래처만 (쉼표로 구분, 비우면 전부)")
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
@@ -298,6 +301,8 @@ def main(argv=None):
         return 7
     data = load(a.입력)
     R = compute(data, kind, asof, start, pick, payday)
+    R["out_group"] = a.출금목록   # 사용자 2026-11-05: 출금 목록 건별 / 거래처별 합침을 창에서 고름
+    R["out_merge_only"] = [x.strip() for x in a.합칠거래처.split(",") if x.strip()]   # 특정 거래처만 합침 (사용자 2026-11-05)
     if kind == "monthly":
         # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
         from ceo_report.convert_xchk import load_xchk

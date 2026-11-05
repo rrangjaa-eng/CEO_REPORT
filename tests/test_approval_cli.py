@@ -331,7 +331,7 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
                           ("GET", "/project/index"): (200, {}, project_page(FAKE_PROJECTS + [RRN_PROJECT]))})
         rc, out, err, fake, mocks = run_cli(self, self.argv(), site=site)
         self.assertEqual(rc, 0, out + err)
-        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 5)  # 스냅숏 CSV 3개 + 화면 1개 + 구조 점검 기록
+        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 6)  # 스냅숏 CSV 3개 + 지급요청서 1개 + 화면 1개 + 구조 점검 기록
         snap = snapshot_module().read_snapshot(os.path.join(self.root, entries(self.root)[0]))
         names = dict((p["번호"], (p["행사명"], p["파트너"])) for p in snap.payments)
         self.assertEqual(names["5201"], ("[26201] 강사료 홍길동 ******-*******", "홍길동 ******-*******"))

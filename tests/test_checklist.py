@@ -203,6 +203,31 @@ class TestEachRow(unittest.TestCase):
         self.assertEqual(len(out), 5)
         self.assertEqual(sum(e["amount"] for e in out), 400005)
 
+    def test_merge_same_vendor_when_chosen(self):
+        """창에서 '거래처별'을 고르면 같은 날 같은 거래처(이름 정규화)는 한 줄, 금액 합계·프로젝트·상세는 이어 적음."""
+        rows = [{"date": D(2026, 11, 6), "amount": 300, "firm": True, "desc": "(주)가나", "cat": "지급요청", "project": "26001",
+                 "detail": "부스 제작"},
+                {"date": D(2026, 11, 6), "amount": 200, "firm": True, "desc": "가나 주식회사", "cat": "지급요청", "project": "26002",
+                 "detail": "운송"},
+                {"date": D(2026, 11, 6), "amount": 50, "firm": True, "desc": "다라", "cat": "미지급금", "project": ""}]
+        out = _each_row(rows, "거래처별")
+        self.assertEqual(len(out), 2)
+        m = out[0]
+        self.assertEqual((m["amount"], m["merged_n"], m["projects"], m["detail"]), (500, 2, ["26001", "26002"], "부스 제작 · 운송"))
+        self.assertEqual(len(_each_row(rows)), 3)
+        # 특정 거래처만 합침 (사용자 2026-11-05)
+        rows.append(dict(rows[2], amount=70))
+        self.assertEqual(len(_each_row(rows, "거래처별", ["다라"])), 3)   # 가나 2줄은 건별, 다라 2줄은 한 줄
+        self.assertEqual([e.get("merged_n") for e in _each_row(rows, "거래처별", ["다라"])], [None, None, 2])
+
+    def test_report_args_for_merge(self):
+        from ceo_report import app
+        p = app.Paths("/tmp/x") if hasattr(app, "Paths") else None
+        _, argv = app.task_argv("주간", p, "2026-11-05", group="거래처별", only="가나,다라")
+        self.assertIn("--합칠거래처", argv)
+        _, argv = app.task_argv("주간", p, "2026-11-05", group="건별", only="가나")
+        self.assertNotIn("--합칠거래처", argv)
+
 
 if __name__ == "__main__":
     unittest.main()

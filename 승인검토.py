@@ -378,6 +378,13 @@ def run_collect(a, asof, now):
     try:
         snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
                                    pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages})
+        if result.requests is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05)
+            from ceo_report import payreq
+            payreq.write(snap_path, result.requests)
+            _say("지급 요청서(관리팀 승인·사장님 승인 전) %d건 읽음 · 세부사항 있음 %d건"
+                 % (len(result.requests), sum(1 for r in result.requests if r["note"])))
+        else:
+            _say("[확인] 지급 요청서 화면 구조가 예상과 달라 세부사항은 가져오지 못함 (목록 자료는 정상 저장)")
         if a.화면 == "안함":
             gathered_summary(result)
             _say("다음: ① '자료 변환'을 누르면 이 자료로 프로젝트 예산·비교가 새로 만들어집니다")

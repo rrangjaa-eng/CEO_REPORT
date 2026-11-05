@@ -1067,6 +1067,16 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         return res
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
     listings, summary = [], []
+    if snap is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05): 최근 스냅숏 것을 입력 폴더로
+        from . import payreq
+        if os.path.exists(os.path.join(snap.path, payreq.FILE)):
+            reqs = payreq.read(snap.path)
+            try:
+                payreq.write(input_dir, reqs)
+                summary.append("지급 요청서(관리팀 승인·사장님 승인 전) %d건 · 세부사항 있음 %d건 → 주간 출금 목록 상세 내역에 맞춰 붙임"
+                               % (len(reqs), sum(1 for r in reqs if r["note"])))
+            except OSError:
+                summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
     if books.state == "ok":
         from . import review_checks
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
@@ -1075,7 +1085,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         from . import checklist, hometax
         ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
         listings = tidy + overlap + dups + ht["notes"] + checks
-        summary = ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
+        summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
         items = (review_checks.duplicate_items(books.journal) + ht["items"]
                  + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
         trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()

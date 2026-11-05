@@ -542,6 +542,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
+    from .payreq import attach as attach_reqs   # 지급 요청서 세부사항 첫 줄: 프로젝트 번호 + 금액 (사용자 2026-11-05)
+    attach_reqs(events, getattr(d, "pay_requests", None) or [])
     R["events"] = events
     from .debts import compare as compare_debts   # 장부 미지급금·차입금 대 일정 (2026-11-04 점검 A1·A2)
     R["debts"] = compare_debts(getattr(d, "debts", None), events, asof)

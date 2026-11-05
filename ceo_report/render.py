@@ -1127,9 +1127,50 @@ def _cat_cell(e):
     return esc(_use_name(e, "")) + ("<small class='dt'>%s</small>" % esc(d) if d else "")
 
 
-def _each_row(rows):
-    """출금 표에 보일 줄: 건마다 한 줄 (사용자 2026-11-05: 거래처·쓰임새별로 합치지 말고 건별로). 날짜 → 큰 금액 순."""
-    return sorted(rows, key=lambda e: (e["date"], -(e["amount"] or 0)))
+def _merge_this(name, only):
+    """합칠 거래처 목록(only)이 비면 전부, 있으면 이름(정규화)이 서로 들어 있는 거래처만."""
+    if not only:
+        return True
+    k = _vkey(name)
+    return any(o and (o in k or k in o) for o in (_vkey(x) for x in only))
+
+
+def _each_row(rows, group="건별", only=None):
+    """출금 표에 보일 줄. 기본은 건마다 한 줄 (사용자 2026-11-05). 날짜 → 큰 금액 순.
+    group='거래처별': 같은 날·같은 거래처 여러 건을 한 줄로 합침 (사용자 2026-11-05: 창에서 고름). 합친 줄은 금액 합계,
+    프로젝트·쓰임새·상세는 서로 다른 것을 이어 적고 'n건'을 붙인다. only = 합칠 거래처 이름 목록 (비면 전부, 사용자 2026-11-05)."""
+    rows = sorted(rows, key=lambda e: (e["date"], -(e["amount"] or 0)))
+    if group != "거래처별":
+        return rows
+    out, at = [], {}
+    for i, e in enumerate(rows):
+        k = (e["date"], _vkey(e.get("desc") or "")) if _merge_this(e.get("desc") or "", only) else i
+        if k not in at:
+            at[k] = len(out)
+            out.append([e])
+        else:
+            out[at[k]].append(e)
+    merged = []
+    for g in out:
+        if len(g) == 1:
+            merged.append(g[0])
+            continue
+        m = dict(g[0])
+        amts = [x["amount"] for x in g]
+        m["amount"] = None if any(a is None for a in amts) else sum(amts)
+        m["firm"] = all(x["firm"] for x in g)
+        m["projects"] = list(dict.fromkeys(x.get("project") for x in g if x.get("project")))
+        dets = list(dict.fromkeys(x.get("detail") for x in g if x.get("detail")))
+        m["detail"] = " · ".join(dets) if dets else None
+        m["merged_n"] = len(g)
+        merged.append(m)
+    return sorted(merged, key=lambda e: (e["date"], -(e["amount"] or 0)))
+
+
+def _proj_cell(R, e):
+    pids = e.get("projects") if e.get("projects") is not None else [e.get("project")]
+    names = [(_pname(R, p) if R else (p or "")) for p in pids if p]
+    return "<br>".join(esc(n) for n in names)
 
 
 def _out_rows_table(G, C, empty, R=None):
@@ -1139,13 +1180,13 @@ def _out_rows_table(G, C, empty, R=None):
          "<th>금액</th></tr></thead><tbody>"]
     if not G["rows"]:
         h.append("<tr><td colspan='5'>%s</td></tr>" % empty)
-    for e in _each_row(G["rows"]):
+    for e in _each_row(G["rows"], (R or {}).get("out_group", "건별"), (R or {}).get("out_merge_only")):
         amt = _na("금액 미확인") if e["amount"] is None else esc(won(e["amount"]))
         if not e["firm"]:
             amt += " <small class='est'>예상</small>"
+        vn = esc(e.get("desc") or "") + (" <small>%d건</small>" % e["merged_n"] if e.get("merged_n") else "")
         h.append("<tr><td>%s</td><td><b class='vn'>%s</b></td><td>%s</td><td>%s</td><td class='vout'>%s</td></tr>"
-                 % (esc(_md(e["date"])), esc(e.get("desc") or ""),
-                    esc(_pname(R, e.get("project")) if R else (e.get("project") or "")), _cat_cell(e), amt))
+                 % (esc(_md(e["date"])), vn, _proj_cell(R, e), _cat_cell(e), amt))
     h.append("</tbody></table>")
     tail = ("합계 %s" % won(G["total"])) if not G["est"] else "합계 %s · 확정 %s · 예상 %s" % (won(G["total"]), won(G["firm"]), won(G["est"]))
     if G["overdue"]:
@@ -1200,13 +1241,14 @@ def _week_out_table(R, mode="ceo"):
             parts.append("확정 안 된 예상 지급 %d건 %s원" % (n_est, won(E["total"])))
         if E["unknown_n"]:
             parts.append("금액 미확인 %d건" % E["unknown_n"])
-        h.append("<div class='note'>%s</div>" % esc("%s은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)" % " · ".join(parts)))
+        # 사용자 2026-11-05: 대표용엔 이 안내 없음 (경영관리용만)
+        h.append(_mg(mode, "<div class='note'>%s</div>" % esc("%s은 목록에서 뺌 (③ 자금 표에는 예상분으로 포함)" % " · ".join(parts))))
     G = W_["gap"]
     if G["rows"]:
         days = sorted(set(e["gap"] for e in G["rows"]))
-        h.append("<div class='note'>%s</div>" % esc(
+        h.append(_mg(mode, "<div class='note'>%s</div>" % esc(
             "예정일(%s)이 지났지만 장부·통장 자료에 아직 없는 지급 %d건 %s원은 목록에서 뺌 — 이미 나간 돈이면 계좌잔액(통장 입출금내역)을 "
-            "새로 넣으면 ③ 자금 표에서도 빠짐 (지금은 아직 나갈 돈으로 포함)" % (", ".join(_md(x) for x in days), len(G["rows"]), won(G["total"]))))
+            "새로 넣으면 ③ 자금 표에서도 빠짐 (지금은 아직 나갈 돈으로 포함)" % (", ".join(_md(x) for x in days), len(G["rows"]), won(G["total"])))))
     h.append(_vs_last_week(R, P, mode))
     h.append("</div>")
     h += ["<div class='card wnc'><div class='wsub'>다음 주 지급 예정 (%s ~ %s) · 항목별 요약</div>"
