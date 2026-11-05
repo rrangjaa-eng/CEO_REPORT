@@ -1357,6 +1357,23 @@ class Window(object):
             self.say("없음: %s" % path)
 
 
+def sharp_text():
+    """글자가 번져 보이지 않게 (사용자 2026-11-05): Windows 화면 배율(125%·150%)에서 창을 그림처럼 늘리지 말고
+    배율에 맞는 크기로 직접 그리게 한다. Tk() 를 만들기 전에 불러야 한다. 다른 OS 에서는 아무것도 안 함."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)   # 시스템 배율 인식
+        return True
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+            return True
+        except (AttributeError, OSError):
+            return False
+
+
 def self_check(log_path):
     """exe 점검: 창 없이 샘플로 주간 보고를 만들어 본다 (빌드 확인용). 0 이면 정상."""
     import shutil
@@ -1396,6 +1413,7 @@ def main(argv=None):
         out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "정합성점검.txt")
         day = dt.date.fromisoformat(argv[2]) if len(argv) > 2 else None
         return integrity.run(app.program_dir(), out, day)
+    sharp_text()
     root = tk.Tk()
     Window(root)
     root.mainloop()
