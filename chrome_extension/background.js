@@ -1,9 +1,11 @@
-// 대표보고 위하고 수집 — 배경. 화면에서 받은 분개장을 다운로드 폴더 '위하고자동수집'에 JSON 으로 저장한다.
-// 자동(30분)일 때는 지난번과 내용이 같으면 저장하지 않는다. 위하고에는 화면 [조회]만 누른다 (읽기 전용).
+// 대표보고 위하고 수집 — 배경. 화면에서 받은 분개장·자금계획을 다운로드 폴더 '위하고자동수집'에 JSON 으로 저장한다.
+// 사용자가 단추를 누를 때만 받는다 (2026-11-05: 30분 자동 확인 없음). 지난번과 내용이 같으면 새로 저장하지 않는다.
+// 위하고에는 날짜 고르기·[조회]·줄 고르기만 한다 (읽기 전용).
 const FOLDER = "위하고자동수집";
-const PERIOD_MIN = 30;
-const SCREEN = {"분개장": "SABK0113"};
-let pending = null;   // {kind, tabId, auto, resolve, timer}
+const SCREEN = {"분개장": "SABK0113", "자금계획": "SAFM0102"};
+const PLAN_COLUMNS = ["date", "yn_inout", "cd_fitem", "nm_fitem", "cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
+let pending = null;   // 분개장: {kind, tabId, resolve, timer}
+let planRun = null;   // 자금계획: {tabId, resolve, timer}
 
 const pad = (n) => String(n).padStart(2, "0");
 function stamp(d = new Date()) {
@@ -30,60 +32,93 @@ async function setStatus(patch) {
   chrome.action.setBadgeText({text: patch.badge || ""});
 }
 
-async function save(msg, auto) {
+// 내용(hashSource)이 지난번과 같으면 저장하지 않는다.
+async function saveFile(kind, file, hashSource, summary) {
   const s = stamp();
-  // 내용 비교는 줄 자료만 (수집 시각 제외)
-  const body = JSON.stringify(msg.rows);
-  const hash = await sha(JSON.stringify(msg.params) + body);
-  const key = "last_" + msg.kind;
+  const hash = await sha(hashSource);
+  const key = "last_" + kind;
   const prev = (await chrome.storage.local.get(key))[key];
-  if (auto && prev && prev.hash === hash) {
-    await setStatus({[msg.kind]: Object.assign({}, prev, {checked: s.iso, changed: false})});
+  if (prev && prev.hash === hash) {
+    const info = Object.assign({}, prev, {checked: s.iso, changed: false});
+    await chrome.storage.local.set({[key]: info});
+    await setStatus({[kind]: info, error: ""});
     return {saved: false, same: true};
   }
-  const file = {"종류": msg.kind, "형식": 1, "수집시각": s.iso, "회사": msg.company, "기간": msg.params,
-                "전표수": msg.tot, "줄수": msg.rows.length, "열": msg.columns, "줄": msg.rows};
-  const name = `${FOLDER}/${s.ymd6} ${msg.kind} 자동수집.json`;
+  file["수집시각"] = s.iso;
+  const name = `${FOLDER}/${s.ymd6} ${kind} 자동수집.json`;
   await chrome.downloads.download({url: toDataUrl(JSON.stringify(file)), filename: name, conflictAction: "overwrite", saveAs: false});
-  const info = {hash, saved: s.iso, checked: s.iso, rows: msg.rows.length, slips: msg.tot, file: name, changed: !!prev};
+  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: name, changed: !!prev}, summary);
   await chrome.storage.local.set({[key]: info});
-  await setStatus({[msg.kind]: info, error: ""});
+  await setStatus({[kind]: info, error: ""});
   return {saved: true, file: name};
 }
 
+async function saveJournal(msg) {
+  const file = {"종류": msg.kind, "형식": 1, "수집시각": "", "회사": msg.company, "기간": msg.params,
+                "전표수": msg.tot, "줄수": msg.rows.length, "열": msg.columns, "줄": msg.rows};
+  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot});
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg && msg.type === "captured") {
-    const auto = !!(pending && pending.tabId === sender.tab.id && pending.auto);
-    save(msg, auto).then((r) => {
+  if (!msg) return;
+  if (msg.type === "captured") {
+    if (!(pending && sender.tab && pending.tabId === sender.tab.id)) return;   // 사용자가 화면에서 직접 [조회]한 것은 저장하지 않음
+    saveJournal(msg).then((r) => {
       if (pending && pending.tabId === sender.tab.id && pending.kind === msg.kind) {
         clearTimeout(pending.timer);
         const p = pending; pending = null;
         p.resolve(r);
       }
     });
-    return false;
+    return;
   }
-  if (msg && msg.type === "collectNow") {
-    collect("분개장", false).then(reply, (e) => reply({error: String(e.message || e)}));
+  if (msg.type === "planProgress" || msg.type === "planResult") {
+    if (!(planRun && sender.tab && planRun.tabId === sender.tab.id)) return;
+    clearTimeout(planRun.timer);
+    if (msg.type === "planProgress") {
+      planRun.timer = setTimeout(planRun.fail, 60000);
+      setStatus({progress: `자금계획 ${msg.date} 까지 받음 (${msg.rows}줄)`});
+    } else {
+      const p = planRun; planRun = null;
+      p.resolve(msg);
+    }
+    return;
+  }
+  if (msg.type === "collectNow") {
+    collectJournal().then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
   }
-  if (msg && msg.type === "setAuto") {
-    setAuto(msg.on).then(() => reply({ok: true}));
+  if (msg.type === "collectAll") {
+    collectAll(msg.months).then(reply, (e) => reply({error: String(e.message || e)}));
+    return true;
+  }
+  if (msg.type === "collectPlan") {
+    collectPlan(msg.months).then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
   }
 });
 
 async function findSmartaTab() {
   const tabs = await chrome.tabs.query({url: "https://smarta.wehago.com/*"});
-  return tabs.find((t) => /[?&]cno=/.test(t.url) || /cNum=/.test(t.url)) || null;
+  return tabs.find((t) => /[?&]cno=/.test(t.url)) || null;
 }
 
-function screenUrl(fromUrl, screen) {
-  // 열린 SmartA 탭 주소의 회사 값(cno·cd_com·gisu…)을 그대로 쓰고 화면 번호만 바꾼다
+// 열린 SmartA 탭 주소의 회사 값(cno·cd_com…)을 그대로 쓰고 화면 번호(그리고 필요하면 기수·연도)만 바꾼다.
+function screenUrl(fromUrl, screen, year) {
   const u = new URL(fromUrl);
   const m = u.hash.match(/^#\/smarta\/account\/[A-Z0-9]+(\?.*)$/);
-  if (m) return `${u.origin}/#/smarta/account/${screen}${m[1]}`;
-  return null;
+  if (!m) return null;
+  let q = m[1];
+  if (year) {
+    const gisu = +(q.match(/[?&]gisu=(\d+)/) || [])[1];
+    const base = +(q.match(/[?&]yminsa=(\d{4})/) || [])[1];
+    if (!gisu || !base) return null;
+    q = q.replace(/([?&]gisu=)\d+/, "$1" + (gisu + year - base))   // 회계연도 = 달력 연도 (1기 2025, 2기 2026, 3기 2027)
+         .replace(/([?&]yminsa=)\d{4}/, "$1" + year)
+         .replace(/([?&]searchData=)\d+/, `$1${year}0101${year}1231`)
+         .replace(/[?&]searchDate=\d+/, "");
+  }
+  return `${u.origin}/#/smarta/account/${screen}${q}`;
 }
 
 function waitLoaded(tabId, ms) {
@@ -95,19 +130,24 @@ function waitLoaded(tabId, ms) {
   });
 }
 
-async function collect(kind, auto) {
-  if (pending) return {error: "이미 수집 중입니다"};
+async function sourceTab() {
   const src = await findSmartaTab();
   if (!src) {
     await setStatus({error: "위하고 SmartA 화면이 열려 있지 않음", badge: "!"});
-    return {error: "위하고에 로그인한 뒤 SmartA(회계) 화면을 한 번 열어 두세요."};
+    throw new Error("위하고에 로그인한 뒤 SmartA(회계) 화면을 한 번 열어 두세요.");
   }
-  const url = screenUrl(src.url, SCREEN[kind]);
+  return src;
+}
+
+async function collectJournal() {
+  if (pending || planRun) return {error: "이미 받는 중입니다"};
+  const src = await sourceTab();
+  const url = screenUrl(src.url, SCREEN["분개장"]);
   if (!url) return {error: "SmartA 회계 화면(분개장·자금계획서 등)을 한 번 열어 두세요."};
   const tab = await chrome.tabs.create({url, active: false});
   await waitLoaded(tab.id, 30000);
   const result = await new Promise(async (resolve) => {
-    pending = {kind, tabId: tab.id, auto, resolve, timer: setTimeout(() => { pending = null; resolve({error: "응답이 오지 않음 (로그인이 풀렸을 수 있음)"}); }, 120000)};
+    pending = {kind: "분개장", tabId: tab.id, resolve, timer: setTimeout(() => { pending = null; resolve({error: "응답이 오지 않음 (로그인이 풀렸을 수 있음)"}); }, 120000)};
     try {
       const r = await chrome.tabs.sendMessage(tab.id, {type: "clickQuery"});
       if (!r || !r.ok) { clearTimeout(pending.timer); pending = null; resolve({error: "[조회] 버튼을 찾지 못함 (로그인이 풀렸을 수 있음)"}); }
@@ -118,14 +158,75 @@ async function collect(kind, auto) {
   return result;
 }
 
-async function setAuto(on) {
-  await chrome.storage.local.set({auto: !!on});
-  if (on) chrome.alarms.create("collect", {periodInMinutes: PERIOD_MIN, delayInMinutes: 1});
-  else chrome.alarms.clear("collect");
+// 이번 달 1일부터 months 개월치 날짜 (연도별로 나눔: 기수가 연도마다 다름)
+function planDates(months, today = new Date()) {
+  const byYear = {};
+  const d = new Date(today.getFullYear(), today.getMonth(), 1);
+  const end = new Date(today.getFullYear(), today.getMonth() + months, 1);
+  for (; d < end; d.setDate(d.getDate() + 1)) {
+    const y = d.getFullYear();
+    (byYear[y] = byYear[y] || []).push(`${y}${pad(d.getMonth() + 1)}${pad(d.getDate())}`);
+  }
+  return byYear;
 }
 
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === "collect") collect("분개장", true); });
-chrome.runtime.onInstalled.addListener(async () => {
-  const {auto} = await chrome.storage.local.get("auto");
-  if (auto) setAuto(true);
-});
+async function runPlanTab(url, dates) {
+  const tab = await chrome.tabs.create({url, active: false});
+  await waitLoaded(tab.id, 30000);
+  const result = await new Promise(async (resolve) => {
+    const fail = () => { planRun = null; resolve({error: "응답이 멈춤 (로그인이 풀렸을 수 있음)", rows: [], done: [], errors: ["시간 초과"]}); };
+    planRun = {tabId: tab.id, resolve, fail, timer: setTimeout(fail, 60000)};
+    try {
+      await chrome.tabs.sendMessage(tab.id, {type: "collectPlan", dates});
+    } catch (e) { clearTimeout(planRun.timer); planRun = null; resolve({error: "화면과 연결하지 못함", rows: [], done: [], errors: ["화면과 연결하지 못함"]}); }
+  });
+  try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
+  return result;
+}
+
+async function collectPlan(months) {
+  if (pending || planRun) return {error: "이미 받는 중입니다"};
+  months = Math.max(1, Math.min(12, +months || 3));
+  await chrome.storage.local.set({planMonths: months});
+  const src = await sourceTab();
+  const byYear = planDates(months);
+  const rows = [], done = [], errors = [];
+  let company = "";
+  const t0 = Date.now();
+  for (const year of Object.keys(byYear).sort()) {
+    const url = screenUrl(src.url, SCREEN["자금계획"], +year);
+    if (!url) { errors.push("SmartA 회계 화면 주소에서 기수를 찾지 못함"); break; }
+    const r = await runPlanTab(url, byYear[year]);
+    rows.push(...r.rows); done.push(...r.done); errors.push(...r.errors);
+    company = company || r.company || "";
+    if (r.errors.length) break;
+  }
+  const all = Object.values(byYear).flat();
+  const file = {"종류": "자금계획", "형식": 1, "수집시각": "", "회사": company,
+                "기간": {"from": all[0], "to": all[all.length - 1], "months": months},
+                "조회한날": done, "오류": errors, "줄수": rows.length, "열": PLAN_COLUMNS, "줄": rows};
+  await setStatus({progress: ""});
+  if (!done.length) {
+    await setStatus({error: errors[0] || "받은 날이 없음", badge: "!"});
+    return {error: errors[0] || "받은 날이 없음"};
+  }
+  const r = await saveFile("자금계획", file, JSON.stringify([file["기간"], done, errors, rows]),
+                           {rows: rows.length, days: done.length, seconds: Math.round((Date.now() - t0) / 1000), errors: errors.length});
+  if (errors.length) {
+    await setStatus({error: `${done[done.length - 1] || ""} 까지만 받음 — ${errors[0]}`, badge: "!"});
+    r.error = `일부만 받음: ${errors[0]}`;
+  }
+  return r;
+}
+
+// 모두 받기: 분개장 → 자금계획 차례로 (하나가 실패해도 다음 것은 받는다)
+async function collectAll(months) {
+  const out = {};
+  for (const [kind, fn] of [["분개장", () => collectJournal()], ["자금계획", () => collectPlan(months)]]) {
+    try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
+  }
+  const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
+  return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
+}
+
+chrome.runtime.onInstalled.addListener(() => { chrome.alarms && chrome.alarms.clearAll(); });

@@ -33,6 +33,78 @@ CASH_DETAIL_RE = re.compile(r"^예정일\s*:\s*(\d{4})\.(\d{1,2})\.(\d{8})\s*-\s
 CASH_HEAD = ("일자", "항목명", "입금액", "지출액", "현금잔액")
 
 
+# 크롬 확장 '대표보고 위하고 수집'이 자금계획입력(SAFM0102) 화면에서 날짜별로 받은 자금계획 (2026-11-05 사용자 결정).
+# 현금대비잔액과 같은 원전표 단위·미반제 건만 (11월 74줄 원 단위 일치 확인). 반제 0원 줄과 전월이월은 없다.
+AUTO_PLAN_SUFFIX = "자금계획 자동수집.json"
+
+
+def is_auto_plan_name(name):
+    base = os.path.basename(name)
+    return not base.startswith("~$") and base.endswith(AUTO_PLAN_SUFFIX)
+
+
+def parse_auto(path):
+    """자동수집 자금계획(.json) -> [(달 res, 자료일)] (달마다 parse_cash 와 같은 모양, form '자동수집').
+    그 달 모든 날을 받은 달만 ok (한 날이라도 못 받았으면 쓰지 않음 — 빠진 날을 0원으로 보지 않는다)."""
+    import calendar
+    import json
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    if not isinstance(doc, dict) or doc.get("종류") != "자금계획" or not isinstance(doc.get("줄"), list):
+        raise XlsError("자금계획 자동수집 파일 모양이 아님")
+    cols = doc.get("열") or []
+    need = ("date", "yn_inout", "nm_fitem", "cd_trade", "nm_trade", "mn_fplan")
+    if any(c not in cols for c in need):
+        raise XlsError("자금계획 자동수집 파일에 필요한 칸이 없음")
+    ix = dict((c, cols.index(c)) for c in need)
+    taken = str(doc.get("수집시각") or "")[:10]
+    try:
+        stamp = dt.date(*[int(x) for x in taken.split("-")])
+    except (TypeError, ValueError):
+        stamp = None
+    done = set(str(d) for d in doc.get("조회한날") or [])
+    period = doc.get("기간") or {}
+    months = []
+    try:
+        y, m = int(str(period["from"])[:4]), int(str(period["from"])[4:6])
+        ey, em = int(str(period["to"])[:4]), int(str(period["to"])[4:6])
+    except (KeyError, TypeError, ValueError):
+        raise XlsError("자금계획 자동수집 파일에 기간이 없음")
+    while (y, m) <= (ey, em):
+        months.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    items = dict((mo, []) for mo in months)
+    bad = 0
+    for row in doc["줄"]:
+        try:
+            d = str(row[ix["date"]])
+            day = dt.date(int(d[:4]), int(d[4:6]), int(d[6:8]))
+            io = {"입금": "in", "지급": "out"}[row[ix["yn_inout"]]]
+            amount = int(round(float(row[ix["mn_fplan"]])))
+        except (IndexError, KeyError, TypeError, ValueError):
+            bad += 1
+            continue
+        if (day.year, day.month) not in items:
+            bad += 1
+            continue
+        code = str(row[ix["cd_trade"]] or "").lstrip("0")
+        items[(day.year, day.month)].append({"date": day, "cat": str(row[ix["nm_fitem"]] or ""),
+                                             "vendor": str(row[ix["nm_trade"]] or ""),
+                                             "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount})
+    out = []
+    for mo in months:
+        days = ["%d%02d%02d" % (mo[0], mo[1], d) for d in range(1, calendar.monthrange(*mo)[1] + 1)]
+        missing = [d for d in days if d not in done]
+        reason = ""
+        if missing:
+            reason = "%d일 못 받음 (%s~)" % (len(missing), missing[0])
+        elif bad:
+            reason = "읽지 못한 줄 %d개" % bad
+        out.append(({"month": mo, "items": items[mo], "checks": [], "ok": not reason, "reason": reason,
+                     "opening": None, "settled": [], "form": "자동수집"}, stamp))
+    return out
+
+
 def is_cash_form(rows):
     for row in rows[:20]:
         if tuple(_squash(v) if isinstance(v, str) else "" for v in row[:5]) == CASH_HEAD:
@@ -223,26 +295,36 @@ def load(folder):
     """
     out = {"rows": [], "months": [], "notes": [], "unused": []}
     try:
-        names = sorted(n for n in os.listdir(folder) if is_fundplan_name(n) and os.path.isfile(os.path.join(folder, n)))
+        names = sorted(n for n in os.listdir(folder) if (is_fundplan_name(n) or is_auto_plan_name(n))
+                       and os.path.isfile(os.path.join(folder, n)))
     except OSError:
         names = []
     parsed = []
     for n in names:
         path = os.path.join(folder, n)
         try:
-            grid = read_xls(path)
-            res = parse_cash(grid) if is_cash_form(grid) else dict(parse(grid), form="지출입금현황")
-        except XlsError as e:
+            if is_auto_plan_name(n):
+                found = parse_auto(path)
+            else:
+                grid = read_xls(path)
+                found = [(parse_cash(grid) if is_cash_form(grid) else dict(parse(grid), form="지출입금현황"), None)]
+        except (XlsError, OSError, ValueError) as e:
             out["notes"].append("%s 읽지 못함 — %s" % (n, e))
             out["unused"].append(n)
             continue
-        if not res["ok"]:
-            out["notes"].append("%s 쓰지 않음 — %s" % (n, res["reason"]))
+        used_any = False
+        for res, stamp in found:
+            label = n if len(found) == 1 else "%s %d-%02d" % ((n,) + tuple(res["month"]))
+            if not res["ok"]:
+                out["notes"].append("%s 쓰지 않음 — %s" % (label, res["reason"]))
+                continue
+            used_any = True
+            stamp = stamp or file_date(n) or dt.date.fromtimestamp(os.path.getmtime(path))
+            # 같은 자료일이면 자동수집 > 현금대비잔액 > 지출입금현황 (원전표 단위·반제 반영, 2026-11-05)
+            rank = {"자동수집": 2, "현금대비잔액": 1}.get(res["form"], 0)
+            parsed.append((res["month"], stamp, rank, os.path.getmtime(path), n, res))
+        if not used_any:
             out["unused"].append(n)
-            continue
-        stamp = file_date(n) or dt.date.fromtimestamp(os.path.getmtime(path))
-        # 같은 자료일이면 현금대비잔액을 지출입금현황보다 먼저 쓴다 (원전표 단위·반제 표시가 있음, 2026-11-05)
-        parsed.append((res["month"], stamp, 1 if res["form"] == "현금대비잔액" else 0, os.path.getmtime(path), n, res))
     best = {}
     for p in parsed:
         if p[0] not in best or p[1:4] > best[p[0]][1:4]:
@@ -265,9 +347,10 @@ def load(folder):
                                 "금액": it["amount"], "대상월": ym, "자료일": stamp.isoformat(), "파일": n,
                                 "상태": "", "근거": ""})
         sums = dict((io, sum(it["amount"] for it in res["items"] if it["io"] == io)) for io in ("out", "in"))
-        out["notes"].append("%s %s: 지급 %d줄 %s원 · 입금 %d줄 %s원 (소계·계와 맞음)" % (
+        out["notes"].append("%s %s: 지급 %d줄 %s원 · 입금 %d줄 %s원 (%s)" % (
             ym, n, sum(1 for it in res["items"] if it["io"] == "out"), "{:,}".format(sums["out"]),
-            sum(1 for it in res["items"] if it["io"] == "in"), "{:,}".format(sums["in"])))
+            sum(1 for it in res["items"] if it["io"] == "in"), "{:,}".format(sums["in"]),
+            "위하고 자금계획입력 날짜별 조회" if res["form"] == "자동수집" else "소계·계와 맞음"))
         if res.get("settled"):
             out["notes"].append("%s %s: 위하고가 이미 반제한 줄 %d건 (금액 없음, 일정에 넣지 않음)" % (ym, n, len(res["settled"])))
     out["unused"].sort()
@@ -320,7 +403,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             key = norm_vendor(r["거래처"])
             vcode = norm_code(r.get("거래처코드"))
             lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
-            if "현금대비" in (r.get("파일") or "") and r.get("자료일"):
+            if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and r.get("자료일"):
                 # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
                 # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
                 lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
