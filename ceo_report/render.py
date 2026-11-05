@@ -204,6 +204,40 @@ table.pt tr.tot td,tr.tot td{border-top:1px solid var(--navy-l)!important}
 """
 
 
+# 숨 쉴 공간 (사용자 2026-11-05 오후: "여백이 너무 없어서 글자만 빡빡하게 보인다"): 줄 간격·칸 안 여백·절 사이를 넓힌다.
+# 쪽 수 상한(주간 2·월간 3)은 그대로, 넘치면 보고서.py fit_pdf 가 인쇄 배율을 줄인다.
+AIR_CSS = """
+body{line-height:1.6}
+@page{size:A4 portrait;margin:13mm 12mm}
+.q{margin:22px 0 10px!important;padding-bottom:5px!important}
+.pg .sec:first-of-type .q,.fs>.sec:first-of-type .q{margin-top:14px!important}
+.sec{margin-bottom:12px}
+.doc-h{margin-bottom:12px}
+.dsrc{margin-top:6px!important}
+.four.top{margin:14px 0 6px!important;gap:10px!important}
+.four.top .card .lab{padding:5px 10px!important}
+.four.top .card .big{padding:6px 10px 2px!important}
+.four.top .card .foot{padding:0 10px 8px!important}
+.four:not(.top){gap:10px!important}
+.four:not(.top)>.card{padding:10px 14px!important}
+table.pt th,.fs table th{padding:6px 8px!important}
+table.pt td{padding:6px 8px!important}
+table.pt.wo td{padding:5px 8px!important}
+.fri{margin:4px 0 8px!important}
+.wsub{margin:16px 0 6px!important}
+.wchg{margin:8px 0 4px!important}
+.note{margin:6px 0!important}
+.avail>.lab{margin-bottom:6px}
+.card+.card,.avail+.card{margin-top:14px!important}
+@media print{body{line-height:1.55}
+.q{margin:18px 0 8px!important}
+table.pt th,.fs table th{padding:5px 7px!important}
+table.pt td{padding:5px 7px!important}
+table.pt.wo td{padding:4px 7px!important}
+table.pt.tm td,table.pt.tm th,table.pt.tx td,table.pt.tx th,table.pt.xr td,table.pt.xr th{padding:4px 6px!important}}
+"""
+
+
 def _na(text):
     return '<span class="na">%s</span>' % esc(text)
 
@@ -385,7 +419,7 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS + DOC2_CSS + DOC3_CSS,
+             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS + DOC2_CSS + DOC3_CSS + AIR_CSS,
                                               # 월간은 인쇄 때 80%: 표가 넓어 A4 3쪽에 맞춤 (사용자 2026-11-04)
                                               "" if R["kind"] == "weekly" else " mon"))
     # 문서 머리 (사용자 2026-11-05: 진짜 문서처럼): 가운데 제목, 왼쪽 문서 정보 표, 오른쪽 결재란
