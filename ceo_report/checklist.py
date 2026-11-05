@@ -70,8 +70,9 @@ def convert_items(tables, cross, notes):
     return out
 
 
-def save_convert_items(input_dir, items, now=None):
-    data = {"_시각": (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M"), "items": items}
+def save_convert_items(input_dir, items, now=None, trace=None):
+    """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀)."""
+    data = {"_시각": (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M"), "items": items, "trace": trace or {}}
     path = os.path.join(input_dir, CONVERT_FILE)
     try:
         with open(path + ".tmp", "w", encoding="utf-8") as f:
@@ -79,6 +80,14 @@ def save_convert_items(input_dir, items, now=None):
         os.replace(path + ".tmp", path)
     except OSError:
         pass
+
+
+def _load_trace(input_dir):
+    try:
+        with open(os.path.join(input_dir, CONVERT_FILE), encoding="utf-8") as f:
+            return json.load(f).get("trace") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
 
 
 def _load_convert_items(input_dir):
@@ -241,6 +250,7 @@ def _report_items(input_dir, asof):
         return [{"id": "오류|계산", "kind": "입력 자료", "date": "", "amount": None, "vendor": "",
                  "title": "보고서 계산을 하지 못해 일부 항목을 못 모음", "detail": type(e).__name__, "choices": ["확인함"]}]
     from .wehago import norm_code, norm_vendor
+    trace = _load_trace(input_dir)
     for r in (R.get("debts") or {}).get("over", []):
         plans = [ev for ev in R["events"] if ev["io"] == "out" and "미지급금" in str(ev.get("cat") or "")
                  and ((r["vcode"] and norm_code(ev.get("vendor_code")) == norm_code(r["vcode"]))
@@ -252,6 +262,9 @@ def _report_items(input_dir, asof):
                 len(same), ", ".join(ev["date"].isoformat() for ev in same if ev["date"]))
         elif plans:
             why = " · 자금계획서 예정 %d줄 (예정일 %s)" % (len(plans), ", ".join(ev["date"].isoformat() for ev in plans if ev["date"]))
+        tr = trace.get(norm_code(r["vcode"]) or "", "") if r["vcode"] else ""
+        if tr:
+            why += " · " + tr
         r = dict(r, why=why)
         out.append({"id": "미지급금예정|%s|%s|%s" % (r["vcode"] or r["vendor"], r["scheduled"], r["balance"]),
                     "kind": "미지급금 예정 > 장부", "date": "", "amount": r["over"], "vendor": r["vendor"], "vcode": r["vcode"],
@@ -259,7 +272,9 @@ def _report_items(input_dir, asof):
                     "detail": "지급 예정(자금계획서) %s원 · 장부 미지급금 %s원 · 더 큰 금액 %s원%s%s" % (
                         won(r["scheduled"]), won(r["balance"]), won(r["over"]), "",
                         r["why"]),
-                    "choices": ["예정이 맞음 (장부 반영 전)", "장부가 맞음 — 자금계획서 고칠 것", "두 번 적힘 — 자금계획서에서 지울 것"]})
+                    "choices": (["두 번 적힘 — 자금계획서에서 지울 것 (프로그램 판단)", "예정이 맞음 (장부 반영 전)", "장부가 맞음 — 자금계획서 고칠 것"]
+                                if len(same) > 1 else
+                                ["예정이 맞음 (장부 반영 전)", "장부가 맞음 — 자금계획서 고칠 것", "두 번 적힘 — 자금계획서에서 지울 것"])})
     for g in R.get("two_source") or []:
         out.append({"id": "두출처|%s|%s|%s" % (g["vendor"], g["month"], sum(g["sources"].values())), "kind": "두 출처 출금",
                     "date": g["month"], "amount": sum(g["sources"].values()), "vendor": g["vendor"], "vcode": g.get("vcode") or "",

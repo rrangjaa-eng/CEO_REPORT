@@ -207,3 +207,30 @@ class TestGroupSmall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPayableTrace(unittest.TestCase):
+    def test_cancel_and_reissue_is_explained(self):
+        import datetime as dt
+        from ceo_report import review_checks
+        d = dt.date(2026, 10, 28)
+        ln = lambda no, cr: {"date": d, "no": no, "account_code": "25300", "vendor_code": "00604", "credit": cr, "debit": None}
+        tr = review_checks.payable_trace([ln("50002", 1155000), ln("50003", -1155000), ln("50004", 1155000)], ("25300",))
+        e = tr["604"]
+        self.assertEqual(e["balance"], 1155000)
+        self.assertIn("50003", e["text"])
+        self.assertIn("다시 발행", e["text"])
+        self.assertIn("장부는 맞음", e["text"])
+
+    def test_no_cancel_no_text(self):
+        import datetime as dt
+        from ceo_report import review_checks
+        tr = review_checks.payable_trace([{"date": dt.date(2026, 10, 1), "no": "1", "account_code": "25300",
+                                           "vendor_code": "7", "credit": 500, "debit": None}], ("25300",))
+        self.assertEqual(tr["7"]["text"], "")
+
+    def test_vendor_label(self):
+        from ceo_report import checklist
+        self.assertEqual(checklist.vendor_label("가나상사", "604"), "가나상사 [604]")
+        self.assertEqual(checklist.vendor_label("가나상사", ""), "가나상사")
+        self.assertEqual(checklist.vendor_label("", "604"), "[604]")

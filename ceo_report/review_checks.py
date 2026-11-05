@@ -208,3 +208,53 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
     for r, why in moved:
         out.append("  옮김 %s %s원 — %s" % (r.get("예정일", ""), util.won(abs(util.num(r.get("금액")) or 0)), why))
     return out
+
+
+def payable_trace(journal, payable_codes, ref=None):
+    """거래처별 미지급금 장부 내역 풀이 (사용자 2026-11-05: 채팅에서 따진 만큼 프로그램이 스스로 따진다).
+
+    미지급금 계정의 대변(+발생)·대변 음수(취소)·차변(지급)을 거래처코드별로 센다. 취소(−금액)는 31일 안의 같은 금액 발생과 짝지어 지운다.
+    -> {거래처코드: {"issued": [(날짜, 금액, 전표)], "cancelled": [...], "paid": 합, "balance": 합, "text": 풀이 글}}
+    """
+    from .wehago import norm_code
+    codes = set(_sq(c) for c in payable_codes)
+    per = collections.OrderedDict()
+    for ln in journal:
+        if _sq(ln.get("account_code")) not in codes or ln.get("date") is None:
+            continue
+        if ref is not None and ln["date"] > ref:
+            continue
+        vc = norm_code(ln.get("vendor_code"))
+        if not vc:
+            continue
+        e = per.setdefault(vc, {"plus": [], "minus": [], "paid": 0})
+        cr, dr = ln.get("credit") or 0, ln.get("debit") or 0
+        no = str(ln.get("no") or "")
+        if cr > 0:
+            e["plus"].append((ln["date"], cr, no))
+        elif cr < 0:
+            e["minus"].append((ln["date"], -cr, no))
+        if dr > 0:
+            e["paid"] += dr
+        elif dr < 0:
+            e["paid"] += dr
+    out = {}
+    for vc, e in per.items():
+        left, cancelled = list(e["plus"]), []
+        for d, amt, no in e["minus"]:
+            hit = next((x for x in left if x[1] == amt and abs((x[0] - d).days) <= CANCEL_DAYS), None)
+            if hit is not None:
+                left.remove(hit)
+                cancelled.append((hit, (d, amt, no)))
+        bal = sum(x[1] for x in e["plus"]) - sum(x[1] for x in e["minus"]) - e["paid"]
+        text = ""
+        if cancelled:
+            c = cancelled[-1]
+            again = any(x[1] == c[0][1] for x in left)
+            text = ("장부: %s 발생 %s원(전표 %s)을 %s 취소(전표 %s)%s → 취소분은 지워져 장부 잔액에 한 번만 잡힘 (장부는 맞음)"
+                    % (c[0][0].isoformat(), util.won(c[0][1]), c[0][2], c[1][0].isoformat(), c[1][2],
+                       "하고 다시 발행" if again else ""))
+            if len(cancelled) > 1:
+                text += " · 취소 후 재발행 %d번" % len(cancelled)
+        out[vc] = {"issued": left, "cancelled": cancelled, "paid": e["paid"], "balance": bal, "text": text}
+    return out

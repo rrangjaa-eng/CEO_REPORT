@@ -1056,7 +1056,9 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         summary = ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
         items = (review_checks.duplicate_items(books.journal) + ht["items"]
                  + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
-        checklist.save_convert_items(input_dir, items, now)
+        trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
+                 if v["text"]}
+        checklist.save_convert_items(input_dir, items, now, trace)
     snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
     lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
                          snap_warning)
