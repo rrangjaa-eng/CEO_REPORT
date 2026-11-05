@@ -49,8 +49,9 @@ class TestBuild(unittest.TestCase):
 
     def test_rows_blocked_and_regular_left_out(self):
         rows, blocked, skipped = transfer.build(self.events(), ACC, D(2026, 11, 1), D(2026, 11, 7))
-        self.assertEqual(rows, [["088", "100000000001", "가상무대", "5000000", "가상무대", "", "", "P26201 P26203", "가상무대"],
-                                ["011", "3010000000002", "가상조명", "1500000", "가상조명", "", "", "가상조명", "가상조명"]])
+        # 예금주는 고객관리성명에만 (사용자 2026-11-05), 나머지 표시·메모·key 칸은 빈칸
+        self.assertEqual(rows, [["088", "100000000001", "가상무대", "5000000", "", "", "", "", ""],
+                                ["011", "3010000000002", "가상조명", "1500000", "", "", "", "", ""]])
         self.assertEqual(blocked, [("가상없음", 900_000, "계좌 정보 없음"), ("가상음향", 700_000, "은행 코드 없음 (모름은행)")])
         self.assertEqual(skipped, 3)
 

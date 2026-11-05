@@ -311,6 +311,12 @@ def _check_acc(acc, amount):
     return holder, number, why
 
 
+def _row(bank, number, holder, amount):
+    """이체 파일 9칸. 예금주는 고객관리성명에만 (사용자 2026-11-05: 은행 수취인조회로 맞춰 봄).
+    출금통장표시내용·입금통장표시내용·입금인코드·비고·업체사용key 는 비운다."""
+    return [bank_code(bank), number, holder, str(amount), "", "", "", "", ""]
+
+
 def multi_accounts(accounts, ln):
     """거래처코드에 계좌(계좌번호 있는 줄)가 2개 이상이면 그 목록, 아니면 None."""
     found = accounts.get(code_key(ln.get("code"))) if code_key(ln.get("code")) else None
@@ -331,7 +337,6 @@ def build(events, accounts, start, end, splits=None, multi=None):
         if ln["unknown"] or ln["amount"] <= 0:
             blocked.append((ln["vendor"], None if ln["unknown"] else ln["amount"], "금액 미확인"))
             continue
-        memo = cut(" ".join(ln["projects"]) or ln["vendor"], MAX_BYTES["memo"])
         many = multi_accounts(accounts, ln)
         if many:
             plan = splits.get(code_key(ln.get("code"))) or {}
@@ -350,8 +355,7 @@ def build(events, accounts, start, end, splits=None, multi=None):
             for a, v in parts:
                 if v:
                     holder, number, _ = _check_acc(a, v)
-                    rows.append([bank_code(a["은행"]), number, holder, str(v), cut(holder, MAX_BYTES["our"]), "", "",
-                                 memo, cut(ln["vendor"], MAX_BYTES["key"])])
+                    rows.append(_row(a["은행"], number, holder, v))
             continue
         acc, missing = find_account(accounts, ln)
         if acc is None:
@@ -361,8 +365,7 @@ def build(events, accounts, start, end, splits=None, multi=None):
         if why:
             blocked.append((ln["vendor"], ln["amount"], why))
             continue
-        rows.append([bank_code(acc["은행"]), number, holder, str(ln["amount"]), cut(holder, MAX_BYTES["our"]), "", "",
-                     memo, cut(ln["vendor"], MAX_BYTES["key"])])
+        rows.append(_row(acc["은행"], number, holder, ln["amount"]))
     return rows, blocked, skipped
 
 
