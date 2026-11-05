@@ -2024,7 +2024,7 @@ def _month_chart(R, H=250):
     foot = ("매출·매입 = 세금계산서 등 증빙 작성일자 기준 공급가액 · 영업이익 = 월별 실적과 같은 기준 (공통비까지 뺀 값)" if ev else
             "증빙월별.csv 없음: 매입 막대 없이 손익 기준 매출만 (대표보고 창의 '자료 변환'이 분개장으로 만듦)")
     return ("<div class='card mchart'><div class='lab'>월별 매출·매입·영업이익 흐름 (%s~%s)</div>%s%s<div class='note%s'>%s</div></div>"
-            % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg, " mgx" if ev else "", esc(foot)))
+            % (esc(_ym_text(ser[0][0])), esc(_ym_text(ser[-1][0])), "".join(out), leg, " mgx", esc(foot)))   # 풀이·자료 없음 안내는 경영관리용에만 (사용자 2026-11-05)
 
 
 def _team_notes(R, basis, dept, last, ym):
