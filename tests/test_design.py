@@ -520,7 +520,7 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
                 self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertEqual(html.count("break-inside:auto"), 2)
+                self.assertEqual(html.count("break-inside:auto"), 3)   # 월간 ③ 지난 미처리 이어짐 규칙 하나 더 (2026-11-05)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 
