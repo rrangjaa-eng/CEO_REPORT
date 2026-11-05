@@ -74,6 +74,71 @@ a{color:inherit;text-decoration:none}}
 """
 
 
+# ─────────── 문서 양식 (사용자 2026-11-05: "AI가 만든 문서 말고 진짜 문서처럼") ───────────
+# 기준: 사내 보고서 양식. 가운데 제목 + 문서 정보 표 + 결재란, 절 제목은 '1.' 번호와 밑줄, 둥근 카드·그림자·색 상자·배지 없음.
+# 표는 위·아래 굵은 선과 안쪽 가는 선, 머리줄은 옅은 회색. 글자색은 검정·회색, 빨강은 모자람·마이너스·경고에만.
+# 숫자·배치·쪽 수는 그대로 두고 겉모양만 바꾼다 (덮어쓰는 CSS).
+DOC_CSS = """
+:root{--ink:#111;--sub:#555;--line:#bfbfbf;--soft:#f2f2f2;--accent:#1a3a6b;--in:#111;--out:#111;--rule:#111}
+body{font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo","Noto Sans KR",sans-serif;color:#111}
+.doc-h{position:relative;margin:0 0 6px}
+.doc-h h1{text-align:center;font-size:22px;font-weight:700;letter-spacing:.35em;margin:6px 0 10px;padding-bottom:6px}
+.doc-h h1 .co{display:block;font-size:12px;letter-spacing:.1em;font-weight:400;color:#333;margin-bottom:2px}
+table.dinfo{width:auto;border-collapse:collapse;font-size:11px;margin:0}
+table.dinfo th,table.dinfo td{border:1px solid #111;padding:3px 8px;white-space:nowrap}
+table.dinfo th{background:#f2f2f2;font-weight:600;text-align:center}
+.dsrc{font-size:10px;color:#555;margin:4px 0 0}
+table.sign{border:1px solid #111!important;border-radius:0!important;margin:0 0 4px 12px}
+table.sign th,table.sign td{border:1px solid #111!important;padding:2px 8px;width:68px}
+table.sign th{background:#fff!important;font-weight:600;letter-spacing:.3em}
+table.sign th.sv{background:#fff!important;color:#111!important;width:18px;letter-spacing:0;font-weight:600}
+table.sign tr.sg td{height:46px}
+.badge,.badge.m{background:none;color:#111;border:1px solid #111;border-radius:0;font-size:11px;letter-spacing:.1em;padding:1px 6px}
+.q{border-left:0!important;padding-left:0!important;font-size:14px!important;font-weight:700!important;color:#111!important;
+border-bottom:1.5px solid #111;padding-bottom:3px!important;margin:16px 0 6px!important;letter-spacing:.02em}
+.q .ev{border:0!important;color:#666!important;font-weight:400!important;font-size:10px!important;padding:0!important;margin-left:8px!important}
+.pgt{color:#111!important;border-bottom:1px solid #111!important}.pgt span{background:none!important;color:#111!important;border:1px solid #111;border-radius:0!important}
+.card,.fs .card,.kpi{border-radius:0!important;box-shadow:none!important}
+.fs .card{border:0!important;padding:0!important;background:none!important}
+.frimain{border:0!important;background:none!important;padding:0!important}
+.fri{border-bottom:0!important;padding-bottom:2px!important}.fri b{color:#111!important;font-size:18px!important}
+.four.top{gap:0!important;border:1.5px solid #111;margin:8px 0 4px!important}
+.four.top .card{border:0!important;border-left:1px solid #111!important;padding:0!important}
+.four.top .card:first-child{border-left:0!important}
+.four.top .card .lab{display:block;background:#f2f2f2;border-bottom:1px solid #111;padding:3px 8px;color:#111;font-size:11px;font-weight:600}
+.four.top .card .big{padding:4px 8px 0;font-size:17px!important;font-weight:700}
+.four.top .card .foot{padding:0 8px 4px}
+.four:not(.top){gap:0!important;border:1px solid #111}
+.four:not(.top)>.card{border:0!important;border-left:1px solid #111!important;padding:6px 10px!important}
+.four:not(.top)>.card:first-child{border-left:0!important}
+.fs .big{font-weight:700!important}
+.vin,.vout,table.pt.wo td:last-child.vout{color:#111!important}
+.neg,table.pt td.av b.neg,table.pt td.av small.firm.neg{color:#c00000!important}
+.chip{border-radius:0!important;background:none!important;color:#555!important;border:0!important;font-weight:400!important;padding:0!important}
+.chip::before{content:"("}.chip::after{content:")"}
+.chip.c-over{color:#c00000!important}
+table{font-variant-numeric:tabular-nums}
+table.pt,.fs table{border-top:1.5px solid #111;border-bottom:1.5px solid #111}
+table.pt th,.fs table th{background:#f2f2f2!important;color:#111;font-weight:600;border-bottom:1px solid #111!important;padding:4px 6px}
+table.pt td{border-bottom:1px solid #d0d0d0}
+table.pt tr:last-child td{border-bottom:0}
+table.pt tr.tot td,tr.tot td{background:#f2f2f2!important;border-top:1px solid #111!important;font-weight:700}
+table.pt td.av,table.pt th.av{background:none!important}
+table.pt td.av b{color:#111!important;font-size:15px!important}
+.avail{border:0!important}
+.warnbar{background:none!important;border:1.5px solid #c00000!important;border-radius:0!important;color:#c00000!important}
+.overl,.dec{border-radius:0!important}.overl{border-left:3px solid #111!important}
+.note,.evid{color:#444}
+.note::before{content:"※ "}
+.evid{border-top:1px solid #111!important}
+.tbar,.tbar i,.bar{border-radius:0!important}
+.st{border-radius:0!important}
+.doc-end{float:right;font-size:11px;color:#111;letter-spacing:.3em}
+@media screen and (max-width:820px){table.dinfo th,table.dinfo td{white-space:normal}table.sign{float:none;margin:0 0 6px}}
+@media print{.doc-h h1{font-size:19px;margin:2px 0 8px}.q{margin:10px 0 4px!important;font-size:12.5px!important}}
+"""
+
+
 def _na(text):
     return '<span class="na">%s</span>' % esc(text)
 
@@ -255,18 +320,24 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS,
+             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS,
                                               # 월간은 인쇄 때 80%: 표가 넓어 A4 3쪽에 맞춤 (사용자 2026-11-04)
                                               "" if R["kind"] == "weekly" else " mon"))
+    # 문서 머리 (사용자 2026-11-05: 진짜 문서처럼): 가운데 제목, 왼쪽 문서 정보 표, 오른쪽 결재란
+    h.append("<div class='doc-h'>")
+    # 대표용엔 '대표용' 표시를 붙이지 않음 (사용자 2026-11-04). 경영관리용만 표시
+    h.append("<h1><span class='co'>%s</span>%s%s</h1>" % (
+        esc(st.get("회사명", "")), esc("%s %s" % (kind, who)), "" if mode == "ceo" else " <span class='badge m'>경영관리용</span>"))
     if mode == "ceo" and R["kind"] == "weekly":   # 결재란: 대표가 서명해 회신 (사용자 2026-11-03)
         # 날짜 줄 없음 (사용자 2026-11-05: 결재란 날짜 삭제하고 더 예쁘게)
         h.append("<table class='sign'><tr><th rowspan='2' class='sv'>결<br>재</th><th>담당</th><th>대표이사</th></tr>"
                  "<tr class='sg'><td></td><td></td></tr></table>")
-    # 대표용엔 '대표용' 표시를 붙이지 않음 (사용자 2026-11-04). 경영관리용만 표시
-    h.append("<h1>%s%s</h1>" % (esc(title), "" if mode == "ceo" else "<span class='badge m'>경영관리용</span>"))
-    h.append("<div class='meta'>보고 기준일 %s · 집계 기간 %s ~ %s · 작성 %s · 금액 단위: 원<br>%s</div>"
-             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                esc("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"]))))
+    h.append("<table class='dinfo'><tr><th>보고 기준일</th><td>%s</td><th>집계 기간</th><td>%s ~ %s</td></tr>"
+             "<tr><th>작성</th><td>%s</td><th>금액 단위</th><td>원</td></tr></table>"
+             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
+    h.append("<div class='meta dsrc'>%s</div>" % esc(
+        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])))
+    h.append("</div>")
 
     h.append(_first_screen(R, mode, per))
     if mode == "ceo":
@@ -363,7 +434,7 @@ table.pt.ayt tr.tot td{font-weight:800;border-top:1.5px solid var(--ink)}table.p
 .fs table.pt.wo tbody td:last-child,.fs table.pt.wn tbody td:nth-child(4){font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}.fs #avail tbody td.vin,.fs #avail tbody td.vout{font-size:13.5px;font-weight:700;font-variant-numeric:tabular-nums}.fs #avail td.av b{font-size:18px}.fs #avail td small,.fs table.pt.wo td small{font-weight:400}.fs ul.nl.one{list-style:none;padding-left:0;columns:1!important}
 """
 
-CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+CIRCLED = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.")   # 문서 절 번호 (2026-11-05)
 
 
 def _ev_span(tags):
@@ -2006,7 +2077,7 @@ def _first_screen(R, mode, per):
                        "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf, H=320, simple=True))
     else:
         flow = (esc("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=420, simple=True))
-    funds = [("앞으로 자금은?" if monthly else "지금 자금은?", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
+    funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
@@ -2031,7 +2102,8 @@ def _first_screen(R, mode, per):
         if monthly and i == 6:
             sec = _mg(mode, sec)   # 계정과목별 사용 금액은 경영관리용에만 (사용자 2026-11-04: 대표 보고에서 없앰)
         h.append(sec)
-    h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.</div>")
+    h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.%s</div>"
+             % ("<span class='doc-end'>끝.</span>" if mode == "ceo" else ""))
     h.append(_mg(mode, _glossary(R)))   # 용어 풀이는 경영관리용에만 (2026-11-05 사용자: 대표 보고 디자인 제안 4). 첫 화면 쪽 안에 (쪽 나눔 뒤로 밀려 빈 쪽이 생기지 않게)
     n = len(blocks)
     h.append(_mg(mode, _evidence(R, n) + "<div class='sec'>%s%s</div><div class='sec'>%s%s</div>" % (

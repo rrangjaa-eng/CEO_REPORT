@@ -441,7 +441,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", dt.date(2026, 10, 31))
         ceo = render(R, "ceo")
         heads = [re.sub("<[^>]+>", "", h) for h in re.findall(r"<div class='q'>.*?</div>", ceo)]
-        self.assertEqual([h[1:].strip().split(" ")[0] for h in heads], ["11/06(금)", "10월", "지금"])
+        self.assertEqual([h.split(" ", 1)[1].strip().split(" ")[0] for h in heads], ["11/06(금)", "10월", "자금"])
         self.assertNotIn("class='prow'", ceo)
         self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
         self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
@@ -452,7 +452,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
         self.assertEqual(ids, ["P26206", "P26203", "P26201", "P26207", "P26204", "P26208"])
         self.assertIn("행사일 순", fs)
-        self.assertLess(fs.index("지금 자금은"), fs.index("프로젝트별 원가 예산·집행"))
+        self.assertLess(fs.index("자금 현황"), fs.index("프로젝트별 원가 예산·집행"))
 
 class TestMonthlyMonthAndYearApart(unittest.TestCase):
     """월간 (사용자 2026-11-03): 이번 달 실적과 올해 누적 실적을 따로 나누고, 경영관리의 영업외 수익을 그 부서 실적으로 보인다."""
@@ -485,7 +485,7 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         self.assertNotIn("zoom:.95", mon)
         # ⑥ 누적 실적(앞으로 들어올 매출 포함)은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
         self.assertIn(".fs.mon .sec.pgb{break-before:page}", mon)
-        self.assertEqual(mon.count("<div class='sec pgb'><div class='q'>⑥"), 1)
+        self.assertEqual(mon.count("<div class='sec pgb'><div class='q'>6."), 1)
         self.assertIn("10월말 통장 잔액", mon)   # 1쪽 맨 위 한눈에 칸
         # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
         self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)

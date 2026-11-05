@@ -587,7 +587,7 @@ class TestSettingsAndKpi(Base):
         # 사용자 2026-11-03: 금액 단위는 백만원이 아니라 원 (첫 화면·그래프 포함)
         html = render(self.R, "mgmt")
         self.assertNotIn("백만원", html)
-        self.assertIn("금액 단위: 원", html)
+        self.assertIn("<th>금액 단위</th><td>원</td>", html)   # 문서 정보 표 (2026-11-05)
         self.assertIn("{:,}".format(self.R["s1"]["available"]), first_screen(html))
 
 

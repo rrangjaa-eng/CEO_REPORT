@@ -101,7 +101,7 @@ class TestWeeklyReport(unittest.TestCase):
         R = self.R([{"vendor": "샘플 지급처", "amount": 45_000_000, "memo": ""}])
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
-            self.assertLess(fs.index("출금 목록"), fs.index("지금 자금은?"))
+            self.assertLess(fs.index("출금 목록"), fs.index("자금 현황"))
             self.assertIn("지난주 대비: 지난주(10/30) 출금 45,000,000 → 이번 출금", fs)
 
     def test_renders_when_last_week_record_exists(self):
