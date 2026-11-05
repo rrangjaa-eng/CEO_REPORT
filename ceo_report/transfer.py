@@ -293,34 +293,74 @@ def pick(events, start, end):
     return sorted(lines.items(), key=lambda kv: (min(kv[1]["dates"]), kv[1]["vendor"])), skipped
 
 
-def build(events, accounts, start, end):
-    """-> (파일 줄 [9칸], 막힌 줄 [(거래처, 금액, 이유)], 뺀 정기 지급 수)."""
+def _check_acc(acc, amount):
+    """계좌 한 줄과 금액 -> (예금주, 계좌번호 숫자, 막는 이유 또는 None)."""
+    holder = acc["예금주"]
+    number = re.sub(r"[\s-]", "", acc["계좌번호"])
+    why = None
+    if not holder:
+        why = "예금주 없음"
+    elif bank_code(acc["은행"]) is None:
+        why = "은행 코드 없음 (%s)" % acc["은행"]
+    elif not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
+        why = "예금주 형식·길이 오류"
+    elif not number.isdigit() or len(number) > MAX_BYTES["account"]:
+        why = "계좌번호 형식 오류"
+    elif len(str(amount)) > MAX_BYTES["amount"]:
+        why = "금액 자릿수 초과"
+    return holder, number, why
+
+
+def multi_accounts(accounts, ln):
+    """거래처코드에 계좌(계좌번호 있는 줄)가 2개 이상이면 그 목록, 아니면 None."""
+    found = accounts.get(code_key(ln.get("code"))) if code_key(ln.get("code")) else None
+    if isinstance(found, list) and len([a for a in found if a["계좌번호"]]) > 1:
+        return [a for a in found if a["계좌번호"]]
+    return None
+
+
+def build(events, accounts, start, end, splits=None, multi=None):
+    """-> (파일 줄 [9칸], 막힌 줄 [(거래처, 금액, 이유)], 뺀 정기 지급 수).
+
+    splits: {거래처코드 열쇠: {예금주: 금액}} — 한 코드에 예금주가 다른 계좌가 여럿일 때 사람별로 나눠 넣는다
+    (사용자 2026-11-05). 합계가 지급액과 같을 때만 쓴다. multi(list)를 주면 나눌 금액이 필요한 거래처를 채운다."""
     picked, skipped = pick(events, start, end)
     rows, blocked = [], []
+    splits = splits or {}
     for k, ln in picked:
-        acc, missing = find_account(accounts, ln)
-        why = None
         if ln["unknown"] or ln["amount"] <= 0:
-            why = "금액 미확인"
-        elif acc is None:
-            why = missing
-        else:
-            holder = acc["예금주"]
-            number = re.sub(r"[\s-]", "", acc["계좌번호"])
-            if not holder:
-                why = "예금주 없음"
-            elif bank_code(acc["은행"]) is None:
-                why = "은행 코드 없음 (%s)" % acc["은행"]
-            elif not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
-                why = "예금주 형식·길이 오류"
-            elif not number.isdigit() or len(number) > MAX_BYTES["account"]:
-                why = "계좌번호 형식 오류"
-            elif len(str(ln["amount"])) > MAX_BYTES["amount"]:
-                why = "금액 자릿수 초과"
-        if why:
-            blocked.append((ln["vendor"], None if ln["unknown"] else ln["amount"], why))
+            blocked.append((ln["vendor"], None if ln["unknown"] else ln["amount"], "금액 미확인"))
             continue
         memo = cut(" ".join(ln["projects"]) or ln["vendor"], MAX_BYTES["memo"])
+        many = multi_accounts(accounts, ln)
+        if many:
+            plan = splits.get(code_key(ln.get("code"))) or {}
+            parts = [(a, plan.get(a["예금주"]) or 0) for a in many]
+            if sum(v for _, v in parts) != ln["amount"] or any(v < 0 for _, v in parts):
+                if multi is not None:
+                    multi.append({"vendor": ln["vendor"], "code": ln.get("code") or "", "amount": ln["amount"],
+                                  "holders": [a["예금주"] for a in many]})
+                blocked.append((ln["vendor"], ln["amount"], "계좌 %d개 (%s) — 예금주별 금액 필요 (합계 %s원)" % (
+                    len(many), ", ".join(a["예금주"] for a in many), "{:,}".format(ln["amount"]))))
+                continue
+            bad = [why for a, v in parts if v for why in [_check_acc(a, v)[2]] if why]
+            if bad:
+                blocked.append((ln["vendor"], ln["amount"], bad[0]))
+                continue
+            for a, v in parts:
+                if v:
+                    holder, number, _ = _check_acc(a, v)
+                    rows.append([bank_code(a["은행"]), number, holder, str(v), cut(holder, MAX_BYTES["our"]), "", "",
+                                 memo, cut(ln["vendor"], MAX_BYTES["key"])])
+            continue
+        acc, missing = find_account(accounts, ln)
+        if acc is None:
+            blocked.append((ln["vendor"], ln["amount"], missing))
+            continue
+        holder, number, why = _check_acc(acc, ln["amount"])
+        if why:
+            blocked.append((ln["vendor"], ln["amount"], why))
+            continue
         rows.append([bank_code(acc["은행"]), number, holder, str(ln["amount"]), cut(holder, MAX_BYTES["our"]), "", "",
                      memo, cut(ln["vendor"], MAX_BYTES["key"])])
     return rows, blocked, skipped
@@ -387,9 +427,10 @@ def write_xlsx(path, rows):
     os.replace(tmp, path)
 
 
-def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None):
+def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, splits=None, multi=None):
     """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None.
-    missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게)."""
+    missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게).
+    splits·multi: 예금주가 다른 계좌가 여럿인 거래처의 사람별 금액 (build 참고)."""
     from .calc import compute
     from .data import load
     d = load(input_dir)
@@ -397,7 +438,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None):
     accounts, notes = read_accounts(input_dir)
     for n in notes:
         say(n)
-    rows, blocked, skipped = build(R["events"], accounts, start, end)
+    rows, blocked, skipped = build(R["events"], accounts, start, end, splits, multi)
     if missing is not None:
         missing.extend(missing_accounts(R["events"], accounts, start, end))
     say("이체 대상 %s ~ %s: 파일에 넣음 %d건 %s원, 못 넣음 %d건, 정기 지급 %d건은 뺌" % (

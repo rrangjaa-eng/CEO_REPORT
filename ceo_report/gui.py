@@ -625,16 +625,68 @@ class Window(object):
             self.say("지급일 끝이 시작보다 앞섭니다")
             return
         self.say("──── 이체 파일 ────")
-        missing = []
+        missing, multi = [], []
+        splits = getattr(self, "_splits", None) or {}
         try:
-            path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing)
+            path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing,
+                                      splits=splits, multi=multi)
         except Exception as e:   # 트레이스백 대신 글로
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             return
         if missing:
             self.ask_accounts(missing)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
+        elif multi:
+            self.ask_splits(multi)       # 예금주가 다른 계좌가 여럿: 사람별 금액을 받고 다시 만든다 (사용자 2026-11-05)
         elif path:
             self.open_dir(self.paths.output)
+
+    def ask_splits(self, multi):
+        """계좌가 여럿(예금주 다름)인 거래처 창: 예금주마다 금액 → 합계가 맞으면 나눠서 이체 파일 다시 만들기."""
+        from . import transfer
+        top = tk.Toplevel(self.root)
+        top.title("예금주별 금액 %d곳" % len(multi))
+        top.transient(self.root)
+        frm = ttk.Frame(top, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="한 거래처에 예금주가 다른 계좌가 여럿입니다. 사람마다 보낼 금액을 넣으세요 (합계가 지급액과 같아야 함). "
+                            "0 이나 빈칸인 사람은 넣지 않습니다.", style="S.TLabel", wraplength=560).grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        fields, r = [], 1
+        for m in multi:
+            ttk.Label(frm, text="%s [%s] · 지급 %s원" % (m["vendor"] or "-", m["code"], "{:,}".format(m["amount"])),
+                      style="H.TLabel").grid(row=r, column=0, columnspan=3, sticky="w", pady=(6, 2))
+            r += 1
+            for h in m["holders"]:
+                v = tk.StringVar()
+                ttk.Label(frm, text=h, width=14).grid(row=r, column=0, sticky="w", padx=(12, 3))
+                ttk.Entry(frm, textvariable=v, width=14).grid(row=r, column=1, sticky="w", padx=3)
+                fields.append((m, h, v))
+                r += 1
+
+        def apply():
+            plan, sums = {}, {}
+            for m, h, v in fields:
+                t = v.get().replace(",", "").strip()
+                try:
+                    amt = int(t) if t else 0
+                except ValueError:
+                    self.say("금액 숫자 오류: %s %s" % (m["vendor"], h))
+                    return
+                plan.setdefault(transfer.code_key(m["code"]), {})[h] = amt
+                sums[m["code"]] = sums.get(m["code"], 0) + amt
+            for m in multi:
+                if sums.get(m["code"], 0) != m["amount"]:
+                    self.say("합계가 맞지 않음: %s 지급 %s원, 넣은 합계 %s원" % (
+                        m["vendor"], "{:,}".format(m["amount"]), "{:,}".format(sums.get(m["code"], 0))))
+                    return
+            self._splits = dict(getattr(self, "_splits", None) or {}, **plan)
+            top.destroy()
+            self.make_transfer()
+
+        b = ttk.Frame(frm)
+        b.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(b, text="나눠서 다시 만들기", command=apply, style="Big.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(b, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
 
     def ask_accounts(self, missing):
         """계좌 없는 거래처 창: 줄마다 거래처코드·은행·계좌번호·예금주 → 저장하고 이체 파일 다시 만들기."""
