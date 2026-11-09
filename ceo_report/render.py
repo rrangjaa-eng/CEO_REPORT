@@ -2489,7 +2489,12 @@ def _no_budget_note(s3):
 
 def _rate_text(s3):
     rate = s3["cost_rate"]
-    return "설정 오류" if rate is None else "%g%%" % round(rate * 100, 6)
+    if rate is None:
+        return "설정 오류"
+    text = "%g%%" % round(rate * 100, 6)
+    if s3.get("team_rate_n"):   # 팀 목표 수익률이 있는 팀은 원가율 = 1 − 목표 수익률 (사용자 2026-11-05)
+        text += " (팀 목표 수익률이 있는 팀은 100% − 목표 수익률)"
+    return text
 
 
 PAID_STATES = ("지급완료", "카드결제완료")

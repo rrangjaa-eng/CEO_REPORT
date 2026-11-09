@@ -796,7 +796,9 @@ class TestCliOutputs(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("집계 기간 2026-10-01 ~ 2026-10-31", r.stdout)
         self.assertEqual(sorted(os.listdir(out)),
-                         ["2026-10-31_월간_경영관리보고.html", "2026-10-31_월간_대표보고.html"])
+                         ["2026-10-31_월간_경영관리보고.html", "2026-10-31_월간_대표보고.html", "팀장용"])
+        self.assertEqual(sorted(os.listdir(os.path.join(out, "팀장용"))),
+                         ["2026-10-31_월간_팀장_기획1팀.html", "2026-10-31_월간_팀장_기획2팀.html"])   # 사용자 2026-11-09
 
     def test_cli_without_browser_still_writes_html(self):
         cli = load_cli()

@@ -263,6 +263,7 @@ def main(argv=None):
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
+    ap.add_argument("--팀장용", default="만듦", choices=["만듦", "안함"], help="월간: 팀마다 팀장용 실적 문서 (출력/팀장용/)")
     ap.add_argument("--근거", default=None, help="대표가 요청한 근거 번호 (예: 1-1,3-2). 이미 만든 경영관리 보고에서 그 근거만 따로 만듦")
     a = ap.parse_args(argv)
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
@@ -332,6 +333,24 @@ def main(argv=None):
                 pdf_failed = True
             else:
                 made.append(base + ".pdf")
+    if kind == "monthly" and a.팀장용 == "만듦":
+        # 팀장용 월간 실적 (사용자 2026-11-09 목업 승인): 팀마다 출력/팀장용/ 에 HTML·PDF. 급여 금액은 넣지 않는다
+        from ceo_report.teamreport import write_all as write_team_reports
+        try:
+            team_pages = write_team_reports(data, R, a.출력)
+        except OSError as e:
+            _say(_write_help(os.path.join(a.출력, "팀장용"), e))
+            team_pages = []
+        for page_path in team_pages:
+            made.append(page_path)
+            if browser:
+                pdf_path = page_path[:-5] + ".pdf"
+                err = to_pdf(browser, page_path, pdf_path)
+                if err:
+                    _say("%s — %s" % (err, os.path.basename(pdf_path)))
+                    pdf_failed = True
+                else:
+                    made.append(pdf_path)
     if kind == "weekly":
         from ceo_report.weekdiff import write_record
         try:
