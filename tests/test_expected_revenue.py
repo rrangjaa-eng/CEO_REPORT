@@ -42,7 +42,10 @@ class TestExpectedRevenue(unittest.TestCase):
             self.assertIn("<div class='big'>250</div>", h)
             self.assertIn("<div class='big'>400 <small>3건</small></div>", h)
             self.assertIn("<div class='big'>650</div>", h)
-            self.assertIn("2027년 이후 행사 1건은 내년 보고에", h)
+        # 풀이 줄(계산식·뺀 것)은 경영관리용에만, 대표용은 머리말 한 구절 (사용자 2026-11-05: 안내 최소)
+        self.assertIn("2027년 이후 행사 제외", ceo)
+        self.assertNotIn("내년 보고에", ceo)
+        self.assertIn("2027년 이후 행사 1건은 내년 보고에", mg)
         self.assertNotIn("모두 공급가액", ceo)
         self.assertIn("모두 공급가액", mg)
 
