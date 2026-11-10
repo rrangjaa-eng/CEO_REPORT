@@ -793,6 +793,16 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "stale": stale_accounts,
     }
     R["targets"] = {t: v for (y, t), v in (getattr(d, "team_targets", None) or {}).items() if y == ym[:4]}
+    # 예산 대비 (사용자 2026-11-10): 그 해 확정 예산이 있을 때만. 실적 = 손익 팀 줄 달별 (WEHAGO 우선)
+    from .budget import compare as budget_compare
+    src0 = next(iter(pl_out.values()), None) if pl_out else None
+    act = {}
+    for m_, rows_ in (src0 or {}).get("by_month", []):
+        for r_ in rows_:
+            if r_["unit"] == "팀" and r_["cur"]:
+                act.setdefault(r_["target"], []).append((int(m_[5:7]), r_["cur"]["revenue"], r_["cur"]["gp"]))
+    R["budget_cmp"] = budget_compare(getattr(d, "budget_confirmed", None), ym, act)
+    R["budget_conf_rows"] = ((getattr(d, "budget_confirmed", None) or {}).get(ym[:4]) or {}).get("rows")
     from .corptax import depreciation   # 법인세 예상용 감가상각비 (사용자 2026-11-04)
     R["evid_month"] = getattr(d, "evid_month", None)   # 증빙 작성일자 기준 달별 매출·매입 (월간 흐름 그림)
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)

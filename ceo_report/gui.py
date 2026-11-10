@@ -488,6 +488,43 @@ class Window(object):
         self.dep_now = tk.StringVar(value=self.dep_text())
         self._hint(f, "", self.dep_now, wrap=430)
 
+        # 내년 예산 (사용자 2026-11-10: 노란 칸 값은 여기서 넣고, 초안 만들기로 다시 계산, 확정하면 월간 보고 '예산 대비')
+        f = self.f_budget = self._card(tab, "내년 예산", "목표 수익률은 '팀 목표' 칸", 3, 1)
+        r = self._row(f)
+        self.b_year, self.b_team = tk.StringVar(value=str(self.today.year + 1)), tk.StringVar(value="기획1팀")
+        self.b_grow, self.b_add, self.b_mon = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.b_raise, self.b_infl = tk.StringVar(), tk.StringVar()
+        ttk.Label(r, text="연도").pack(side="left")
+        ttk.Entry(r, textvariable=self.b_year, width=6).pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="팀").pack(side="left")
+        ttk.Combobox(r, textvariable=self.b_team, values=("기획1팀", "기획2팀", "기획3팀"), width=8).pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="성장률(%)").pack(side="left")
+        e_g = ttk.Entry(r, textvariable=self.b_grow, width=5)
+        e_g.pack(side="left", padx=(3, 0))
+        r = self._row(f)
+        ttk.Label(r, text="늘릴 인원").pack(side="left")
+        e_a = ttk.Entry(r, textvariable=self.b_add, width=4)
+        e_a.pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="입사 월").pack(side="left")
+        e_m = ttk.Entry(r, textvariable=self.b_mon, width=4)
+        e_m.pack(side="left", padx=(3, 8))
+        self._btn(r, "팀 값 저장", self.save_budget_team)
+        self._enter((e_g, e_a, e_m), self.save_budget_team)
+        r = self._row(f)
+        ttk.Label(r, text="급여 인상률(%)").pack(side="left")
+        e_r = ttk.Entry(r, textvariable=self.b_raise, width=5)
+        e_r.pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="물가 인상률(%)").pack(side="left")
+        e_i = ttk.Entry(r, textvariable=self.b_infl, width=5)
+        e_i.pack(side="left", padx=(3, 8))
+        self._btn(r, "저장", self.save_budget_co)
+        self._enter((e_r, e_i), self.save_budget_co)
+        r = self._row(f, pady=(6, 0))
+        self._btn(r, "예산 초안 만들기", lambda: self.start("예산"))
+        self._btn(r, "예산 확정", self.confirm_budget)
+        self.budget_now = tk.StringVar(value=app.budget_text(self.paths.input, self.b_year.get()))
+        self._hint(f, "", self.budget_now, wrap=430)
+
     # ───────────── 오른쪽: 자료 상태 · 진행 ─────────────
     def _side(self, side):
         f = ttk.Frame(side, style="Card.TFrame", padding=(10, 8, 10, 8))
@@ -814,12 +851,14 @@ class Window(object):
         if task == "주간":
             app.save_merge(self.paths, group, only)
         ev_task = task.startswith("근거")
+        year = self.b_year.get().strip() if task.startswith("예산") and hasattr(self, "b_year") else ""
 
         def work():
             try:
                 rc, files = app.run_task(task, self.paths, self.say, asof=asof.isoformat(), pick=pick, collect=collect,
                                          credentials=(lambda: (uid, pw)) if collect else None,
-                                         nums=nums if ev_task else "", payday=payday, group=group, only=only)
+                                         nums=nums if ev_task else "", payday=payday, group=group, only=only,
+                                         year=year)
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []
@@ -1204,6 +1243,36 @@ class Window(object):
                  % (self.g_year.get().strip(), self.g_team.get().strip(), self.g_rev.get().strip(), self.g_rate.get().strip(), n))
         self.goal_now.set(self.goal_text())
         self._flash(self.f_goal, "저장됨", lambda: "월간 누적 실적에 쓰임")
+
+    def _save_budget(self, items, what):
+        try:
+            n = app.save_budget_values(self.paths.input, self.b_year.get(), items)
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.say("내년 예산 값 저장: %s년 %s (그 해 %d줄) — '예산 초안 만들기'를 누르면 다시 계산합니다" % (self.b_year.get().strip(), what, n))
+        self.budget_now.set(app.budget_text(self.paths.input, self.b_year.get()))
+        self._flash(self.f_budget, "저장됨", lambda: "목표 수익률은 '팀 목표' 칸")
+
+    def save_budget_team(self):
+        t = self.b_team.get().strip()
+        if self.b_add.get().strip() and not self.b_mon.get().strip():
+            self.b_mon.set("1")
+        self._save_budget([("성장률", t, self.b_grow.get()), ("늘릴인원", t, self.b_add.get()), ("입사월", t, self.b_mon.get() if self.b_add.get().strip() else "")],
+                          "%s 성장률 %s%% · 인원 %s" % (t, self.b_grow.get().strip() or "(비움)", self.b_add.get().strip() or "변동 없음"))
+
+    def save_budget_co(self):
+        self._save_budget([("급여인상률", "", self.b_raise.get()), ("물가인상률", "", self.b_infl.get())],
+                          "급여 인상률 %s%% · 물가 인상률 %s%%" % (self.b_raise.get().strip() or "(비움)", self.b_infl.get().strip() or "(비움)"))
+
+    def confirm_budget(self):
+        if self.busy:
+            return
+        y = self.b_year.get().strip()
+        if not messagebox.askyesno("예산 확정", "%s년 예산을 지금 값으로 확정할까요?\n\n확정한 숫자는 월간 보고 '예산 대비'에 쓰입니다.\n"
+                                   "나중에 값을 바꾸고 다시 확정하면 새 숫자로 바뀝니다." % y, parent=self.root):
+            return
+        self.start("예산확정")
 
     def save_dep(self):
         try:

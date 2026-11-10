@@ -1681,6 +1681,7 @@ def _team_table(R, part="month", mode="mgmt"):
         out.append("</tbody></table>")
         out.append(_corptax_line(R, Y, ym) + _mg(mode, _corptax_table(R, Y, ym, mode)))   # 두 판 같은 한 줄, 표는 경영관리용에만
         out.append(_target_table(R, Y, ym))
+        out.append(_budget_table(R, Y, ym, mode))
         out.append(_mg(mode, _person_table(R, src, dept, ym, basis)))   # 사람별 급여가 드러나므로 경영관리용에만 (2026-11-04)
     else:
         out.append(_na("올해 누적 자료 없음"))
@@ -1841,6 +1842,50 @@ def _target_table(R, Y, ym):
     h.append("</tbody></table>")
     if not T:
         h.append("<div class='note'>팀 목표 없음 — 대표보고 창 '⑧ 팀 목표'에 연간 매출 목표와 목표 수익률을 넣으면 보입니다</div>")
+    return "".join(h)
+
+
+def _budget_table(R, Y, ym, mode="ceo"):
+    """예산 대비 (사용자 2026-11-10: 내년 예산 확정 후 월간 보고에). 확정 예산이 없으면 아무것도 넣지 않는다.
+    팀 줄 = 이번 달·누적 매출 대 예산. 경영관리용에만 누적 손익(매출총이익·급여·판관비·영업이익) 대 예산."""
+    B = R.get("budget_cmp")
+    if not B:
+        return ""
+    m = B["month"]
+
+    def diff(a, b):
+        if a is None or b is None:
+            return "—"
+        return "<span%s>%s%s</span>" % (" style='color:#c00000'" if a < b else "", "+" if a >= b else "−", "{:,}".format(abs(a - b)))
+
+    def rate(a, b):
+        if a is None or not b:
+            return "—"
+        return "<span%s>%.1f%%</span>" % (" style='color:#c00000'" if a < b else "", a * 100.0 / b)
+    h = ["<div class='wsub'>예산 대비 (%s 확정 예산)</div>" % esc(B["date"] or ""),
+         "<table class='pt tg'><thead><tr><th>팀</th><th>%d월 매출</th><th>%d월 예산</th><th>차이</th><th>1~%d월 누적</th><th>누적 예산</th>"
+         "<th>예산 대비</th><th>누적 매출총이익<br><small>실적 / 예산</small></th></tr></thead><tbody>" % (m, m, m)]
+    for r in B["rows"] + [dict(B["tot"], team="팀 합계")]:
+        h.append("<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s / %s</td></tr>"
+                 % (" class='tot'" if r["team"] == "팀 합계" else "", esc(r["team"]), W(r["cur"]), W(r["cur_b"]), diff(r["cur"], r["cur_b"]),
+                    W(r["ytd"]), W(r["ytd_b"]), rate(r["ytd"], r["ytd_b"]), W(r["gp"]), W(r["gp_b"])))
+    h.append("</tbody></table>")
+    if mode != "ceo":
+        from .budget import COMPANY
+        conf = (R.get("budget_conf_rows") or {})
+        c = Y["company"]
+        def cb(k):
+            return sum((conf.get((mm, COMPANY), {}).get(k) or 0) for mm in range(1, m + 1)) if conf else None
+        sal_b, sga_b = cb("급여"), cb("판관비")
+        gp_b = B["tot"]["gp_b"]
+        op_b = None if None in (sal_b, sga_b) else gp_b - sal_b - sga_b
+        op_a = c.get("net")
+        h.append("<table class='pt tg'><thead><tr><th>1~%d월 누적 (회사)</th><th>실적</th><th>예산</th><th>차이</th><th>예산 대비</th></tr></thead><tbody>" % m)
+        for nm, a, b in (("매출", c.get("revenue"), B["tot"]["ytd_b"]), ("매출총이익", c.get("gp"), gp_b), ("급여", c.get("salary"), sal_b),
+                         ("판관비 (급여 뺀 것)", c.get("sga"), sga_b), ("영업이익 (감가상각비 예상 빼기 전)", op_a, op_b)):
+            h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (nm, W(a), W(b), "—" if a is None or b is None else ("+" if a >= b else "−") + "{:,}".format(abs(a - b)),
+                                                                                    "—" if a is None or not b else "%.1f%%" % (a * 100.0 / b)))
+        h.append("</tbody></table><div class='note'>%s</div>" % esc("급여·판관비는 예산보다 많으면 나쁜 쪽. 영업이익은 위 누적 표와 같은 값(감가상각비 예상은 결산 줄에서 따로 뺌)"))
     return "".join(h)
 
 

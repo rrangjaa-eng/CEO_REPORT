@@ -70,7 +70,7 @@ def _check_day(text, label):
     return d
 
 
-def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=""):
+def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only="", year=""):
     """작업 이름 -> (모듈 이름, argv). 날짜는 비우면 오늘. 근거주간·근거월간은 nums(근거 번호, 예: 1-1,3-2)가 있어야 한다."""
     _check_day(asof, "기준일")
     _check_day(pick, "가용자금 볼 날짜")
@@ -87,6 +87,12 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
     if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
         from .evidence import parse_nums
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
+    if task in ("예산", "예산확정"):   # 내년 예산 초안·확정 (사용자 2026-11-10)
+        y = str(year or "").strip()
+        if y and not (y.isdigit() and len(y) == 4):
+            raise ValueError("예산 연도는 4자리 (예: 2027)")
+        return "예산", (day + (["--연도", y] if y else []) + ["--입력", paths.input, "--출력", paths.output]
+                      + (["--확정", "함"] if task == "예산확정" else []))
     if task == "승인검토":
         return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect]
     if task == "인트라넷":   # 가져오기만 (사용자 2026-11-04: 승인 검토 화면은 만들지 않음)
@@ -100,6 +106,8 @@ def _module(name):
         import 변환 as m
     elif name == "보고서":
         import 보고서 as m
+    elif name == "예산":
+        import 예산 as m
     else:
         import 승인검토 as m
     return m
@@ -218,13 +226,13 @@ def import_auto(paths, say, dirs=None):
     return n
 
 
-def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday="", group="", only=""):
+def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None, nums="", payday="", group="", only="", year=""):
     """작업 하나를 돌리고 (종료코드, 새로 생긴 출력 파일 목록)을 돌려준다. 글은 say(한 줄)로 넘긴다.
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
     try:
-        name, argv = task_argv(task, paths, asof, pick, nums, payday, group, only)
+        name, argv = task_argv(task, paths, asof, pick, nums, payday, group, only, year)
     except ValueError as e:
         say(str(e))
         return 2, []
@@ -469,6 +477,20 @@ def save_depreciation(input_dir, year, amount):
     """법인세 예상에 쓸 연간 감가상각비 저장 (사용자 2026-11-04). 비우면 작년 장부 값을 씀."""
     from . import corptax
     return corptax.save(input_dir, year, amount)
+
+
+def save_budget_values(input_dir, year, items):
+    """내년 예산 값 저장 (사용자 2026-11-10). items = [(구분, 대상, 값)]."""
+    from . import budget
+    return budget.save_values(input_dir, year, items)
+
+
+def budget_text(input_dir, year):
+    from . import budget
+    try:
+        return budget.values_text(input_dir, year)
+    except Exception:   # 창이 멈추지 않게
+        return ""
 
 
 def card_list(input_dir):
