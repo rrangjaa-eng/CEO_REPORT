@@ -93,6 +93,11 @@ def remember_run(input_dir, task, ok, now=None):
     return save(input_dir, runs=runs)
 
 
+def report_year(day):
+    """연간 보고 연도 기본값: 1~3월(결산 철)이면 지난해, 아니면 그 해 (사용자 2026-11-10)."""
+    return day.year - 1 if day.month <= 3 else day.year
+
+
 def start_values(input_dir, today):
     """창을 열 때 칸 값: 기준일 = 오늘, 출금일·가용자금 날짜는 지난번 값이 아직 기준일보다 뒤일 때만."""
     st = load(input_dir)
@@ -306,7 +311,7 @@ def rc_message(task, rc):
     """-> (완료인가, 한 줄). 진행 글 맨 위에 크게 보인다."""
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
-               "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다"}
+               "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
     if rc == 2:
         why = "날짜나 입력 파일에 문제가 있습니다. 아래 글의 안내대로 고친 뒤 다시 누르세요"

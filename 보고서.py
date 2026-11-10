@@ -250,9 +250,67 @@ def _evidence(a, kind, asof):
     return 0
 
 
+def _annual(a):
+    """연간 보고 (사용자 2026-11-10 목업 승인): 대표용·경영관리용 HTML·PDF. 숫자는 변환이 만든 CSV에서 (월간과 같은 기준)."""
+    from ceo_report import annual
+    today = parse_date(a.기준일) if a.기준일 else dt.date.today()
+    if today is None:
+        _say("기준일 형식 오류: %s" % a.기준일)
+        return 2
+    year = today.year - 1 if today.month <= 3 else today.year
+    if a.연도:
+        if not (a.연도.strip().isdigit() and len(a.연도.strip()) == 4):
+            _say("연도 형식 오류: %s (예: 2026)" % a.연도)
+            return 2
+        year = int(a.연도)
+    if not os.path.isdir(a.입력):
+        _say(_input_help(a.입력))
+        return 2
+    try:
+        os.makedirs(a.출력, exist_ok=True)
+    except OSError as e:
+        _say(_write_help(a.출력, e))
+        return 7
+    D = load(a.입력)
+    A = annual.compute(a.입력, year, D.settings, D)
+    if A["Y"] is None:
+        _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
+        return 2
+    browser = find_browser() if a.pdf == "만듦" else None
+    made, pdf_failed = [], False
+    for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
+        base = os.path.join(a.출력, "%d_연간_%s" % (year, who))
+        page = annual.render(A, mode)
+        try:
+            with open(base + ".html", "w", encoding="utf-8") as f:
+                f.write(page)
+        except OSError as e:
+            _say(_write_help(a.출력, e))
+            return 7
+        made.append(base + ".html")
+        if browser:
+            err = to_pdf(browser, base + ".html", base + ".pdf")
+            if err:
+                _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+                pdf_failed = True
+            else:
+                made.append(base + ".pdf")
+    _say("%d년 연간 보고 · 손익 %d개월 · 결산 전표 %s" % (year, len(A["Y"]["months"]), "반영" if A["closed"] else "없음 (감가상각비·법인세 예상)"))
+    if not A.get("has_annual"):
+        _say("연간자료.csv 없음 — '자료 변환'을 다시 하면 거래처·통장 흐름·결산 법인세가 들어갑니다.")
+    _say("만든 파일:")
+    for m in made:
+        _say("  " + m)
+    if pdf_failed:
+        _say("PDF: 만들지 못한 것은 HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
+    if a.pdf == "만듦" and not browser:
+        _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="대표 주간·월간 보고서")
-    ap.add_argument("유형", choices=["주간", "월간", "weekly", "monthly"])
+    ap.add_argument("유형", choices=["주간", "월간", "연간", "weekly", "monthly"])
     ap.add_argument("--기준일", default=None, help="YYYY-MM-DD (기본: 오늘)")
     ap.add_argument("--시작일", default=None, help="집계 시작일 (기본: 주간=기준일-6일, 월간=그 달 1일)")
     ap.add_argument("--가용일", default=None, help="이 날짜까지의 가용자금 줄을 더함 YYYY-MM-DD (기준일 뒤)")
@@ -265,7 +323,10 @@ def main(argv=None):
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
     ap.add_argument("--팀장용", default="만듦", choices=["만듦", "안함"], help="월간: 팀마다 팀장용 실적 문서 (출력/팀장용/)")
     ap.add_argument("--근거", default=None, help="대표가 요청한 근거 번호 (예: 1-1,3-2). 이미 만든 경영관리 보고에서 그 근거만 따로 만듦")
+    ap.add_argument("--연도", default=None, help="연간: 보고할 해 (기본: 기준일의 해, 1~3월이면 지난해)")
     a = ap.parse_args(argv)
+    if a.유형 == "연간":
+        return _annual(a)
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
     asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
     if asof is None:

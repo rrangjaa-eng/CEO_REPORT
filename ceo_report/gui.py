@@ -309,6 +309,15 @@ class Window(object):
                 ttk.Button(r, text="%s 보고" % kind, command=cmd, style="Big.TButton")
             b.grid(row=0, column=i, sticky="ew", padx=(0, 6) if i == 0 else (0, 0))
             self.buttons.append(b)
+        # 연간 보고 (사용자 2026-11-10): 결산 뒤 분개장을 다시 받아 변환한 다음, 연도를 골라 누른다
+        r = self._row(s3, (6, 0))
+        y0 = winstate.report_year(self.today)
+        self.year = tk.StringVar(value=str(y0))
+        b = ttk.Button(r, text="연간 보고", command=lambda: self.report("연간"))
+        b.pack(side="left")
+        self.buttons.append(b)
+        ttk.Spinbox(r, from_=2025, to=2100, width=6, textvariable=self.year).pack(side="left", padx=(6, 2))
+        ttk.Label(r, text="년 (결산 뒤 분개장 다시 받고 변환)", style="S.TLabel").pack(side="left")
         # 주간 출금 목록: 건별 / 같은 거래처 합침 (사용자 2026-11-05)
         self._sep(s3, "주간 출금 목록")
         g0, o0 = app.load_merge(self.paths)
@@ -811,6 +820,7 @@ class Window(object):
         nums = getattr(self, "ev_nums", "")
         payday = self._day(self.payday).isoformat() if self.payday.get().strip() else ""
         group, only = self.group.get(), self.only.get().strip()
+        year = self.year.get().strip()
         if task == "주간":
             app.save_merge(self.paths, group, only)
         ev_task = task.startswith("근거")
@@ -819,7 +829,8 @@ class Window(object):
             try:
                 rc, files = app.run_task(task, self.paths, self.say, asof=asof.isoformat(), pick=pick, collect=collect,
                                          credentials=(lambda: (uid, pw)) if collect else None,
-                                         nums=nums if ev_task else "", payday=payday, group=group, only=only)
+                                         nums=nums if ev_task else "", payday=payday, group=group, only=only,
+                                         year=year if task == "연간" else "")
             except Exception as e:   # 창이 멈추지 않게
                 self.say("예상하지 못한 오류 (%s)" % type(e).__name__)
                 rc, files = 7, []
