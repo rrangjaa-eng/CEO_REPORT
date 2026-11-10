@@ -56,13 +56,16 @@ async function writeOut(fname, text) {
   return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
 }
 
-// 내용(hashSource)이 지난번과 같으면 저장하지 않는다 (지난번 것이 아직 허용 기다림이면 다시 저장).
+// 내용(hashSource)이 지난번과 같고 이미 저장 폴더에 들어가 있으면 저장하지 않는다.
 async function saveFile(kind, file, hashSource, summary) {
   const s = stamp();
   const hash = await sha(hashSource);
   const key = "last_" + kind;
   const prev = (await chrome.storage.local.get(key))[key];
-  if (prev && prev.hash === hash && prev.where !== "허용 기다림") {
+  // 같은 내용이라도 지금 저장 폴더에 아직 안 들어갔으면(예전 다운로드 폴더 저장·허용 기다림) 다시 저장한다
+  const dir = await getFolder();
+  const placed = prev && (dir ? prev.where === "위하고 폴더" : !!prev.where && prev.where !== "허용 기다림");
+  if (prev && prev.hash === hash && placed) {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
     await setStatus({[kind]: info, error: ""});
