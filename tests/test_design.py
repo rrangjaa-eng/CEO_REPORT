@@ -513,8 +513,8 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 # 주간 ① 출금 목록만 쪽을 넘어 이어질 수 있다 (사용자 2026-11-04: 길면 통째로 밀려 1쪽이 비던 것)
                 brk = html.count("<div class='sec brk'><div class='q'>")
                 self.assertEqual(brk, 1 if kind == "weekly" else 0)
-                pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ③(③·④ 함께 2쪽)·⑥: 새 쪽에서 통째로 (사용자 2026-11-05)
-                self.assertEqual(pgb, 0 if kind == "weekly" else 2)
+                pgb = html.count("<div class='sec pgb'><div class='q'>")   # 월간 ⑥: 새 쪽에서 통째로
+                self.assertEqual(pgb, 0 if kind == "weekly" else 2)   # 월간 ③(2쪽 첫머리)·⑥
                 # 주간 ② 자금은 2쪽 첫머리에서, 표와 그림 사이에서만 나뉠 수 있다 (사용자 2026-11-05: 빈 곳 최소)
                 flow = html.count("<div class='sec sflow pgb'><div class='q'>")
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
