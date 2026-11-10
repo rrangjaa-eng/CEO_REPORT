@@ -93,7 +93,7 @@ class Window(object):
         tab1 = ttk.Frame(self.nb, padding=10, style="Card.TFrame")
         tab2 = ttk.Frame(self.nb, padding=10, style="Card.TFrame")
         self.nb.add(tab1, text="  이번 주 할 일  ")
-        self.nb.add(tab2, text="  가끔 넣는 값 (7)  ")
+        self.nb.add(tab2, text="  가끔 넣는 값 (8)  ")
         self._steps(tab1)
         self._occasional(tab2)
         self._side(side)
