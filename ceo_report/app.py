@@ -84,6 +84,11 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
                         + (["--출금목록", group] if group and task == "주간" else [])
                         + (["--합칠거래처", only] if only and group == "거래처별" and task == "주간" else [])
                         + ["--입력", paths.input, "--출력", paths.output])
+    if task == "연간":   # 연간 보고 (사용자 2026-11-10): 연도를 비우면 기준일의 해 (1~3월이면 지난해)
+        y = (year or "").strip()
+        if y and not (y.isdigit() and len(y) == 4):
+            raise ValueError("연도 형식 오류: %s (예: 2026)" % y)
+        return "보고서", ["연간"] + day + (["--연도", y] if y else []) + ["--입력", paths.input, "--출력", paths.output]
     if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
         from .evidence import parse_nums
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
