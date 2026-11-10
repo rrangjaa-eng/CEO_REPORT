@@ -96,6 +96,17 @@ class TestFreshAndSteps(Base):
         S = winstate.steps(P)
         self.assertEqual((S["now"], S["new_since"]), (2, ["분개장"]))
 
+    def test_auto_collected_json(self):
+        # 크롬 확장 자동수집 json 만 있어도 '없음'이 아님 (2026-11-10 사용자: 창에 자금계획서가 없음으로 나옴)
+        asof = dt.date(2026, 11, 10)
+        P = self.P
+        self.touch(os.path.join(P.wehago, "261110 분개장 자동수집.json"), dt.datetime(2026, 11, 10, 17, 35))
+        self.touch(os.path.join(P.wehago, "261110 자금계획 자동수집.json"), dt.datetime(2026, 11, 10, 17, 36))
+        F = {f["name"]: f for f in winstate.freshness(P, asof)}
+        self.assertEqual(F["분개장"]["level"], "g")
+        self.assertEqual(F["자금계획서"]["level"], "g")
+        self.assertEqual(F["자금계획서"]["text"], "오늘 17:36")
+
     def test_latest_reports(self):
         P = self.P
         self.assertEqual(winstate.latest_reports(P.output), {})

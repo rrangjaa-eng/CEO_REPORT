@@ -175,7 +175,7 @@ def sources(paths):
     from . import checklist, fundplan, hometax, wehago
     wf = _files(paths.wehago)
     journal = [p for p in wf if wehago._kind_of(os.path.basename(p))[0] == "분개장"]
-    plans = [p for p in wf if fundplan.is_fundplan_name(p)]
+    plans = [p for p in wf if fundplan.is_fundplan_name(p) or fundplan.is_auto_plan_name(p)]   # 크롬 자동수집 json 도 (2026-11-10)
     bank = checklist.read_bank(paths.input)
     return [
         ("분개장", _newest(journal), "수집\\위하고 에 받은 때"),
