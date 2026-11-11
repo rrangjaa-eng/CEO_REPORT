@@ -151,6 +151,15 @@ class TestFinalExecutionTable(unittest.TestCase):
         self.assertIn("지급요청 누계 9,000,000가 장부 원가보다 많음", html)
         self.assertIn("장부 원가가 실행가보다 4,000,000 적음 → 아직 안 들어온 증빙", html)
 
+    def test_budget_between_cost_and_cost_plus_card_vat_is_explained(self):
+        html = final_table([xproject("A", 9000000, 9400000, card_vat=1000000)], {"A": "대표이사"})
+        self.assertIn("카드 부가세로 설명됨 (차이에서 뺌): 실행가가 장부 원가와 카드 부가세 더한 원가 사이", html)
+        self.assertIn("카드 부가세로 설명되는 1건은 차이 합계에서 뺌", html)
+        self.assertNotIn("600,000</td>", html.replace("9,400,000", ""))   # 차이 칸·합계에 600,000 이 없다
+        self.assertIn("400,000어치 부가세만", html)
+        self.assertIn("나머지 600,000은 공급가액으로", html)
+        self.assertNotIn("실행가에 없는 지출", html)
+
     def test_unknown_values_are_not_turned_into_a_difference(self):
         html = final_table([xproject("A", 5000000, None), xproject("B", 5000000, 10000000, out=True)], {"A": "팀장", "B": "팀장"})
         self.assertIn("인트라넷 실행가 빈칸", html)
@@ -159,6 +168,13 @@ class TestFinalExecutionTable(unittest.TestCase):
 
     def test_no_approval_data_says_so(self):
         self.assertIn("승인 단계 자료 없음", final_table([xproject("A", 1, 1)], {"A": ""}))
+
+
+class TestCardVendorName(unittest.TestCase):
+    def test_card_company_and_last_four_digits_is_a_card(self):
+        from ceo_report import convert_projects
+        for name, card in (("신한_5860", True), ("롯데_1842", True), ("(주) 인하모니네트워크", False), ("신한_58601", False), ("A B_1234", False)):
+            self.assertEqual(bool(convert_projects._CARD_NO.match(name)), card, name)
 
 
 class TestCardVatFact(unittest.TestCase):

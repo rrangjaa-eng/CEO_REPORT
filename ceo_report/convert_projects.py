@@ -403,6 +403,9 @@ def _first_line(g):
     return g["lines"][0]
 
 
+_CARD_NO = re.compile(r"^[^\s_]+_\d{4}$")   # 법인카드 거래처 이름: 카드사_카드번호 끝 4자리
+
+
 def _row_order(g):
     no = g["no"]
     return (g["day"] or dt.date.max, (0, int(no), "") if no.isdigit() else (1, 0, no), _first_line(g)["vendor"])
@@ -431,6 +434,7 @@ def _wehago_rows(books, costs, cfg):
         base = "WEHAGO %s 전표 %s" % (g["day"].isoformat() if g["day"] else "날짜 없음", g["no"])
         g["basis"] = base
         g["card"] = False
+        g["card_pay"] = False
         g["paid_day"] = None
         g["firm"] = False
         if cash_paid and not pay_idx:
@@ -443,6 +447,8 @@ def _wehago_rows(books, costs, cfg):
         same = [i for i in pay_idx if books.journal[i].get("vendor_norm") == g["vendor_norm"]] or pay_idx
         pick = max(same, key=lambda i: (books.journal[i]["credit"], -i))
         g["card"] = any(w and w in (books.journal[pick].get("vendor") or "") for w in words)
+        # 실제 장부의 법인카드 거래처는 '신한_5860'처럼 카드사_끝 4자리 (PC 자료 2026-11-11). 상태 판정(card)은 그대로 두고 부가세 집계에만 쓴다
+        g["card_pay"] = g["card"] or bool(_CARD_NO.match((books.journal[pick].get("vendor") or "").strip()))
         it = items.get(pick)
         if it is not None and it["remaining"] == 0 and it["done"] is not None:
             g["state"] = "카드결제완료" if g["card"] else "지급완료"
@@ -863,7 +869,7 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     # 프로젝트별 법인카드 원가의 부가세 (사용자 2026-11-11: 인트라넷 실행가는 카드 금액이 부가세 포함 → 실행가 차이를 볼 때 장부 원가에 더한다)
     card_vat = {}
     for g in groups:
-        if g.get("card") and g.get("project") and g.get("vat"):
+        if g.get("card_pay") and g.get("project") and g.get("vat"):
             cv = card_vat.setdefault(g["project"], [0, 0])
             cv[0] += g["vat"]
             cv[1] += 1
