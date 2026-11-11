@@ -497,12 +497,9 @@ def _wehago_rows(books, costs, cfg):
         g["item"] = first["memo"] or first["account"]
         g["vendor_text"] = first["vendor"]
         vat_value = g["vat"]
-        if g["card"]:
-            g["supply_cell"] = cell_amount(None if g["supply"] is None or vat_value is None else g["supply"] + vat_value)
-            g["vat_cell"] = ""
-        else:
-            g["supply_cell"] = cell_amount(g["supply"])
-            g["vat_cell"] = cell_amount(vat_value)
+        # 법인카드로 결제한 원가도 회계자료 기준 = 부가세 뺀 금액 (사용자 2026-11-11). 부가세는 다른 줄처럼 부가세 칸에 둔다
+        g["supply_cell"] = cell_amount(g["supply"])
+        g["vat_cell"] = cell_amount(vat_value)
     cost_source = _sum_or_none([ln["amount"] for ln in costs["lines"]])
     checks = [
         Check("원가 줄 합계 ((도) 차변−대변)", cost_source, _sum_or_none([g["supply"] for g in ordered])),

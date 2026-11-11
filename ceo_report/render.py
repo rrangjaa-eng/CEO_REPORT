@@ -3360,46 +3360,53 @@ def _xk_cash_tables(X):
     return out
 
 
-def _xk_final_why(p, b, c, v, d):
-    """실행가 차이 한 줄의 설명 (사용자 2026-11-11: 차이가 나는 부분에 설명). 장부에서 알 수 있는 까닭만 적는다."""
+def _xk_final_why(p, b, c, v, d0, used):
+    """실행가 차이 한 줄의 설명 (사용자 2026-11-11). d0 = 장부 원가 − 실행가, used = 그중 카드 부가세로 설명되는 금액.
+    장부에서 알 수 있는 까닭만 적는다."""
     why = []
-    if v:
-        why.append("카드 부가세 %s 더함 (%d건, 인트라넷 실행가는 카드 금액이 부가세 포함)" % (won(v), p.get("card_n") or 0))
     if p.get("out_of_period"):
         why.append("분개장 기간 밖 원가가 있어 장부 원가를 다 알 수 없음")
     elif c is None:
         why.append("금액 모르는 원가 줄이 있어 차이 판단 불가")
     if b is None:
         why.append("인트라넷 실행가 빈칸")
-    if d is None:
+    if d0 is None:
         return " · ".join(why)
-    if d == 0:
+    if d0 == 0:
         why.append("일치")
-    elif v and 0 < d <= v:
-        # 실행가가 장부 원가(공급가액)와 카드 부가세를 더한 원가 사이 (PC 자료 2026-11-11: 큰 카드 결제는 인트라넷에 공급가액으로 들어간 것이 있음)
-        why.append("카드 부가세로 설명됨 (차이에서 뺌): 실행가가 장부 원가와 카드 부가세 더한 원가 사이 → 카드 금액 중 %s어치 부가세만 인트라넷에 들어간 것으로 보임 (나머지 %s은 공급가액으로 올린 카드 결제로 추정)"
-                   % (won(v - d), won(d)))
-    elif d > 0:
-        why.append("장부 원가가 실행가보다 %s 많음 → 실행가에 없는 지출이거나 다른 프로젝트 원가가 이 번호로 들어갔을 수 있음" % won(d))
+        return " · ".join(why)
+    if used:
+        if used == v:
+            why.append("인트라넷 실행가에 법인카드 사용분 부가세 %s 포함 (%d건 전부) → 그만큼 실행가가 큼" % (won(used), p.get("card_n") or 0))
+        else:
+            why.append("인트라넷 실행가에 법인카드 사용분 부가세 포함 → %s은 카드 부가세로 설명됨 (카드 부가세 모두 %s 중 일부만 인트라넷에 부가세 포함으로 올라감)"
+                       % (won(used), won(v)))
+    rest = d0 + used
+    if rest == 0:
+        why.append("카드 부가세를 빼면 일치")
+    elif rest > 0:
+        why.append("장부 원가가 실행가보다 %s 많음 → 실행가에 없는 지출이거나 다른 프로젝트 원가가 이 번호로 들어갔을 수 있음" % won(rest))
     else:
         rq = p.get("requested")
+        head = "카드 부가세를 빼고도 " if used else ""
         if rq is not None and c is not None and rq > c + (v or 0):
-            why.append("장부 원가가 실행가보다 %s 적음 · 지급요청 누계 %s가 장부 원가보다 많음 → 증빙이 아직 장부에 없거나 전표에 프로젝트 번호가 안 붙었을 수 있음"
-                       % (won(-d), won(rq)))
+            why.append("%s장부 원가가 실행가보다 %s 적음 · 지급요청 누계 %s가 장부 원가보다 많음 → 증빙이 아직 장부에 없거나 전표에 프로젝트 번호가 안 붙었을 수 있음"
+                       % (head, won(-rest), won(rq)))
         else:
-            why.append("장부 원가가 실행가보다 %s 적음 → 아직 안 들어온 증빙, 프로젝트 번호 안 붙은 전표, 또는 실행가보다 덜 쓴 금액" % won(-d))
+            why.append("%s장부 원가가 실행가보다 %s 적음 → 아직 안 들어온 증빙, 프로젝트 번호 안 붙은 전표, 또는 실행가보다 덜 쓴 금액" % (head, won(-rest)))
     return " · ".join(why)
 
 
 def _xk_final_table(X, R):
     """최종 실행가 차이 (사용자 2026-11-11): 인트라넷에서 팀장 승인 이상(~대표이사 승인) 진행된 프로젝트만,
-    인트라넷 실행가 대 위하고 장부 (도)원가. 인트라넷 실행가는 카드 사용 금액이 부가세 포함이라 장부 원가에 카드 부가세를 더해 견준다.
+    인트라넷 실행가 대 위하고 장부 (도)원가. 장부 원가는 회계자료 기준 = 부가세 뺀 금액 (카드 결제분도).
+    인트라넷 실행가는 법인카드 사용분 일부가 부가세 포함이라, 실행가가 장부 원가보다 큰 만큼은 카드 부가세 범위 안에서 '설명됨'으로 본다.
     차이는 두 값을 모두 알 때만."""
     from .linking import APPROVAL_STAGES, APPROVAL_TEAM_UP
     ps = dict((P["id"], P) for P in ((R or {}).get("s3") or {}).get("projects", []))
     if not any((P.get("approval") or "") for P in ps.values()):
         return "<div class='note'>%s</div>" % esc("승인 단계 자료 없음 — 인트라넷 자료를 받은 뒤 '자료 변환'을 하면 채워짐 (승인된 프로젝트가 하나도 없을 때도 이 글)")
-    rows, s_b, s_c, s_v, n_both, s_d, n_vat = [], 0, 0, 0, 0, 0, 0
+    rows, s_b, s_c, s_v, n_both, s_d, s_used, s_rest, n_vat = [], 0, 0, 0, 0, 0, 0, 0, 0
     order = dict((n, i) for i, n in enumerate(APPROVAL_STAGES))
     picked = [p for p in X["projects"] if (ps.get(p["key"], {}).get("approval") or "") in APPROVAL_TEAM_UP]
     picked.sort(key=lambda p: (-order[ps[p["key"]]["approval"]], p["key"]))
@@ -3408,29 +3415,30 @@ def _xk_final_table(X, R):
         b = p["budget"] if p["has_budget"] else None
         c = None if p.get("out_of_period") else p["cost"]
         v = p.get("card_vat") or 0
-        d = None if b is None or c is None else c + v - b
-        # 실행가가 장부 원가와 카드 부가세 더한 원가 사이면 카드 부가세로 설명되는 차이 → 차이로 세지 않는다 (사용자 2026-11-11)
-        within = d is not None and v and 0 < d <= v
-        if d is not None:
+        d0 = None if b is None or c is None else c - b
+        # 실행가가 장부 원가보다 큰 만큼을 카드 부가세(있는 만큼)로 설명한다
+        used = 0 if d0 is None else max(0, min(v, -d0))
+        rest = None if d0 is None else d0 + used
+        if d0 is not None:
             s_b, s_c, s_v, n_both = s_b + b, s_c + c, s_v + v, n_both + 1
-            s_d, n_vat = s_d + (0 if within else d), n_vat + (1 if within else 0)
+            s_d, s_used, s_rest, n_vat = s_d + d0, s_used + used, s_rest + rest, n_vat + (1 if used else 0)
         rows.append([esc(p["key"]), esc(p["name"]), esc(stage + " 승인"), _xk_none() if b is None else esc(won(b)),
                      _xk_period_cell(p["cost"], p["cost_note"], p.get("out_of_period"), p.get("cost_period")),
-                     esc(won(v)) if v else _xk_none(), _na("판단 불가") if c is None else esc(won(c + v)),
-                     _xk_diff(0 if within else d), _na("판단 불가") if d is None or not b else esc("%.1f%%" % ((c + v) * 100.0 / b)),
-                     esc(_xk_final_why(p, b, c, v, d))])
+                     _xk_diff(d0), esc(won(v)) if v else _xk_none(), esc(won(used)) if used else _xk_none(), _xk_diff(rest),
+                     _na("판단 불가") if d0 is None or not b else esc("%.1f%%" % (c * 100.0 / b)),
+                     esc(_xk_final_why(p, b, c, v, d0, used))])
     if not rows:
         return "<div class='note'>%s</div>" % esc("팀장 승인 이상 진행된 프로젝트 없음")
-    total = ["합계 (두 값을 모두 아는 %d건)" % n_both, "", "", esc(won(s_b)), esc(won(s_c)), esc(won(s_v)), esc(won(s_c + s_v)),
-             esc(won(s_d)), esc("%.1f%%" % ((s_c + s_v) * 100.0 / s_b)) if s_b else "",
-             esc("카드 부가세로 설명되는 %d건은 차이 합계에서 뺌" % n_vat) if n_vat else ""]
-    out = _idt("xchk-final", table(["번호", "프로젝트", "승인 단계", "인트라넷 실행가", _xk_label("WEHAGO 원가", X), "카드 부가세", "견줄 원가",
-                                    "차이 (견줄 원가−실행가)", "실행가 대비", "차이 설명"],
-                                   rows, num_cols=(3, 4, 5, 6, 7, 8), total=total))
+    total = ["합계 (두 값을 모두 아는 %d건)" % n_both, "", "", esc(won(s_b)), esc(won(s_c)), esc(won(s_d)), esc(won(s_v)),
+             esc(won(s_used)), esc(won(s_rest)), esc("%.1f%%" % (s_c * 100.0 / s_b)) if s_b else "",
+             esc("카드 부가세로 설명되는 프로젝트 %d건" % n_vat) if n_vat else ""]
+    out = _idt("xchk-final", table(["번호", "프로젝트", "승인 단계", "인트라넷 실행가", _xk_label("WEHAGO 원가", X), "차이 (장부 원가−실행가)",
+                                    "카드 부가세", "카드 부가세로 설명", "남는 차이", "실행가 대비", "차이 설명"],
+                                   rows, num_cols=(3, 4, 5, 6, 7, 8, 9), total=total))
     return out + "<div class='note'>%s</div>" % esc(
         "대상 = 인트라넷에서 팀장 승인이 끝난 프로젝트부터 대표이사 승인까지 끝난 프로젝트 (%d건). "
-        "견줄 원가 = 장부 (도)원가(공급가액) + 법인카드 원가의 부가세 (인트라넷 실행가는 카드 사용 금액이 부가세 포함이라 같은 기준으로 맞춤). "
-        "실행가가 장부 원가와 견줄 원가 사이에 있으면 카드 부가세로 설명되는 차이로 보고 차이를 0으로 둠 (큰 카드 결제는 인트라넷에 공급가액으로 올린 것이 있음). "
+        "장부 원가 = 회계자료 기준 (도)원가, 부가세 뺀 금액 (법인카드 결제분도). 인트라넷 실행가는 법인카드 사용분 일부가 부가세 포함으로 올라가 있어, "
+        "실행가가 장부 원가보다 큰 만큼은 그 프로젝트 카드 부가세 범위 안에서 '카드 부가세로 설명'에 넣고 나머지만 '남는 차이'로 둠. "
         "차이가 +면 장부 원가가 실행가보다 큼. 장부 원가는 프로젝트 번호가 붙은 전표만 (미연결 원가는 빠짐). 증빙이 늦게 들어오면 바뀜." % len(rows))
 
 
