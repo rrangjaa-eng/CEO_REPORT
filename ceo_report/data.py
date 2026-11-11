@@ -381,6 +381,9 @@ def load(folder):
             "contract": num(r.get("계약금액"), iss, r, "계약금액"),
             "recognized": num(r.get("매출반영누계"), iss, r, "매출반영누계"),
             "event_date": r.get("행사일", ""),
+            # 인트라넷 프로젝트 목록에서 온 칸 (없는 예전 파일은 빈칸): 확정 견적금액·실행가, 승인이 끝난 가장 높은 단계
+            "quote": num(r.get("견적금액"), iss, r, "견적금액"), "exec_budget": num(r.get("실행가"), iss, r, "실행가"),
+            "approval": (r.get("승인단계") or "").strip(),
             "done_date": date(r.get("완료일"), iss, r, "완료일"), "row": r}
         d.project_order.append(pid)
 

@@ -816,10 +816,14 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         history = convert_projects.out_of_period(books, links["projects"], links["requests"])   # WR-05
         project_table = convert_projects.build_projects(links["projects"], links["revenue"], prev["프로젝트.csv"], history,
                                                         convert_projects.period_text(books))
+        if getattr(snap, "projects", None):   # 승인 칸 글자가 실제 화면과 맞는지 볼 수 있게 (대표이사 승인 = 종결, 사용자 2026-11-11)
+            project_table.notes.append("인트라넷 승인 칸 글자 — %s (끝남으로 읽는 글자: %s)"
+                                       % (linking.approval_words(snap.projects), "·".join(linking.APPROVAL_DONE)))
         execs = convert_projects.build_execs(books, links["costs"], links["requests"], match, prev["프로젝트집행.csv"], cfg,
                                              links["projects"])
         xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,
-                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir))
+                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir),
+                                       card_vat=(execs.extra or {}).get("card_vat"))
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))

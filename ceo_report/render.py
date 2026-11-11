@@ -1941,6 +1941,8 @@ def _expected_strip(R, mode="ceo", Y=None):
            cell("= %d년 매출 예상" % y, W(total, "확인 필요"), cls=" tot")]   # 결론 숫자에 밑줄 하나 (사용자 2026-11-05)
     bot = "앞으로 들어올 매출 = 사전견적 − 이미 발행한 계산서 · 행사 끝남(미발행) %s (%d건) + %d년 남은 행사 %s (%d건)" % (
         won(E["past"]), E["past_n"], y, won(E["this_year"]), E["this_year_n"])
+    if E.get("quoted_n"):
+        bot += " · 대표이사 승인 끝난 %d건은 사전견적 대신 확정 견적금액" % E["quoted_n"]
     # 풀이 줄(계산식·뺀 것)은 경영관리용에만 (사용자 2026-11-05: 월간 대표 보고 안내 최소)
     h = "<div class='card exprow'>%s%s" % (head, "".join(top)) + _mg(mode, "<div class='exp-b'>%s</div>" % esc(bot))
     left = []
@@ -2754,7 +2756,7 @@ def _s3(R, per):
                                                    + (" · " + note_nb if note_nb else "")))
     rows = []
     for P in s3["ranked"]:
-        rows.append([esc(P["id"]), esc(P["name"]), esc(P["team"]), esc(P["state"]), W(P["estimate"], "-"),
+        rows.append([esc(P["id"]), esc(P["name"]), esc(P["team"]), esc(_state_text(P)), W(P["estimate"], "-"),
                      W(P["budget"], "예산 미지정"), _na(P["budget_reason"]) if P["budget_reason"] else "",
                      esc(d2s(P["budget_date"], "-")), W(P["paid_period"]), W(P["paid_total"]),
                      W(P["paid_cash"], P["paid_cash_reason"] or "미확인"), W(P["requested"]), W(P["card_unpaid"]), W(P["planned"]),
@@ -2889,6 +2891,14 @@ def _s5(R):
     return "".join(h)
 
 
+def _state_text(P):
+    """프로젝트 표 상태 칸: 손으로 적은 상태가 없고 인트라넷에서 대표이사 승인까지 끝났으면 '종결(대표 승인)' (사용자 2026-11-11)."""
+    st = (P.get("state") or "").strip()
+    if not st and (P.get("approval") or "").strip() == "대표이사":
+        return "종결(대표 승인)"
+    return st
+
+
 def _event_unissued_table(s5):
     """행사일이 지났는데 계산서가 덜 나간 프로젝트 (사전견적 − 발행, 오래된 행사 순). 모르는 것은 까닭과 함께 건수로."""
     E = s5["event_unissued"]
@@ -2897,10 +2907,11 @@ def _event_unissued_table(s5):
         h.append("<div class='note na'>%s</div>" % esc("계산서 자료 없음 — 행사 후 미발행은 ‘자료 없음’"))
         return "".join(h)
     rows = [[esc(y["P"]["id"]), esc(y["P"]["name"]), esc(d2s(y["event"])), esc("%d일" % y["days"]),
-             W(y["estimate"]), W(y["issued"], "0"), W(y["unissued"])] for y in E["rows"]]
+             W(y["estimate"]) + ("<small> 견적금액</small>" if y.get("quoted") else ""), W(y["issued"], "0"), W(y["unissued"])] for y in E["rows"]]
     h.append(table(["번호", "프로젝트", "행사일", "행사 후", "사전견적(공급가)", "발행금액(공급가)", "미발행금액"], rows,
                    num_cols=(3, 4, 5, 6), total=["합계", "", "", "", "", "", W(E["total"])]))
-    note = "미발행금액 = 사전견적 − 발행금액(공급가). 행사일이 기준일 전인 프로젝트만."
+    note = ("미발행금액 = 사전견적 − 발행금액(공급가). 행사일이 기준일 전인 프로젝트만. "
+            "인트라넷에서 대표이사 승인까지 끝난 프로젝트는 사전견적 대신 확정 견적금액 기준.")
     if E["unknown"]:
         by = OrderedDict()
         for u in E["unknown"]:
@@ -3349,12 +3360,78 @@ def _xk_cash_tables(X):
     return out
 
 
-def _xk_detail(X):
+def _xk_final_why(p, b, c, v, d):
+    """실행가 차이 한 줄의 설명 (사용자 2026-11-11: 차이가 나는 부분에 설명). 장부에서 알 수 있는 까닭만 적는다."""
+    why = []
+    if v:
+        why.append("카드 부가세 %s 더함 (%d건, 인트라넷 실행가는 카드 금액이 부가세 포함)" % (won(v), p.get("card_n") or 0))
+    if p.get("out_of_period"):
+        why.append("분개장 기간 밖 원가가 있어 장부 원가를 다 알 수 없음")
+    elif c is None:
+        why.append("금액 모르는 원가 줄이 있어 차이 판단 불가")
+    if b is None:
+        why.append("인트라넷 실행가 빈칸")
+    if d is None:
+        return " · ".join(why)
+    if d == 0:
+        why.append("일치")
+    elif d > 0:
+        why.append("장부 원가가 실행가보다 %s 많음 → 실행가에 없는 지출이거나 다른 프로젝트 원가가 이 번호로 들어갔을 수 있음" % won(d))
+    else:
+        rq = p.get("requested")
+        if rq is not None and c is not None and rq > c + (v or 0):
+            why.append("장부 원가가 실행가보다 %s 적음 · 지급요청 누계 %s가 장부 원가보다 많음 → 증빙이 아직 장부에 없거나 전표에 프로젝트 번호가 안 붙었을 수 있음"
+                       % (won(-d), won(rq)))
+        else:
+            why.append("장부 원가가 실행가보다 %s 적음 → 아직 안 들어온 증빙, 프로젝트 번호 안 붙은 전표, 또는 실행가보다 덜 쓴 금액" % won(-d))
+    return " · ".join(why)
+
+
+def _xk_final_table(X, R):
+    """최종 실행가 차이 (사용자 2026-11-11): 인트라넷에서 팀장 승인 이상(~대표이사 승인) 진행된 프로젝트만,
+    인트라넷 실행가 대 위하고 장부 (도)원가. 인트라넷 실행가는 카드 사용 금액이 부가세 포함이라 장부 원가에 카드 부가세를 더해 견준다.
+    차이는 두 값을 모두 알 때만."""
+    from .linking import APPROVAL_STAGES, APPROVAL_TEAM_UP
+    ps = dict((P["id"], P) for P in ((R or {}).get("s3") or {}).get("projects", []))
+    if not any((P.get("approval") or "") for P in ps.values()):
+        return "<div class='note'>%s</div>" % esc("승인 단계 자료 없음 — 인트라넷 자료를 받은 뒤 '자료 변환'을 하면 채워짐 (승인된 프로젝트가 하나도 없을 때도 이 글)")
+    rows, s_b, s_c, s_v, n_both = [], 0, 0, 0, 0
+    order = dict((n, i) for i, n in enumerate(APPROVAL_STAGES))
+    picked = [p for p in X["projects"] if (ps.get(p["key"], {}).get("approval") or "") in APPROVAL_TEAM_UP]
+    picked.sort(key=lambda p: (-order[ps[p["key"]]["approval"]], p["key"]))
+    for p in picked:
+        stage = ps[p["key"]]["approval"]
+        b = p["budget"] if p["has_budget"] else None
+        c = None if p.get("out_of_period") else p["cost"]
+        v = p.get("card_vat") or 0
+        d = None if b is None or c is None else c + v - b
+        if d is not None:
+            s_b, s_c, s_v, n_both = s_b + b, s_c + c, s_v + v, n_both + 1
+        rows.append([esc(p["key"]), esc(p["name"]), esc(stage + " 승인"), _xk_none() if b is None else esc(won(b)),
+                     _xk_period_cell(p["cost"], p["cost_note"], p.get("out_of_period"), p.get("cost_period")),
+                     esc(won(v)) if v else _xk_none(), _na("판단 불가") if c is None else esc(won(c + v)),
+                     _xk_diff(d), _na("판단 불가") if d is None or not b else esc("%.1f%%" % ((c + v) * 100.0 / b)),
+                     esc(_xk_final_why(p, b, c, v, d))])
+    if not rows:
+        return "<div class='note'>%s</div>" % esc("팀장 승인 이상 진행된 프로젝트 없음")
+    total = ["합계 (두 값을 모두 아는 %d건)" % n_both, "", "", esc(won(s_b)), esc(won(s_c)), esc(won(s_v)), esc(won(s_c + s_v)),
+             esc(won(s_c + s_v - s_b)), esc("%.1f%%" % ((s_c + s_v) * 100.0 / s_b)) if s_b else "", ""]
+    out = _idt("xchk-final", table(["번호", "프로젝트", "승인 단계", "인트라넷 실행가", _xk_label("WEHAGO 원가", X), "카드 부가세", "견줄 원가",
+                                    "차이 (견줄 원가−실행가)", "실행가 대비", "차이 설명"],
+                                   rows, num_cols=(3, 4, 5, 6, 7, 8), total=total))
+    return out + "<div class='note'>%s</div>" % esc(
+        "대상 = 인트라넷에서 팀장 승인이 끝난 프로젝트부터 대표이사 승인까지 끝난 프로젝트 (%d건). "
+        "견줄 원가 = 장부 (도)원가(공급가액) + 법인카드 원가의 부가세 (인트라넷 실행가는 카드 사용 금액이 부가세 포함이라 같은 기준으로 맞춤). "
+        "차이가 +면 장부 원가가 실행가보다 큼. 장부 원가는 프로젝트 번호가 붙은 전표만 (미연결 원가는 빠짐). 증빙이 늦게 들어오면 바뀜." % len(rows))
+
+
+def _xk_detail(X, R=None):
     """경영관리용에만 붙는 상세 묶음. 시험의 numbers_of 가 이 표지 사이를 뺀다 (REP-02: 요약 숫자는 두 판이 같다)."""
     h = ["<div id='xchk-detail'>",
          "<div class='note'>상세 (경영관리용). 값은 위하고대조.csv의 사실이며, 차이는 두 값을 모두 알 때만 계산 (모르면 ‘판단 불가’).</div>",
          "<h3>지급요청 대조 (상태별)</h3>", _xk_status_table(X),
          "<h3>상태 확인 필요 지급요청 (사장님승인 빈칸·알 수 없는 값, 요청 누계·프로젝트밖요청에 포함)</h3>", _xk_status_check_table(X),
+         "<h3>최종 실행가 차이 (팀장 승인 ~ 대표이사 승인 프로젝트)</h3>", _xk_final_table(X, R),
          "<h3>프로젝트별 (도)원가 · 실행가 · 요청 누계</h3>", _xk_projects_table(X),
          "<h3>프로젝트 밖 지급요청</h3>", _xk_outside_table(X),
          "<h3>프로젝트 미연결 원가 줄</h3>", _xk_lines_table("xchk-unlinked", X["unlinked_lines"], X["unlinked"]),
@@ -3384,7 +3461,7 @@ def _s8(R, mode):
              "계약금액은 사람이 입력한 값.</div>"
              % esc("WEHAGO 원가·매출은 분개장 기간 %s 합계" % span if span else "WEHAGO 원가·매출은 분개장 전체 기간 합계 (분개장 기간 기록 없음)"))
     if mode == "mgmt":
-        h.append(_xk_detail(X))
+        h.append(_xk_detail(X, R))
     return "".join(h)
 
 

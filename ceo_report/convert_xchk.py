@@ -159,7 +159,10 @@ def period_checks(history, rows):
     return out
 
 
-def _cost_rows(projects, costs, requests, history=None):
+CARD_VAT_ITEM = "카드 부가세"   # 프로젝트원가: 그 프로젝트 법인카드 원가 전표의 부가세대급금 합 (실행가 차이 비교용)
+
+
+def _cost_rows(projects, costs, requests, history=None, card_vat=None):
     """프로젝트원가: 프로젝트마다 WEHAGO 원가 (모든 날짜의 줄), 실행가, 요청 누계 (코드가 프로젝트 키이고 상태를 읽은 요청)."""
     rows = []
     history = history or {}
@@ -170,6 +173,9 @@ def _cost_rows(projects, costs, requests, history=None):
         total, unknown = _known_sum([ln["amount"] for ln in mine])
         name = p["name"] if p is not None else NOT_LISTED
         rows.extend(_total_rows("프로젝트원가", key, name, "WEHAGO 원가", total, len(mine), _unknown_note(unknown, "줄"), history))
+        cv = (card_vat or {}).get(key)
+        if cv:
+            rows.append(_row("프로젝트원가", key, name, CARD_VAT_ITEM, cv[0], cv[1], "법인카드 원가 전표의 부가세 (WEHAGO 원가에는 없음)"))
         if p is not None:
             notes = (["프로젝트번호 겹침 (첫 줄의 실행가)"] if p.get("dup") else []) + (
                 ["실행가 빈칸"] if p["budget"] is None else [])
@@ -387,7 +393,7 @@ def _source_total(books, cfg, kind):
     return _known_sum([_net(line, kind) for line in books.journal if _classify(line, cfg) == kind])[0]
 
 
-def build_xchk(books, costs, revenue, projects, requests, match, project_rows, meta, cfg, bank):
+def build_xchk(books, costs, revenue, projects, requests, match, project_rows, meta, cfg, bank, card_vat=None):
     """위하고대조.csv 표. 입력은 바꾸지 않고 파일은 열지 않는다 (bank: {"balances": 줄 또는 None, "transactions": 줄 또는 None})."""
     bank = bank or {}
     if books.state != "ok":
@@ -397,7 +403,7 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     history = out_of_period(books, projects, requests)
     rows = _meta_rows(meta)
     status_rows = _status_rows(match)
-    cost_rows = _cost_rows(projects, costs, requests, history)
+    cost_rows = _cost_rows(projects, costs, requests, history, card_vat)
     unlinked_rows = _unlinked_cost_rows(costs)
     revenue_rows = _revenue_rows(projects, revenue, project_rows, history)
     unlinked_revenue = _unlinked_revenue_rows(revenue)
@@ -490,7 +496,7 @@ def _project_of(row):
     return {"key": row["대상"], "name": row["이름"], "cost": None, "cost_lines": None, "cost_note": "", "cost_period": None,
             "out_of_period": False, "budget": None,
             "budget_note": "", "has_budget": False, "requested": None, "requested_count": None,
-            "requested_note": "", "cost_vs_budget": None, "request_vs_cost": None}
+            "requested_note": "", "cost_vs_budget": None, "request_vs_cost": None, "card_vat": None, "card_n": None}
 
 
 def _contract_of(row):
@@ -514,6 +520,8 @@ def _load_rows(rows):
                 p["out_of_period"] = row["비고"].startswith(OUT_OF_PERIOD)
             elif item == "WEHAGO 원가" + PERIOD_SUFFIX:
                 p["cost_period"] = row["_amount"]
+            elif item == CARD_VAT_ITEM:
+                p["card_vat"], p["card_n"] = row["_amount"], row["_count"]
             elif item == "실행가":
                 p["budget"], p["budget_note"], p["has_budget"] = row["_amount"], row["비고"], True
             elif item == "요청 누계":

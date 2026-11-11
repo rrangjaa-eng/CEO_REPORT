@@ -14,7 +14,7 @@ import html
 import os
 import re
 
-from .calc import DONE_STATES, _event_date
+from .calc import _event_date, is_closed
 
 NET_SETTING = "팀장용_급여반영손익"   # '표시' 이면 급여 반영 손익(흑자/적자) 줄·칸을 보인다 (사용자 2026-11-05 보류)
 LOW_GAP = 4.0   # 누계 프로젝트 수익률이 팀 목표 수익률보다 이만큼(%p) 이상 낮으면 밑줄
@@ -177,7 +177,7 @@ def build(d, R, team):
     recognized = set(pid for pid in per if any(v[0] for v in per[pid].values()))
     up = []
     for P_ in R["s3"]["projects"]:
-        if (P_.get("team") or "").strip() != team or (P_.get("state") or "").strip() in DONE_STATES:
+        if (P_.get("team") or "").strip() != team or is_closed(P_):
             continue
         if P_["id"] in recognized or P_.get("recognized"):
             continue

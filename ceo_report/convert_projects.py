@@ -16,7 +16,7 @@ from .wehago import norm_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
 
-PROJECT_EXTRA = ["실행가"]
+PROJECT_EXTRA = ["실행가", "견적금액", "승인단계"]   # 견적금액·승인단계: 인트라넷 프로젝트 목록 (사용자 2026-11-11)
 CARRIED = ("상태", "예산수정일", "계약금액", "완료일")   # 이전 프로젝트.csv 에서 옮기는 칸 (D-49)
 
 
@@ -55,7 +55,7 @@ def _carry_cell(column, raw, key, notes):
 
 
 CARRY_LABEL = "이전 프로젝트.csv에만 있는 프로젝트 → 옮긴 줄"
-_AMOUNT_COLUMNS = ("사전견적예산", "계약금액", "매출반영누계", "실행가")
+_AMOUNT_COLUMNS = ("사전견적예산", "계약금액", "매출반영누계", "실행가", "견적금액")
 
 
 def _prev_only(prev_rows, keys):
@@ -172,6 +172,8 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
             row[column] = cell_amount(p[field])
             if p[field] is None and not is_blank(p.get(text)):
                 notes.append("%s %s 숫자 아님 → 빈칸" % (key, "사전견적" if field == "estimate" else "실행가"))
+        row["견적금액"] = cell_amount(p.get("quote"))
+        row["승인단계"] = p.get("approval") or ""
         row["행사일"] = p.get("event_text") if p.get("event_text") is not None else cell_date(p["event_date"])
         total = _sum_or_none(amounts.get(key, []))
         period_total[key] = total
@@ -193,6 +195,11 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
     if n_old:
         notes.append("예전 인트라넷 프로젝트 %d건 더함 (지금 인트라넷에 없는 번호) · 그중 %s 이전 행사 %d건은 상태 '완료(예전 인트라넷)' — 보고서 표·미발행에서 뺌"
                      % (n_old, OLD_LAST_DAY.isoformat(), old_done))
+    stages = [projects[k].get("approval") or "" for k in keys if not projects[k].get("old")]
+    if any(stages):
+        from .linking import APPROVAL_STAGES
+        notes.append("인트라넷 승인 단계: %s · 승인 전 %d건 — 대표이사 승인 끝난 프로젝트는 종결로 봄 (남은 예산 지급 예정에서 뺌, 매출 예상은 견적금액 기준)"
+                     % (" · ".join("%s까지 %d건" % (s, stages.count(s)) for s in APPROVAL_STAGES), stages.count("")))
     columns = data.SCHEMA["프로젝트.csv"] + PROJECT_EXTRA
     only_prev = _prev_only(prev_rows, keys)
     order = sorted(only_prev, key=lambda k: (_digits(k) == "", int(_digits(k) or 0), k))   # 이전 파일 줄 순서와 무관하게
@@ -853,4 +860,12 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
                          % (len(unpaid), won(sum(known)),
                             " (금액 미확인 %d건 제외)" % (len(unpaid) - len(known)) if len(known) < len(unpaid) else ""))
     portions = [g["supply"] for g in groups] + [None] * (len(request_rows) + len(carried) + len(hand))
-    return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes, extra={"cost_portions": portions})
+    # 프로젝트별 법인카드 원가의 부가세 (사용자 2026-11-11: 인트라넷 실행가는 카드 금액이 부가세 포함 → 실행가 차이를 볼 때 장부 원가에 더한다)
+    card_vat = {}
+    for g in groups:
+        if g.get("card") and g.get("project") and g.get("vat"):
+            cv = card_vat.setdefault(g["project"], [0, 0])
+            cv[0] += g["vat"]
+            cv[1] += 1
+    return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes,
+                 extra={"cost_portions": portions, "card_vat": card_vat})

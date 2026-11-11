@@ -70,6 +70,40 @@ def projects_of(snap, old=None):
     return out
 
 
+APPROVAL_STAGES = ("담당자", "팀장", "관리팀", "대표이사")   # 인트라넷 프로젝트 목록의 승인 네 칸, 이 순서로 진행
+APPROVAL_DONE = ("완료", "수락완료", "승인완료", "반려")
+# 승인 칸 글자 (사용자 2026-11-11: 대표 승인까지 끝난 프로젝트 = 종결, 팀장 승인부터는 실행가 검토 대상).
+# 지급요청 목록에서 실제로 본 규칙(2026-11-05)과 같게 읽는다: '수락완료'·'완료' = 끝남, '반려'(반려 버튼) = 그 단계 승인이 끝남,
+# '승인'(승인 버튼)·'미승인'·빈칸 = 아직. 모르는 글자는 '아직'으로 본다 (끝나지 않은 프로젝트를 종결로 잘못 보지 않게).
+APPROVAL_TEAM_UP = APPROVAL_STAGES[1:]   # 팀장 승인 이상
+
+
+def approval_stage(p):
+    """프로젝트 목록 줄 -> 승인이 끝난 가장 높은 단계 ('' | 담당자 | 팀장 | 관리팀 | 대표이사).
+
+    네 칸을 합친 한 칸 '완료'(뒤 칸은 빈칸)는 모두 끝난 것."""
+    cells = [(p.get("승인_" + s) or "").strip() for s in APPROVAL_STAGES]
+    if cells[0] in ("완료", "수락완료", "승인완료") and not any(cells[1:]):
+        return APPROVAL_STAGES[-1]
+    stage = ""
+    for name, text in zip(APPROVAL_STAGES, cells):
+        if text in APPROVAL_DONE:
+            stage = name
+    return stage
+
+
+def approval_words(rows):
+    """승인 칸마다 어떤 글자가 몇 번 나왔는지 (변환결과에 적어 글자 규칙이 실제 화면과 맞는지 볼 수 있게)."""
+    out = []
+    for s in APPROVAL_STAGES:
+        c = {}
+        for p in rows:
+            t = (p.get("승인_" + s) or "").strip() or "(빈칸)"
+            c[t] = c.get(t, 0) + 1
+        out.append("%s %s" % (s, ", ".join("'%s' %d" % kv for kv in sorted(c.items(), key=lambda kv: -kv[1]))))
+    return " · ".join(out)
+
+
 def _add_projects(out, rows, is_old):
     for p in rows:
         title = p.get("행사명", "")
@@ -84,6 +118,7 @@ def _add_projects(out, rows, is_old):
         out[key] = {"key": key, "old": is_old, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),
                     "client": p.get("클라이언트", ""), "client_norm": norm_vendor(p.get("클라이언트", "")),
                     "estimate": num(p.get("사전견적")), "quote": num(p.get("견적금액")), "budget": num(p.get("실행가")),
+                    "approval": "" if is_old else approval_stage(p),
                     "event_date": parse_date(p.get("행사일")), "dup": False,
                     # 읽기 전 글자 (프로젝트.csv 를 만드는 쪽이 '숫자 아님'과 빈칸을 구별하고 행사일을 글자 그대로 쓴다)
                     "estimate_text": (p.get("사전견적") or "").strip(), "budget_text": (p.get("실행가") or "").strip(),
