@@ -10,6 +10,7 @@ from collections import OrderedDict
 
 from .util import won, man, pct, d2s, esc, ssum, date as parse_date
 from .calc import _event_date
+from . import areas
 
 CSS = """
 :root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;--out:#b5523b;
@@ -438,6 +439,7 @@ def render(R, mode):
         "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])))
     h.append("</div>")
 
+    fs_i = len(h)
     h.append(_first_screen(R, mode, per))
     # 풀이 안내(note mgx)는 경영관리용에만 (사용자 2026-11-05: 대표 월간 보고도 안내 최소). 자료 없음 경고는 남는다
     h = [re.sub(r"<div class='note mgx'>(.*?)</div>",
@@ -447,27 +449,31 @@ def render(R, mode):
         h.append("</div></body></html>")
         return "".join(h)
 
+    # 경영관리용 영역별 보기 (사용자 2026-11-11: 보기 불편 → 영역별로 나눠 보고, 필요하면 전체 출력)
     toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
+    chap = [_s1(R, per), _s2(R), _s3(R, per), _s4(R), _s5(R), _s6(R), _s7(R)]
     if R["kind"] == "monthly":
         toc.append(XCHK_TITLE)  # 월간에만 8번 (주간 보고는 바뀌지 않는다, D-44)
-    h.append("<div class='toc'>상세자료: " + " ".join(
-        '<a href="#s%d">%d. %s</a>' % (i, i, t) for i, t in enumerate(toc, 1))
-             + (' <a href="#risk">위험 분석</a>' if mode == "mgmt" else "") + "</div>")
+        chap.append(_s8(R, mode))
+    summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
+    evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
+    hi = sum(1 for r in R["risks"] if r["level"] == "높음")
+    G1, G2 = "보고 요약", "상세 자료"
+    top = [("sum", "요약 (대표 보고 화면)", G1, summ, None), ("ev", "근거자료 · 확인할 것", G1, evid, None)]
+    rest = [("risk", "위험 분석·해결방안", G1, _risk_section(R), hi or None)]
+    rest += [("s%d" % i, "%d. %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
+    allk = top + rest
 
-    if mode == "mgmt":
-        h.append(_risk_section(R))
-
-    h.append(_s1(R, per))
-    h.append(_s2(R))
-    h.append(_s3(R, per))
-    h.append(_s4(R))
-    h.append(_s5(R))
-    h.append(_s6(R))
-    h.append(_s7(R))
-    if R["kind"] == "monthly":
-        h.append(_s8(R, mode))
-    h.append("</div></body></html>")
-    return "".join(h)
+    def sec(i):
+        k, lab, g, body, _ = allk[i]
+        prev = allk[i - 1][:2] if i else None
+        nxt = allk[i + 1][:2] if i + 1 < len(allk) else None
+        return areas.section(k, lab, body + areas.pager(prev, nxt), g)
+    out = h[:fs_i] + [sec(i) for i in range(len(top))]
+    out.append(areas.nav([(k, lab, g, b) for k, lab, g, _, b in allk]))   # 예전 목차 자리 (첫 화면 | 상세 장 경계)
+    out += [sec(i) for i in range(len(top), len(allk))]
+    out.append("</div>" + areas.JS + "</body></html>")
+    return "".join(out)
 
 
 # 용어 풀이 (2026-11-04 대표 이해도 점검 U2): 첫 화면에 나오는 말만, 한 줄씩. 두 판 같음 (숫자 없음)
@@ -2304,12 +2310,14 @@ def _first_screen(R, mode, per):
              % ("<span class='doc-end'>끝.</span>" if mode == "ceo" else ""))
     h.append(_mg(mode, _glossary(R)))   # 용어 풀이는 경영관리용에만 (2026-11-05 사용자: 대표 보고 디자인 제안 4). 첫 화면 쪽 안에 (쪽 나눔 뒤로 밀려 빈 쪽이 생기지 않게)
     n = len(blocks)
+    if mode == "mgmt":   # 경영관리용: 근거·프로젝트 예산·확인할 것은 '근거자료' 영역으로 나눈다 (사용자 2026-11-11 영역별 보기)
+        h.append("</div>" + areas.SUMMARY_MARK + "<div class='page fs%s'>" % (" mon" if monthly else ""))
     h.append(_mg(mode, _evidence(R, n) + "<div class='sec'>%s%s</div><div class='sec'>%s%s</div>" % (
         _q(n + 1, "프로젝트별 원가 예산·집행"), _project_bars(R, per, active_only=not monthly),
         _q(n + 2, "위 숫자에 안 들어간 것 · 확인할 것"), _check_box(R))))
     if mode == "mgmt":
         hi = sum(1 for r in R["risks"] if r["level"] == "높음")
-        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — 아래 ‘위험 분석·해결방안’ 참조</div>"
+        h.append("<div class='note' style='margin-top:10px'>위험 항목 %d건 (높음 %d건) — <a href='#risk'>‘위험 분석·해결방안’ 보기</a></div>"
                  % (len(R["risks"]), hi))
     h.append("</div>")
     return "".join(h)

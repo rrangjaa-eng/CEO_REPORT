@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from ceo_report import annual, app, convert  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 import annual_sample  # noqa: E402
 
 D = dt.date
@@ -162,7 +163,11 @@ class TestReport(unittest.TestCase):
         self.assertNotIn("위험 분석", ceo)
         self.assertIn("위험 분석", mg)
         self.assertIn("경영관리용", mg)
-        self.assertNotIn("<script", ceo + mg)
+        self.assertNotIn("<script", ceo)
+        self.assertNotIn("<script", strip_ui(mg))   # 경영관리용은 영역별 보기 장치만 (사용자 2026-11-11)
+        self.assertIn("id='anav'", mg)
+        self.assertEqual(re.findall(r"<section class='area' id='a-([^']+)'", mg), ["sum", "risk", "d1", "d2", "d3", "d4", "d5", "d6"])
+        self.assertEqual(mg.count("<div"), mg.count("</div>"))
 
     def test_cli_writes_files(self):
         out = os.path.join(self.tmp, "출력")

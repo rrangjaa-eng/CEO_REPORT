@@ -24,6 +24,7 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from ceo_report import approval, calc, data, snapshot  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 from ceo_report.convert_xchk import load_xchk  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from test_approval import edit_csv, load_approval_cli, set_setting  # noqa: E402
@@ -112,7 +113,7 @@ class TestConvertedReports(unittest.TestCase):
         old = weekly_baseline(self, self.input_dir)
         for mode in ("ceo", "mgmt"):
             with self.subTest(mode):
-                self.assertEqual(STAMP.sub("", self.weekly[mode]), STAMP.sub("", old[mode]))
+                self.assertEqual(STAMP.sub("", strip_ui(self.weekly[mode])), STAMP.sub("", strip_ui(old[mode])))   # 영역 보기 장치만 뺌 (2026-11-11)
 
     def test_weekly_has_no_section_8(self):
         for page in self.weekly.values():

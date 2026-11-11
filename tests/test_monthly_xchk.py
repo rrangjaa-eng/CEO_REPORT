@@ -26,6 +26,7 @@ import datetime as dt  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table, shared_inputs,  # noqa: E402
                                write_xchk, xchk_table)
@@ -210,7 +211,7 @@ class TestMonthlySection(unittest.TestCase):
         for mode, page in detail(self.pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
+                self.assertIn("<a href='#a-s8' data-k='s8'>8. WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
 
     def test_section_8_comes_after_section_7(self):
         for page in detail(self.pages).values():
@@ -675,7 +676,7 @@ class TestMonthlyMissing(unittest.TestCase):
         for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
+                self.assertIn("<a href='#a-s8' data-k='s8'>8. WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
                 self.assertIn(NO_FILE_TEXT, section8_text(page))
                 self.assertNotIn("xchk-summary", page)
                 self.assertNotIn("xchk-detail", page)
@@ -863,7 +864,8 @@ class TestWeeklyUnchanged(unittest.TestCase):
         self.assertEqual(rc, 0)
         for mode in ("ceo", "mgmt"):
             with self.subTest(mode):
-                self.assertEqual(STAMP.sub("", new[mode]), STAMP.sub("", old[mode]))
+                # 경영관리용은 영역 보기 장치(2026-11-11)만 더해졌다: 그것을 빼면 예전과 같다
+                self.assertEqual(STAMP.sub("", strip_ui(new[mode])), STAMP.sub("", strip_ui(old[mode])))
 
     def test_weekly_never_imports_or_calls_load_xchk(self):
         folder = sample_folder(self, xchk_table(shared_inputs()))

@@ -597,6 +597,7 @@ def render(A, mode):
         meta.append("%d년 손익 %d개월치 (%d월까지)" % (year, len(Yp["months"]), Yp["months"][-1]))
     meta.append("작년 = %d년%s" % (year - 1, " (%d개월)" % len(Lp["months"]) if Lp and not Lp["full"] else ("" if Lp else " 자료 없음")))
     h.append("<div class='meta dsrc'>%s</div></div>" % esc(" · ".join(meta)))
+    sum_i = len(h)
     h.append("<div class='page fs mon'>")
     goal_all = sum((A["goals"].get((str(year), t["name"])) or (0, 0))[0] or 0 for t in A["teams"])
     lm = "(%d개월)" % len(Lp["months"]) if Lp and not Lp["full"] else ""
@@ -773,7 +774,18 @@ def render(A, mode):
     if mode == "ceo":
         h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.<span class='doc-end'>끝.</span></div></div></div></body></html>")
     else:
-        h.append("</div>" + _detail(A) + "<div class='evid'><span class='doc-end'>끝.</span></div></div></div></body></html>")
+        # 영역별 보기 (사용자 2026-11-11): 요약 · 위험 분석 · 상세 1~6 을 한 영역씩 (주간·월간 경영관리 보고와 같은 방식)
+        from . import areas
+        parts = [("sum", "요약 (대표 보고 화면)", "보고 요약", "".join(h[sum_i:]) + "</div>")] + _detail(A)
+        parts[-1] = parts[-1][:3] + (parts[-1][3] + "<div class='evid'><span class='doc-end'>끝.</span></div>",)
+        h = h[:sum_i]
+        for i, (k, lab, g, body) in enumerate(parts):
+            if i == 1:
+                h.append(areas.nav([(p[0], p[1], p[2], A.get("_risk_hi") if p[0] == "risk" else None) for p in parts]))
+            prev = parts[i - 1][:2] if i else None
+            nxt = parts[i + 1][:2] if i + 1 < len(parts) else None
+            h.append(areas.section(k, lab, body + areas.pager(prev, nxt), g))
+        h.append("</div>" + areas.JS + "</body></html>")
     return "".join(h)
 
 
@@ -809,12 +821,19 @@ def _risks(A):
 
 def _detail(A):
     year, Yp, Lp = A["year"], A["Y"], A["L"]
-    d = ["<div class='page'><div class='toc'>상세자료: " + " ".join('<a href="#d%d">%d. %s</a>' % (i, i, t) for i, t in enumerate(
-        ["달별 손익과 결산", "분기별 실적", "통장 흐름", "거래처", "팀·프로젝트·판관비", "%d년 준비 근거" % (year + 1)], 1)) + ' <a href="#risk">위험 분석</a></div>']
+    # 영역별 보기 (사용자 2026-11-11): [(영역 키, 이름, 묶음, HTML)] — render 가 영역으로 감싸고 목록을 붙인다
+    names = ["달별 손익과 결산", "분기별 실적", "통장 흐름", "거래처", "팀·프로젝트·판관비", "%d년 준비 근거" % (year + 1)]
+    out, d = [], []
+
+    def cut(key, label, group="상세 자료"):
+        out.append((key, label, group, "".join(d)))
+        del d[:]
     rk = _risks(A)
+    A["_risk_hi"] = sum(1 for r in rk if r[0] == "높음") or None
     d.append("<h2 id='risk'>위험 분석·해결방안 (경영관리 전용)</h2>")
     d.append("<div class='tw'><table class='risk'><thead><tr><th>등급</th><th>영역</th><th>근거 (숫자)</th><th>해결방안</th></tr></thead><tbody>%s</tbody></table></div>"
              % "".join("<tr><td class='lv'>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % r for r in rk) if rk else "<div class='note'>눈에 띄는 위험 없음</div>")
+    cut("risk", "위험 분석·해결방안", "보고 요약")
     d.append("<h2 id='d1'>1. 달별 손익과 결산</h2><div class='evh'>근거 1-1 · 달별 손익 (위하고 순서)</div>")
     rows = [("매출", Yp["rev_m"]), ("매출원가", Yp["cogs_m"]), ("매출총이익", [Yp["rev_m"][i] - Yp["cogs_m"][i] for i in range(12)]),
             ("판관비", Yp["common_m"]), ("영업이익", Yp["op_m"])]
@@ -825,6 +844,7 @@ def _detail(A):
     d.append(_tab(["항목", "연중 예상", "결산", "차이", "예상 근거"], [
         ["감가상각비", W(A["dep_est"]), W(Yp["dep"]) if A["closed"] else "결산 전", sgn(Yp["dep"] - A["dep_est"]) if A["closed"] and A["dep_est"] else "—", esc(A["dep_src"] or "")],
         ["법인세 등", W(A["tax_est"]), W(A["tax"]) if A["tax_fixed"] else "결산 전", sgn(A["tax"] - A["tax_est"]) if A["tax_fixed"] else "—", "세전 이익 × 세율, 세무조정 없음"]], "pt evt"))
+    cut("d1", "1. " + names[0])
     d.append("<h2 id='d2'>2. 분기별 실적</h2><div class='evh'>근거 2-1 · 분기 합계%s</div>" % ("와 작년 같은 분기" if Lp else ""))
     qr = []
     for k in range(4):
@@ -835,6 +855,7 @@ def _detail(A):
         qr.append(["%d분기" % (k + 1), W(r_), W(sum(buy)) if buy else "—", W(r_ - sum(Yp["cogs_m"][sl])), W(sum(Yp["op_m"][sl])), W(lr), chg(r_, lr)])
     d.append(_tab(["분기", "매출", "매입", "매출총이익", "영업이익", "작년 같은 분기 매출", "매출 증감률"], qr, "pt pl",
                   ["합계", W(Yp["rev"]), W(Yp["buy"]), W(Yp["gp"]), W(Yp["op"]), W(Lp["rev"] if Lp else None), chg(Yp["rev"], Lp["rev"] if Lp else None)]))
+    cut("d2", "2. " + names[1])
     d.append("<h2 id='d3'>3. 통장 흐름</h2><div class='evh'>근거 3-1 · 한 해 현금 흐름 분류 (보통예금 상대 계정)</div>")
     why = {"영업 입금": "외상매출금·선수금 등 (아래 분류가 아닌 계정)", "영업 지급": "외상매입금·미지급금·급여·판관비 등", "세금": "부가세·예수금·선납세금·법인세 계정",
            "투자": "유형·무형자산 계정", "대출 받음": "차입금 대변", "대출 갚음": "차입금 차변", "자본금 납입": "자본금 계정"}
@@ -843,6 +864,7 @@ def _detail(A):
     d.append("<div class='evh'>근거 3-2 · 달별 월말 잔액</div>")
     minc = num(A["settings"].get("위험_최소보유현금")) or 0
     d.append(_tab(["달", "월말 잔액", "최소 보유현금 위 여유"], [["%d월" % (i + 1), W(v), W(v - minc) if v is not None else "—"] for i, v in enumerate(A["bal_m"])], "pt pl"))
+    cut("d3", "3. " + names[2])
     d.append("<h2 id='d4'>4. 거래처</h2><div class='evh'>근거 4-1 · 매출·매입 상위 10곳</div><div class='cf'>")
     for lst in (A["cust"], A["vend"]):
         tot = sum(v for _, _, v in lst)
@@ -862,6 +884,7 @@ def _detail(A):
             d.append("<div class='wsub'>행사 뒤 60일 넘겨 입금된 %d건</div>" % len(S["over60"]))
             d.append(_tab(["거래처", "프로젝트", "행사 끝난 날", "입금일", "걸린 날", "입금액"],
                           [[esc(x[0]), esc("%s %s" % (x[1], x[2])), x[3].isoformat(), x[4].isoformat(), "%d일" % x[5], W(x[6])] for x in S["over60"]], "pt evt"))
+    cut("d4", "4. " + names[3])
     d.append("<h2 id='d5'>5. 팀·프로젝트·판관비</h2><div class='evh'>근거 5-1 · 팀 분기 추이</div>")
     rows = []
     for T in A["teams"]:
@@ -894,6 +917,7 @@ def _detail(A):
         tb = sum(Lp["acct"].values()) if Lp else None
         d.append(_tab(["항목", "%d년" % year, "매출 대비"] + (["%d년" % (year - 1), "매출 대비", "증감", "증감률"] if Lp else []), rows, "pt pl",
                       ["판관비 합계", W(ta), pct(ta, Yp["rev"])] + ([W(tb), pct(tb, Lp["rev"]), sgn(ta - tb), chg(ta, tb)] if Lp else [])))
+    cut("d5", "5. " + names[4])
     d.append("<h2 id='d6'>6. %d년 준비 근거</h2><div class='evh'>근거 6-1 · 법인세 계산</div>" % (year + 1))
     d.append(_tab(["단계", "금액"], [["세전 이익", W(Yp["pre"])], ["법인세 등 %s" % ("확정 (결산 전표)" if A["tax_fixed"] else "예상 (세무조정 없음)"), W(A["tax"])],
                                    ["법인세 (지방소득세 뺀 것)", W(A["corp"])], ["− 중간예납 등 선납세금", W(A["prepaid"])],
@@ -906,4 +930,5 @@ def _detail(A):
                       [[esc(p["team"]), esc("%s %s" % (p["id"], p["name"])), p["day"].isoformat(), W(p["est"]), W(p["budget"]), W(p["paid"]),
                         W((p["budget"] or 0) - p["paid"])] for p in NX], "pt evt"))
         d.append("<div class='note'>추정 예산 = 사전견적 × (1 − 그 팀 목표 수익률)</div>")
-    return "".join(d)   # 'page' div 는 끝 표시와 함께 render 가 닫는다 (빈 쪽이 생기지 않게)
+    cut("d6", "6. " + names[5])
+    return out
