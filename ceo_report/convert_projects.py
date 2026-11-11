@@ -464,9 +464,10 @@ def _wehago_rows(books, costs, cfg):
             continue
         same = [i for i in pay_idx if books.journal[i].get("vendor_norm") == g["vendor_norm"]] or pay_idx
         pick = max(same, key=lambda i: (books.journal[i]["credit"], -i))
-        g["card"] = any(w and w in (books.journal[pick].get("vendor") or "") for w in words)
-        # 실제 장부의 법인카드 거래처는 '신한_5860'처럼 카드사_끝 4자리 (PC 자료 2026-11-11). 상태 판정(card)은 그대로 두고 부가세 집계에만 쓴다
-        g["card_pay"] = g["card"] or bool(_CARD_NO.match((books.journal[pick].get("vendor") or "").strip()))
+        # 법인카드 거래처: 설정 낱말(card_words) 또는 실제 장부 이름 '신한_5860'(카드사_끝 4자리) — 사용자 2026-11-11 켬
+        pay_vendor = (books.journal[pick].get("vendor") or "").strip()
+        g["card"] = any(w and w in pay_vendor for w in words) or bool(_CARD_NO.match(pay_vendor))
+        g["card_pay"] = g["card"]
         it = items.get(pick)
         if it is not None and it["remaining"] == 0 and it["done"] is not None:
             g["state"] = "카드결제완료" if g["card"] else "지급완료"
