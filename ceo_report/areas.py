@@ -87,21 +87,25 @@ table.afold:not(.aopen) tr.afx{display:none}
 .ahere{animation:ahere 1.6s ease-out}
 @keyframes ahere{0%{background:#fff3c4}100%{background:transparent}}
 }
-@media screen and (min-width:1100px){
+@media screen and (min-width:1440px){
 body.js-areas .anav{left:0;top:0;bottom:0;width:232px;padding:16px 14px;border-right:1px solid #dde1e7;overflow-y:auto}
 body.js-areas .wrap{margin-left:max(252px,calc((100vw - 1180px) / 2))}
 }
-@media screen and (max-width:1099.98px){
+@media screen and (max-width:1439.98px){
 body.js-areas{padding-top:50px}
 body.js-areas .anav{left:0;right:0;top:0;flex-direction:row;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid #dde1e7;
-overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+white-space:nowrap}
 body.js-areas .anav .ahd b{display:none}
-.anav .alist{display:flex;align-items:center;gap:2px}
+.anav .ahd{flex:none}
+/* 영역 목록만 옆으로 밀리고, 인쇄 단추는 오른쪽에 늘 보인다 (1280 노트북에서 단추가 화면 밖으로 밀리던 것) */
+.anav .alist{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.anav .aprint{flex:none}
 .anav .ag{margin:0 2px 0 8px}
 .anav .aprint{flex-wrap:nowrap;margin:0 0 0 8px;padding:0 0 0 8px;border-top:0;border-left:1px solid #dde1e7}
 .anav .ahint{display:none}
 .anav.picking .apsel{width:auto}
 }
+@media screen and (max-width:700px){.anav .aprint{display:none}}
 @media print{
 .anav,.apager,.afold-btn{display:none!important}
 #a-sum>.page{break-after:auto;page-break-after:auto}
@@ -126,7 +130,8 @@ JS = r"""
     if(on){a.setAttribute('aria-current','true');}else{a.removeAttribute('aria-current');}});
     areas.forEach(function(s){s.classList.toggle('on',s.id==='a-'+k);});
     var c=nav.querySelector('.ai a.cur');   // 좁은 화면(위쪽 띠)에서 지금 영역이 보이게
-    if(c&&nav.scrollWidth>nav.clientWidth){var l=c.offsetLeft-nav.clientWidth/2+c.offsetWidth/2;nav.scrollLeft=Math.max(0,l);}}
+    var L=nav.querySelector('.alist');
+    if(c&&L.scrollWidth>L.clientWidth){var l=c.offsetLeft-L.offsetLeft-L.clientWidth/2+c.offsetWidth/2;L.scrollLeft=Math.max(0,l);}}
   function go(id,jump){
     var el=document.getElementById(id); if(!el)return false;
     var s=areaOf(el); if(!s)return false;
