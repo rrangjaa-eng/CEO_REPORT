@@ -120,6 +120,7 @@ def to_pdf(browser, html_path, pdf_path):
     # 새 프로필은 첫 실행 상태라 실험 설정(field trial) 때문에 PDF 출력이 멈추는 환경이 있다 → 끄고 첫 실행 화면도 건너뛴다.
     cmd = [browser, "--headless", "--disable-gpu", "--user-data-dir=" + profile, "--no-first-run",
            "--disable-field-trial-config", "--no-pdf-header-footer",
+           "--generate-pdf-document-outline",   # PDF 왼쪽 책갈피 = 장 제목 (사용자 2026-11-11 영역별 보기). 모르는 브라우저는 무시
            "--print-to-pdf=" + os.path.abspath(pdf_path), url]
     if not _is_windows():
         cmd.insert(3, "--no-sandbox")  # Windows에서는 필요 없고, 리눅스(루트 실행·시험 환경)에서만 쓴다

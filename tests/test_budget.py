@@ -2,6 +2,7 @@
 import csv
 import datetime as dt
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -15,6 +16,7 @@ for _p in (ROOT, HERE):
 
 from ceo_report import app, budget  # noqa: E402
 from ceo_report.budget_render import render_budget  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
@@ -112,6 +114,14 @@ class Compute(Base):
         self.assertIn("2027년 예산 계획 (초안)", ceo)
         self.assertNotIn("쓴 자료", ceo)
         self.assertIn("쓴 자료", mg)
+        # 경영관리용만 영역별 보기 (사용자 2026-11-11): 요약+1절, 그다음 절마다 한 영역. 대표용은 그대로 문서
+        ids = re.findall(r"<section class='area' id='a-(b\d+)' data-label='([^']+)'", mg)
+        self.assertEqual(ids[0], ("b0", "요약 · 1. 정해야 할 값"))
+        self.assertEqual(ids[-1][1], "%d. 쓴 자료 · 확인할 것" % len(ids))
+        self.assertIn(("b1", "2. 손익 예산"), ids)
+        self.assertEqual(mg.count("<div"), mg.count("</div>"))
+        self.assertNotIn("<script", ceo)
+        self.assertNotIn("<script", strip_ui(mg))
         self.assertIn("입력 전", ceo)
         self.assertIn("확정 2026-11-06", render_budget(B, "ceo", "", "2026-11-06"))
 

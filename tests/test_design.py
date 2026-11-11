@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
@@ -140,6 +141,10 @@ class TestReportIsADocument(unittest.TestCase):
             for edition in ("ceo", "mgmt"):
                 with self.subTest(kind=kind, edition=edition):
                     html = render(R, edition)
+                    if edition == "mgmt":
+                        # 경영관리용은 영역별 보기 목록·인쇄 단추만 있다 (사용자 2026-11-11). 그것을 빼면 문서 그대로
+                        self.assertIn("id='anav'", html)
+                        html = strip_ui(html)
                     for tag in ("<script", "<button", "<input"):
                         self.assertNotIn(tag, html)
 

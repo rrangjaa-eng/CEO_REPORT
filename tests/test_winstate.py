@@ -117,6 +117,9 @@ class TestFreshAndSteps(Base):
         self.assertEqual(R["kind"], "주간")
         self.assertTrue(R["대표"].endswith("2026-11-05_주간_대표보고.pdf"))
         self.assertTrue(R["경영관리"].endswith("2026-11-05_주간_경영관리보고.html"))
+        # PDF 가 있어도 경영관리용은 HTML 을 연다 (영역별 보기, 사용자 2026-11-11)
+        self.touch(os.path.join(P.output, "2026-11-05_주간_경영관리보고.pdf"), dt.datetime(2026, 11, 5, 10, 2))
+        self.assertTrue(winstate.latest_reports(P.output)["경영관리"].endswith("2026-11-05_주간_경영관리보고.html"))
 
 
 class TestMergeAndEvidence(Base):

@@ -202,7 +202,7 @@ def convert_time(input_dir):
 
 
 def latest_reports(output_dir):
-    """가장 최근에 만든 보고 -> {'대표': pdf 또는 html, '경영관리': …, 'at': 시각, 'kind': '주간'·'월간'}."""
+    """가장 최근에 만든 보고 -> {'대표': pdf 또는 html, '경영관리': html(영역별 보기) 또는 pdf, 'at': 시각, 'kind': '주간'·'월간'}."""
     found = []
     for kind in ("주간", "월간"):
         for p in glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind)):
@@ -212,13 +212,14 @@ def latest_reports(output_dir):
     at, kind, html = max(found)
     base = html[: -len("_대표보고.html")]
 
-    def best(who):
-        for ext in (".pdf", ".html"):
+    def best(who, exts=(".pdf", ".html")):
+        for ext in exts:
             p = "%s_%s%s" % (base, who, ext)
             if os.path.isfile(p):
                 return p
         return None
-    return {"대표": best("대표보고"), "경영관리": best("경영관리보고"), "at": at, "kind": kind,
+    # 경영관리용은 HTML 을 먼저: 브라우저에서 영역별로 나눠 보고 골라 인쇄 (사용자 2026-11-11). 전체 PDF 는 같은 폴더에 그대로
+    return {"대표": best("대표보고"), "경영관리": best("경영관리보고", (".html", ".pdf")), "at": at, "kind": kind,
             "name": os.path.basename(base)}
 
 
