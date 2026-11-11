@@ -153,7 +153,9 @@ class TestFinalExecutionTable(unittest.TestCase):
 
     def test_budget_between_cost_and_cost_plus_card_vat_is_explained(self):
         html = final_table([xproject("A", 9000000, 9400000, card_vat=1000000)], {"A": "대표이사"})
-        self.assertIn("실행가가 장부 원가와 카드 부가세 더한 원가 사이", html)
+        self.assertIn("카드 부가세로 설명됨 (차이에서 뺌): 실행가가 장부 원가와 카드 부가세 더한 원가 사이", html)
+        self.assertIn("카드 부가세로 설명되는 1건은 차이 합계에서 뺌", html)
+        self.assertNotIn("600,000</td>", html.replace("9,400,000", ""))   # 차이 칸·합계에 600,000 이 없다
         self.assertIn("400,000어치 부가세만", html)
         self.assertIn("나머지 600,000은 공급가액으로", html)
         self.assertNotIn("실행가에 없는 지출", html)
