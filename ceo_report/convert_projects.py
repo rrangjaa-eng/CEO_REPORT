@@ -12,7 +12,7 @@ import re
 from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
 from .old_intranet import OLD_LAST_DAY, OLD_STATE
-from .wehago import norm_vendor
+from .wehago import journal_from_start, norm_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
 
@@ -351,6 +351,9 @@ def _settle(books, keys, payable_codes):
         if (_squash(row.get("account_code")) in payable_codes and not _is_opening(row) and row.get("debit") is None
                 and row.get("credit") is None and (ref is None or row.get("date") is None or row["date"] <= ref)):
             unknown_pay = True
+    # 분개장이 회사 설립 달부터 있으면 (전기이월 줄이 없어도) 미지급 잔액을 처음부터 아는 것이라 2회전을 돈다.
+    # 실제 자료 2026-11-11: 설립 첫해부터 있는 분개장에서 2회전이 안 돌아 법인카드처럼 여러 건을 한 번에 갚는 지급 17억이 미배분으로 남았다
+    fifo = opening_any or (bool(books.journal) and journal_from_start(books.journal))
     items_by_idx = {}
     leftovers = []
     pay_total = 0
@@ -372,7 +375,7 @@ def _settle(books, keys, payable_codes):
                     p["used"], p["left"] = True, 0
                     it["remaining"], it["applied"], it["done"] = 0, it["amount"], p
                     break
-        if opening_any:   # 2회전: 남은 지급으로 오래된 항목부터
+        if fifo:   # 2회전: 남은 지급으로 오래된 항목부터
             for p in v["pays"]:
                 if p["used"]:
                     continue
@@ -387,6 +390,21 @@ def _settle(books, keys, payable_codes):
                     p["left"] -= take
                     if it["remaining"] == 0:
                         it["done"] = p
+        if fifo:   # 3회전: 먼저 낸 돈(선결제)을 그 뒤에 생긴 항목에 (실제 자료: 법인카드 선결제 뒤에 카드 사용 전표가 들어옴)
+            for p in v["pays"]:
+                if p["left"] <= 0:
+                    continue
+                for it in v["items"]:
+                    if p["left"] <= 0:
+                        break
+                    if it["remaining"] <= 0 or it["date"] is None or it["date"] <= p["date"]:
+                        continue
+                    take = min(p["left"], it["remaining"])
+                    it["remaining"] -= take
+                    it["applied"] += take
+                    p["left"] -= take
+                    if it["remaining"] == 0:
+                        it["done"] = dict(p, date=it["date"])   # 돈은 먼저 나갔고, 빚이 생긴 날 바로 갚은 것으로 본다
         for p in v["pays"]:
             pay_total += p["amount"]
             if p["left"] > 0:
