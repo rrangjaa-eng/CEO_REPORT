@@ -138,11 +138,13 @@ class TestFinalExecutionTable(unittest.TestCase):
             self.assertEqual(key in html, shown, key)
         self.assertLess(html.index("가상 E"), html.index("가상 C"))   # 승인이 많이 진행된 것부터
 
-    def test_card_vat_is_added_to_the_book_cost_before_comparing(self):
+    def test_card_vat_explains_the_whole_gap_when_the_intranet_holds_it_all(self):
+        # 장부 원가 900만(부가세 제외) · 카드 부가세 100만 · 실행가 1,000만 → 차이 −100만은 모두 카드 부가세
         html = final_table([xproject("A", 9000000, 10000000, card_vat=1000000)], {"A": "대표이사"})
-        self.assertIn("일치", html)
-        self.assertIn("카드 부가세 1,000,000 더함 (2건", html)
-        self.assertIn("100.0%", html)
+        self.assertIn("인트라넷 실행가에 법인카드 사용분 부가세 1,000,000 포함 (2건 전부)", html)
+        self.assertIn("카드 부가세를 빼면 일치", html)
+        self.assertIn("90.0%", html)   # 실행가 대비 = 장부 원가(부가세 제외) ÷ 실행가
+        self.assertIn("카드 부가세로 설명되는 프로젝트 1건", html)
 
     def test_difference_rows_carry_an_explanation(self):
         html = final_table([xproject("A", 12000000, 10000000), xproject("B", 6000000, 10000000, requested=9000000),
@@ -151,14 +153,17 @@ class TestFinalExecutionTable(unittest.TestCase):
         self.assertIn("지급요청 누계 9,000,000가 장부 원가보다 많음", html)
         self.assertIn("장부 원가가 실행가보다 4,000,000 적음 → 아직 안 들어온 증빙", html)
 
-    def test_budget_between_cost_and_cost_plus_card_vat_is_explained(self):
+    def test_only_part_of_the_card_vat_is_used_when_the_gap_is_smaller(self):
         html = final_table([xproject("A", 9000000, 9400000, card_vat=1000000)], {"A": "대표이사"})
-        self.assertIn("카드 부가세로 설명됨 (차이에서 뺌): 실행가가 장부 원가와 카드 부가세 더한 원가 사이", html)
-        self.assertIn("카드 부가세로 설명되는 1건은 차이 합계에서 뺌", html)
-        self.assertNotIn("600,000</td>", html.replace("9,400,000", ""))   # 차이 칸·합계에 600,000 이 없다
-        self.assertIn("400,000어치 부가세만", html)
-        self.assertIn("나머지 600,000은 공급가액으로", html)
+        self.assertIn("400,000은 카드 부가세로 설명됨 (카드 부가세 모두 1,000,000 중 일부만", html)
+        self.assertIn("카드 부가세를 빼면 일치", html)
         self.assertNotIn("실행가에 없는 지출", html)
+
+    def test_gap_beyond_the_card_vat_and_book_cost_above_budget_stay_as_differences(self):
+        html = final_table([xproject("A", 9000000, 10500000, card_vat=1000000), xproject("B", 9000000, 8000000, card_vat=1000000)],
+                           {"A": "대표이사", "B": "대표이사"})
+        self.assertIn("카드 부가세를 빼고도 장부 원가가 실행가보다 500,000 적음", html)
+        self.assertIn("장부 원가가 실행가보다 1,000,000 많음", html)   # B: 카드 부가세로 설명하지 않는다
 
     def test_unknown_values_are_not_turned_into_a_difference(self):
         html = final_table([xproject("A", 5000000, None), xproject("B", 5000000, 10000000, out=True)], {"A": "팀장", "B": "팀장"})

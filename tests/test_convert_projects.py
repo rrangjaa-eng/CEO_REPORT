@@ -393,10 +393,10 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertEqual(by_slip(t, 22)[0], "")
         self.assertEqual(by_slip(t, 23)[0], "26999")
 
-    def test_card_use_is_one_total_row_without_vat_until_it_is_paid(self):
+    def test_card_use_is_one_row_with_supply_and_vat_until_it_is_paid(self):
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA)))
         row = by_slip(t, 50)
-        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드사용미결제", "363000", "", "", "확정"))
+        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드사용미결제", "330000", "33000", "", "확정"))   # 회계자료 기준: 부가세 뺀 금액 (사용자 2026-11-11)
         self.assertEqual(row[8], "WEHAGO 2026-10-30 전표 50")
         portions = dict((r[8], p) for r, p in zip(cell_rows(t), t.extra["cost_portions"]))
         self.assertEqual(portions["WEHAGO 2026-10-30 전표 50"], 330000)
@@ -418,7 +418,7 @@ class TestBuildExecsBooks(unittest.TestCase):
     def test_card_bill_payment_makes_it_paid_on_the_payment_date(self):
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA, CARD_PAID_EXTRA)))
         row = by_slip(t, 50)
-        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드결제완료", "363000", "", "2026-10-31", "확정"))
+        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드결제완료", "330000", "33000", "2026-10-31", "확정"))
         self.assertEqual(row[8], "WEHAGO 2026-10-30 전표 50 · 지급 2026-10-31 전표 51")
         lines = check_lines(t)
         self.assertIn("원가 줄 합계 ((도) 차변−대변): 원본 259,830,000 · CSV 259,830,000 → 일치", lines)
@@ -467,11 +467,11 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertEqual(mod("convert").check_result(chk), "판단 불가")
         self.assertEqual(mod("convert").check_result([c for c in t.checks if c.label == "원가 줄 수"][0]), "일치")
 
-    def test_card_total_is_blank_when_the_vat_is_unknown(self):
+    def test_card_supply_stays_when_the_vat_is_unknown(self):
         unknown = [_jl(_D, 50, "13500", "부가세대급금", None, None, "가상카드", "[26201] 부가세 금액 없음")]
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA, unknown)))
         row = by_slip(t, 50)
-        self.assertEqual((row[3], row[4], row[5]), ("카드사용미결제", "", ""))
+        self.assertEqual((row[3], row[4], row[5]), ("카드사용미결제", "330000", ""))
 
     def test_unknown_cost_amount_is_blank_and_the_cost_check_cannot_decide(self):
         unknown = [_jl(dt.date(2026, 10, 30), 70, "61101", "행사외주비(도)", None, None, "가상기타", "[26201] 금액 없음"),
