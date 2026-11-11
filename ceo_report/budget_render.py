@@ -3,6 +3,7 @@
 노란 칸 ✎ = 사람이 정하는 값 (창 '내년 예산'·'팀 목표'에서 넣음). 넣지 않은 값은 '입력 전'으로 보이고 0%·기본값으로 계산한다.
 대표용 = 요약·정할 값·손익·팀별·달별 그림·지급 일정·월별 자금 그림. 경영관리용 = 같은 숫자 + 계산 근거·상세 표·자료 확인.
 """
+import re
 from . import render as RD
 from .util import esc, won
 
@@ -333,4 +334,35 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         h.append("</div></div>")
     h.append("<div class='evid'>%s<span class='doc-end'>끝.</span></div></div></div></body></html>"
              % ("확정 %s — 월간 보고 '예산 대비'에 쓰입니다." % confirmed if confirmed else "초안 — 창에서 '예산 확정'을 누르면 월간 보고 '예산 대비'에 쓰입니다."))
-    return "".join(h)
+    page = "".join(h)
+    return _areas(page) if mg else page
+
+
+def _areas(page):
+    """경영관리용 영역별 보기 (사용자 2026-11-11: 예산 문서도 주간·월간 경영관리 보고처럼).
+    요약 카드 + 1절 = 첫 영역, 나머지 절마다 한 영역. 절(div.sec)은 서로 형제라 그 앞에서 자르면 덩어리마다 닫힌 HTML."""
+    from . import areas
+    start = "<div class='page fs mon'>"
+    i = page.index(start) + len(start)
+    j = page.rindex("<div class='evid'>")
+    head, body, tail = page[:i], page[i:j], page[j:]
+    cuts = [m.start() for m in re.finditer(r"<div class='sec[ '\"]", body)]
+    if len(cuts) < 2:
+        return page
+    chunks = [body[:cuts[1]]] + [body[a:b] for a, b in zip(cuts[1:], cuts[2:] + [len(body)])]
+    chunks[-1] += tail[:tail.rindex("</div></div></body></html>")]   # 끝. 표시는 마지막 영역에
+    labels = []
+    for n, c in enumerate(chunks):
+        q = re.search(r"<div class='q'>(.*?)</div>", c, re.S)
+        t = re.sub(r"<span class='src.*?</span>|<[^>]+>|\s*\(.*?\)", "", q.group(1)).strip() if q else "%d" % n   # 목록엔 괄호 풀이 뺌
+        labels.append("요약 · " + t if n == 0 else t)
+    keys = ["b%d" % n for n in range(len(chunks))]
+    parts = []
+    for n, c in enumerate(chunks):
+        prev = (keys[n - 1], labels[n - 1]) if n else None
+        nxt = (keys[n + 1], labels[n + 1]) if n + 1 < len(chunks) else None
+        parts.append(areas.section(keys[n], labels[n], "<div class='fs mon'>%s</div>" % c + areas.pager(prev, nxt), "예산"))
+        if n == 0:
+            parts.append(areas.nav([(k, l, "예산", None) for k, l in zip(keys, labels)]))
+    # 요약 영역을 담던 div.page.fs 는 비워 닫는다 (쪽 나눔은 절의 pgb 가 그대로 맡음)
+    return head[:-len(start)] + "".join(parts) + "</div>" + areas.JS + "</body></html>"
