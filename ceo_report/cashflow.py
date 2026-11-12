@@ -1020,7 +1020,7 @@ def _insight_html(CF):
     if not items:
         return ""
     icon = {"ok": ("✓", "var(--in)"), "warn": ("!", "var(--out)"), "info": ("i", "var(--accent)")}
-    h = ["<div class='q'>이 표로 알 수 있는 것</div><div class='note'>숫자에서 자동으로 뽑은 풀이입니다. 표를 다시 만들면 문장도 그 숫자로 바뀝니다.</div><div class='ins'>"]
+    h = ["<div class='q'>이 표로 알 수 있는 것</div><div class='ins'>"]
     for t, body, look, lv in items:
         mark, col = icon[lv]
         h.append("<div class='card'><div class='it'><span class='ik' style='background:%s'>%s</span>%s</div><div class='ib'>%s</div>"
