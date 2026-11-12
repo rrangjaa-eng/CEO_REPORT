@@ -32,7 +32,7 @@ class TestAreas(unittest.TestCase):
         cls.month = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
 
     def test_management_report_is_split_into_areas_in_order(self):
-        for R, ids in ((self.week, WEEK), (self.month, WEEK + ["s8", "s9"])):
+        for R, ids in ((self.week, WEEK), (self.month, WEEK + ["s8", "s9", "s10"])):
             page = render(R, "mgmt")
             with self.subTest(R["kind"]):
                 self.assertEqual(area_ids(page), ids)

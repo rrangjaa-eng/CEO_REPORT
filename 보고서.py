@@ -383,6 +383,18 @@ def main(argv=None):
         if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 앞 11·12월 경영관리 보고에만
             from ceo_report import credit
             R["credit"] = credit.compute(a.입력, R["period"][1])
+        # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고 10장. 보고 기준 해(1~3월이면 아직 처분 전인 작년)
+        from ceo_report import surplus
+        R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
+        # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
+        from ceo_report import taxadj, filing
+        R["taxadj"] = taxadj.load(a.입력)
+        R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
+        from ceo_report import filehelp
+        from ceo_report.util import esc as _esc
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
+        R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)
