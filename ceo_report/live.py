@@ -99,13 +99,15 @@ section h2{font-size:15px;margin:0 0 8px}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:4px 8px;border-bottom:1px solid #edf0f5;text-align:left;font-size:13px}
 th{color:#5b6577;font-weight:600;background:#f8f9fb}td.n,th.n{text-align:right;white-space:nowrap}
+section.auto h2{font-size:16px;margin:0 0 6px}section.auto h3{font-size:14px;margin:14px 0 6px}section.auto .note{font-size:12px;color:#5b6577}
+section.auto table{margin-bottom:6px}
 .est{color:#8a6d00}.muted{color:#8a93a3;font-size:12px}
 .chg{background:#fff8e1;border-color:#f2d27a}.chg li{margin:2px 0}
 .up{color:#1b7f3b}.down{color:#c62828}
 """
 
 
-def render(R, now_snap, diff, meta):
+def render(R, now_snap, diff, meta, auto_html=""):
     asof = R["asof"]
     s1, s2 = R.get("s1") or {}, R.get("s2") or {}
     h = ["<!doctype html><html lang='ko'><head><meta charset='utf-8'>",
@@ -196,6 +198,8 @@ def render(R, now_snap, diff, meta):
                      % (_e(k), _won(s), _won(b), _won((s or 0) - (b or 0))))
         h.append("<tr><th>합계</th><th class='n'>%s</th><th class='n'>%s</th><th class='n'>%s</th></tr></table></section>"
                  % (_won(ts), _won(tb), _won(ts - tb)))
+    if auto_html:
+        h.append("<section class='auto'>%s</section>" % auto_html)
     h.append("<p class='muted'>이 화면은 자료 변환이 끝날 때마다 새로 써지고, 열어 두면 %d초마다 다시 읽습니다. "
              "숫자는 주간 보고와 같은 계산입니다.</p></main></body></html>" % REFRESH_SEC)
     return "".join(h)
@@ -224,13 +228,21 @@ def build(input_dir, output_dir, asof=None, now=None):
         meta += " · 자금계획서 %s 받음" % fp["stamp"].isoformat()
     if hist:
         meta += " · 지난 현황 %s" % hist[-1].get("at", "")
-    page = render(R, snap, diff, meta)
+    # 자동 분석 13가지 (사용자 2026-11-12) — 지난 현황 때 일정과 비교해 '바뀐 이유'
+    from . import insights, insights_render
+    R["auto_facts"] = insights.read_facts(input_dir)
+    R["_invoices"] = d.invoices
+    R["auto_prev"] = hist[-1].get("events") if hist else None
+    I, why = insights.for_report(R)
+    auto_html = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2><p class='muted'>계산하지 못함 (%s)</p>" % _e(why)
+    snap["events"] = insights.events_for_record(R)
+    page = render(R, snap, diff, meta, auto_html)
     path = os.path.join(output_dir, FILE)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(page)
     os.replace(tmp, path)
-    if not hist or {k: v for k, v in hist[-1].items() if k != "at"} != {k: v for k, v in snap.items() if k != "at"}:
+    if not hist or {k: v for k, v in hist[-1].items() if k != "at"} != {k: v for k, v in snap.items() if k != "at"}:   # 일정까지 같으면 새로 쌓지 않음
         hist.append(snap)
     try:
         with open(hist_path, "w", encoding="utf-8") as f:

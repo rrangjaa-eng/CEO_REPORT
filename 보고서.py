@@ -377,6 +377,11 @@ def main(argv=None):
         # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
         from ceo_report.convert_xchk import load_xchk
         R["xchk"] = load_xchk(a.입력)
+    # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
+    from ceo_report import insights
+    R["auto_facts"] = insights.read_facts(a.입력)
+    R["_invoices"] = data.invoices
+    R["auto_prev"] = insights.load_previous(a.출력, asof)
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
@@ -425,6 +430,10 @@ def main(argv=None):
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
                         _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+    try:
+        insights.write_record(a.출력, R)
+    except OSError as e:
+        _say("자동 분석 일정 기록을 남기지 못했습니다 (다음 보고 '바뀐 이유'에 쓰임): %s" % e)
     if kind == "weekly":
         from ceo_report.weekdiff import write_record
         try:

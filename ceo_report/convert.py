@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "변환결과.txt", "확인할것.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -1120,6 +1120,8 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     if books.state == "ok":
         from . import review_checks
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
+        from . import insights   # 자동 분석용 장부 풀이: 고정비·매달 있어야 할 전표 (사용자 2026-11-12)
+        insights.write_facts(input_dir, insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"]))
         dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
         from . import checklist, hometax

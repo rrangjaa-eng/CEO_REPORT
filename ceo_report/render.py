@@ -461,6 +461,11 @@ def render(R, mode):
     G1, G2 = "보고 요약", "상세 자료"
     top = [("sum", "요약 (대표 보고 화면)", G1, summ, None), ("ev", "근거자료 · 확인할 것", G1, evid, None)]
     rest = [("risk", "위험 분석·해결방안", G1, _risk_section(R), hi or None)]
+    # 자동 분석 13가지 (사용자 2026-11-12: 경영관리 보고에는 전부)
+    from . import insights, insights_render
+    I, why = insights.for_report(R)
+    body = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2>" + _na("계산하지 못함 (%s)" % why)
+    rest.append(("auto", "자동 분석 13가지", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None))
     rest += [("s%d" % i, "%d. %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
     allk = top + rest
 
