@@ -380,7 +380,7 @@ def main(argv=None):
         # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
         from ceo_report import cashflow
         R["cf"] = cashflow.for_report(a.입력, R)
-        if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 앞 11·12월 경영관리 보고에만
+        if R["period"][1].month == 9:   # 기업신용평가 미리보기: 9월분 '결산 준비' 부록 C-5 (사용자 2026-11-12 카드, 예전 11·12월) + 연간 보고
             from ceo_report import credit
             R["credit"] = credit.compute(a.입력, R["period"][1])
         # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고 10장. 보고 기준 해(1~3월이면 아직 처분 전인 작년)
@@ -403,6 +403,8 @@ def main(argv=None):
     R["auto_records"] = insights.load_records(a.출력)
     R["auto_profits"] = insights.load_profit_forecasts(a.출력)
     R["_txns"] = data.txns   # 예측 입금 vs 실제 입금
+    from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
+    R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
@@ -452,6 +454,10 @@ def main(argv=None):
                     for gone in pdfname.prune(page_path[:-5]):
                         _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     try:
+        digest.write_record(a.출력, R)
+    except OSError as e:
+        _say("경영관리 신호등 기록을 남기지 못했습니다 (다음 보고 '바뀜' 표시에 쓰임): %s" % e)
+    try:
         insights.write_record(a.출력, R)
     except OSError as e:
         _say("자동 분석 일정 기록을 남기지 못했습니다 (다음 보고 '바뀐 이유'에 쓰임): %s" % e)
@@ -476,15 +482,15 @@ def main(argv=None):
              "계산했습니다 (실제보다 낮을 수 있음)." % ", ".join(R["s2"]["in_missing"]))
     n = len(R["s7"]["issues"])
     if n:
-        _say("입력 자료 확인 필요 %d건 — 경영관리보고 맨 끝 '7. 지난 보고 이후 변동과 자료 반영 범위' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
+        _say("입력 자료 확인 필요 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
     bad = [c for c in R["s7"]["checks"] if not c[3]]
     if bad:
-        _say("대조 불일치 %d건 — 경영관리보고 맨 끝 '7. …' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
+        _say("대조 불일치 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
     if kind == "monthly" and R["xchk"]["state"] != "ok":
         if R["xchk"]["state"] == "자료 없음":
-            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '8. WEHAGO 기준 대조'에 들어갑니다.")
+            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다.")
         else:
-            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '8. WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
+            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
     return 0
 
 

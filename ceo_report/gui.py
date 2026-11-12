@@ -1396,7 +1396,7 @@ class Window(object):
         top.transient(self.root)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="월간(11·12월)·연간 경영관리 보고의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
+        ttk.Label(frm, text="9월분 월간(결산 준비)·연간 경영관리 보고의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
                   wraplength=560).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         vars_ = {}
         for i, (k, hint) in enumerate(credit.INPUT_ITEMS, 1):
@@ -1420,7 +1420,7 @@ class Window(object):
             except OSError as e:
                 self.say("저장하지 못함: %s" % (e.strerror or type(e).__name__))
                 return
-            self.say("신용평가 체크리스트 저장 — 다음 월간(11·12월)·연간 경영관리 보고부터 반영")
+            self.say("신용평가 체크리스트 저장 — 다음 9월분 월간(결산 준비)·연간 경영관리 보고부터 반영")
             top.destroy()
         self._go(r, "저장", save).pack(side="right")
         ttk.Button(r, text="닫기", command=top.destroy).pack(side="right", padx=6)

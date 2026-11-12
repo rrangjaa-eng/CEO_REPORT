@@ -177,7 +177,7 @@ class TestCashflowInReport(unittest.TestCase):
         R = compute(load(SAMPLE), "monthly", D(2026, 10, 31))
         rows = C.build_rows(journal(), ("10300",))
         R["cf"] = C.compute(rows, D(2026, 10, 1), D(2026, 10, 31), 5000, None, "10월")
-        self.assertIn("9. 현금흐름표", render(R, "mgmt"))
+        self.assertIn("B-9 현금흐름표", render(R, "mgmt"))
         self.assertNotIn("현금흐름표", render(R, "ceo"))
 
 
