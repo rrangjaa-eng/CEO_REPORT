@@ -109,7 +109,7 @@ def build_table(books, cfg, asof, input_dir=None):
         return Table(FILE, COLUMNS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
     ym = corptax._last_full_month(asof)
     A = corptax.adjust_for(books.journal, cfg, asof, input_dir)
-    rows = [dict(zip(COLUMNS, [ym[:4], n, "" if v is None else str(int(v)), "넣음" if on else "확인 필요", why]))
+    rows = [dict(zip(COLUMNS, [ym[:4], n, "" if v is None else str(int(v)), "넣음" if on else ("조정 없음" if v == 0 and "확인 필요" not in why else "확인 필요"), why]))
             for n, v, on, why in A["items"]]
     return Table(FILE, COLUMNS, rows, notes=["세무조정 예상 (1~%d월): 법인세 예상에 +%s원 넣음, 확인 필요 %d건"
                                              % (int(ym[5:]), "{:,}".format(A["total"]), sum(1 for r in rows if r["반영"] != "넣음"))])
@@ -134,6 +134,6 @@ def render(rows, esc):
          "<table class='pt tx'><thead><tr><th>항목</th><th>금액</th><th>법인세 예상에</th><th>근거</th></tr></thead><tbody>%s</tbody></table>"
          % "".join("<tr><td>%s</td><td>%s</td><td>%s</td><td style='text-align:left'>%s</td></tr>"
                    % (esc(r["항목"]), "{:,}".format(int(r["금액"])) if (r.get("금액") or "").strip() else "–",
-                      "넣음" if r["반영"] == "넣음" else "<b>확인 필요</b>", esc(r["근거"])) for r in rows),
+                      "<b>확인 필요</b>" if r["반영"] == "확인 필요" else esc(r["반영"]), esc(r["근거"])) for r in rows),
          "<div class='note'>%s</div>" % esc("넣은 조정 합 +%s원은 과세표준에 더함. 업무 무관·증빙 없는 비용은 전표마다 사람이 판단해야 해 빠져 있음 · 세무사 확인 필요" % "{:,}".format(tot))]
     return "".join(h)

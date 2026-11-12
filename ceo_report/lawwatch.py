@@ -30,7 +30,15 @@ WATCH = [
     (("금융소득기준",), "소득세법", 14, 0),
     (("배당원천세율",), "소득세법", 129, 0),
     (("건강보험료율",), "국민건강보험법 시행령", 44, 0),
+    # 노동·급여 (사용자 2026-11-12)
+    (("가산율",), "근로기준법", 56, 0),
+    (("국민연금요율",), "국민연금법", 88, 0),
+    (("장기요양비율",), "노인장기요양보험법 시행령", 4, 0),
+    (("고용보험요율",), "고용보험 및 산업재해보상보험의 보험료징수 등에 관한 법률 시행령", 12, 0),
+    (("식대비과세",), "소득세법 시행령", 17, 2),
+    (("최저시급",), "최저임금 고시", 0, 0),   # 행정규칙(고시): 이름이 해마다 바뀌어 '최저임금'으로 찾아 가장 최근 것
 ]
+ADMRUL = {"최저임금 고시": "최저임금"}   # 법령이 아니라 고시(행정규칙)로 찾는 것
 
 
 def _jo(n, sub):
@@ -116,6 +124,21 @@ def _texts(o):
     return "\n".join(x.strip() for x in out if x and x.strip())
 
 
+def find_admrul(oc, query, opener=None):
+    """고시(행정규칙) 중 이름에 query 가 든 가장 최근 것 → {mst(ID), 시행일자, 공포일자, kind} 또는 None."""
+    q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "query": query, "display": 20})
+    data = _get(BASE + "lawSearch.do?" + q, opener)
+    best = None
+    for d in _walk(data):
+        nm = (d.get("행정규칙명") or "").strip()
+        rid = d.get("행정규칙일련번호") or d.get("행정규칙ID") or d.get("ID")
+        if query in nm and rid:
+            day = str(d.get("시행일자") or d.get("발령일자") or "")
+            if best is None or day > best["시행일자"]:
+                best = {"mst": str(rid), "시행일자": day, "공포일자": str(d.get("발령일자") or ""), "kind": "admrul"}
+    return best
+
+
 def find_law(oc, name, opener=None):
     """법령 이름 → {mst, 시행일자, 공포일자} 또는 None."""
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "query": name, "display": 20})
@@ -128,7 +151,10 @@ def find_law(oc, name, opener=None):
     return None
 
 
-def fetch_article(oc, mst, n, sub, opener=None):
+def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
+    if kind == "admrul":
+        q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "ID": mst})
+        return _texts(_get(BASE + "lawService.do?" + q, opener))
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "MST": mst, "JO": _jo(n, sub)})
     return _texts(_get(BASE + "lawService.do?" + q, opener))
 
@@ -167,15 +193,15 @@ def check(input_dir, year, today=None, opener=None):
         raise ValueError("국가법령정보 Open API 아이디(OC)를 먼저 넣어 주세요 (open.law.go.kr 무료 신청)")
     out, laws = [], {}
     for keys, name, n, sub in WATCH:
-        tag = "%s %s" % (name, jo_name(n, sub))
+        tag = name if name in ADMRUL else "%s %s" % (name, jo_name(n, sub))
         try:
             if name not in laws:
-                laws[name] = find_law(S["oc"], name, opener)
+                laws[name] = find_admrul(S["oc"], ADMRUL[name], opener) if name in ADMRUL else find_law(S["oc"], name, opener)
             info = laws[name]
             if not info:
                 out.append((keys, tag, "못 찾음", "", "법령 이름으로 찾지 못함"))
                 continue
-            text = fetch_article(S["oc"], info["mst"], n, sub, opener)
+            text = fetch_article(S["oc"], info["mst"], n, sub, opener, info.get("kind", "law"))
         except Exception as e:   # 네트워크·응답 모양: 멈추지 않고 알림
             out.append((keys, tag, "실패", "", "%s: %s" % (type(e).__name__, e)))
             continue
@@ -189,7 +215,7 @@ def check(input_dir, year, today=None, opener=None):
         miss = []
         for k in keys:
             v = taxlaw.value(input_dir, year, k)[0]
-            if isinstance(v, (int, float)) and v:
+            if isinstance(v, (int, float)) and v and taxlaw.UNIT[k] in ("원", "비율"):
                 pool = nums["원"] if taxlaw.UNIT[k] == "원" else nums["비율"]
                 if not any(abs(p - v) < 1e-6 * max(1, abs(v)) for p in pool):
                     miss.append(taxlaw.LABEL[k])

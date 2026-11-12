@@ -461,6 +461,10 @@ def render(R, mode):
         from . import surplus   # 10장 이익잉여금처분계산서 (사용자 2026-11-12: 경영관리 보고에만)
         toc.append("이익잉여금처분계산서")
         chap.append(surplus.render(R.get("re")))
+        if R.get("filing") or R.get("filing_help"):   # 11장 신고 일정·도우미 (사용자 2026-11-12)
+            from . import filing
+            toc.append("신고 일정·도우미")
+            chap.append("<h2>신고 일정 (장부 기준)</h2>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or ""))
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
     hi = sum(1 for r in R["risks"] if r["level"] == "높음")

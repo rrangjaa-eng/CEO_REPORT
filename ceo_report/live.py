@@ -246,6 +246,10 @@ def build(input_dir, output_dir, asof=None, now=None):
     I, why = insights.for_report(R)
     auto_html = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2><p class='muted'>계산하지 못함 (%s)</p>" % _e(why)
     auto_html = surplus.live_line(RE) + auto_html
+    from . import filing   # 2주 안 신고 기한·지난 것 (사용자 2026-11-12)
+    fl = filing.live_lines(filing.load(input_dir), asof)
+    if fl:
+        auto_html = "<div class='note'><b>신고 기한</b><br>%s</div>" % "<br>".join(_e(x) for x in fl) + auto_html
     snap["events"] = insights.events_for_record(R)
     page = render(R, snap, diff, meta, auto_html)
     path = os.path.join(output_dir, FILE)

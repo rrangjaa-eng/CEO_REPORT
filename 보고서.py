@@ -384,8 +384,12 @@ def main(argv=None):
         from ceo_report import surplus
         R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
         # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
-        from ceo_report import taxadj
+        from ceo_report import taxadj, filing
         R["taxadj"] = taxadj.load(a.입력)
+        R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
+        from ceo_report import filehelp
+        from ceo_report.util import esc as _esc
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)
