@@ -132,8 +132,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (closingRun && sender.tab && closingRun.tabId === sender.tab.id) closingRun.got.push({path: msg.path, data: msg.data});
     return;
   }
-  if (msg.type === "collectClosing" || msg.type === "collectHr") {
-    collectClosing(msg.type === "collectHr" ? "인사" : "결산").then(reply, (e) => reply({error: String(e.message || e)}));
+  if (msg.type === "collectClosing" || msg.type === "collectHr" || msg.type === "collectYearEnd") {
+    const prefix = {collectHr: "인사", collectYearEnd: "연말정산"}[msg.type] || "결산";
+    collectClosing(prefix).then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
   }
   if (msg.type === "openSaver") { openSaver(); return; }
@@ -297,13 +298,16 @@ async function collectAll(months) {
 // 화면마다 위하고 내부 주소를 확인한 뒤에는 단추 하나로 세 화면을 차례로 받게 바꾼다. 위하고에서는 [조회]만 누른다 (읽기 전용).
 const CLOSING_MS = 15000;
 // 인사·급여 자료 받기 (사용자 2026-11-12): 같은 방식으로 사원등록·급여자료입력·사업소득·기타소득 화면 응답을 'YYMMDD 인사_<화면이름>' 으로 저장.
+// 연말정산 결과 받기 (사용자 2026-11-12): 같은 방식으로 'YYMMDD 연말정산_<화면이름>' 으로 저장. 직원별 인적공제(부양가족·자녀 수)와
+// 공제 항목을 다음 해 연말정산 예상·매달 원천세(간이세액표 공제대상가족 수)에 쓴다.
 // 직원 개인정보: 원본은 사용자 PC 저장 폴더에만 두고, 프로그램은 생년월일·입퇴사일·급여 항목만 읽는다 (주민번호 뒷자리는 쓰지 않음).
 async function collectClosing(prefix = "결산") {
   if (pending || planRun || closingRun) return {error: "이미 받는 중입니다"};
   const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
   if (!tab || !/^https:\/\/smarta\.wehago\.com\//.test(tab.url || "")) {
-    return {error: prefix === "인사" ? "위하고 SmartA 에서 사원등록·급여자료입력·사업소득·기타소득 화면 중 하나를 열고, 조회 조건을 고른 뒤 이 단추를 누르세요."
-                                     : "위하고 SmartA 에서 받을 결산 화면(재무상태표 등)을 열고, 연도를 고른 뒤 이 단추를 누르세요."};
+    return {error: {"인사": "위하고 SmartA 에서 사원등록·급여자료입력·사업소득·기타소득 화면 중 하나를 열고, 조회 조건을 고른 뒤 이 단추를 누르세요.",
+                    "연말정산": "위하고 SmartA 에서 연말정산 결과 화면(연말정산자료입력 또는 근로소득 원천징수영수증)을 열고, 2025년 귀속·사원을 고른 뒤 이 단추를 누르세요."}[prefix]
+                   || "위하고 SmartA 에서 받을 결산 화면(재무상태표 등)을 열고, 연도를 고른 뒤 이 단추를 누르세요."};
   }
   closingRun = {tabId: tab.id, got: []};
   let ack;
@@ -319,7 +323,7 @@ async function collectClosing(prefix = "결산") {
   const name = (ack.screen || ack.code || "화면").replace(/[\\/:*?"<>|\s]+/g, "");
   const file = {"종류": prefix + "원본", "형식": 1, "수집시각": "", "화면": ack.screen, "화면코드": ack.code, "응답수": run.got.length, "응답": run.got};
   const r = await saveFile(prefix + "_" + name, file, JSON.stringify(run.got), {rows: run.got.length, screen: ack.screen});
-  const logKey = prefix === "인사" ? "hrLog" : "closingLog";
+  const logKey = {"인사": "hrLog", "연말정산": "yearEndLog"}[prefix] || "closingLog";
   const log = (await chrome.storage.local.get(logKey))[logKey] || [];
   const s = stamp();
   log.unshift({at: s.iso, screen: ack.screen, code: ack.code, file: r.file || "(바뀐 것 없음)", where: r.where || ""});
