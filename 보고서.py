@@ -383,6 +383,9 @@ def main(argv=None):
         # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고 10장. 보고 기준 해(1~3월이면 아직 처분 전인 작년)
         from ceo_report import surplus
         R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
+        # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
+        from ceo_report import taxadj
+        R["taxadj"] = taxadj.load(a.입력)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)

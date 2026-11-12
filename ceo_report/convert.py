@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -841,6 +841,8 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.append(cashflow.build_table(books, cfg))
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고에만, 분개장이 오면 바로 반영
     tables.append(surplus.build_table(books, cfg, asof, wehago_dir))
+    from . import taxadj   # 세무조정 예상 (사용자 2026-11-12)
+    tables.append(taxadj.build_table(books, cfg, asof, input_dir))
     return tables, states
 
 
@@ -970,7 +972,7 @@ def build_tax(books, cfg, asof, input_dir=None):
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
-    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {})
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir)
     rows += ct_rows
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",

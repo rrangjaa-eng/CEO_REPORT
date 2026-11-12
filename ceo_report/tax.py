@@ -16,7 +16,7 @@ import os
 import datetime as dt
 import re
 
-COLUMNS = ["세목", "대상기간", "납부예정일", "금액", "상태", "근거", "과세표준", "산출세액", "기납부"]   # 뒤 세 칸은 법인세 줄만 (2026-11-04)
+COLUMNS = ["세목", "대상기간", "납부예정일", "금액", "상태", "근거", "과세표준", "산출세액", "기납부", "대손충당금"]   # 뒤 네 칸은 법인세 줄만 (2026-11-04, 대손충당금 11-12)
 FILE = "세금예상.csv"
 
 
@@ -559,7 +559,7 @@ def deposits(journal, asof, codes=("10500",), words=("정기예금",)):
 
 def _row(kind, period, due, amount, state, basis):
     return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
-            "상태": state, "근거": basis, "과세표준": "", "산출세액": "", "기납부": ""}
+            "상태": state, "근거": basis, "과세표준": "", "산출세액": "", "기납부": "", "대손충당금": ""}
 
 
 # ───────────── 보고서 쪽: 자금 일정에 넣기 ─────────────

@@ -17,8 +17,7 @@ from .surplus import FOUNDED
 MIN_TAX = 0.07          # 중소기업 최저한세율 (과세표준의 7%)
 LOCAL_RATE = 0.10       # 법인지방소득세도 같은 비율로 줄어든다
 SME_START_YEARS = 5     # 창업중소기업 감면: 창업 후 처음 소득 난 해부터 5년
-# 통합고용세액공제 (중소기업, 상시근로자 1명 늘 때 1년 공제액, 3년간): 청년 등 / 그 밖
-HIRE = {"수도권": (14_500_000, 8_500_000), "지방": (15_500_000, 9_500_000)}
+# 통합고용 공제액·창업 감면율·최저한세율은 taxlaw.py 연도별 기준표에서 읽는다 (사용자 2026-11-12)
 
 
 def W(v):
@@ -77,14 +76,22 @@ def check(input_dir, year, answers, holders=(), assets=None):
     """assets = (장비 산 금액, 연구개발비) 또는 None(장부 신호 모름).
     -> {year, rows:[(이름, 상태, 예상 금액|None, 근거, 할 일)], total(해당만, 최저한세 반영), local, base, tax, note}."""
     a = answers or {}
+    from . import taxlaw   # 연도별 세법 기준 (미확인 값을 쓰는 후보는 '확인 필요', 합계에 안 넣음)
+
+    def law(key):
+        return taxlaw.value(input_dir, year, key)
     cb = corp_base(input_dir, year)
     base, tax, period = cb if cb else (None, None, "")
     rows = []
     young, dense, metro = a.get("청년창업"), a.get("과밀억제"), a.get("수도권")
     # 1) 창업중소기업 세액감면 (조특법 6조)
-    rate = None
+    rate, rate_ok = None, True
     if dense in ("예", "아니오") and young in ("예", "아니오"):
-        rate = {("아니오", "예"): 1.0, ("아니오", "아니오"): 0.5, ("예", "예"): 0.5, ("예", "아니오"): 0.0}[(dense, young)]
+        key = {("아니오", "예"): "창업감면_과밀밖청년", ("아니오", "아니오"): "창업감면_과밀밖", ("예", "예"): "창업감면_과밀안청년"}.get((dense, young))
+        if key:
+            rate, rate_ok, _ = taxlaw.value(input_dir, FOUNDED, key)   # 창업한 해 규정
+        else:
+            rate = 0.0
     last = FOUNDED + SME_START_YEARS - 1
     if year > last:
         rows.append(("창업중소기업 세액감면", "해당 없음", None, "감면 기간(%d~%d년)이 지남" % (FOUNDED, last), ""))
@@ -99,7 +106,7 @@ def check(input_dir, year, answers, holders=(), assets=None):
             FOUNDED, FOUNDED, last, "%d%%" % (rate * 100) if rate is not None else "모름")
         if bad:
             rows.append(("창업중소기업 세액감면", "해당 없음", None, why + " — 새 창업 또는 감면 업종이 아님", ""))
-        elif unk:
+        elif unk or not rate_ok:
             rows.append(("창업중소기업 세액감면", "확인 필요", amt, why,
                          "세무사에게 '행사 대행 등 우리 업종이 창업 감면 업종인지, 새 창업으로 보는지' 확인"))
         else:
@@ -112,7 +119,8 @@ def check(input_dir, year, answers, holders=(), assets=None):
     # 3) 통합고용세액공제 (조특법 29조의8) — 상시근로자 증가 1명당, 3년간
     hc = headcount(input_dir, holders)
     zone = "수도권" if metro == "예" else ("지방" if metro == "아니오" else None)
-    per_other = HIRE[zone][1] if zone else None
+    per_other, hire_ok, hire_why = law("고용공제_" + zone) if zone else (None, False, "")
+    per_young = law("고용공제_%s청년" % zone)[0] if zone else None
     cur = hc.get(year)
     prev = hc.get(year - 1) if year - 1 >= FOUNDED else (0.0, 12)
     if cur is None:
@@ -133,11 +141,14 @@ def check(input_dir, year, answers, holders=(), assets=None):
             year, cur[0], year - 1, prev[0], " (%d달만 있음)" % cur[1] if cur[1] < 12 else "",
             " · ".join("%d년 +%.1f명" % (y, v) for y, v in inc) if inc else "늘어난 인원 없음")
         if n <= 0:
-            rows.append(("통합고용세액공제", "해당 없음", None, why, "직원이 늘면 1명당 연 %s원 이상 (3년)" % W(per_other or HIRE["수도권"][1])))
+            rows.append(("통합고용세액공제", "해당 없음", None, why, "직원이 늘면 1명당 공제 (3년)"))
+        elif not hire_ok:
+            rows.append(("통합고용세액공제", "확인 필요", None, why + " · 1명당 금액: " + hire_why,
+                         "세법 기준 확인 화면에서 %d년 1명당 금액(세무사 확인)을 넣으면 계산" % year))
         else:
-            rows.append(("통합고용세액공제", "해당" if zone and cur[1] >= 12 else "확인 필요", amt,
-                         why + " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(HIRE[zone][0])) if zone else why,
-                         "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈. 인원이 줄면 받은 공제를 토해 냄"))
+            rows.append(("통합고용세액공제", "해당" if cur[1] >= 12 else "확인 필요", amt,
+                         why + " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(per_young) if per_young else "더 큼"),
+                         "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈"))
     # 4) 작년(2025)분 놓친 감면·공제 — 5년 안 경정청구
     if year - 1 >= FOUNDED:
         got = a.get("작년감면")
@@ -177,7 +188,7 @@ def check(input_dir, year, answers, holders=(), assets=None):
     total = sum(r[2] for r in rows if r[1] == "해당" and r[2])
     note = ""
     if base is not None and tax is not None and total:
-        floor = int(base * MIN_TAX)
+        floor = int(base * (law("최저한세율")[0] or MIN_TAX))
         cap = max(tax - floor, 0)
         full_start = rows[0][1] == "해당" and rate == 1.0
         if total > cap and not full_start:

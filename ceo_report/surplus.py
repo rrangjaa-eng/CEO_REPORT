@@ -284,6 +284,8 @@ def for_report(input_dir, year, R=None):
                                    None if eq is None else (eq, rd or 0))
     except (ValueError, OSError):
         out["tb"] = None
+    from . import taxlaw
+    out["law"] = taxlaw.status(input_dir, (R["asof"].year if R else y))
     if R is not None:
         out["advice"] = dividend.advise(R, out, out["div"], input_dir)
     return out
@@ -383,6 +385,8 @@ def render(S):
     from . import taxbreak
     h.append(dividend.advice_html(S.get("advice"), esc))
     h.append(taxbreak.render(S.get("tb"), esc))
+    from . import taxlaw
+    h.append(taxlaw.render(S.get("law"), esc))
     h.append(dividend.render(S.get("div"), esc))
     # 처리 순서
     h.append("<div class='q'>결산 때 처리 순서</div><ol class='steps'>")

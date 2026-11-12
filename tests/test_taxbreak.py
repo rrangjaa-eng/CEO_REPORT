@@ -56,8 +56,13 @@ class Hiring(unittest.TestCase):
     def test_increase_counts_and_shareholders_excluded(self):
         pay = dict(("2025-%02d" % m, ["대표", "a", "b"]) for m in range(1, 13))
         pay.update(("2026-%02d" % m, ["대표", "a", "b", "c", "d"]) for m in range(1, 13))
-        T = tb.check(folder(pay), 2026, YES, holders=["대표"])
-        r = row(T, "통합고용")
+        d = folder(pay)
+        r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
+        self.assertEqual(r[1], "확인 필요")   # 2026 개편 1명당 금액 미확인 → 합계에 안 넣음
+        self.assertIn("세법 기준 확인", r[4])
+        from ceo_report import taxlaw
+        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000"}, "세무사")
+        r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
         self.assertEqual(r[1], "해당")
         self.assertEqual(r[2], 4 * 8_500_000)   # 2025년 +2명(첫해, 0명에서) + 2026년 +2명, 수도권 그 밖 850만
 
