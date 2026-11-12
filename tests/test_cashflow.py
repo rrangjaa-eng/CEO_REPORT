@@ -102,6 +102,42 @@ class TestCashflow(unittest.TestCase):
         self.assertIn("현금흐름표 자료 없음", C.render(None))
 
 
+class TestCollection(unittest.TestCase):
+    def folder(self, rows):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        with open(os.path.join(d, "계산서.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("프로젝트번호,거래처,발행일,구분,공급가액,부가세,입금예정일,예정일확정,입금일,입금액\n")
+            for r in rows:
+                f.write(",".join(str(x) for x in r) + "\n")
+        return d
+
+    def test_days_weighted_by_amount_and_open_aging_nets_corrections(self):
+        d = self.folder([
+            ("", "가", "2026-06-01", "발행", 1000, 100, "", "", "2026-06-11", 1100),     # 10일 (6월 입금)
+            ("", "나", "2026-08-01", "발행", 3000, 300, "", "", "2026-10-30", 3300),     # 90일 (10월 입금)
+            ("", "다", "2026-10-01", "발행", 500, 50, "", "", "2026-10-11", 550),        # 10일
+            ("", "라", "2026-08-15", "발행", 2000, 200, "", "", "", ""),                  # 못 받음, 77일
+            ("", "라", "2026-08-15", "수정", -2000, -200, "", "", "", ""),                # 위와 짝 → 지움
+            ("", "마", "2026-07-01", "발행", 700, 70, "", "", "2026-11-03", 770),        # 10/31 기준 못 받음, 122일
+        ])
+        c = C.collection(d, D(2026, 10, 1), D(2026, 10, 31))
+        self.assertEqual(c["cur"][0], round((90 * 3300 + 10 * 550) / 3850.0))
+        self.assertEqual(c["months"][5][1][0], 10)
+        self.assertEqual(c["open_total"], 770)
+        self.assertEqual([b[1] for b in c["buckets"]], [0, 0, 0, 770])
+        self.assertEqual(c["late"], [("마", 770, 122)])
+
+    def test_health_has_three_questions(self):
+        rows = C.build_rows(journal(), ("10300",))
+        CF = C.compute(rows, D(2026, 10, 1), D(2026, 10, 31), 5000, None, "10월")
+        verdict, lv, out = C.health(CF)
+        self.assertEqual(len(out), 3)
+        self.assertIn(lv, ("ok", "warn", "info"))
+        self.assertIn("이 회사는 건강한가요?", C.render(CF))
+
+
 class TestCashflowInReport(unittest.TestCase):
     def test_monthly_management_has_chapter_but_ceo_does_not(self):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

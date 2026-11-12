@@ -247,7 +247,7 @@ def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
     y0 = dt.date(p1.year, 1, 1)
     M, Y = period(rows, p0, p1), period(rows, y0, p1)
     have = min(d for d, _, _, _ in rows)
-    CF = {"p0": p0, "p1": p1, "y0": y0, "label": label, "M": M, "Y": Y, "end": end_balance,
+    CF = {"p0": p0, "p1": p1, "y0": y0, "label": label, "M": M, "Y": Y, "end": end_balance, "_rows": rows,
           "year_partial": have > y0, "first_day": have, "start_check": start_check}
     if end_balance is not None:
         CF["start"] = end_balance - M["total"]
@@ -280,6 +280,180 @@ def annual(rows, year, end_balance, start_balance=None):
     return CF
 
 
+# ───────────── 대금 회수 날수 (사용자 2026-11-12) ─────────────
+def _read_csv(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _d(text):
+    try:
+        return dt.date(*[int(x) for x in (text or "").strip().split("-")])
+    except (ValueError, TypeError):
+        return None
+
+
+def _i(text):
+    try:
+        return int(float(str(text or "").replace(",", "").strip() or 0))
+    except ValueError:
+        return 0
+
+
+def collection(input_dir, p0, p1):
+    """계산서.csv (발행일·입금일·입금액) + 프로젝트.csv (행사 끝난 날) → 대금 회수 날수.
+
+    - 계산서 → 입금: 입금된 계산서마다 (입금일 − 발행일), 입금액으로 가중 평균. 달은 입금한 달 기준.
+    - 행사 끝 → 입금: 프로젝트 번호가 있고 행사 끝난 날을 아는 계산서만 (선입금은 따로 셈).
+    - 아직 못 받은 계산서: 기간 끝(p1) 기준 발행 뒤 지난 날수로 나눔. 입금일이 p1 뒤면 p1 에는 못 받은 것으로 본다.
+    """
+    inv = _read_csv(os.path.join(input_dir, "계산서.csv"))
+    if not inv:
+        return None
+    projs = dict((r.get("프로젝트번호", "").strip(), r) for r in _read_csv(os.path.join(input_dir, "프로젝트.csv")) if r.get("프로젝트번호"))
+
+    def end_of(pid):
+        p = projs.get((pid or "").strip())
+        if not p:
+            return None
+        from .calc import _event_date
+        return _d(p.get("완료일")) or _event_date(p.get("행사일"))
+    y0 = dt.date(p1.year, 1, 1)
+    by_m = collections.defaultdict(lambda: [0, 0, 0])      # 입금한 달 → [날수×금액, 금액, 건수]
+    ev = collections.defaultdict(lambda: [0, 0, 0, 0])     # 기간 → [날수×금액, 금액, 건수, 선입금 건수]
+    open_rows = []
+    for r in inv:
+        iss, paid, amt = _d(r.get("발행일")), _d(r.get("입금일")), _i(r.get("입금액"))
+        if iss is None or iss > p1:
+            continue
+        if paid is not None and paid <= p1 and amt > 0:
+            days = max((paid - iss).days, 0)
+            k = (paid.year, paid.month)
+            by_m[k][0] += days * amt
+            by_m[k][1] += amt
+            by_m[k][2] += 1
+            e = end_of(r.get("프로젝트번호"))
+            if e is not None and paid >= y0:
+                for key in ("ytd",) + (("cur",) if paid >= p0 else ()):
+                    if paid >= e:
+                        ev[key][0] += (paid - e).days * amt
+                        ev[key][1] += amt
+                        ev[key][2] += 1
+                    else:
+                        ev[key][3] += 1
+        elif paid is None or paid > p1:
+            total = _i(r.get("공급가액")) + _i(r.get("부가세"))
+            if total:
+                open_rows.append(((r.get("거래처") or "").strip(), iss, total, (p1 - iss).days))
+
+    def avg(keys):
+        a = sum(by_m[k][0] for k in keys)
+        b = sum(by_m[k][1] for k in keys)
+        return (round(a / float(b)), b, sum(by_m[k][2] for k in keys)) if b else None
+    months = [(m, avg([(p1.year, m)])) for m in range(1, p1.month + 1)]
+    cur_keys = [(p1.year, m) for m in range(p0.month, p1.month + 1)] if p0.year == p1.year else [(p1.year, p1.month)]
+    recent = [(p1.year, m) for m in range(max(1, p1.month - 2), p1.month + 1)]
+    early = [(p1.year, m) for m in range(1, max(1, p1.month - 2))]
+    open_rows = _net_open(open_rows)
+    buckets = [("30일 안", 0, 30), ("31~60일", 31, 60), ("61~90일", 61, 90), ("90일 넘음", 91, 10 ** 6)]
+    bk = []
+    for nm, lo, hi in buckets:
+        rows = [x for x in open_rows if lo <= x[3] <= hi]
+        bk.append((nm, sum(x[2] for x in rows), len(rows)))
+    late = collections.defaultdict(lambda: [0, 0])
+    for v, iss, amt, days in open_rows:
+        if days > 60:
+            late[v][0] += amt
+            late[v][1] = max(late[v][1], days)
+    late = sorted([(v, a, d) for v, (a, d) in late.items() if a > 0], key=lambda x: -x[1])[:5]
+    ev_avg = lambda k: (round(ev[k][0] / float(ev[k][1])), ev[k][2], ev[k][3]) if ev[k][1] else None
+    return {"months": months, "cur": avg(cur_keys), "recent": avg(recent), "early": avg(early) if early else None,
+            "ytd": avg([(p1.year, m) for m in range(1, p1.month + 1)]),
+            "open_total": sum(x[2] for x in open_rows), "buckets": bk, "late": late,
+            "ev_cur": ev_avg("cur"), "ev_ytd": ev_avg("ytd"), "have_projects": bool(projs)}
+
+
+def _net_open(rows):
+    """못 받은 계산서에서 수정(−) 계산서를 지운다: 같은 거래처·같은 금액 원본과 짝짓고(가까운 날짜 먼저), 남은 −는 가장 오래된 것부터 줄인다."""
+    by = collections.defaultdict(list)
+    for x in rows:
+        by[x[0]].append(list(x))
+    out = []
+    for v, lst in by.items():
+        pos = sorted([x for x in lst if x[2] > 0], key=lambda x: x[1])
+        neg = [x for x in lst if x[2] < 0]
+        for n in neg:
+            same = [p_ for p_ in pos if p_[2] == -n[2]]
+            if same:
+                pos.remove(min(same, key=lambda p_: abs((p_[1] - n[1]).days)))
+                continue
+            left = -n[2]
+            for p_ in pos:
+                take = min(left, p_[2])
+                p_[2] -= take
+                left -= take
+                if not left:
+                    break
+        out += [tuple(p_) for p_ in pos if p_[2] > 0]
+    return out
+
+
+def _collect_html(CF):
+    C_ = CF.get("collect")
+    if not C_:
+        return ("<div class='q'>대금 회수에 걸리는 날수</div><div class='note'>계산서 자료(계산서.csv)가 없어 계산하지 못했습니다.</div>")
+    lab = CF["label"]
+    h = ["<div class='q'>대금 회수에 걸리는 날수</div>",
+         "<div class='note'>계산서를 낸 날부터 돈이 통장에 들어온 날까지 걸린 날수입니다 (입금액이 큰 건을 더 무겁게 쳐서 평균). "
+         "짧을수록 번 돈이 빨리 현금이 됩니다. 이 날수가 길어지면 이익이 나도 통장 돈이 모자랍니다.</div>"]
+    cards = []
+    if CF.get("annual"):
+        cards.append(("%s 평균" % lab, C_["ytd"]))
+    else:
+        cards.append(("%s 받은 돈" % lab, C_["cur"]))
+        cards.append(("최근 3달", C_["recent"]))
+        cards.append(("올해 누적", C_["ytd"]))
+    h.append("<div class='four c3'>")
+    for nm, v in cards:
+        h.append(_card(nm, ("%d일" % v[0]) if v else "—", ("입금 %s원 · %d건" % (W(v[1]), v[2])) if v else "이 기간 입금 없음"))
+    h.append("</div>")
+    tr = _collect_trend(C_)
+    if tr:
+        h.append("<div class='say'>%s</div>" % esc(tr[0]))
+    if C_.get("ev_ytd"):
+        e = C_["ev_ytd"]
+        h.append("<div class='note'>행사가 끝난 날부터 따지면 올해 평균 %d일입니다 (%d건%s).</div>"
+                 % (e[0], e[1], ", 행사 전에 먼저 받은 것 %d건은 뺌" % e[2] if e[2] else ""))
+    ms = [m for m in C_["months"] if m[1]]
+    if ms:
+        h.append("<div class='tw'><table class='mo' style='margin-top:6px'><thead><tr><th>입금한 달</th>%s</tr></thead><tbody>"
+                 % "".join("<th>%d월</th>" % m for m, _ in C_["months"]))
+        h.append("<tr class='bl'><td>회수 날수</td>%s</tr>" % "".join("<td>%s</td>" % ("%d일" % v[0] if v else "—") for _, v in C_["months"]))
+        h.append("<tr><td>받은 금액</td>%s</tr></tbody></table></div>" % "".join("<td>%s</td>" % (eok(v[1]) if v else "—") for _, v in C_["months"]))
+    h.append("<div class='wsub'>%s 기준 아직 못 받은 계산서 %s원 — 낸 지 며칠 됐나</div>" % (_md(CF["p1"]), W(C_["open_total"])))
+    h.append("<div class='tw'><table class='cf'><thead><tr><th>지난 날수</th><th>금액</th><th>건수</th></tr></thead><tbody>%s</tbody></table></div>"
+             % "".join("<tr><td>%s</td><td>%s</td><td>%d건</td></tr>" % (nm, W(a), n) for nm, a, n in C_["buckets"]))
+    if C_["late"]:
+        h.append("<div class='note'>60일 넘게 못 받은 곳: %s</div>"
+                 % esc(" · ".join("%s %s원(%d일)" % (v, W(a), d) for v, a, d in C_["late"])))
+    return "".join(h)
+
+
+def _collect_trend(C_):
+    """회수 날수 추세 한 줄 + 수준('ok'/'warn'/'info'). 최근 3달 vs 그 전 달들."""
+    r, e = C_.get("recent"), C_.get("early")
+    if not r or not e:
+        return None
+    d = r[0] - e[0]
+    if d >= 10:
+        return ("최근 3달 회수 날수가 %d일로, 그 전 달들(%d일)보다 %d일 길어졌습니다. 같은 매출이라도 통장에 돈이 늦게 들어오고 있다는 신호입니다." % (r[0], e[0], d), "warn")
+    if d <= -10:
+        return ("최근 3달 회수 날수가 %d일로, 그 전 달들(%d일)보다 %d일 짧아졌습니다. 번 돈이 더 빨리 들어오고 있습니다." % (r[0], e[0], -d), "ok")
+    return ("최근 3달 회수 날수는 %d일로 그 전 달들(%d일)과 비슷합니다. 돈이 묶이는 이유는 회수가 늦어져서라기보다 일이 늘어서입니다." % (r[0], e[0]), "info")
+
+
 def for_report(input_dir, R):
     """월간 보고 R → 현금흐름표 숫자. 끝 잔액 = 1장 계좌 잔액 합(정기예금 줄 뺌, 잔액 모르는 계좌가 있으면 None)."""
     rows = load(input_dir)
@@ -295,7 +469,10 @@ def for_report(input_dir, R):
     if s1.get("start_bank") is not None and not any(str(a.get("account", "")).startswith("정기예금") for a in s1.get("accounts") or []):
         chk = ("%s 은행 잔액" % _md(p0), s1["start_bank"])
     label = "%d월" % p1.month if p0.day == 1 and p0.month == p1.month else "이번 기간"
-    return compute(rows, p0, p1, end, chk, label)
+    CF = compute(rows, p0, p1, end, chk, label)
+    if CF is not None:
+        CF["collect"] = collection(input_dir, p0, p1)
+    return CF
 
 
 # ───────────── 그리기 ─────────────
@@ -330,7 +507,8 @@ CSS = """<style>
 .cfx .sgs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}.cfx .sg{border:1px solid var(--line);border-radius:6px;padding:6px 8px;text-align:center}
 .cfx .sg .l{font-size:11.5px;color:var(--sub);font-weight:700}.cfx .sg .v{font-size:22px;font-weight:800;line-height:1.2}.cfx .sg .w{font-size:11px;color:var(--sub)}
 .cfx .dw{font-size:13px;font-weight:700;margin:4px 0}.cfx .dy{font-size:11.8px;line-height:1.6;margin:4px 0;padding-left:18px}
-.cfx .il{font-size:11.6px;line-height:1.55}
+.cfx .il{font-size:11.6px;line-height:1.55}.cfx .q{break-after:avoid}
+.cfx table.hc td:first-child{width:34%;font-weight:700}.cfx table.hc .ik{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;text-align:center;font-size:11px;line-height:18px;margin-right:6px}
 .cfx .imp{display:grid;grid-template-columns:1fr;gap:6px}.cfx .imp .card{padding:8px 10px;break-inside:avoid}
 .cfx .imp .it{font-weight:800;font-size:12.8px;margin-bottom:3px}.cfx .imp .ik{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;text-align:center;font-size:11px;line-height:18px;margin-right:6px}.cfx .imp .ib{font-size:11.6px;line-height:1.55}
 .cfx .ins{display:grid;grid-template-columns:1fr 1fr;gap:8px}.cfx .ins .card{padding:8px 10px;break-inside:avoid}
@@ -485,7 +663,9 @@ def render(CF):
     h.append("<tr class='xbal'><td>끝날 때 통장 잔액</td>%s</tr>" % "".join("<td>%s</td>" % W(end) for _ in cols))
     h.append("<tr class='xchk'><td colspan='%d'>%s</td></tr>" % (len(cols) + 1, _check_text(CF)))
     h.append("</tbody></table></div>")
+    h.append(_health_html(CF))
     h.append(_diag_html(CF))
+    h.append(_collect_html(CF))
     h.append(_insight_html(CF))
     h.append(_improve_html(CF))
     # 이익과 현금
@@ -686,6 +866,62 @@ def diagnose(CF):
     return out
 
 
+def health(CF):
+    """건강 점검 3가지 (사용자 2026-11-12: 현금흐름표로 건강한지 알 수 있나) — 돈을 버나 · 번 돈이 들어오나 · 버틸 돈이 있나.
+    -> (종합 한 줄, 수준, [(질문, 답, 수준)])."""
+    ann = CF.get("annual")
+    P = CF["M"] if ann else CF["Y"]
+    r = P["rec"]
+    out = []
+    if r["이익"] > 0:
+        out.append(("돈을 버는가 (손익)", "예 — 장부상 이익 %s원" % W(r["이익"]), "ok"))
+    else:
+        out.append(("돈을 버는가 (손익)", "아니오 — 장부상 손실 %s원" % W(r["이익"]), "warn"))
+    C_ = CF.get("collect") or {}
+    tr = _collect_trend(C_) if C_ else None
+    if P["op"] >= r["이익"] * 0.8 and P["op"] > 0:
+        out.append(("번 돈이 들어오는가 (현금)", "예 — 본업 현금 %s원" % W(P["op"]), "ok"))
+    else:
+        txt = "아직 — 본업 현금 %s원 (받을 돈 %s원 늘어남)" % (W(P["op"]), W(-r["받을돈"]) if r["받을돈"] < 0 else "0")
+        lv = "warn" if (tr and tr[1] == "warn") or r["이익"] <= 0 else "info"
+        if tr:
+            txt += ". 회수 날수: 최근 3달 %d일 / 그 전 %d일" % (C_["recent"][0], C_["early"][0])
+        out.append(("번 돈이 들어오는가 (현금)", txt, lv))
+    end = CF.get("end")
+    run = None
+    if end is not None and CF.get("_rows"):
+        lo = dt.date(CF["p1"].year, max(1, CF["p1"].month - 2), 1)
+        q = period(CF["_rows"], lo, CF["p1"])
+        spent = sum(-v for k, v in q["cash"].items() if v < 0 and k in [x for x, _, _ in OPS])
+        n = CF["p1"].month - lo.month + 1
+        if spent > 0:
+            run = end / (spent / float(n))
+    if run is not None:
+        lv = "ok" if run >= 3 else ("info" if run >= 1.5 else "warn")
+        out.append(("버틸 돈이 있는가 (잔액)", "통장 %s원 = 최근 3달 평균으로 본업에 나가는 돈의 %.1f달 치 (들어오는 돈 없이 버틸 수 있는 기간)" % (W(end), run), lv))
+    elif end is not None:
+        out.append(("버틸 돈이 있는가 (잔액)", "통장 %s원" % W(end), "info"))
+    warn = [q for q, a, lv in out if lv == "warn"]
+    if not warn and all(lv == "ok" for _, _, lv in out):
+        verdict, lv = "건강합니다 — 돈을 벌고, 번 돈이 들어오고, 버틸 돈도 있습니다.", "ok"
+    elif not warn:
+        verdict, lv = "이익은 나지만 현금이 늦게 도는 상태입니다 — 회수가 늦어지지 않는 한 성장하며 생기는 모습입니다.", "info"
+    else:
+        verdict, lv = "주의가 필요합니다 — %s 쪽에서 신호가 있습니다." % " · ".join(q.split(" (")[0] for q in warn), "warn"
+    return verdict, lv, out
+
+
+def _health_html(CF):
+    v, hl, rows_ = health(CF)
+    icon = {"ok": ("✓", "var(--in)"), "warn": ("!", "var(--out)"), "info": ("i", "var(--accent)")}
+    return ("<div class='q'>이 회사는 건강한가요?</div><div class='card dg' style='border-left:5px solid %s'>"
+            "<div class='dw' style='color:%s;font-size:14px'>%s</div><table class='cf hc'><tbody>%s</tbody></table>"
+            "<div class='note'>현금흐름표만으로는 ‘번 돈이 들어오는가’만 보입니다. 손익(돈을 버는가)과 잔액(버틸 돈)을 함께 봐야 건강을 판단할 수 있어 세 가지를 같이 봅니다.</div></div>"
+            % (icon[hl][1], icon[hl][1], esc(v), "".join(
+                "<tr><td><span class='ik' style='background:%s'>%s</span>%s</td><td style='text-align:left;white-space:normal'>%s</td></tr>"
+                % (icon[l][1], icon[l][0], esc(q), esc(a_)) for q, a_, l in rows_)))
+
+
 def _diag_html(CF):
     D = diagnose(CF)
     col = {"ok": "var(--in)", "warn": "var(--out)", "info": "var(--accent)"}[D["level"]]
@@ -721,7 +957,8 @@ def improve(CF):
     if r["받을돈"] < 0 and abs(r["받을돈"]) >= 10_000_000:
         out.append(("행사 대금 받는 날을 앞당기기",
                     "%s 못 받은 매출 대금이 %s원 늘었습니다. 본업 현금이 이익보다 적은 가장 큰 이유입니다." % (plab, W(-r["받을돈"])),
-                    "행사가 끝나면 바로 계산서를 내고, 입금일이 지난 건은 주마다 담당자가 고객에게 확인합니다. 받는 만큼 본업 현금이 그대로 늘어납니다 (예: 늘어난 금액의 절반이면 %s원)." % W(-r["받을돈"] // 2)))
+                    "행사가 끝나면 바로 계산서를 내고, 입금일이 지난 건은 주마다 담당자가 고객에게 확인합니다. 받는 만큼 본업 현금이 그대로 늘어납니다 (예: 늘어난 금액의 절반이면 %s원)." % W(-r["받을돈"] // 2)
+                    + _faster_text(CF)))
     if P["op"] < 0 or r["선급"] < 0:
         pre = "업체에 먼저 준 계약금이 %s원 늘었습니다. " % W(-r["선급"]) if r["선급"] < 0 else ""
         out.append(("큰 행사는 고객에게서도 계약금 받기",
@@ -752,6 +989,18 @@ def improve(CF):
                     "%s 본업으로 %s원이 들어와 통장 돈이 %s원 늘었습니다." % (plab, W(P["op"]), W(P["total"])),
                     "앞으로 3달 지급 예정만큼은 통장에 두고, 그보다 남는 돈은 대출 상환이나 짧은 정기예금으로 옮기면 놀고 있는 돈이 줄어듭니다."))
     return out
+
+
+def _faster_text(CF):
+    """회수 날수가 길어졌으면: 예전 날수로 돌아갈 때 풀리는 돈 (최근 3달 하루 평균 입금 × 줄어드는 날수)."""
+    C_ = CF.get("collect") or {}
+    r, e = C_.get("recent"), C_.get("early")
+    if not r or not e or r[0] - e[0] < 10:
+        return ""
+    lo = max(1, CF["p1"].month - 2)
+    days = (CF["p1"] - dt.date(CF["p1"].year, lo, 1)).days + 1
+    freed = int(r[1] / float(days) * (r[0] - e[0]))
+    return " 최근 3달 회수 날수가 %d일로 그 전(%d일)보다 길어졌습니다. 그 전 수준으로 돌아가면 통장에 약 %s원이 더 있게 됩니다 (최근 하루 평균 입금 × %d일)." % (r[0], e[0], W(freed), r[0] - e[0])
 
 
 def _improve_html(CF):

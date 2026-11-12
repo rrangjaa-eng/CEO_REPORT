@@ -267,6 +267,8 @@ def compute(input_dir, year, settings=None, D=None):
     A["bal_end"] = next((v for v in reversed(A["bal_m"]) if v is not None), None)
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12): 1월 1일 잔액은 장부(작년 분개장 있을 때)
     A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"])
+    if A["cfs"]:
+        A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
