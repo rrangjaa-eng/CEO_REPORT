@@ -3430,24 +3430,51 @@ def _xk_final_table(X, R):
         if d0 is not None:
             s_b, s_c, s_v, n_both = s_b + b, s_c + c, s_v + v, n_both + 1
             s_d, s_used, s_rest, n_vat = s_d + d0, s_used + used, s_rest + rest, n_vat + (1 if used else 0)
-        rows.append([esc(p["key"]), esc(p["name"]), esc(stage + " 승인"), _xk_none() if b is None else esc(won(b)),
-                     _xk_period_cell(p["cost"], p["cost_note"], p.get("out_of_period"), p.get("cost_period")),
-                     _xk_diff(d0), esc(won(v)) if v else _xk_none(), esc(won(used)) if used else _xk_none(), _xk_diff(rest),
-                     _na("판단 불가") if d0 is None or not b else esc("%.1f%%" % (c * 100.0 / b)),
-                     esc(_xk_final_why(p, b, c, v, d0, used))])
+        why = _xk_final_why(p, b, c, v, d0, used)
+        if d0 is None:
+            verdict = ("na", "판단 불가")
+        elif d0 == 0:
+            verdict = ("ok", "일치")
+        elif rest == 0:
+            verdict = ("ok", "카드 부가세로 설명")
+        elif rest > 0:
+            verdict = ("hi", "장부 원가 많음")
+        else:
+            verdict = ("lo", "장부 원가 적음")
+        rows.append(([esc(p["key"]), esc(p["name"]), esc(stage + " 승인"), _xk_none() if b is None else esc(won(b)),
+                      _xk_period_cell(p["cost"], p["cost_note"], p.get("out_of_period"), p.get("cost_period")),
+                      _xk_diff(d0), esc(won(v)) if v else _xk_none(), esc(won(used)) if used else _xk_none(), _xk_diff(rest),
+                      _na("판단 불가") if d0 is None or not b else esc("%.1f%%" % (c * 100.0 / b)),
+                      "<span class='xv %s'>%s</span>" % verdict], why if why and why != "일치" else ""))
     if not rows:
         return "<div class='note'>%s</div>" % esc("팀장 승인 이상 진행된 프로젝트 없음")
+    # 사용자 2026-11-12: '차이 설명' 칸이 좁아 읽을 수 없음 → 숫자 줄 밑에 표 너비 전체로 설명 줄을 붙이고, 끝 칸은 짧은 판정만
+    head = ["번호", "프로젝트", "승인 단계", "인트라넷 실행가", "장부 원가", "차이 (장부 원가−실행가)",
+            "카드 부가세", "카드 부가세로 설명", "남는 차이", "실행가 대비", "판정"]
+    nums = (3, 4, 5, 6, 7, 8, 9)
+    td = lambda i, c: '<td class="n">%s</td>' % c if i in nums else "<td>%s</td>" % c
+    body = []
+    for cells, why in rows:
+        body.append("<tr class='xmain%s'>%s</tr>" % ("" if why else " xnowhy", "".join(td(i, c) for i, c in enumerate(cells))))
+        if why:
+            body.append("<tr class='xsub'><td></td><td colspan='%d'>%s</td></tr>" % (len(head) - 1, esc(why)))
     total = ["합계 (두 값을 모두 아는 %d건)" % n_both, "", "", esc(won(s_b)), esc(won(s_c)), esc(won(s_d)), esc(won(s_v)),
              esc(won(s_used)), esc(won(s_rest)), esc("%.1f%%" % (s_c * 100.0 / s_b)) if s_b else "",
              esc("카드 부가세로 설명되는 프로젝트 %d건" % n_vat) if n_vat else ""]
-    out = _idt("xchk-final", table(["번호", "프로젝트", "승인 단계", "인트라넷 실행가", _xk_label("WEHAGO 원가", X), "차이 (장부 원가−실행가)",
-                                    "카드 부가세", "카드 부가세로 설명", "남는 차이", "실행가 대비", "차이 설명"],
-                                   rows, num_cols=(3, 4, 5, 6, 7, 8, 9), total=total))
+    body.append('<tr class="tot">%s</tr>' % "".join(td(i, c) for i, c in enumerate(total)))
+    style = ("<style>#xchk-final tr.xsub td{border-top:0;padding-top:0;color:#444;font-size:.92em;line-height:1.45;white-space:normal}"
+             "#xchk-final tr.xmain:not(.xnowhy) td{border-bottom:0}"
+             "#xchk-final tr.xmain td:nth-child(3){white-space:nowrap}#xchk-final .xv{white-space:nowrap;font-weight:600}#xchk-final .xv.hi,#xchk-final .xv.lo{color:#b42318}"
+             "#xchk-final .xv.ok{color:#1f6f43}#xchk-final .xv.na{color:#666}</style>")
+    out = style + '<div class="tw"><table id="xchk-final" class=""><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (
+        "".join('<th class="n">%s</th>' % esc(c) if i in nums else "<th>%s</th>" % esc(c) for i, c in enumerate(head)), "".join(body))
+    per = _xk_period(X)
     return out + "<div class='note'>%s</div>" % esc(
         "대상 = 인트라넷에서 팀장 승인이 끝난 프로젝트부터 대표이사 승인까지 끝난 프로젝트 (%d건). "
-        "장부 원가 = 회계자료 기준 (도)원가, 부가세 뺀 금액 (법인카드 결제분도). 인트라넷 실행가는 법인카드 사용분 일부가 부가세 포함으로 올라가 있어, "
+        "장부 원가 = 회계자료 기준 (도)원가, 부가세 뺀 금액 (법인카드 결제분도)%s. 인트라넷 실행가는 법인카드 사용분 일부가 부가세 포함으로 올라가 있어, "
         "실행가가 장부 원가보다 큰 만큼은 그 프로젝트 카드 부가세 범위 안에서 '카드 부가세로 설명'에 넣고 나머지만 '남는 차이'로 둠. "
-        "차이가 +면 장부 원가가 실행가보다 큼. 장부 원가는 프로젝트 번호가 붙은 전표만 (미연결 원가는 빠짐). 증빙이 늦게 들어오면 바뀜." % len(rows))
+        "차이가 +면 장부 원가가 실행가보다 큼. 장부 원가는 프로젝트 번호가 붙은 전표만 (미연결 원가는 빠짐). 증빙이 늦게 들어오면 바뀜. "
+        "판정 밑 줄은 장부에서 알 수 있는 차이 까닭." % (len(rows), (", " + per) if per else ""))
 
 
 def _xk_detail(X, R=None):

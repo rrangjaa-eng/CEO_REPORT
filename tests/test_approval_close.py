@@ -165,6 +165,19 @@ class TestFinalExecutionTable(unittest.TestCase):
         self.assertIn("카드 부가세를 빼고도 장부 원가가 실행가보다 500,000 적음", html)
         self.assertIn("장부 원가가 실행가보다 1,000,000 많음", html)   # B: 카드 부가세로 설명하지 않는다
 
+    def test_explanation_gets_its_own_full_width_row(self):
+        """사용자 2026-11-12: 차이 설명 칸이 좁아 읽을 수 없음 → 숫자 줄 밑에 표 너비 전체 설명 줄, 끝 칸은 짧은 판정."""
+        import re
+        html = final_table([xproject("A", 12000000, 10000000), xproject("B", 9000000, 9400000, card_vat=1000000),
+                            xproject("C", 5000000, 5000000), xproject("D", 6000000, 10000000)],
+                           {"A": "팀장", "B": "팀장", "C": "팀장", "D": "팀장"})
+        self.assertNotIn("<th>차이 설명</th>", html)
+        verdicts = re.findall(r"<span class='xv (\w+)'>(.*?)</span>", html)
+        self.assertEqual(verdicts, [("hi", "장부 원가 많음"), ("ok", "카드 부가세로 설명"), ("ok", "일치"), ("lo", "장부 원가 적음")])
+        subs = re.findall(r"<tr class='xsub'><td></td><td colspan='10'>(.*?)</td></tr>", html)
+        self.assertEqual(len(subs), 3)   # 일치(C)는 설명 줄 없음
+        self.assertIn("장부 원가가 실행가보다 2,000,000 많음", subs[0])
+
     def test_unknown_values_are_not_turned_into_a_difference(self):
         html = final_table([xproject("A", 5000000, None), xproject("B", 5000000, 10000000, out=True)], {"A": "팀장", "B": "팀장"})
         self.assertIn("인트라넷 실행가 빈칸", html)

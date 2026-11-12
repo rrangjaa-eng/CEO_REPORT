@@ -177,9 +177,11 @@ JS = r"""
   // 긴 목록 표: 화면에서는 앞 10줄만 (인쇄에는 전부)
   areas.forEach(function(s){[].slice.call(s.querySelectorAll('table')).forEach(function(t){
     if(t.querySelector('[rowspan]')||!t.tBodies.length)return;
-    var rows=[].slice.call(t.tBodies[0].rows).filter(function(r){return !r.classList.contains('tot');});
+    // 설명 줄(xsub)은 바로 위 줄에 딸린 것: 세지 않고, 위 줄과 같이 숨긴다
+    var rows=[].slice.call(t.tBodies[0].rows).filter(function(r){return !r.classList.contains('tot')&&!r.classList.contains('xsub');});
     if(rows.length<=16)return;
-    rows.slice(10).forEach(function(r){r.classList.add('afx');});
+    rows.slice(10).forEach(function(r){r.classList.add('afx');var n=r.nextElementSibling;
+      if(n&&n.classList.contains('xsub'))n.classList.add('afx');});
     t.classList.add('afold');
     var b=document.createElement('button');b.type='button';b.className='afold-btn';
     var label='나머지 '+(rows.length-10)+'줄 펼치기 (전체 '+rows.length+'줄)';b.textContent=label;
