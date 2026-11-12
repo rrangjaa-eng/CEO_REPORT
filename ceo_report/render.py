@@ -420,7 +420,7 @@ def render(R, mode):
     title = "%s %s %s" % (st.get("회사명", ""), kind, who)
     h.append("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
              "<meta name='viewport' content='width=device-width,initial-scale=1'><title>%s · %s</title><style>%s</style></head>"
-             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS + DOC2_CSS + DOC3_CSS + AIR_CSS + TYPE_CSS,
+             "<body><div class='wrap%s'>" % (esc(title), d2s(R["asof"]), CSS + FS_CSS + DOC_CSS + DOC2_CSS + DOC3_CSS + AIR_CSS + TYPE_CSS + "/*ins*/" + _ins_css() + "/*/ins*/",
                                               # 월간은 인쇄 때 80%: 표가 넓어 A4 3쪽에 맞춤 (사용자 2026-11-04)
                                               "" if R["kind"] == "weekly" else " mon"))
     # 문서 머리 (사용자 2026-11-05: 진짜 문서처럼): 가운데 제목, 왼쪽 문서 정보 표, 오른쪽 결재란
@@ -465,7 +465,7 @@ def render(R, mode):
     from . import insights, insights_render
     I, why = insights.for_report(R)
     body = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2>" + _na("계산하지 못함 (%s)" % why)
-    rest.append(("auto", "자동 분석 13가지", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None))
+    rest.append(("auto", "자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None))
     rest += [("s%d" % i, "%d. %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
     allk = top + rest
 
@@ -2266,6 +2266,46 @@ def _evidence(R, base_no):
     return "".join(h)
 
 
+def _ins_css():
+    from . import insights_render
+    return insights_render.CEO_CSS
+
+
+INS_A, INS_B = "<!--ins-->", "<!--/ins-->"   # 자동 분석 조각 표시: 예전과 비교하는 시험이 빼고 본다 (areas.strip_ui)
+
+
+def _ins(x):
+    return INS_A + x + INS_B if x else ""
+
+
+def _insights(R):
+    from . import insights
+    if "_ins" not in R:
+        R["_ins"] = insights.for_report(R)[0]
+    return R["_ins"]
+
+
+def _month_foot(R, I, html_):
+    """주간 ③ 이번 달 매출 칸 밑에 이번 달 예상 영업이익 (사용자 2026-11-12)."""
+    from . import insights_render as IR
+    t = "" if I is None else IR.ceo_month_text(I)
+    if not t:
+        return html_
+    lab = "%d월 매출" % R["asof"].month
+    return re.sub(r"(<div class='lab'>%s</div><div class='big'>.*?</div><div class='foot'>)(.*?)(</div>)" % re.escape(lab),
+                  lambda m: m.group(1) + m.group(2) + _ins(("<br>" if m.group(2) else "") + "<b>%s</b>" % esc(t)) + m.group(3),
+                  html_, count=1)
+
+
+def _issue_card(R):
+    """행사 후 미발행 중 늦게 내면 자금이 모자라는 것과 발행 기한 (사용자 2026-11-12: 작성일 뒤 60일 입금). 실패해도 보고서는 만든다."""
+    from . import insights, insights_render
+    try:
+        return _ins(insights_render.ceo_issue(insights.issue_deadline(R)))
+    except Exception:   # 이 칸 때문에 보고서를 못 만들면 안 된다
+        return ""
+
+
 def _first_screen(R, mode, per):
     """대표 보고 본문 (사용자 2026-11-03: 대표가 꼭 알아야 할 것만, 주간 2쪽 · 월간 3쪽, 빈 곳 없이).
 
@@ -2283,23 +2323,35 @@ def _first_screen(R, mode, per):
                        "" if "(실적)" in mf["buckets"][0]["label"] else "+남은 예정", _bal_note(s1))), chart(mf, H=310, simple=True))
     else:
         flow = (esc("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=270, simple=True))
-    funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
+    from . import insights_render as IR
+    I = _insights(R)
+    # 자동 분석 (사용자 2026-11-12 목업 확인): 큰 입금이 늦으면 · 이번 달 예상 영업이익(주간) · 바뀐 이유(월간은 여기, 주간은 지난주 대비 밑)
+    risk = "" if I is None else _ins((IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것") if monthly else "")
+                                     + IR.ceo_risk_card(I, month=False))   # 예상 영업이익은 ③ 이번 달 매출 칸 밑 (주간)
+    funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + risk + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
         # 1쪽 자금(흐름·앞으로) · 2쪽 ③ 지난 미처리 · ④ 세금 · ⑤ 이번 달 실적(월별 흐름 그림 포함) · 3쪽 누적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
-                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode))]
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
     else:
         wo = week_outflows(R)
         # 1쪽 = 이번 주 지급(출금 목록·다음 주 예정), 2쪽 = 자금 현황 → 실적 (사용자 2026-11-05: 맥락에 맞게, 빈 곳 최소)
         blocks = ([("%s 출금 목록" % _day(wo["fri"]), _week_out_table(R, mode))] + funds
-                  + [("%s 실적" % ymt, _results(R, cum=True) + over)])
+                  + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True)) + _issue_card(R) + over)])
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
-    h.append(_mon_strip(R) if monthly else _top_strip(R))
+    h.append("" if I is None else _ins(IR.ceo_alert(I)))   # 여유 자금 부족 경보만 (적자 프로젝트는 대표 보고에 넣지 않음)
+    strip = _mon_strip(R) if monthly else _top_strip(R)
+    tax = "" if I is None else re.sub(r"<[^>]+>", "", IR.ceo_tax_line(I))
+    if tax:   # 마지막 기간 여유 자금 칸 밑에: 그 뒤 낼 세금까지 떼면
+        strip = re.sub(r"(까지 여유 자금</div><div class='big'>.*?</div><div class='foot'>)(.*?)(</div>)",
+                       lambda m: m.group(1) + m.group(2) + _ins((" · " if m.group(2) else "") + esc(tax)) + m.group(3),
+                       strip, count=1)
+    h.append(strip)
     for i, (title, body) in enumerate(blocks):
         # 주간 ① 출금 목록은 길면 쪽을 넘어 이어진다 (사용자 2026-11-04: 통째로 다음 쪽에 밀려 1쪽이 비던 것)
         cls = "sec brk" if (not monthly and i == 0) else "sec"
@@ -2310,6 +2362,9 @@ def _first_screen(R, mode, per):
         sec = "<div class='%s'>%s%s</div>" % (cls, _q(i, title, _ev_tags(R, i + 1)), body)
         if monthly and i == 6:
             sec = _mg(mode, sec)   # 계정과목별 사용 금액은 경영관리용에만 (사용자 2026-11-04: 대표 보고에서 없앰)
+        if not monthly and i == 0 and I is not None and I["reasons"]:
+            sec = re.sub(r"(<div class='wchg'>.*?</div>)", lambda m: m.group(1) + _ins(IR.ceo_reasons(I, head="지난 보고 뒤 여유 자금을 바꾼 것")),
+                         sec, count=1)
         h.append(sec)
     h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.%s</div>"
              % ("<span class='doc-end'>끝.</span>" if mode == "ceo" else ""))

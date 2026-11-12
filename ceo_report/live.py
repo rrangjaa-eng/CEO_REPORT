@@ -107,13 +107,18 @@ section.auto table{margin-bottom:6px}
 """
 
 
+def _ins_css():
+    from . import insights_render
+    return insights_render.CEO_CSS
+
+
 def render(R, now_snap, diff, meta, auto_html=""):
     asof = R["asof"]
     s1, s2 = R.get("s1") or {}, R.get("s2") or {}
     h = ["<!doctype html><html lang='ko'><head><meta charset='utf-8'>",
          "<meta http-equiv='refresh' content='%d'>" % REFRESH_SEC,
          "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-         "<title>지금 현황</title><style>%s</style></head><body>" % CSS]
+         "<title>지금 현황</title><style>%s</style></head><body>" % (CSS + _ins_css())]
     h.append("<header><h1>지금 현황 · %s 기준</h1><span class='m'>%s</span></header><main>"
              % (_e(asof.isoformat()), _e(meta)))
     # 바뀐 것

@@ -38,11 +38,14 @@ def _pct(v):
 
 
 # ───────────── 대표 보고 조각 ─────────────
-CEO_CSS = (".ins-alert{border:2px solid #c62828;background:#fdecea;color:#8e1b1b;border-radius:8px;padding:6px 12px;margin:6px 0;"
-           "font-weight:700}.ins-alert li{margin:2px 0}.ins-line{font-size:12.5px;color:#1d2433;margin-top:4px}"
+CEO_CSS = (".ins-alert{border:1.5px solid #c62828;background:#fdecea;color:#8e1b1b;border-radius:6px;padding:2px 10px;margin:4px 0;font-size:11.5px;"
+           "font-weight:700}.ins-alert li{margin:2px 0}.ins-line{font-size:11.5px;color:#1d2433;margin-top:4px}"
            ".ins-line b{font-variant-numeric:tabular-nums}.ins-card{margin-top:8px}.ins-card table{width:100%}"
-           ".ins-why{margin:4px 0 0 0;padding-left:18px;font-size:12.5px}.ins-why li{margin:1px 0}"
-           ".ins-pos{color:#1b7f3b}.ins-neg{color:#c62828}")
+           ".ins-why{margin:2px 0 0 0;padding-left:18px;font-size:11.5px}.ins-why li{margin:1px 0}"
+           ".ins-pos{color:#1b7f3b}.ins-neg{color:#c62828}"
+           "table.pt.iss{font-size:11px;margin-top:2px}table.pt.iss td,table.pt.iss th{padding:3px 4px}table.pt.iss td:first-child{white-space:normal}"
+           "table.pt.iss td:nth-child(4),table.pt.iss th:nth-child(4){text-align:center}table.pt.iss tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}"
+           "table.pt.iss tr.mut td{color:var(--sub)}")
 
 
 def ceo_alert(I):
@@ -61,31 +64,70 @@ def ceo_tax_line(I):
             % (W(T["later_total"]), W(T["after"])))
 
 
-def ceo_reasons(I, n=3):
+def ceo_reasons(I, n=3, head=""):
     if not I["reasons"]:
         return ""
-    return "<ul class='ins-why'>%s</ul>" % "".join(
+    return (("<div class='ins-line'><b>%s</b></div>" % esc(head)) if head else "") + "<ul class='ins-why'>%s</ul>" % "".join(
         "<li>%s <span class='%s'>(%s)</span></li>" % (esc(t), "ins-pos" if v > 0 else "ins-neg", S(v)) for t, v in I["reasons"][:n])
 
 
-def ceo_risk_card(I):
-    """입금 지연 위험 3건 + 이번 달 예상 영업이익 한 줄."""
+def ceo_month_text(I):
+    """이번 달 예상 영업이익 한 줄 글 (대표 주간 '이번 달 매출' 칸 밑, 사용자 2026-11-12 "넣어")."""
+    M = I["month"]
+    if not M or M["forecast"] is None:
+        return ""
+    return "%d월 예상 영업이익 %s (아직 안 넣은 급여·카드 등 포함)" % (int(M["ym"][5:]), W(M["forecast"]))
+
+
+def ceo_risk_card(I, month=True):
+    """입금 지연 위험 3건 + 이번 달 예상 영업이익 한 줄 (사용자 2026-11-12 "넣어"). month=False 면 영업이익 줄 뺌 (월간: 실적이 따로 있음)."""
     parts = []
     D = I["delay"]
-    if D:
-        rows = "".join("<tr><td>%s</td><td>%s</td><td class='vin'>%s</td><td class='av'><b>%s</b></td><td class='vout'>%s</td></tr>"
-                       % (esc(r["desc"]), r["date"].strftime("%m/%d"), W(r["amount"]), W(r["avail"]), S(r["drop"])) for r in D)
-        parts.append("<div class='lab'>큰 입금이 %d일 늦으면</div><table class='pt'><thead><tr><th>입금</th><th>예정일</th>"
-                     "<th>금액</th><th>그때 여유 자금</th><th>줄어드는 돈</th></tr></thead><tbody>%s</tbody></table>"
-                     % (insights.DELAY_DAYS, rows))
-    M = I["month"]
+    if D:   # 표 대신 한 줄씩 (대표 보고 쪽 수: 주간 2쪽·월간 3쪽)
+        parts.append("<div class='ins-line'><b>큰 입금이 %d일 늦으면</b></div><ul class='ins-why'>%s</ul>" % (insights.DELAY_DAYS, "".join(
+            "<li>%s %s원 (%s 예정) → 여유 자금 %s원 <span class='ins-neg'>(%s)</span></li>"
+            % (esc(r["desc"]), W(r["amount"]), r["date"].strftime("%m/%d"), W(r["avail"]), S(r["drop"])) for r in D)))
+    M = I["month"] if month else None
     if M and M["forecast"] is not None:
         adds = " · ".join("%s %s" % (n, W(v)) for n, v in M["adds"])
         parts.append("<div class='ins-line'>이번 달(%s월) 예상 영업이익 <b>%s</b>원 <span style='color:#5b6475'>(지금 장부 %s%s)</span></div>"
                      % (int(M["ym"][5:]), W(M["forecast"]), W(M["booked"]), (" − 아직 안 넣은 " + adds) if adds else ""))
     if not parts:
         return ""
-    return "<div class='card ins-card'>%s</div>" % "".join(parts)
+    return "<div class='ins-card'>%s</div>" % "".join(parts)
+
+
+def _md(d):
+    return "%d/%d" % (d.month, d.day)
+
+
+def ceo_issue(D, top=3):
+    """행사 후 미발행 중 자금에 영향 있는 것: 언제까지 발행해야 자금이 모자라기 전에 들어오나 (사용자 2026-11-12)."""
+    if not D or not D["rows"]:
+        return ""
+    if D["short"]:
+        day, gap, wday, wgap = D["short"]
+        head = ("예상 지급까지 넣으면 <b>%s</b>에 잔액이 늘 남겨 둘 돈보다 %s원 모자랍니다%s. 작성일 뒤 %d일 입금이라 "
+                % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
+        if D["late"]:
+            head += ("<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(D["rows"][0]["pay_if_today"])))
+        else:
+            head += "<b class='ins-neg'>%s까지 발행</b>해야 그 전에 들어옵니다." % _md(D["deadline"])
+    else:   # 늦어도 자금이 모자라지 않으면 한 줄만
+        return ("<div class='ins-line'>행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함): 지금 일정으로는 %s까지 잔액이 "
+                "늘 남겨 둘 돈 아래로 내려가지 않아 발행이 늦어도 자금은 모자라지 않습니다 (작성일 뒤 %d일 입금 기준).</div>"
+                % (len(D["rows"]), W(D["total"]), D["horizon"].strftime("%Y-%m-%d"), D["days"]))
+    rows = D["rows"][:top]
+    body = "".join("<tr><td>[%s] %s</td><td>%s일</td><td class='vin'>%s</td><td>%s</td></tr>"
+                   % (esc(r["id"]), esc(r["name"]), r["days"], W(r["amount"]), _md(r["pay_if_today"])) for r in rows)
+    rest = D["rows"][top:]
+    if rest:
+        body += "<tr class='mut'><td>그 밖 %d건</td><td></td><td class='vin'>%s</td><td></td></tr>" % (
+            len(rest), W(sum(r["amount"] for r in rest)))
+    body += "<tr class='tot'><td>합계 %d건</td><td></td><td class='vin'>%s</td><td></td></tr>" % (len(D["rows"]), W(D["total"]))
+    return ("<div class='card ins-card'><div class='lab'>계산서 늦으면 자금에 영향 · 행사 끝나고 아직 발행 안 한 돈</div>"
+            "<div class='ins-line'>%s</div><table class='pt iss'><thead><tr><th>프로젝트</th><th>행사 후</th><th>미발행 (부가세 포함)</th>"
+            "<th>오늘 발행하면 입금</th></tr></thead><tbody>%s</tbody></table></div>" % (head, body))
 
 
 # ───────────── 팀장 보고 조각 ─────────────
@@ -197,7 +239,8 @@ def mgmt_section(I, R):
         h.append("<h3>%d. %s</h3>%s" % (no, esc(title), body))
 
     # 4 경보 (맨 위)
-    sub(1, "경보", _tbl(["수준", "내용"], [[esc(lv), esc(t)] for lv, t in I["alerts"]]) if I["alerts"] else _none("경보 없음"))
+    sub(1, "경보", _tbl(["수준", "내용"], [[esc(lv), "<span style='display:block;text-align:left'>%s</span>" % esc(t)]
+                                        for lv, t in I["alerts"]]) if I["alerts"] else _none("경보 없음"))
     # 1 바뀐 이유
     if not I["has_prev"]:
         body = _none("지난 기록이 없어 비교하지 못함 (다음 보고부터)")
@@ -284,4 +327,13 @@ def mgmt_section(I, R):
         _tbl(["순위", "팀", "매출", "매출총이익", "수익률", "매출 목표", "달성률"],
              [["%d" % (i + 1), esc(t["team"]), W(t["revenue"]), W(t["gp"]), _pct(t["rate"]), W(t["target"]), _pct(t["achieve"])]
               for i, t in enumerate(tm)], nums=(2, 3, 4, 5, 6)) if tm else _none("팀별 자료 없음"))
+    # 14 계산서 발행 기한 (사용자 2026-11-12: 작성일 뒤 60일 입금)
+    D = I.get("issue")
+    if D is None:
+        body = _none("계산서 자료 없음")
+    elif not D["rows"]:
+        body = _none("행사 끝나고 1만 원 넘게 발행 안 한 프로젝트 없음")
+    else:
+        body = ceo_issue(D, top=len(D["rows"]))
+    sub(14, "계산서 발행 기한 (늦으면 자금이 모자라는 것)", body)
     return "".join(h)

@@ -204,6 +204,7 @@ def strip_ui(page):
     import re
     # 자동 분석 영역(2026-11-12 추가)은 새 내용이라 예전과 비교할 때 뺀다
     page = re.sub(r"<section class='area' id='a-auto'.*?</section>", "", page, flags=re.S)
+    page = re.sub(r"<!--ins-->.*?<!--/ins-->|/\*ins\*/.*?/\*/ins\*/", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'><style>.*?</nav></div>", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'>상세자료: .*?</div>", "", page, flags=re.S)
     page = re.sub(r"\n?<script>.*?</script>", "", page, flags=re.S)

@@ -437,6 +437,60 @@ def delay_risk(R, n=3):
     return sorted(out, key=lambda r: r["drop"])[:n]
 
 
+# ───────────── 계산서 발행 기한 (사용자 2026-11-12: 대표 보고) ─────────────
+PAY_AFTER_ISSUE = 60   # 이 회사 매출 계산서는 대부분 작성일 뒤 60일쯤 입금 (사용자 2026-11-12)
+ISSUE_SMALL = 10000    # 1만 원 밑 끝전은 자금에 영향 없음
+
+
+def _first_short(R, mode):
+    """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None."""
+    s2 = R["s2"]
+    start, mc = s2.get("start"), s2.get("min_cash")
+    if start is None or mc is None:
+        return None
+    daily = collections.defaultdict(int)
+    for e in s2.get("dated") or []:
+        if e["date"] <= R["asof"] or e.get("amount") is None or (mode == "firm" and not e["firm"]):
+            continue
+        daily[e["date"]] += e["amount"] if e["io"] == "in" else -e["amount"]
+    bal, first, worst = start, None, None
+    for day in sorted(daily):
+        bal += daily[day]
+        if bal < mc:
+            if first is None:
+                first = (day, mc - bal)
+            if worst is None or mc - bal > worst[1]:
+                worst = (day, mc - bal)
+    return None if first is None else (first[0], first[1], worst[0], worst[1])
+
+
+def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
+    """행사 끝났는데 계산서를 덜 낸 프로젝트: 오늘 내면 언제 입금되나, 자금이 모자라기 전에 받으려면 언제까지 내야 하나.
+
+    자금이 모자라는 날 = 일정(예상 포함)을 날마다 더한 잔액이 최소 보유현금 밑으로 처음 내려가는 날. 발행 기한 = 그날 − 60일.
+    미발행 계산서의 입금은 지금 일정에 들어 있지 않다 (발행 계산서만 입금 예정)."""
+    E = (R.get("s5") or {}).get("event_unissued") or {}
+    if E.get("missing") or E.get("total") is None:
+        return None
+    asof = R["asof"]
+    rows = []
+    for x in E.get("rows") or []:
+        if x["unissued"] < small:
+            continue
+        rows.append({"id": x["P"]["id"], "name": x["P"].get("name") or "", "event": x["event"], "days": x["days"],
+                     "amount": int(round(x["unissued"] * 1.1)), "pay_if_today": asof + dt.timedelta(days=days)})
+    rows.sort(key=lambda r: (-r["amount"], r["id"]))
+    short = _first_short(R, "all")
+    firm = _first_short(R, "firm")
+    out = {"rows": rows, "total": sum(r["amount"] for r in rows), "days": days, "short": short, "firm_short": firm,
+           "deadline": None, "late": False, "small_n": sum(1 for x in E.get("rows") or [] if x["unissued"] < small),
+           "horizon": max([e["date"] for e in R["s2"].get("dated") or []] or [asof])}
+    if short:
+        out["deadline"] = short[0] - dt.timedelta(days=days)
+        out["late"] = out["deadline"] < asof
+    return out
+
+
 def missing_entries(R, facts, small=100000, thin=0.3):
     """13: 매달 있던 전표가 빠졌거나 덜 들어감 -> [(종류, 글)].
 
@@ -529,6 +583,7 @@ def compute(R, facts=None, invoices=None, prev_events=None):
         "teams": team_rank(R),
         "delay": delay_risk(R),
         "missing": missing_entries(R, facts),
+        "issue": issue_deadline(R),
         "has_facts": bool(facts),
         "has_prev": prev_events is not None,
     }

@@ -203,10 +203,12 @@ async function collectJournal() {
   return result;
 }
 
-// 이번 달부터 months 개월 (연도별로 나눔: 기수가 연도마다 다름) -> {2026: ["202611", "202612"], 2027: ["202701"]}
+// 지난달 + 이번 달부터 months 개월 (연도별로 나눔: 기수가 연도마다 다름) -> {2026: ["202610", "202611", "202612"], 2027: ["202701"]}
+// 지난달: 예정일이 지났는데 아직 나가거나 들어오지 않은 돈(지난 미지급·미수)도 받는다 (사용자 2026-11-12)
+const PAST_MONTHS = 1;
 function planMonths(months, today = new Date()) {
   const byYear = {};
-  for (let i = 0; i < months; i++) {
+  for (let i = -PAST_MONTHS; i < months; i++) {
     const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
     const y = d.getFullYear();
     (byYear[y] = byYear[y] || []).push(`${y}${pad(d.getMonth() + 1)}`);

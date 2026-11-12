@@ -496,10 +496,18 @@ def write_all(d, R, out_dir, today=None):
     os.makedirs(folder, exist_ok=True)
     out = []
     asof = R.get("asof") or today or dt.date.today()
+    from . import insights, insights_render
+    I = insights.for_report(R)[0] if R.get("s2") else None   # 자동 분석 (사용자 2026-11-12: 팀장 보고는 목업대로)
     for team in team_names(d):
         T = build(d, R, team)
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
+        page = render(T, today)
+        if I is not None:
+            try:
+                page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)
+            except Exception:   # 자동 분석 때문에 팀장 보고를 못 만들면 안 된다
+                pass
         with open(path, "w", encoding="utf-8") as f:
-            f.write(render(T, today))
+            f.write(page)
         out.append(path)
     return out

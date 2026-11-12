@@ -90,3 +90,57 @@ class TestOnSample(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fake_R(asof, start, min_cash, events, unissued):
+    P = lambda i, n: {"id": i, "name": n}
+    return {"asof": asof, "kind": "weekly",
+            "s2": {"start": start, "min_cash": min_cash, "dated": events, "periods": []},
+            "s5": {"event_unissued": {"missing": False, "total": sum(u for _, u in unissued),
+                                      "rows": [{"P": P("P%d" % k, "프로젝트%d" % k), "event": asof - dt.timedelta(days=10 + k),
+                                                "days": 10 + k, "unissued": u} for k, (_, u) in enumerate(unissued)]}}}
+
+
+class TestIssueDeadline(unittest.TestCase):
+    """계산서 발행 기한 (사용자 2026-11-12): 작성일 뒤 60일 입금, 자금이 모자라는 날 − 60일까지 발행."""
+
+    def test_deadline_is_short_day_minus_60(self):
+        ev = [{"date": D(2027, 1, 11), "io": "out", "amount": 50, "firm": False}]
+        R = _fake_R(D(2026, 11, 2), 120, 100, ev, [("a", 1000000), ("b", 500)])
+        X = insights.issue_deadline(R)
+        self.assertEqual(X["short"][:2], (D(2027, 1, 11), 30))
+        self.assertEqual(X["deadline"], D(2026, 11, 12))
+        self.assertFalse(X["late"])
+        self.assertEqual([r["amount"] for r in X["rows"]], [1100000])   # 부가세 포함, 1만 원 밑 끝전은 뺌
+        self.assertEqual(X["small_n"], 1)
+        self.assertEqual(X["rows"][0]["pay_if_today"], D(2027, 1, 1))
+        html = insights_render.ceo_issue(X)
+        self.assertIn("11/12까지 발행", html)
+        self.assertIn("1,100,000", html)
+
+    def test_late_when_deadline_passed(self):
+        ev = [{"date": D(2026, 12, 1), "io": "out", "amount": 50, "firm": True}]
+        X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
+        self.assertTrue(X["late"])
+        self.assertEqual(X["firm_short"][0], D(2026, 12, 1))
+        self.assertIn("발행했어야", insights_render.ceo_issue(X))
+
+    def test_no_short_one_line(self):
+        ev = [{"date": D(2026, 12, 1), "io": "out", "amount": 5, "firm": True}]
+        X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
+        self.assertIsNone(X["deadline"])
+        html = insights_render.ceo_issue(X)
+        self.assertIn("자금은 모자라지 않습니다", html)
+        self.assertNotIn("<table", html)
+
+    def test_ceo_reports_carry_issue_and_month_line(self):
+        d = load(SAMPLE)
+        from ceo_report.render import render
+        from ceo_report.areas import strip_ui
+        R = compute(d, "weekly", D(2026, 11, 6))
+        h = render(R, "ceo")
+        self.assertIn("행사 끝나고 아직 발행 안 한 계산서", h)
+        self.assertIn("11월 예상 영업이익", h)
+        import re
+        self.assertNotIn("예산", re.sub(r"<[^>]+>", "", h[h.index("<body"):]))   # 대표용엔 '예산' 글자 없음
+        self.assertNotIn("<!--ins-->", strip_ui(h))
