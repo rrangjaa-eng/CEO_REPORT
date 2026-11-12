@@ -121,6 +121,14 @@ class TestFreshAndSteps(Base):
         self.touch(os.path.join(P.output, "2026-11-05_주간_경영관리보고.pdf"), dt.datetime(2026, 11, 5, 10, 2))
         self.assertTrue(winstate.latest_reports(P.output)["경영관리"].endswith("2026-11-05_주간_경영관리보고.html"))
 
+    def test_latest_reports_picks_newest_stamped_pdf(self):
+        # PDF 이름에 만든 시각이 붙는다 (사용자 2026-11-12): 가장 새로 만든 것을 연다
+        P = self.P
+        self.touch(os.path.join(P.output, "2026-11-12_주간_대표보고.html"), dt.datetime(2026, 11, 12, 10, 5))
+        self.touch(os.path.join(P.output, "2026-11-12_주간_대표보고 (11-12 09시00분 만듦).pdf"), dt.datetime(2026, 11, 12, 9, 0))
+        self.touch(os.path.join(P.output, "2026-11-12_주간_대표보고 (11-12 10시05분 만듦).pdf"), dt.datetime(2026, 11, 12, 10, 5))
+        self.assertTrue(winstate.latest_reports(P.output)["대표"].endswith("(11-12 10시05분 만듦).pdf"))
+
 
 class TestMergeAndEvidence(Base):
     def test_merge_candidates(self):

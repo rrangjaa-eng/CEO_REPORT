@@ -818,7 +818,8 @@ class TestCliOutputs(unittest.TestCase):
         r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "주간", "--기준일", "2026-11-02",
                             "--입력", SAMPLE, "--출력", out], capture_output=True, text=True, timeout=300)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(sorted(os.listdir(out)), [
+        import re as _re
+        self.assertEqual(sorted(_re.sub(r" \(\d\d-\d\d \d\d시\d\d분 만듦\)\.pdf$", ".pdf", n) for n in os.listdir(out)), [
             "2026-11-02_주간_경영관리보고.html", "2026-11-02_주간_경영관리보고.pdf",
             "2026-11-02_주간_대표보고.html", "2026-11-02_주간_대표보고.pdf", "지급예정기록"])
         for name in os.listdir(out):

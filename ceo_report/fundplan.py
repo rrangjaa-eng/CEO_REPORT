@@ -5,7 +5,9 @@
 '예정일:YYYY.MM.DD-거래처[코드]'(그 날짜 칸에 금액), '계'(구분 합계). 상세 줄 금액을 읽고, 분류 합계·'계'와 원 단위로 맞는지
 확인한다. 맞지 않는 달은 쓰지 않는다 (모르는 것을 0으로 넣지 않음, 틀린 일정도 넣지 않음).
 """
+import collections
 import datetime as dt
+import itertools
 import os
 import re
 from collections import OrderedDict
@@ -393,42 +395,104 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 return debit, False
         return None, False
 
-    for r in rows:
+    def window(r):
         due = dt.date(*[int(x) for x in r["예정일"].split("-")])
-        found = None
-        if journal is not None:
-            key = norm_vendor(r["거래처"])
-            vcode = norm_code(r.get("거래처코드"))
-            lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
-            if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and r.get("자료일"):
-                # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
-                # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
-                lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+        lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
+        if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and r.get("자료일"):
+            # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
+            # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
+            lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+        return due, lo
+
+    def same_vendor(r, line):
+        # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인).
+        # 두 쪽에 거래처코드가 있으면 코드로만 본다 (사용자 2026-11-04: 글자 말고 코드로). 자금계획서 [000101] 의
+        # 앞 0을 떼면 분개장 거래처Code 00101 과 같다 (실제 파일 3개월 515줄 모두 같은 거래처). 한쪽이라도 코드가 없을 때만 이름으로.
+        vcode, lcode = norm_code(r.get("거래처코드")), norm_code(line.get("vendor_code"))
+        if vcode and lcode:
+            return lcode == vcode
+        key = norm_vendor(r["거래처"])
+        return bool(key) and norm_vendor(line["vendor"]) == key
+
+    def candidates(r):
+        """이 줄과 같은 거래처·기간의 아직 안 쓴 분개장 돈 줄 -> [(i, 금액, 채무·채권 줄인가)] (전표 하나에서는 한 줄만: 채무·채권 줄 먼저)."""
+        due, lo = window(r)
+        by_slip = {}
+        for i, line in enumerate(journal):
+            if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+                continue
+            amount, named = kind(line, r["입출금"])
+            if not amount or not same_vendor(r, line):
+                continue
+            k = (line["date"], str(line.get("no") or i))
+            if k not in by_slip or (named and not by_slip[k][2]):
+                by_slip[k] = (i, amount, named)
+        return sorted(by_slip.values(), key=lambda c: (journal[c[0]]["date"], c[0]))
+
+    found = {}
+    if journal is not None:
+        # ① 같은 금액 한 줄 (예전 규칙)
+        for n, r in enumerate(rows):
+            due, _ = window(r)
             best = None
-            for i, line in enumerate(journal):
-                if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
-                    continue
-                amount, named = kind(line, r["입출금"])
+            for i, amount, named in candidates(r):
                 if amount != r["금액"]:
                     continue
-                # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인).
-                # 두 쪽에 거래처코드가 있으면 코드로만 본다 (사용자 2026-11-04: 글자 말고 코드로). 자금계획서 [000101] 의
-                # 앞 0을 떼면 분개장 거래처Code 00101 과 같다 (실제 파일 3개월 515줄 모두 같은 거래처). 한쪽이라도 코드가 없을 때만 이름으로.
-                lcode = norm_code(line.get("vendor_code"))
-                if vcode and lcode:
-                    if lcode != vcode:
-                        continue
-                elif not key or norm_vendor(line["vendor"]) != key:
-                    continue
-                rank = (0 if named else 1, abs((line["date"] - due).days))
+                rank = (0 if named else 1, abs((journal[i]["date"] - due).days))
                 if best is None or rank < best[0]:
                     best = (rank, i)
-            found = best[1] if best else None
-        if found is not None:
-            used.add(found)
-            line = journal[found]
+            if best is not None:
+                used.add(best[1])
+                found[n] = [best[1]]
+        # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
+        for n, r in enumerate(rows):
+            if n in found:
+                continue
+            cands = [c for c in candidates(r) if c[1] < r["금액"]][:12]
+            hit = None
+            for size in (2, 3, 4):
+                for combo in itertools.combinations(cands, size):
+                    if sum(c[1] for c in combo) == r["금액"]:
+                        hit = [c[0] for c in combo]
+                        break
+                if hit:
+                    break
+            if hit:
+                used.update(hit)
+                found[n] = hit
+        # ③ 한 번에 여러 줄을 함께 낸(받은) 돈: 같은 거래처·같은 입출금의 남은 줄 2~4개 합이 분개장 한 줄과 같으면
+        rest = collections.OrderedDict()
+        for n, r in enumerate(rows):
+            if n not in found:
+                rest.setdefault((r["입출금"], norm_code(r.get("거래처코드")) or norm_vendor(r["거래처"])), []).append(n)
+        for group in rest.values():
+            if len(group) < 2:
+                continue
+            cache = dict((n, set(candidates(rows[n]))) for n in group[:8])
+            for size in (4, 3, 2):
+                for combo in itertools.combinations([n for n in group if n not in found][:8], size):
+                    if any(n in found for n in combo):
+                        continue
+                    total = sum(rows[n]["금액"] for n in combo)
+                    hit = sorted(c for c in cache[combo[0]] if c[1] == total and c[0] not in used
+                                 and all(c in cache[n] for n in combo[1:]))
+                    if hit:
+                        used.add(hit[0][0])
+                        for n in combo:
+                            found[n] = [hit[0][0]]
+    for n, r in enumerate(rows):
+        due, _ = window(r)
+        if n in found:
+            lines = [journal[i] for i in found[n]]
             r["상태"] = "이미 지급" if r["입출금"] == "지급" else "이미 입금"
-            r["근거"] = "분개장 %s 전표 %s %s" % (line["date"].isoformat(), line["no"], line["account"])
+            if len(lines) == 1 and kind(lines[0], r["입출금"])[0] != r["금액"]:
+                r["근거"] = "분개장 %s 전표 %s %s (같은 거래처 여러 줄을 한 번에 %s)" % (
+                    lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"], "지급" if r["입출금"] == "지급" else "입금")
+            elif len(lines) == 1:
+                r["근거"] = "분개장 %s 전표 %s %s" % (lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"])
+            else:
+                r["근거"] = "분개장 %d건 합계로 나눠 %s: %s" % (len(lines), "지급" if r["입출금"] == "지급" else "입금", ", ".join(
+                    "%s 전표 %s" % (x["date"].isoformat(), x["no"]) for x in lines))
         elif due <= asof and journal is not None and ref is not None and due > ref:
             # 분개장이 예정일 전까지만 있으면 '안 나감'이라 단정하지 않는다 (사용자 2026-11-05: 11/5 급여가 11/6 목록에 나옴)
             r["상태"] = "예정"

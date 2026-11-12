@@ -29,6 +29,7 @@ from ceo_report.calc import compute  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
 from ceo_report.util import mask_rrn  # noqa: E402
+from ceo_report import pdfname  # noqa: E402
 
 BROWSERS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -239,11 +240,14 @@ def _evidence(a, kind, asof):
     made = [base + ".html"]
     browser = find_browser() if a.pdf == "만듦" else None
     if browser:
-        err = to_pdf(browser, base + ".html", base + ".pdf")
+        pdf = pdfname.stamped(base)   # 만든 시각을 이름에 (사용자 2026-11-12)
+        err = to_pdf(browser, base + ".html", pdf)
         if err:
-            _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+            _say("%s — %s" % (err, os.path.basename(pdf)))
         else:
-            made.append(base + ".pdf")
+            made.append(pdf)
+            for gone in pdfname.prune(base):
+                _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("근거 %s · %s %s 경영관리 보고에서 뽑음" % (", ".join(nums), asof, label))
     _say("만든 파일:")
     for m in made:
@@ -290,12 +294,15 @@ def _annual(a):
             return 7
         made.append(base + ".html")
         if browser:
-            err = to_pdf(browser, base + ".html", base + ".pdf")
+            pdf = pdfname.stamped(base)
+            err = to_pdf(browser, base + ".html", pdf)
             if err:
-                _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+                _say("%s — %s" % (err, os.path.basename(pdf)))
                 pdf_failed = True
             else:
-                made.append(base + ".pdf")
+                made.append(pdf)
+                for gone in pdfname.prune(base):
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("%d년 연간 보고 · 손익 %d개월 · 결산 전표 %s" % (year, len(A["Y"]["months"]), "반영" if A["closed"] else "없음 (감가상각비·법인세 예상)"))
     if not A.get("has_annual"):
         _say("연간자료.csv 없음 — '자료 변환'을 다시 하면 거래처·통장 흐름·결산 법인세가 들어갑니다.")
@@ -389,12 +396,15 @@ def main(argv=None):
             return 7
         made.append(base + ".html")
         if browser:
-            err = fit_pdf(browser, base + ".html", base + ".pdf", ceo_pages(base + ".html"))
+            pdf = pdfname.stamped(base)   # 만든 시각을 이름에 (사용자 2026-11-12)
+            err = fit_pdf(browser, base + ".html", pdf, ceo_pages(base + ".html"))
             if err:
-                _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+                _say("%s — %s" % (err, os.path.basename(pdf)))
                 pdf_failed = True
             else:
-                made.append(base + ".pdf")
+                made.append(pdf)
+                for gone in pdfname.prune(base):
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and a.팀장용 == "만듦":
         # 팀장용 월간 실적 (사용자 2026-11-09 목업 승인): 팀마다 출력/팀장용/ 에 HTML·PDF. 급여 금액은 넣지 않는다
         from ceo_report.teamreport import write_all as write_team_reports
@@ -406,13 +416,15 @@ def main(argv=None):
         for page_path in team_pages:
             made.append(page_path)
             if browser:
-                pdf_path = page_path[:-5] + ".pdf"
+                pdf_path = pdfname.stamped(page_path[:-5])
                 err = to_pdf(browser, page_path, pdf_path)
                 if err:
                     _say("%s — %s" % (err, os.path.basename(pdf_path)))
                     pdf_failed = True
                 else:
                     made.append(pdf_path)
+                    for gone in pdfname.prune(page_path[:-5]):
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "weekly":
         from ceo_report.weekdiff import write_record
         try:

@@ -165,6 +165,38 @@ def books_with(lines, book_date=dt.date(2026, 11, 2)):
 class TestSettle(unittest.TestCase):
     ASOF = dt.date(2026, 11, 3)
 
+    def test_income_split_in_two_is_already_in(self):
+        # 나눠 들어온 입금 (사용자 2026-11-12): 같은 거래처 두 번 입금 합이 계획 금액과 같으면 이미 입금
+        rows = [plan_row("2026-11-20", "입금", "가상고객", 11000000)]
+        books = books_with([(dt.date(2026, 10, 25), "외상매출금", None, 5000000, "가상고객"),
+                            (dt.date(2026, 11, 1), "외상매출금", None, 6000000, "가상고객"),
+                            (dt.date(2026, 11, 1), "외상매출금", None, 4000000, "다른고객")])
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual(rows[0]["상태"], "이미 입금")
+        self.assertIn("2건 합계", rows[0]["근거"])
+
+    def test_split_sum_must_match_exactly(self):
+        rows = [plan_row("2026-11-20", "입금", "가상고객", 11000000)]
+        books = books_with([(dt.date(2026, 10, 25), "외상매출금", None, 5000000, "가상고객")])   # 일부만 들어옴
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual(rows[0]["상태"], "예정")
+
+    def test_one_payment_for_two_plan_lines(self):
+        rows = [plan_row("2026-11-13", "지급", "가상음향", 1000000), plan_row("2026-11-13", "지급", "가상음향", 2300000)]
+        books = books_with([(dt.date(2026, 11, 1), "미지급금", 3300000, None, "가상음향")])
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual([r["상태"] for r in rows], ["이미 지급", "이미 지급"])
+        self.assertIn("여러 줄을 한 번에", rows[0]["근거"])
+
+    def test_exact_line_wins_over_split(self):
+        # 같은 금액 한 줄이 있으면 그 줄을 쓰고, 다른 계획 줄의 나눠 낸 돈을 가져가지 않는다
+        rows = [plan_row("2026-11-13", "지급", "가상음향", 3000000), plan_row("2026-11-14", "지급", "가상음향", 1000000)]
+        books = books_with([(dt.date(2026, 11, 1), "미지급금", 2000000, None, "가상음향"),
+                            (dt.date(2026, 11, 1), "미지급금", 1000000, None, "가상음향")])
+        fundplan.settle(rows, books, self.ASOF)
+        self.assertEqual(rows[1]["상태"], "이미 지급")
+        self.assertEqual(rows[0]["상태"], "예정")
+
     def test_paid_before_due_is_already_paid(self):
         rows = [plan_row("2026-11-13", "지급", "가상음향", 3410000)]
         books = books_with([(dt.date(2026, 10, 30), "미지급금", 3410000, None, "가상음향"),
