@@ -141,6 +141,8 @@ class TestIssueDeadline(unittest.TestCase):
         h = render(R, "ceo")
         self.assertIn("행사 끝나고 아직 발행 안 한 계산서", h)
         self.assertIn("11월 예상 영업이익", h)
+        self.assertNotIn("늦으면</b>", h)   # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12)
+        self.assertNotIn("큰 입금이", render(compute(d, "monthly", D(2026, 10, 31)), "ceo"))
         import re
         self.assertNotIn("예산", re.sub(r"<[^>]+>", "", h[h.index("<body"):]))   # 대표용엔 '예산' 글자 없음
         self.assertNotIn("<!--ins-->", strip_ui(h))

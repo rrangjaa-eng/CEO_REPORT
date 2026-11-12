@@ -2325,9 +2325,9 @@ def _first_screen(R, mode, per):
         flow = (esc("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=270, simple=True))
     from . import insights_render as IR
     I = _insights(R)
-    # 자동 분석 (사용자 2026-11-12 목업 확인): 큰 입금이 늦으면 · 이번 달 예상 영업이익(주간) · 바뀐 이유(월간은 여기, 주간은 지난주 대비 밑)
-    risk = "" if I is None else _ins((IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것") if monthly else "")
-                                     + IR.ceo_risk_card(I, month=False))   # 예상 영업이익은 ③ 이번 달 매출 칸 밑 (주간)
+    # 자동 분석 (사용자 2026-11-12 목업 확인): 바뀐 이유(월간은 여기, 주간은 지난주 대비 밑). 예상 영업이익은 ③ 이번 달 매출 칸 밑 (주간).
+    # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12 "전부 삭제") — 경영관리 보고 자동 분석에만
+    risk = "" if I is None or not monthly else _ins(IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것"))
     funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + risk + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
