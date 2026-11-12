@@ -3,6 +3,8 @@
 다른 시험 파일에서는 함수와 상수만 가져온다 (TestCase 클래스를 가져오면 시험이 두 번 돈다).
 """
 import csv
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import datetime as dt
 import os
 import re

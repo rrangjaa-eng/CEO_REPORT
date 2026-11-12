@@ -435,9 +435,12 @@ def render(R, mode):
     h.append("<table class='dinfo'><tr><th>보고 기준일</th><td>%s</td><th>집계 기간</th><td>%s ~ %s</td></tr>"
              "<tr><th>작성</th><td>%s</td><th>금액 단위</th><td>원</td></tr></table>"
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
-    h.append("<div class='meta dsrc'>%s</div>" % esc(
-        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])))
+    from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-12: 자금계획서 없이 계산한 보고가 다시 나오면 안 됨)
+    h.append("<div class='meta dsrc'>%s%s</div>" % (esc(
+        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])),
+        _ins("<br>" + esc(gate.sources_line(R)))))
     h.append("</div>")
+    h.append(_ins(gate.banner(gate.problems(R))))
 
     fs_i = len(h)
     h.append(_first_screen(R, mode, per))

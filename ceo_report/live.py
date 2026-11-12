@@ -121,6 +121,8 @@ def render(R, now_snap, diff, meta, auto_html=""):
          "<title>지금 현황</title><style>%s</style></head><body>" % (CSS + _ins_css())]
     h.append("<header><h1>지금 현황 · %s 기준</h1><span class='m'>%s</span></header><main>"
              % (_e(asof.isoformat()), _e(meta)))
+    from . import gate   # 자금계획서·분개장 미반영이면 맨 위에 큰 경고 (사용자 2026-11-12)
+    h.append(gate.banner(gate.problems(R), "지금 현황의 자금 숫자"))
     # 바뀐 것
     if diff:
         h.append("<section class='chg'><h2>지난 현황 뒤 바뀐 것</h2><ul>")

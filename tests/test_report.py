@@ -1,5 +1,7 @@
 """보고 규칙 테스트. 실행: python -m unittest discover -s tests"""
 import contextlib
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import csv
 import datetime as dt
 import importlib.util

@@ -4,6 +4,8 @@
 실제 입력/·수집/ 폴더와 실제 WEHAGO 파일은 열지 않는다. 다른 시험 파일에서는 함수와 상수만 가져온다.
 """
 import contextlib
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import html as htmllib
 import io
 import os
