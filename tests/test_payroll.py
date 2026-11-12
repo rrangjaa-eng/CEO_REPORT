@@ -69,6 +69,18 @@ class Detail(Base):
         self.assertIn("2026-11 급여 점검", h)
         self.assertNotIn("대표", h)
 
+    def test_last_year_yearend_used(self):
+        base = dict((r["name"], r) for r in payroll.yearend(self.d, 2026, dt.date(2026, 10, 31)))["김정상"]
+        cols = payroll.YE_COLUMNS
+        v = dict.fromkeys(cols, "0")
+        v.update({"귀속연도": "2025", "사원명": "김정상", "기본공제인원": "4", "경로우대": "1", "자녀세액공제인원": "2",
+                  "그밖소득공제": "2000000", "특별세액공제": "300000"})
+        write(os.path.join(self.d, "연말정산.csv"), cols, [[v[c] for c in cols]])
+        y = dict((r["name"], r) for r in payroll.yearend(self.d, 2026, dt.date(2026, 10, 31)))["김정상"]
+        self.assertLess(y["tax"], base["tax"])
+        self.assertGreater(y["diff"], base["diff"])
+        self.assertIn("2025년 연말정산 공제 그대로 (본인 포함 4명, 자녀 2명)", y["notes"])
+
     def test_render(self):
         h = payroll.render(payroll.check(self.d, "2026-10"), payroll.yearend(self.d, 2026, dt.date(2026, 10, 31)),
                            lambda s: s, "2026-10", 2026)
