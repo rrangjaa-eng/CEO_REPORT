@@ -189,19 +189,41 @@ def _last(R):
     return per[-1] if per else None
 
 
+MUST_WORDS = ("급여", "회사부담금", "4대보험", "세금", "부가세", "원천세", "법인세", "지방소득세", "차입금", "대출", "이자")
+
+
+def _is_must(e):
+    """꼭 나갈 돈: 급여(4대보험 포함)·세금·대출 원금·이자 (사용자 2026-11-12)."""
+    cat = str(e.get("cat") or "")
+    return e.get("io") == "out" and any(w in cat for w in MUST_WORDS)
+
+
+def _next_month_end(d):
+    y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return (dt.date(y + (m == 12), m % 12 + 1, 1) - DAY)
+
+
 def taxes_set_aside(R):
-    """2: 이미 쌓인 세금 (기준일 뒤 낼 부가세·원천세·법인세 계산값)."""
+    """2: 여유 자금 기간 뒤 꼭 나갈 돈까지 떼어 본다 (사용자 2026-11-12 결정 '기간 뒤 필수지출만 더 빼기').
+
+    · must: 기간 끝 다음 날 ~ 다음 달 말일에 나갈 급여(4대보험)·세금·대출 원금·이자 (기간 안 것은 이미 여유 자금에 들어 있음)
+    · later: 다음 달 말일 뒤에 낼 세금 계산값 (이미 쌓인 부가세·원천세·법인세)
+    after = 마지막 기간 여유 자금(확정분) − must − later."""
     rows = [t for t in R.get("tax") or [] if t.get("kind") in TAX_KINDS and t.get("due") and t["due"] > R["asof"]
             and t.get("amount") is not None]
     total = sum(t["amount"] for t in rows)
-    # 여유 자금 기간 뒤에 낼 세금은 여유 자금 계산에 아직 안 들어 있다: 그만큼 더 떼어 본다
     last = _last(R)
     end = last["end"] if last else R["asof"]
-    later = [t for t in rows if t["due"] > end]
+    upto = max(_next_month_end(R["asof"]), end)
+    must = sorted([e for e in R["s2"].get("dated") or [] if end < e["date"] <= upto and _is_must(e) and e.get("amount")],
+                  key=lambda e: e["date"])
+    later = [t for t in rows if t["due"] > upto]
     avail = last["firm"]["avail"] if last else None
     later_total = sum(t["amount"] for t in later)
+    must_total = sum(e["amount"] for e in must)
     return {"rows": rows, "total": total, "later": later, "later_total": later_total, "label": last["label"] if last else "",
-            "avail": avail, "after": None if avail is None else avail - later_total}
+            "must": must, "must_total": must_total, "upto": upto, "end": end,
+            "avail": avail, "after": None if avail is None else avail - must_total - later_total}
 
 
 def month_forecast(R):
@@ -568,6 +590,118 @@ def events_for_record(R):
              "firm": bool(e.get("firm"))} for e in R["s2"].get("dated") or [] if e.get("amount")]
 
 
+# ───────────── 예측 입금 vs 실제 입금 (사용자 2026-11-12 "추천대로": 과거 예측과 실제 차이 추적) ─────────────
+TRACK_WEEKS = 4      # 보고 때 예측한 뒤 4주 동안 들어온 돈과 견준다
+TRACK_ROWS = 8
+
+
+def _actual(txns, frm, to, io):
+    """통장에서 실제로 움직인 돈 (frm 다음 날 ~ to, 계좌 간 이체 뺌). io = '입금' | '출금'."""
+    return sum(t["amount"] or 0 for t in txns or [] if frm < t["date"] <= to and t.get("io") == io
+               and t.get("cat") != "계좌간이체")
+
+
+def _pred(events, frm, to, io, firm_only):
+    tot = 0
+    for e in events:
+        if e.get("io") != io or not e.get("amount") or (firm_only and not e.get("firm")):
+            continue
+        d = e["date"] if isinstance(e["date"], dt.date) else dt.date.fromisoformat(e["date"])
+        if frm < d <= to:
+            tot += e["amount"]
+    return tot
+
+
+def _cmp(ev, txns, frm, to):
+    return {"in": {"firm": _pred(ev, frm, to, "in", True), "all": _pred(ev, frm, to, "in", False),
+                   "actual": _actual(txns, frm, to, "입금")},
+            "out": {"firm": _pred(ev, frm, to, "out", True), "all": _pred(ev, frm, to, "out", False),
+                    "actual": _actual(txns, frm, to, "출금")}}
+
+
+def booked_profit(R, ym):
+    """그 달 장부 영업이익 (지금 장부: 증빙 기준 매출 − 원가 − 판관비) 또는 None."""
+    A = R.get("acct_year") or {}
+    if A.get("state") != "ok" or str(A.get("year")) != ym[:4]:
+        return None
+    grp = dict((g["name"], g) for g in A.get("groups") or [])
+    mi = int(ym[5:]) - 1
+    sales = ((R.get("evid_month") or {}).get(ym) or (None, None))[0]
+    if sales is None:
+        return None
+    cost = (grp.get("원가") or {"months": [0] * 12})["months"][mi] or 0
+    sga = (grp.get("판매비와관리비") or {"months": [0] * 12})["months"][mi] or 0
+    return sales - cost - sga
+
+
+def forecast_track(records, txns, R=None, profits=None):
+    """지난 보고 때 예측과 그 뒤 실제 (사용자 2026-11-12: 기록을 나중 장부와 맞춰 경영관리 보고에 매번).
+
+    · weeks: 보고마다 그날 뒤 4주(통장 자료가 있는 날까지) 예측 입금·출금(확정분·예상 포함) vs 통장 실제
+    · months: 다 끝난 달마다, 그 달 1일 전 가장 늦은 보고의 예측 vs 그 달 통장 실제
+    · profit: 지난달들에 보고 때 낸 '이번 달 예상 영업이익' vs 지금 장부의 그 달 영업이익
+    차이 = 실제 − 예측 (입금 + 면 더 들어옴, 출금 + 면 더 나감)."""
+    last = max([t["date"] for t in txns or []] or [None]) if txns else None
+    out = {"weeks": [], "months": [], "profit": [], "last_txn": last}
+    if records and last:
+        first = min(t["date"] for t in txns)   # 통장 자료가 처음부터 덮는 기간만 견준다 (덜 덮이면 실제가 작게 나옴)
+        recs = sorted((d0, ev) for d0, ev in records if first <= d0 < last)
+        for d0, ev in recs[-TRACK_ROWS:][::-1]:
+            to = min(d0 + dt.timedelta(weeks=TRACK_WEEKS), last)
+            out["weeks"].append(dict(_cmp(ev, txns, d0, to), made=d0, to=to, part=to < d0 + dt.timedelta(weeks=TRACK_WEEKS)))
+        if recs:
+            y, m = recs[0][0].year, recs[0][0].month
+            while True:
+                m += 1
+                if m == 13:
+                    y, m = y + 1, 1
+                start = dt.date(y, m, 1)
+                end = dt.date(y + (m == 12), m % 12 + 1, 1) - DAY
+                if end > last:
+                    break
+                before = [r for r in recs if r[0] < start]
+                if before and first < start:
+                    d0, ev = before[-1]
+                    out["months"].append(dict(_cmp(ev, txns, start - DAY, end), ym="%04d-%02d" % (y, m), made=d0))
+        out["months"] = out["months"][::-1][:TRACK_ROWS]
+    if R is not None and profits:
+        cur = R["asof"].strftime("%Y-%m")
+        latest = {}
+        for d0, ym, fc in sorted(profits):
+            if ym < cur and fc is not None:
+                latest[ym] = (d0, fc)
+        for ym in sorted(latest, reverse=True)[:TRACK_ROWS]:
+            d0, fc = latest[ym]
+            out["profit"].append({"ym": ym, "made": d0, "forecast": fc, "actual": booked_profit(R, ym)})
+    return out
+
+
+def load_records(out_dir, keep_days=400):
+    """출력\\자동분석기록\\일정_<기준일>.json 전부 -> [(기준일, 일정 목록)] (오래된 순)."""
+    folder = os.path.join(out_dir, RECORD_DIR)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        m = re.match(r"^일정_(\d{4}-\d{2}-\d{2})\.json$", n)
+        if not m:
+            continue
+        try:
+            with open(os.path.join(folder, n), encoding="utf-8") as f:
+                x = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(x, list):
+            out.append((dt.date.fromisoformat(m.group(1)), x))
+    out.sort()
+    if out:
+        cut = out[-1][0] - dt.timedelta(days=keep_days)
+        out = [r for r in out if r[0] >= cut]
+    return out
+
+
 def compute(R, facts=None, invoices=None, prev_events=None):
     return {
         "reasons": change_reasons(prev_events, R),
@@ -584,6 +718,7 @@ def compute(R, facts=None, invoices=None, prev_events=None):
         "delay": delay_risk(R),
         "missing": missing_entries(R, facts),
         "issue": issue_deadline(R),
+        "track": forecast_track(R.get("auto_records"), R.get("_txns"), R, R.get("auto_profits")),
         "has_facts": bool(facts),
         "has_prev": prev_events is not None,
     }
@@ -599,7 +734,35 @@ def write_record(out_dir, R):
     path = os.path.join(folder, "일정_%s.json" % R["asof"].isoformat())
     with open(path, "w", encoding="utf-8") as f:
         json.dump(events_for_record(R), f, ensure_ascii=False)
+    try:   # 이번 달 예상 영업이익도 남긴다: 나중 장부와 견줌 (사용자 2026-11-12)
+        M = month_forecast(R)
+    except Exception:
+        M = None
+    if M and M.get("forecast") is not None:
+        with open(os.path.join(folder, "예측_%s.json" % R["asof"].isoformat()), "w", encoding="utf-8") as f:
+            json.dump({"ym": M["ym"], "profit": M["forecast"]}, f, ensure_ascii=False)
     return path
+
+
+def load_profit_forecasts(out_dir):
+    """출력\\자동분석기록\\예측_<기준일>.json -> [(기준일, 달, 예상 영업이익)]."""
+    folder = os.path.join(out_dir, RECORD_DIR)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        m = re.match(r"^예측_(\d{4}-\d{2}-\d{2})\.json$", n)
+        if not m:
+            continue
+        try:
+            with open(os.path.join(folder, n), encoding="utf-8") as f:
+                x = json.load(f)
+            out.append((dt.date.fromisoformat(m.group(1)), str(x["ym"]), int(x["profit"])))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return sorted(out)
 
 
 def load_previous(out_dir, asof, lookback=14):

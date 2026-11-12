@@ -243,6 +243,9 @@ def build(input_dir, output_dir, asof=None, now=None):
     R["auto_facts"] = insights.read_facts(input_dir)
     R["_invoices"] = d.invoices
     R["auto_prev"] = hist[-1].get("events") if hist else None
+    R["auto_records"] = insights.load_records(output_dir)
+    R["auto_profits"] = insights.load_profit_forecasts(output_dir)
+    R["_txns"] = d.txns
     I, why = insights.for_report(R)
     auto_html = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2><p class='muted'>계산하지 못함 (%s)</p>" % _e(why)
     auto_html = surplus.live_line(RE) + auto_html
