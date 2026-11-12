@@ -33,11 +33,11 @@ OPS = [("고객", "고객에게 받은 행사 대금", "행사를 하고 고객�
        ("이자낸", "대출 이자", "빌린 돈에 대해 은행에 낸 이자입니다."),
        ("이자받", "예금 이자", "정기예금 등에서 받은 이자입니다(이자에서 미리 떼인 세금은 위 세금 줄에 들어감)."),
        ("기타", "그 밖의 작은 금액", "은행 수수료·잡수입 등 작은 금액입니다.")]
-INV = [("정기넣음", "정기예금에 넣은 돈", "당장 쓰지 않을 돈을 정기예금에 옮긴 것입니다. 통장에서는 빠지지만 회사 돈이 없어진 것은 아닙니다."),
-       ("정기찾음", "정기예금에서 찾은 돈", "만기가 되어 다시 통장으로 돌아온 돈입니다."),
+INV = [("정기넣음", "단기금융상품에 넣은 돈", "만기가 3개월 넘는 예금·적금·공제부금에 넣은 돈입니다. 통장에서는 빠지지만 회사 돈이 없어진 것은 아닙니다. (만기 3개월 이내 정기예금은 현금으로 보아 여기 없음)"),
+       ("정기찾음", "단기금융상품에서 찾은 돈", "만기가 3개월 넘는 예금 등이 끝나 통장으로 돌아온 돈입니다."),
        ("보증금", "보증금 맡김·돌려받음", "사무실 등을 빌리며 맡긴 돈입니다. 나가면 돌려받습니다."),
        ("자산", "장비·시설 등 산 돈", "오래 쓰는 물건(비품·차량·시설 등)을 사거나 판 돈입니다."),
-       ("투자기타", "그 밖에 맡기거나 빌려준 돈", "보증금·정기예금 말고 회사 밖에 맡기거나 빌려준 돈입니다.")]
+       ("투자기타", "그 밖에 맡기거나 빌려준 돈", "보증금·예금 말고 회사 밖에 맡기거나 빌려준 돈입니다.")]
 FIN = [("자본", "주주가 넣은 돈 (자본금)", "회사를 세우거나 키우려고 주주가 넣은 돈입니다. 갚지 않아도 되는 돈입니다."),
        ("대출받음", "은행 대출 받음", "은행에서 빌린 돈입니다. 들어왔지만 갚아야 할 돈입니다."),
        ("대출갚음", "대출 원금 갚음", "빌린 돈 중 원금을 갚은 것입니다. 이자는 위 본업 칸에 있습니다."),
@@ -54,6 +54,8 @@ GLOSSARY = [("현금흐름표", "한 기간 동안 통장에 돈이 어디서 �
             ("선급금 (미리 준 돈)", "행사 전에 업체에 먼저 준 계약금. 행사가 끝나면 비용으로 바뀝니다."),
             ("부가세", "고객에게 받은 10%는 나라에 낼 돈이고, 업체에 준 10%는 돌려받을 돈. 둘의 차이를 분기마다 냅니다."),
             ("원천세·4대보험", "급여를 줄 때 미리 떼어 두었다가 다음 달 10일에 내는 세금과 보험료."),
+            ("현금성자산", "통장 돈과 가입할 때 만기가 3개월 이내인 정기예금. 곧 쓸 수 있는 돈이라 현금으로 봅니다."),
+            ("단기금융상품", "만기가 3개월 넘는 정기예금·적금·공제부금. 회사 돈이지만 바로 쓰기 어려워 현금과 따로 봅니다."),
             ("가수금", "회사 통장에 들어왔지만 성격이 정해지지 않은 돈. 이 회사에서는 대표이사가 회사에 잠시 넣어 둔 돈입니다.")]
 ALL_CASH = [k for k, _, _ in OPS + INV + FIN]
 
@@ -140,6 +142,55 @@ def _cash_item(ln, x):
     return "기타"
 
 
+SHORT_DAYS = 92   # 가입할 때 만기 3개월 이내 = 현금성자산 (사용자 2026-11-12, 회계기준)
+
+
+def _is_deposit(ln):
+    n = _sq(ln.get("account"))
+    return "정기예" in n or "적금" in n
+
+
+def deposit_terms(journal):
+    """정기예금 하나(거래처 = '신한260113' 처럼 가입일)마다 가입 → 만기 날수와 현금성 여부.
+    -> {거래처: (날수 또는 None, 현금성 True/False, 근거)}. 적요에 '정기예금'이 없는 것(공제부금·적금)은 현금성이 아님.
+    아직 만기 전이면 지난 정기예금들이 모두 3개월 이내였을 때만 현금성으로 본다 (추정)."""
+    info = collections.defaultdict(lambda: {"join": None, "end": None, "memo": "", "vendor": ""})
+    for ln in journal:
+        if ln.get("date") is None or not _is_deposit(ln):
+            continue
+        v = (ln.get("vendor") or "").strip()
+        e = info[v]
+        e["memo"] += " " + (ln.get("memo") or "")
+        opening = any(w in (ln.get("memo") or "") for w in OPENING)
+        if ln.get("debit") and not opening and (e["join"] is None or ln["date"] < e["join"]):
+            e["join"] = ln["date"]
+        if ln.get("credit") and "만기" in (ln.get("memo") or ""):
+            e["end"] = ln["date"] if e["end"] is None or ln["date"] > e["end"] else e["end"]
+    out = {}
+    for v, e in info.items():
+        if "정기예금" not in e["memo"]:
+            out[v] = (None, False, "정기예금 아님 (공제부금·적금 등)")
+            continue
+        join = e["join"]
+        m = re.search(r"(\d{2})(\d{2})(\d{2})$", v)
+        if join is None and m:   # 작년에 가입한 것: 거래처 이름의 가입일
+            try:
+                join = dt.date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                join = None
+        if join and e["end"]:
+            days = (e["end"] - join).days
+            out[v] = (days, days <= SHORT_DAYS, "가입 %s → 만기 %s" % (join.isoformat(), e["end"].isoformat()))
+        else:
+            out[v] = (None, None, "만기 전")
+    known = [x[1] for x in out.values() if x[0] is not None]
+    guess = bool(known) and all(known)
+    for v, x in list(out.items()):
+        if x[1] is None:
+            out[v] = (None, guess, "만기 전 · 지난 정기예금이 %s" % ("모두 3개월 이내라 현금성으로 추정" if guess else "3개월 넘은 적이 있어 단기금융상품으로 봄"))
+    return out
+
+
 def _memo_item(memo):
     if "카드" in memo:
         return "카드"
@@ -152,7 +203,12 @@ def _memo_item(memo):
 
 def build_rows(journal, cash_codes):
     """분개장 줄 → [(일자, 구분, 항목, 금액)] (날짜·항목별 합). 구분 '현금' = 통장 돈이 오간 이유, '변화' = 계정 묶음 증감(대변 − 차변)."""
-    cash = set(_sq(c) for c in cash_codes)
+    codes = set(_sq(c) for c in cash_codes)
+    terms = deposit_terms(journal)
+    short = set(v for v, x in terms.items() if x[1])
+
+    def is_cash(ln):
+        return _sq(ln.get("account_code")) in codes or (_is_deposit(ln) and (ln.get("vendor") or "").strip() in short)
     slips = collections.defaultdict(list)
     for ln in journal:
         if ln.get("date") is not None:
@@ -160,11 +216,18 @@ def build_rows(journal, cash_codes):
     agg = collections.defaultdict(int)
     for (d, _, _), lines in slips.items():
         if any(w in (ln.get("memo") or "") for ln in lines for w in OPENING):
+            for ln in lines:   # 전기이월이라도 현금성 정기예금 잔액은 이어 받음
+                if is_cash(ln) and _sq(ln.get("account_code")) not in codes:
+                    agg[(d, "현금성", "정기예금")] += (ln.get("debit") or 0) - (ln.get("credit") or 0)
             continue
-        mine = [ln for ln in lines if _sq(ln.get("account_code")) in cash]
+        mine = [ln for ln in lines if is_cash(ln)]
         for ln in lines:   # 변화: 통장 아닌 모든 줄 (간접법)
             code = _sq(ln.get("account_code"))
-            if code in cash:
+            if is_cash(ln):
+                if _sq(ln.get("account_code")) not in codes:   # 현금성 정기예금 잔액 변화 (끝 잔액에 더함)
+                    v = (ln.get("debit") or 0) - (ln.get("credit") or 0)
+                    if v:
+                        agg[(d, "현금성", "정기예금")] += v
                 continue
             v = (ln.get("credit") or 0) - (ln.get("debit") or 0)
             if v:
@@ -175,7 +238,7 @@ def build_rows(journal, cash_codes):
         c = sum((ln.get("debit") or 0) - (ln.get("credit") or 0) for ln in mine)
         att = 0
         for ln in lines:
-            if _sq(ln.get("account_code")) in cash:
+            if is_cash(ln):
                 continue
             x = (ln.get("credit") or 0) - (ln.get("debit") or 0)
             if x:
@@ -185,7 +248,9 @@ def build_rows(journal, cash_codes):
         if res:
             item = _memo_item(" ".join(ln.get("memo") or "" for ln in mine))
             agg[(d, "현금", item or "이체")] += res
-    return sorted((d, g, k, v) for (d, g, k), v in agg.items() if v)
+    for v, (days, sh, why) in terms.items():   # 보고서 '만든 기준'에 보일 정기예금 판정 (금액 칸 = 날수, 모르면 −1)
+        agg[(dt.date(1900, 1, 1), "예금판정", "%s|%s|%s" % (v, "현금성" if sh else "단기금융상품", why))] = days if days is not None else -1
+    return sorted((d, g, k, v) for (d, g, k), v in agg.items() if v or g == "예금판정")
 
 
 def build_table(books, cfg):
@@ -194,7 +259,7 @@ def build_table(books, cfg):
         return Table(FILE, KEYS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
     rows = build_rows(books.journal, cfg["cash_codes"])
     out = [dict(zip(KEYS, [d.isoformat(), g, k, str(int(v))])) for d, g, k, v in rows]
-    days = [r[0] for r in rows]
+    days = [r[0] for r in rows if r[1] in FLOW]
     note = "현금흐름표 자료 %d줄 (%s ~ %s)" % (len(out), min(days).isoformat(), max(days).isoformat()) if days else "현금흐름표 자료 없음"
     return Table(FILE, KEYS, out, notes=[note])
 
@@ -213,6 +278,28 @@ def load(input_dir):
             except (ValueError, TypeError):
                 continue
             out.append((d, (r.get("구분") or "").strip(), (r.get("항목") or "").strip(), v))
+    return out
+
+
+FLOW = ("현금", "변화")
+
+
+def _flow_days(rows):
+    return [d for d, g, _, _ in rows if g in FLOW]
+
+
+def short_balance(rows, upto):
+    """만기 3개월 이내 정기예금(현금성자산) 잔액: upto 날까지 쌓인 변화."""
+    return sum(v for d, g, _, v in rows if g == "현금성" and d <= upto)
+
+
+def deposit_list(rows):
+    """정기예금 판정 [(거래처, 현금성/단기금융상품, 근거, 날수 또는 None)]."""
+    out = []
+    for _, g, k, v in rows:
+        if g == "예금판정":
+            a = (k.split("|") + ["", "", ""])[:3]
+            out.append((a[0], a[1], a[2], v if v >= 0 else None))
     return out
 
 
@@ -242,13 +329,19 @@ def period(rows, lo, hi):
 
 def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
     """경영관리 보고의 현금흐름표 숫자. end_balance = 기간 끝 통장 잔액 (보고서 1장과 같은 값, 정기예금 뺌)."""
-    if not rows:
+    if not rows or not _flow_days(rows):
         return None
     y0 = dt.date(p1.year, 1, 1)
     M, Y = period(rows, p0, p1), period(rows, y0, p1)
-    have = min(d for d, _, _, _ in rows)
+    have = min(_flow_days(rows))
+    short_end = short_balance(rows, p1)   # 현금성 정기예금은 현금에 더함 (통장 ↔ 짧은 예금 이동은 안쪽 이동)
+    if end_balance is not None:
+        end_balance += short_end
+    if start_check is not None:
+        start_check = (start_check[0], start_check[1] + short_balance(rows, p0 - dt.timedelta(days=1)))
     CF = {"p0": p0, "p1": p1, "y0": y0, "label": label, "M": M, "Y": Y, "end": end_balance, "_rows": rows,
-          "year_partial": have > y0, "first_day": have, "start_check": start_check}
+          "year_partial": have > y0, "first_day": have, "start_check": start_check,
+          "short_end": short_end, "deposits": deposit_list(rows)}
     if end_balance is not None:
         CF["start"] = end_balance - M["total"]
         CF["ystart"] = end_balance - Y["total"]
@@ -269,13 +362,14 @@ def annual(rows, year, end_balance, start_balance=None):
     """연간: 1~12월 (또는 자료 있는 마지막 날까지)."""
     if not rows:
         return None
-    last = max(d for d, _, _, _ in rows if d.year == year) if any(d.year == year for d, _, _, _ in rows) else None
-    if last is None:
+    mine = [d for d in _flow_days(rows) if d.year == year]
+    if not mine:
         return None
+    last = max(mine)
     p1 = min(dt.date(year, 12, 31), last) if last.year == year else dt.date(year, 12, 31)
     CF = compute(rows, dt.date(year, 1, 1), p1, end_balance, label="%d년" % year)
     if CF and start_balance is not None and CF.get("ystart") is not None:
-        CF["start_check"] = ("장부 1월 1일 잔액", start_balance)
+        CF["start_check"] = ("장부 1월 1일 잔액", start_balance + short_balance(rows, dt.date(year - 1, 12, 31)))
     CF["annual"] = True
     return CF
 
@@ -639,7 +733,7 @@ def render(CF):
     # 읽는 법
     h.append("<div class='q'>현금흐름표 읽는 법</div><div class='how'>"
              "<div class='card'><div class='t'><span class='k'>1</span>본업</div><div class='d'>행사를 해서 받은 돈과 행사·회사 운영에 쓴 돈. 회사가 스스로 돈을 버는 힘을 보여 줍니다. 여러 달을 묶어 보면 <b>+</b>여야 건강합니다.</div></div>"
-             "<div class='card'><div class='t'><span class='k'>2</span>묶어 둔 돈</div><div class='d'>정기예금·보증금처럼 잠시 맡겨 둔 돈. 통장에선 빠지지만 회사 재산으로 남아 있습니다.</div></div>"
+             "<div class='card'><div class='t'><span class='k'>2</span>묶어 둔 돈</div><div class='d'>만기 3개월 넘는 예금·보증금처럼 잠시 맡겨 둔 돈. 통장에선 빠지지만 회사 재산으로 남아 있습니다.</div></div>"
              "<div class='card'><div class='t'><span class='k'>3</span>빌리고 갚은 돈</div><div class='d'>대출 받기·갚기, 대표이사 돈 받기·돌려드리기. 들어와도 <b>번 돈이 아니라 갚을 돈</b>입니다.</div></div>"
              "</div><div class='note'>세 칸을 더하면 통장 잔액이 늘거나 준 만큼과 정확히 같습니다. <span class='pin'>+초록</span>은 통장에 들어온 돈, <span class='pout'>−빨강</span>은 나간 돈입니다.</div>")
     # 본표
@@ -702,11 +796,11 @@ def render(CF):
              % "".join("<div><b>%s</b>%s</div>" % (esc(a), esc(b)) for a, b in GLOSSARY))
     h.append("<div class='q'>이 표를 만든 기준</div><div class='card'><ul class='lim'>"
              "<li><b>통장</b>은 장부의 보통예금 계좌 전체입니다. 계좌끼리 옮긴 돈은 들어오고 나간 것이 같아 0으로 빠집니다.</li>"
-             "<li><b>정기예금</b>은 통장 밖에 묶어 둔 돈으로 보고 ②에 넣었습니다.</li>"
+             "<li><b>정기예금</b>은 가입할 때 만기가 3개월 이내면 현금(현금성자산)으로 보아 통장 돈에 더했고, 3개월이 넘거나 적금·공제부금이면 ‘단기금융상품’으로 ②에 넣었습니다.%s</li>"
              "<li><b>이자</b>는 일반기업회계기준대로 ① 본업에 넣었습니다(받은 이자·낸 이자 모두).</li>"
              "<li>각 줄은 통장 전표의 상대 계정으로 나눴습니다. 상대 계정이 없는 통장 전표(급여·카드 대금 일부)는 적요로 나눴습니다.</li>"
-             "<li>끝날 때 잔액은 이 보고서 1장의 통장 잔액(정기예금 뺀 금액)이고, 시작 잔액은 거기서 이 기간 흐름을 거꾸로 빼서 구했습니다.</li>"
-             "</ul></div></div>")
+             "<li>끝날 때 잔액은 이 보고서 1장의 통장 잔액(정기예금 뺀 금액)%s이고, 시작 잔액은 거기서 이 기간 흐름을 거꾸로 빼서 구했습니다.</li>"
+             "</ul></div></div>" % (_deposit_text(CF), " + 만기 3개월 이내 정기예금 %s원" % W(CF["short_end"]) if CF.get("short_end") else ""))
     h.append("</div>")
     return "".join(h)
 
@@ -792,9 +886,9 @@ def insights(CF):
     # 7. 정기예금
     dep = P["cash"].get("정기넣음", 0) + P["cash"].get("정기찾음", 0)
     if P["cash"].get("정기넣음") and abs(dep) >= 1_000_000:
-        out.append(("정기예금으로 옮긴 돈이 있습니다",
-                    "%s 정기예금에 %s원을 넣고 %s원을 찾았습니다 (차이 %s%s원)." % (plab, W(-P["cash"].get("정기넣음", 0)), W(P["cash"].get("정기찾음", 0)), "+" if dep > 0 else "", W(dep)),
-                    "정기예금은 통장 잔액에서 빠져 있지만 회사 돈입니다. 급할 때 깰 수 있는지(만기) 확인해 두세요.", "info"))
+        out.append(("단기금융상품(만기 3개월 넘는 예금 등)으로 옮긴 돈이 있습니다",
+                    "%s 단기금융상품에 %s원을 넣고 %s원을 찾았습니다 (차이 %s%s원)." % (plab, W(-P["cash"].get("정기넣음", 0)), W(P["cash"].get("정기찾음", 0)), "+" if dep > 0 else "", W(dep)),
+                    "단기금융상품은 통장 잔액에서 빠져 있지만 회사 돈입니다. 급할 때 깰 수 있는지(만기) 확인해 두세요.", "info"))
     # 8. 월말 잔액 가장 낮았던 달
     if len(months) > 1:
         low = min(months, key=lambda m: m[4])
@@ -1031,6 +1125,14 @@ def _insight_html(CF):
 
 def _card(lab, big, foot):
     return "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>" % (esc(lab), big, esc(foot))
+
+
+def _deposit_text(CF):
+    deps = CF.get("deposits") or []
+    if not deps:
+        return ""
+    return "<br>" + " · ".join("%s: %s%s" % (esc(v), kind, " (%d일)" % days if days is not None else " (%s)" % esc(why))
+                               for v, kind, why, days in deps)
 
 
 def _check_text(CF):
