@@ -540,6 +540,46 @@ def save_depreciation(input_dir, year, amount):
     return corptax.save(input_dir, year, amount)
 
 
+def save_holder(input_dir, name, share, minor, salaried, interest, other, delete=False, dependents=""):
+    """주주 저장·지우기 (사용자 2026-11-12: 배당 권장). -> (동작, 주주 수, 지분율 합)."""
+    from . import dividend
+    return dividend.save(input_dir, name, share, minor, salaried, interest, other, delete, dependents)
+
+
+def question_text(input_dir):
+    """배당 판단 질문 상태 한 줄: 꼭 넣을 값 중 비어 있는 것."""
+    from . import dividend
+    try:
+        CL = dividend.checklist(input_dir)
+    except Exception:
+        return ""
+    miss = [k for k, q, v, need, u in CL if need and u is None]
+    done = sum(1 for k, q, v, need, u in CL if v and k != "주주")
+    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당·감면 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
+
+
+def holder_settings(input_dir):
+    from . import dividend
+    try:
+        return dividend.read_settings(input_dir)
+    except Exception:
+        return {}
+
+
+def save_holder_settings(input_dir, values):
+    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12)."""
+    from . import dividend
+    return dividend.save_settings(input_dir, values, strict=True)
+
+
+def holder_text(input_dir):
+    from . import dividend
+    try:
+        return dividend.text(input_dir)
+    except Exception:   # 창이 멈추지 않게
+        return ""
+
+
 def save_budget_values(input_dir, year, items):
     """내년 예산 값 저장 (사용자 2026-11-10). items = [(구분, 대상, 값)]."""
     from . import budget

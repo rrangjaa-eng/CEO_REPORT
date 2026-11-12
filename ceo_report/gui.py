@@ -6,7 +6,7 @@
 구성 (사용자 2026-11-05: 쓰기 편하게 다시 꾸미기, 목업 mockups/창_새구성):
 - 맨 위: 기준일·출금일·가용자금 볼 날짜 (두 탭이 같이 씀, 요일·형식 오류를 바로 보임, 달력 단추)
 - 탭 '이번 주 할 일': 1 자료 모으기 → 2 변환하고 확인 → 3 보고 만들기 (단계마다 상태, 지금 할 차례 강조)
-- 탭 '가끔 넣는 값': 지급·입금 예정, 통장 잔액, 카드 납부일, 이체 파일, 거래처 계좌, 팀 목표, 감가상각비
+- 탭 '가끔 넣는 값': 지급·입금 예정, 통장 잔액, 카드 납부일, 이체 파일, 거래처 계좌, 팀 목표, 감가상각비, 내년 예산, 주주
 - 오른쪽: 자료가 얼마나 최신인가 + 진행 상황 (결과 한 줄, 만든 보고 열기 단추)
 상태 계산은 winstate.py (tkinter 없이 시험).
 """
@@ -130,6 +130,7 @@ class Window(object):
         style.configure("Bad.TLabel", foreground=C["red"], font=F["small"], background=C["bg"])
         style.configure("Day.TLabel", foreground=C["sub"], font=F["small"], background=C["bg"])
         style.configure("Sec.TLabel", font=F["sec"], background=C["card"])
+        style.configure("Need.TLabel", foreground=C["red"], background=C["card"])
         style.configure("Big.TButton", font=F["big"], padding=(12, 7))
         style.configure("Tiny.TButton", padding=(1, 0))
         style.configure("Sec.TLabelframe", background=C["card"])
@@ -542,6 +543,44 @@ class Window(object):
         self._btn(r, "예산 확정", self.confirm_budget)
         self.budget_now = tk.StringVar(value=app.budget_text(self.paths.input, self.b_year.get()))
         self._hint(f, "", self.budget_now, wrap=430)
+
+        # 주주 (사용자 2026-11-12: 대표 근로소득을 고려한 배당 권장, 주주 3명 중 2명 미성년자)
+        f = self.f_sh = self._card(tab, "주주 (배당 계산)", "월간 경영관리 보고 이익잉여금 장에 쓰임", 4, 0)
+        f.grid(columnspan=2)
+        r = self._row(f)
+        self.h_name, self.h_share, self.h_int, self.h_other = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.h_minor, self.h_wage = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
+        ttk.Label(r, text="이름").pack(side="left")
+        e_n = ttk.Entry(r, textvariable=self.h_name, width=8)
+        e_n.pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="지분율(%)").pack(side="left")
+        e_s = ttk.Entry(r, textvariable=self.h_share, width=5)
+        e_s.pack(side="left", padx=(3, 8))
+        ttk.Checkbutton(r, text="미성년자", variable=self.h_minor).pack(side="left", padx=(0, 6))
+        ttk.Checkbutton(r, text="회사 급여 받음", variable=self.h_wage).pack(side="left", padx=(0, 8))
+        ttk.Label(r, text="다른 금융소득(연)").pack(side="left")
+        e_i = ttk.Entry(r, textvariable=self.h_int, width=11)
+        e_i.pack(side="left", padx=(3, 8))
+        self._amount(e_i, self.h_int)
+        ttk.Label(r, text="그 밖의 소득(연)").pack(side="left")
+        e_o = ttk.Entry(r, textvariable=self.h_other, width=11)
+        e_o.pack(side="left", padx=(3, 8))
+        self._amount(e_o, self.h_other)
+        self.h_dep = tk.StringVar()
+        ttk.Label(r, text="공제 인원(본인 포함)").pack(side="left")
+        e_d = ttk.Entry(r, textvariable=self.h_dep, width=3)
+        e_d.pack(side="left", padx=(3, 8))
+        self._btn(r, "저장", self.save_holder)
+        self._btn(r, "지우기", lambda: self.save_holder(delete=True))
+        self._enter((e_n, e_s, e_i, e_o, e_d), self.save_holder)
+        self.sh_now = tk.StringVar(value=app.holder_text(self.paths.input))
+        self._hint(f, "", self.sh_now, wrap=900)
+        # 배당 판단 전 확인 질문 (사용자 2026-11-12: 필요한 값은 체크리스트로 먼저 넣게, 오차가 작게 꼼꼼히).
+        # 질문이 많아 창 한 화면 규칙을 지키려고 따로 여는 창에서 받는다.
+        r = self._row(f, pady=(6, 0))
+        self._btn(r, "배당 판단 질문 열기", self.open_questions)
+        self.q_now = tk.StringVar(value=app.question_text(self.paths.input))
+        ttk.Label(r, textvariable=self.q_now, style="S.TLabel").pack(side="left", padx=(8, 0))
 
     # ───────────── 오른쪽: 자료 상태 · 진행 ─────────────
     def _side(self, side):
@@ -1319,6 +1358,92 @@ class Window(object):
                                    "나중에 값을 바꾸고 다시 확정하면 새 숫자로 바뀝니다." % y, parent=self.root):
             return
         self.start("예산확정")
+
+    def open_questions(self):
+        """배당 판단 전 질문 창: ★ 꼭 넣을 값, 나머지는 비우면 기본값·장부 값을 씀."""
+        from . import dividend
+        if getattr(self, "q_win", None) is not None and self.q_win.winfo_exists():
+            self.q_win.lift()
+            return
+        w = self.q_win = tk.Toplevel(self.root)
+        w.title("배당 판단 질문")
+        w.transient(self.root)
+        body = ttk.Frame(w, style="Card.TFrame", padding=(14, 10, 14, 10))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="★ 는 꼭 넣어야 판단합니다. 나머지는 비우면 [ ] 안 기본값이나 장부 값을 씁니다.",
+                  style="S.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        cur = app.holder_settings(self.paths.input)
+        self.q_vars, self.q_labs, row, group = {}, {}, 1, None
+        for k, g, q, kind, opts, dflt, need in dividend.QUESTIONS:
+            if g != group:
+                group = g
+                ttk.Label(body, text=g, style="Sec.TLabel").grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 2))
+                row += 1
+            v = tk.StringVar(value=cur.get(k) or (dflt if kind == "choice" and dflt else ""))
+            self.q_vars[k] = v
+            lab = self.q_labs[k] = ttk.Label(body, text=("★ " if need else "   ") + q.strip() + (" [%s]" % dflt if dflt else ""))
+            lab.grid(row=row, column=0, sticky="w", padx=(12 if q.startswith(" ") else 0, 8), pady=1)
+            v.trace_add("write", lambda *_: self._mark_questions())
+            if kind == "choice":
+                ttk.Combobox(body, textvariable=v, values=("",) + tuple(opts) if not dflt else opts, width=8,
+                             state="readonly").grid(row=row, column=1, sticky="w")
+            else:
+                e = ttk.Entry(body, textvariable=v, width=14)
+                e.grid(row=row, column=1, sticky="w")
+                if kind == "amount":
+                    self._amount(e, v)
+            row += 1
+        self.q_msg = tk.StringVar()
+        ttk.Label(body, textvariable=self.q_msg, style="S.TLabel", wraplength=560).grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        b = ttk.Frame(body, style="Card.TFrame")
+        b.grid(row=row + 1, column=0, columnspan=2, sticky="e", pady=(8, 0))
+        self._btn(b, "저장", self.save_questions)
+        self._btn(b, "닫기", w.destroy)
+        self._mark_questions()
+
+    def _mark_questions(self):
+        """꼭 넣을 값 중 빈 칸은 빨간 글씨 (답에 따라 필요한 칸 포함)."""
+        from . import dividend
+        st = dict((k, v.get().strip()) for k, v in self.q_vars.items())
+        need = set(k for k, _, _, _, _, dflt, n in dividend.QUESTIONS if n and not dflt)
+        for (k, val), more in dividend.NEEDS_IF.items():
+            if st.get(k) == val:
+                need.update(more)
+        for k, lab in self.q_labs.items():
+            lab.configure(style="Need.TLabel" if k in need and not st.get(k) else "TLabel")
+        left = sum(1 for k in need if not st.get(k))
+        if getattr(self, "q_msg", None) is not None:
+            self.q_msg.set("빨간 칸 %d개를 넣어야 저장됩니다." % left if left else "모두 넣었습니다 — 저장을 누르세요.")
+
+    def save_questions(self):
+        try:
+            cur = app.save_holder_settings(self.paths.input, dict((k, v.get()) for k, v in self.q_vars.items()))
+        except (ValueError, OSError) as e:
+            msg = "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__))
+            self.q_msg.set(msg)
+            self.say(msg)
+            return
+        self.q_now.set(app.question_text(self.paths.input))
+        self.q_msg.set("저장됨 — " + self.q_now.get())
+        self.say("배당 판단 질문 저장 (%d개) — 다음 월간 보고부터 반영" % len(cur))
+        self._flash(self.f_sh, "질문 저장됨", lambda: "월간 경영관리 보고 이익잉여금 장에 쓰임")
+
+    def save_holder(self, delete=False):
+        try:
+            action, n, total = app.save_holder(self.paths.input, self.h_name.get(), self.h_share.get(), self.h_minor.get(),
+                                               self.h_wage.get(), self.h_int.get(), self.h_other.get(), delete,
+                                               self.h_dep.get())
+        except (ValueError, OSError) as e:
+            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            return
+        self.say("주주 %s: %s — %d명, 지분율 합 %g%% · 다음 월간 보고부터 배당 권장에 반영" % (action, self.h_name.get().strip(), n, total))
+        self.sh_now.set(app.holder_text(self.paths.input))
+        for v in (self.h_name, self.h_share, self.h_int, self.h_other, self.h_dep):
+            v.set("")
+        self.q_now.set(app.question_text(self.paths.input))
+        self.h_minor.set(False)
+        self.h_wage.set(False)
+        self._flash(self.f_sh, "%s됨" % action, lambda: "월간 경영관리 보고 이익잉여금 장에 쓰임")
 
     def save_dep(self):
         try:

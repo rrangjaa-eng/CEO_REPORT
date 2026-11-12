@@ -269,6 +269,8 @@ def compute(input_dir, year, settings=None, D=None):
     A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"])
     if A["cfs"]:
         A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
+    from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
+    A["re"] = surplus.for_report(input_dir, year)
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
@@ -938,4 +940,7 @@ def _detail(A):
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12: 연간 누적으로도). 경영관리용에만
     d.append("<h2 id='d7'>7. 현금흐름표</h2>" + cashflow.render(A.get("cfs")))
     cut("d7", "7. 현금흐름표")
+    from . import surplus
+    d.append("<h2 id='d8'>8. 이익잉여금처분계산서</h2>" + surplus.render(A.get("re")))
+    cut("d8", "8. 이익잉여금처분계산서")
     return out

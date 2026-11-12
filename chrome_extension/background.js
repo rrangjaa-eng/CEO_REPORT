@@ -7,6 +7,7 @@ const SCREEN = {"분개장": "SABK0113", "자금계획": "SAFM0102"};
 const PLAN_COLUMNS = ["date", "yn_inout", "cd_fitem", "nm_fitem", "cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
 let pending = null;   // 분개장: {kind, tabId, resolve, timer}
 let planRun = null;   // 자금계획: {tabId, resolve, timer}
+let closingRun = null;   // 결산 자료: {tabId, got: [{path, data}], screen, code}
 
 const pad = (n) => String(n).padStart(2, "0");
 function stamp(d = new Date()) {
@@ -126,6 +127,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await chrome.storage.local.set({status});
     })();
     return;
+  }
+  if (msg.type === "closingCaptured") {
+    if (closingRun && sender.tab && closingRun.tabId === sender.tab.id) closingRun.got.push({path: msg.path, data: msg.data});
+    return;
+  }
+  if (msg.type === "collectClosing") {
+    collectClosing().then(reply, (e) => reply({error: String(e.message || e)}));
+    return true;
   }
   if (msg.type === "openSaver") { openSaver(); return; }
   if (msg.type === "collectNow") {
@@ -281,6 +290,37 @@ async function collectAll(months) {
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
   return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
+}
+
+// 결산 자료 받기 (사용자 2026-11-12): 위하고에서 지금 열려 있는 결산 화면(재무상태표·이익잉여금처분계산서·고정자산 등)에서
+// [조회]를 한 번 누르고 15초 동안 온 응답을 원본 그대로 'YYMMDD 결산_<화면이름> 자동수집.json' 으로 저장한다.
+// 화면마다 위하고 내부 주소를 확인한 뒤에는 단추 하나로 세 화면을 차례로 받게 바꾼다. 위하고에서는 [조회]만 누른다 (읽기 전용).
+const CLOSING_MS = 15000;
+async function collectClosing() {
+  if (pending || planRun || closingRun) return {error: "이미 받는 중입니다"};
+  const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  if (!tab || !/^https:\/\/smarta\.wehago\.com\//.test(tab.url || "")) {
+    return {error: "위하고 SmartA 에서 받을 결산 화면(재무상태표 등)을 열고, 연도를 고른 뒤 이 단추를 누르세요."};
+  }
+  closingRun = {tabId: tab.id, got: []};
+  let ack;
+  try { ack = await chrome.tabs.sendMessage(tab.id, {type: "armClosing", ms: CLOSING_MS}); } catch (e) { ack = null; }
+  if (!ack || (ack.v || 0) < 5) {
+    closingRun = null;
+    return {error: "확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"};
+  }
+  if (!ack.ok) { closingRun = null; return {error: "이 화면에서 [조회] 버튼을 찾지 못함"}; }
+  await new Promise((r) => setTimeout(r, CLOSING_MS));
+  const run = closingRun; closingRun = null;
+  if (!run.got.length) return {error: `${ack.screen || "이 화면"}: 응답이 오지 않음 (조회 조건을 고른 뒤 다시 눌러 보세요)`};
+  const name = (ack.screen || ack.code || "화면").replace(/[\\/:*?"<>|\s]+/g, "");
+  const file = {"종류": "결산원본", "형식": 1, "수집시각": "", "화면": ack.screen, "화면코드": ack.code, "응답수": run.got.length, "응답": run.got};
+  const r = await saveFile("결산_" + name, file, JSON.stringify(run.got), {rows: run.got.length, screen: ack.screen});
+  const {closingLog = []} = await chrome.storage.local.get("closingLog");
+  const s = stamp();
+  closingLog.unshift({at: s.iso, screen: ack.screen, code: ack.code, file: r.file || "(바뀐 것 없음)", where: r.where || ""});
+  await chrome.storage.local.set({closingLog: closingLog.slice(0, 6)});
+  return Object.assign(r, {screen: ack.screen});
 }
 
 chrome.runtime.onInstalled.addListener(() => { chrome.alarms && chrome.alarms.clearAll(); });
