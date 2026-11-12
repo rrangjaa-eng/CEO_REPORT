@@ -16,7 +16,7 @@ from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 
-WEEK = ["sum", "ev", "risk", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+WEEK = ["sum", "ev", "risk", "auto", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]
 
 
 def area_ids(page):

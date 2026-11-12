@@ -25,6 +25,7 @@ from tkinter import messagebox, ttk
 from . import app, checklist, credstore, editmode, winstate
 
 TITLE = "대표 보고"
+AUTO_CHECK_MS = 30000   # 새 자료 확인 간격 (창이 켜져 있을 때만)
 
 # 색 (목업과 같게)
 C = {"bg": "#f3f4f6", "card": "#ffffff", "line": "#d7dbe2", "text": "#1f2430", "sub": "#5b6475",
@@ -58,6 +59,7 @@ class Window(object):
         self.buttons = []
         self.hints = []
         self.then = None          # 변환이 끝나면 이어서 할 보고 (주간·월간)
+        self.auto_tried = None    # 자동으로 한 번 돌린 자료 표시 (실패해도 같은 자료로 되풀이하지 않게)
         self.check = None
         self.edit = None
         root.title(TITLE)
@@ -106,6 +108,7 @@ class Window(object):
         root.after(100, self.pump)
         root.after(300, self.refresh_state)
         root.after(500, self.refresh_checks)
+        root.after(AUTO_CHECK_MS, self.watch)
 
     # ───────────── 모양 ─────────────
     def _style(self):
@@ -282,6 +285,11 @@ class Window(object):
         self._btn(s2, "자료 변환", lambda: self.start("변환"), style="Go", full=True)
         self.conv_info = tk.StringVar(value="")
         self._hint(s2, "", self.conv_info)
+        # 새 자료 자동 반영 (사용자 2026-11-12: 분개장·자금계획서가 들어오면 변환·현황·주간·월간 PDF까지)
+        self.auto = tk.BooleanVar(value=winstate.load(self.paths.input).get("auto", True) is not False)
+        ttk.Checkbutton(s2, text="새 자료 오면 자동 반영 (변환·현황·주간·월간 PDF)",
+                        variable=self.auto, command=lambda: winstate.save(self.paths.input, auto=bool(self.auto.get()))
+                        ).pack(anchor="w", pady=(4, 0))
         self._sep(s2, "확인할 것")
         box = tk.Frame(s2, background=C["chk_bg"], highlightbackground=C["chk_line"], highlightthickness=1, padx=8, pady=5)
         box.pack(fill="x", pady=(4, 0))
@@ -334,6 +342,7 @@ class Window(object):
         ttk.Label(r, textvariable=self.merge_info, style="S.TLabel").pack(side="left")
         self._sep(s3, "만든 뒤")
         r = self._row(s3)
+        self._btn(r, "지금 현황", self.open_live)
         self._btn(r, "출력 폴더", lambda: self.open_dir(self.paths.output))
         self._btn(r, "수정 모드", self.edit_report)
         self._btn(r, "근거자료 PDF…", self.pick_evidence)
@@ -834,6 +843,28 @@ class Window(object):
                 return
         self.start(kind)
 
+    def watch(self):
+        """수집\\위하고 에 새 분개장·자금계획서가 들어왔는지 본다 (창이 켜져 있는 동안 AUTO_CHECK_MS 마다)."""
+        try:
+            if self.auto.get() and not self.busy:
+                sig = app.auto_signature(self.paths)
+                if sig and sig != self.auto_tried:
+                    self.auto_tried = sig
+                    self.start("자동")
+        except Exception as e:   # 창이 멈추지 않게
+            self.say("새 자료 확인 중 오류 (%s)" % type(e).__name__)
+        self.root.after(AUTO_CHECK_MS, self.watch)
+
+    def open_live(self):
+        from . import live
+        path = os.path.join(self.paths.output, live.FILE)
+        if not os.path.exists(path):
+            app.build_live(self.paths, self.say, self.asof.get().strip())
+        if os.path.exists(path):
+            open_path(path)
+        else:
+            self.say("지금 현황 화면이 없습니다 — 자료 변환을 먼저 하세요")
+
     def start(self, task, collect=False):
         if self.busy:
             return
@@ -881,7 +912,7 @@ class Window(object):
         if task in ("승인검토", "인트라넷"):
             self.after_collect(rc)
         winstate.remember_run(self.paths.input, task, rc == 0)
-        if task in ("변환", "정합성"):
+        if task in ("변환", "정합성", "자동"):
             self.refresh_checks()
         ok, line = winstate.rc_message(task, rc)
         if task == "정합성":
@@ -889,7 +920,10 @@ class Window(object):
             self.refresh_state()
             self.open_checklist()
             return
-        if rc == 0:
+        if task == "자동":
+            n = sum(1 for f in files if f.lower().endswith(".pdf"))
+            self.say("자동 반영 끝 — 지금 현황과 보고 PDF %d개를 새로 만들었습니다 (출력 폴더)" % n)
+        elif rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
             if pdfs:

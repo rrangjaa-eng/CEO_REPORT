@@ -195,10 +195,15 @@ def freshness(paths, asof):
 def convert_time(input_dir):
     from . import checklist
     _, when = checklist._load_convert_items(input_dir)
+    exact = _mtime(os.path.join(input_dir, checklist.CONVERT_FILE))
     try:
-        return dt.datetime.strptime(when[:16], "%Y-%m-%d %H:%M")
+        t = dt.datetime.strptime(when[:16], "%Y-%m-%d %H:%M")
     except ValueError:
-        return _mtime(os.path.join(input_dir, checklist.CONVERT_FILE))
+        return exact
+    # 기록은 분 단위라, 같은 분에 받은 자료를 '변환 뒤 새 자료'로 잘못 보지 않게 파일을 쓴 정확한 시각을 쓴다 (2026-11-12)
+    if exact is not None and t <= exact < t + dt.timedelta(minutes=1):
+        return exact
+    return t
 
 
 def latest_reports(output_dir):
@@ -213,9 +218,11 @@ def latest_reports(output_dir):
     base = html[: -len("_대표보고.html")]
 
     def best(who, exts=(".pdf", ".html")):
+        from . import pdfname
         for ext in exts:
-            p = "%s_%s%s" % (base, who, ext)
-            if os.path.isfile(p):
+            # PDF 는 이름에 만든 시각이 붙는다 (사용자 2026-11-12): 같은 보고 중 가장 새로 만든 것
+            p = pdfname.newest("%s_%s" % (base, who)) if ext == ".pdf" else "%s_%s%s" % (base, who, ext)
+            if p and os.path.isfile(p):
                 return p
         return None
     # 경영관리용은 HTML 을 먼저: 브라우저에서 영역별로 나눠 보고 골라 인쇄 (사용자 2026-11-11). 전체 PDF 는 같은 폴더에 그대로
@@ -313,7 +320,8 @@ def rc_message(task, rc):
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
                "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다",
-               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 보고부터 '예산 대비'가 붙습니다"}
+               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 보고부터 '예산 대비'가 붙습니다",
+               "자동": "새 자료로 지금 현황·주간·월간 보고를 다시 만들었습니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
     if rc == 2:
         why = "날짜나 입력 파일에 문제가 있습니다. 아래 글의 안내대로 고친 뒤 다시 누르세요"

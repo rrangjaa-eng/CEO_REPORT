@@ -21,6 +21,7 @@ from ceo_report.budget_render import render_budget  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.util import date as parse_date  # noqa: E402
 from ceo_report.util import mask_rrn  # noqa: E402
+from ceo_report import pdfname  # noqa: E402
 
 
 def _say(text):
@@ -87,11 +88,14 @@ def main(argv=None):
             return 7
         made.append(base + ".html")
         if browser:
-            err = 보고서.to_pdf(browser, base + ".html", base + ".pdf")
+            pdf = pdfname.stamped(base)   # 만든 시각을 이름에 (사용자 2026-11-12)
+            err = 보고서.to_pdf(browser, base + ".html", pdf)
             if err:
-                _say("%s — %s" % (err, os.path.basename(base + ".pdf")))
+                _say("%s — %s" % (err, os.path.basename(pdf)))
             else:
-                made.append(base + ".pdf")
+                made.append(pdf)
+                for gone in pdfname.prune(base):
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     Y = B["Y"]
     _say("%d년 예산 %s · 매출 %s · 영업이익 %s" % (year, "확정" if confirmed else "초안", "{:,}".format(Y["rev"]),
                                           "미확인" if Y["op"] is None else "{:,}".format(Y["op"])))

@@ -20,7 +20,7 @@ from .util import date as parse_date
 
 ARCHIVE = "지난자료"
 SCHED_FILE = "자금일정.csv"
-TASKS = ("변환", "주간", "월간", "승인검토", "인트라넷")
+TASKS = ("변환", "주간", "월간", "승인검토", "인트라넷", "자동")
 
 
 def program_dir():
@@ -236,6 +236,8 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
+    if task == "자동":
+        return run_auto(paths, say, asof, pick, payday, group, only)
     try:
         name, argv = task_argv(task, paths, asof, pick, nums, payday, group, only, year)
     except ValueError as e:
@@ -265,7 +267,61 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
         out.flush()
         if name == "승인검토":
             mod.CREDENTIALS = old_cred
+    if task == "변환" and rc == 0:
+        build_live(paths, say, asof)
     return rc, new_files(paths.output, started)
+
+
+def build_live(paths, say, asof=""):
+    """변환 뒤 지금 현황 화면을 새로 쓴다 (사용자 2026-11-12). 실패해도 변환 결과는 그대로 (글로만 알림). -> 경로 또는 None."""
+    from . import live
+    try:
+        path, diff = live.build(paths.input, paths.output, parse_date(asof) if asof else None)
+    except Exception as e:   # 현황 화면 때문에 변환을 실패로 만들지 않는다
+        say("지금 현황 화면을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:150]))
+        return None
+    say("지금 현황 화면 새로 씀 (%s) · 지난 현황 뒤 바뀐 것 %d건" % (os.path.basename(path), len(diff)))
+    for name, a, b in diff[:8]:
+        say("  %s: %s → %s" % (name, "–" if a is None else "{:,}".format(a), "–" if b is None else "{:,}".format(b)))
+    return path
+
+
+AUTO_KINDS = ("분개장", "자금계획서")   # 이 자료가 새로 들어오면 자동으로 변환·보고 (사용자 2026-11-12)
+AUTO_SETTLE_SEC = 20                    # 파일을 다 쓴 뒤 이만큼 지나야 읽는다 (쓰는 중인 파일을 읽지 않게)
+
+
+def auto_signature(paths, now=None):
+    """새 분개장·자금계획서가 들어와 자동으로 돌릴 차례면 그 자료의 표시(받은 시각 글자), 아니면 None.
+
+    마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다."""
+    from . import winstate
+    now = now or dt.datetime.now()
+    src = dict((n, w) for n, w, _ in winstate.sources(paths) if n in AUTO_KINDS)
+    conv = winstate.convert_time(paths.input)
+    new = dict((n, w) for n, w in src.items() if isinstance(w, dt.datetime) and (conv is None or w > conv))
+    if not new or any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()):
+        return None
+    return "|".join("%s %s" % (n, w.strftime("%Y-%m-%d %H:%M:%S")) for n, w in sorted(new.items()))
+
+
+def run_auto(paths, say, asof="", pick="", payday="", group="", only=""):
+    """새 자료 → 변환 → 지금 현황 → 주간·월간 보고 PDF (사용자 2026-11-12 'PDF까지 자동'). -> (종료코드, 새 출력 파일).
+
+    변환이 실패하면 보고는 만들지 않는다. 보고 하나가 실패해도 다른 보고는 만든다 (가장 나쁜 종료코드를 돌려줌)."""
+    say("새 자료가 들어와 자동으로 변환하고 보고를 다시 만듭니다")
+    rc, files = run_task("변환", paths, say, asof=asof)
+    if rc != 0:
+        say("변환이 끝나지 않아 보고는 만들지 않았습니다")
+        return rc, files
+    worst = 0
+    for kind in ("주간", "월간"):
+        say("──── 자동: %s 보고 ────" % kind)
+        r, f = run_task(kind, paths, say, asof=asof, pick=pick, payday=payday, group=group, only=only)
+        files += f
+        if r != 0:
+            say("%s 보고를 만들지 못함 (코드 %s)" % (kind, r))
+            worst = worst or r
+    return worst, list(dict.fromkeys(files))
 
 
 MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' 칸 값 (다음에 열 때 그대로, 사용자 2026-11-05)
