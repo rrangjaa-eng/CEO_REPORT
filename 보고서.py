@@ -370,6 +370,9 @@ def main(argv=None):
         # 월간 8번 'WEHAGO 기준 대조'용 사실 (D-44). 주간 보고는 이 파일을 읽지 않는다. calc.compute 뒤에 붙인다.
         from ceo_report.convert_xchk import load_xchk
         R["xchk"] = load_xchk(a.입력)
+        # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
+        from ceo_report import cashflow
+        R["cf"] = cashflow.for_report(a.입력, R)
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous

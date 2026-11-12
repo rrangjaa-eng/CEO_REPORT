@@ -166,7 +166,7 @@ class TestReport(unittest.TestCase):
         self.assertNotIn("<script", ceo)
         self.assertNotIn("<script", strip_ui(mg))   # 경영관리용은 영역별 보기 장치만 (사용자 2026-11-11)
         self.assertIn("id='anav'", mg)
-        self.assertEqual(re.findall(r"<section class='area' id='a-([^']+)'", mg), ["sum", "risk", "d1", "d2", "d3", "d4", "d5", "d6"])
+        self.assertEqual(re.findall(r"<section class='area' id='a-([^']+)'", mg), ["sum", "risk", "d1", "d2", "d3", "d4", "d5", "d6", "d7"])
         self.assertEqual(mg.count("<div"), mg.count("</div>"))
 
     def test_cli_writes_files(self):

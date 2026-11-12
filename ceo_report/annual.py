@@ -265,6 +265,8 @@ def compute(input_dir, year, settings=None, D=None):
     first = min(bal) if bal else None
     A["bal0"] = ends.get((year - 1, 12), 0 if first and first.year >= year else None)
     A["bal_end"] = next((v for v in reversed(A["bal_m"]) if v is not None), None)
+    from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12): 1월 1일 잔액은 장부(작년 분개장 있을 때)
+    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"])
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
@@ -931,4 +933,7 @@ def _detail(A):
                         W((p["budget"] or 0) - p["paid"])] for p in NX], "pt evt"))
         d.append("<div class='note'>추정 예산 = 사전견적 × (1 − 그 팀 목표 수익률)</div>")
     cut("d6", "6. " + names[5])
+    from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12: 연간 누적으로도). 경영관리용에만
+    d.append("<h2 id='d7'>7. 현금흐름표</h2>" + cashflow.render(A.get("cfs")))
+    cut("d7", "7. 현금흐름표")
     return out

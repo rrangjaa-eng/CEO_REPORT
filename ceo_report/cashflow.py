@@ -1,0 +1,743 @@
+"""현금흐름표 (사용자 2026-11-12 목업: mockups/현금흐름표/). 경영관리 보고에만 싣는다 (대표 보고에는 없음).
+
+- 변환 쪽: build_table(books, cfg) → 현금흐름.csv (날짜마다 ① 통장 돈이 오간 이유별 금액, ② 장부 계정 묶음별 변화).
+- 보고 쪽: load(input_dir) → 줄, compute(rows, p0, p1, end_balance) → 숫자, render(CF) → 경영관리 보고의 한 영역.
+
+방식 (직접법): 통장(보통예금, cfg cash_codes) 줄이 있는 전표에서 상대 계정 줄마다 (대변 − 차변)을 그 줄 때문에 오간 현금으로 본다.
+전표는 차변 = 대변이라 상대 줄을 다 더하면 통장 증감과 원 단위로 같다. 통장 줄만 있는 전표(급여 일부 등)는 적요로 나누고,
+계좌 사이 이체는 들어오고 나간 것이 같아 0이 된다. 전기이월·기초잔액 전표는 넣지 않는다.
+이익 → 현금 맞추기 (간접법): 장부상 이익 + 받을 돈·미리 준 돈·줄 돈·맡아 둔 세금의 변화 = ① 본업 합계. 맞지 않으면 '그 밖의 차이'로 보인다.
+"""
+import collections
+import csv
+import datetime as dt
+import os
+import re
+
+from .util import esc
+
+FILE = "현금흐름.csv"
+KEYS = ["일자", "구분", "항목", "금액"]
+OPENING = ("전기이월", "기초잔액")
+CARD = re.compile(r"^(신한|롯데|비씨|BC|국민|KB|삼성|현대|하나|우리|농협|NH|씨티|IBK|기업)[^_]*_.*\d{4}$")
+
+# (키, 쉬운 이름, 설명) — 목업 승인 문구 (사용자 2026-11-12)
+OPS = [("고객", "고객에게 받은 행사 대금", "행사를 하고 고객사에게서 실제로 통장에 입금받은 돈입니다. 부가세가 포함된 금액입니다."),
+       ("지원금", "정부 지원금", "정부 지원 사업(고용 지원 등)으로 받은 돈입니다."),
+       ("업체", "행사 업체에 보낸 돈", "외주·장소·물품·인력 등 행사 업체에 통장에서 이체한 돈입니다(부가세 포함)."),
+       ("카드", "법인카드 대금", "법인카드로 쓴 돈을 카드사에 갚은 것입니다. 카드는 쓴 날이 아니라 갚는 날 통장에서 나갑니다."),
+       ("급여", "직원 급여", "직원 통장으로 들어간 실수령액입니다. 세금·4대보험을 떼고 남은 금액입니다."),
+       ("프리", "프리랜서·강사 보수", "직원이 아닌 사람에게 일의 대가로 준 돈입니다(사업소득·기타소득)."),
+       ("원천", "4대보험·원천세 납부", "급여에서 떼어 둔 세금·보험료와 회사 부담 보험료를 공단·세무서에 낸 돈입니다."),
+       ("세금", "부가세·법인세 납부", "고객에게 받아 둔 부가세에서 업체에 낸 부가세를 빼고 나라에 낸 돈, 법인세 등입니다."),
+       ("이자낸", "대출 이자", "빌린 돈에 대해 은행에 낸 이자입니다."),
+       ("이자받", "예금 이자", "정기예금 등에서 받은 이자입니다(이자에서 미리 떼인 세금은 위 세금 줄에 들어감)."),
+       ("기타", "그 밖의 작은 금액", "은행 수수료·잡수입 등 작은 금액입니다.")]
+INV = [("정기넣음", "정기예금에 넣은 돈", "당장 쓰지 않을 돈을 정기예금에 옮긴 것입니다. 통장에서는 빠지지만 회사 돈이 없어진 것은 아닙니다."),
+       ("정기찾음", "정기예금에서 찾은 돈", "만기가 되어 다시 통장으로 돌아온 돈입니다."),
+       ("보증금", "보증금 맡김·돌려받음", "사무실 등을 빌리며 맡긴 돈입니다. 나가면 돌려받습니다."),
+       ("자산", "장비·시설 등 산 돈", "오래 쓰는 물건(비품·차량·시설 등)을 사거나 판 돈입니다."),
+       ("투자기타", "그 밖에 맡기거나 빌려준 돈", "보증금·정기예금 말고 회사 밖에 맡기거나 빌려준 돈입니다.")]
+FIN = [("자본", "주주가 넣은 돈 (자본금)", "회사를 세우거나 키우려고 주주가 넣은 돈입니다. 갚지 않아도 되는 돈입니다."),
+       ("대출받음", "은행 대출 받음", "은행에서 빌린 돈입니다. 들어왔지만 갚아야 할 돈입니다."),
+       ("대출갚음", "대출 원금 갚음", "빌린 돈 중 원금을 갚은 것입니다. 이자는 위 본업 칸에 있습니다."),
+       ("대표", "대표이사와 주고받은 돈", "회사가 대표이사에게서 잠시 받아 쓴 돈(가수금)을 받거나 돌려드린 것입니다.")]
+GROUPS = [("이익", "장부상 이익", "매출에서 비용을 뺀 이익입니다. 행사를 끝낸 달에 매출·비용을 잡습니다."),
+          ("받을돈", "아직 못 받은 매출 대금", "매출로 잡았지만 고객이 아직 입금하지 않은 돈(미수금)이 늘면 그만큼 통장 돈은 적습니다. 줄면 그만큼 더 들어온 것입니다."),
+          ("줄돈", "아직 안 준 업체·카드·급여", "비용으로 잡았지만 아직 업체·카드사·직원에게 주지 않은 돈(미지급금·미지급비용)이 늘면 통장 돈은 그만큼 남아 있습니다."),
+          ("선급", "미리 준 돈 정리", "행사 전에 업체에 먼저 준 계약금(선급금)이 늘면 통장 돈이 먼저 나간 것이고, 비용으로 바뀌어 줄면 더해 줍니다."),
+          ("세금예수", "부가세·원천세 맡아 둔 돈", "고객에게 받은 부가세, 급여에서 뗀 세금은 나중에 나라에 낼 돈입니다. 내기 전까지는 통장에 있습니다.")]
+GLOSSARY = [("현금흐름표", "한 기간 동안 통장에 돈이 어디서 들어오고 어디로 나갔는지 정리한 표. 손익계산서가 ‘얼마 벌었나’라면, 현금흐름표는 ‘돈이 실제로 얼마 있나’를 봅니다."),
+            ("장부상 이익", "일을 끝낸 시점에 매출과 비용을 잡아 계산한 이익. 돈이 들어오기 전에도 이익이 생길 수 있습니다."),
+            ("미수금 (받을 돈)", "계산서를 발행했거나 일을 끝냈지만 아직 받지 못한 돈."),
+            ("미지급금·미지급비용 (줄 돈)", "비용은 생겼지만 아직 주지 않은 돈. 업체 대금, 카드 대금, 다음 달 5일에 줄 급여 등."),
+            ("선급금 (미리 준 돈)", "행사 전에 업체에 먼저 준 계약금. 행사가 끝나면 비용으로 바뀝니다."),
+            ("부가세", "고객에게 받은 10%는 나라에 낼 돈이고, 업체에 준 10%는 돌려받을 돈. 둘의 차이를 분기마다 냅니다."),
+            ("원천세·4대보험", "급여를 줄 때 미리 떼어 두었다가 다음 달 10일에 내는 세금과 보험료."),
+            ("가수금", "회사 통장에 들어왔지만 성격이 정해지지 않은 돈. 이 회사에서는 대표이사가 회사에 잠시 넣어 둔 돈입니다.")]
+ALL_CASH = [k for k, _, _ in OPS + INV + FIN]
+
+
+def _sq(text):
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _kind(code, name):
+    """계정 → 묶음: 'pl' 손익 · 'cash' · 'inv' · 'fin' · 'ar' · 'ap' · 'pre' · 'tax' · 'other' (그 밖의 영업 자산·부채)."""
+    if "보증금" in name:
+        return "inv"   # 이 회사 임차보증금 코드는 96200 이라 손익 코드 범위와 겹친다
+    if "정기예" in name or "적금" in name:
+        return "inv"
+    if code[:1] in ("4", "5", "6", "7", "8", "9"):
+        return "pl"
+    if code[:1] == "3" or "자본금" in name or "잉여금" in name:
+        return "fin"
+    if "차입금" in name or "가수금" in name or "사채" in name:
+        return "fin"
+    if code.isdigit() and 17900 <= int(code) < 25000:   # 비유동자산 (투자·유형·무형·기타비유동)
+        return "inv"
+    if "대여금" in name or "가지급금" in name or "단기매매" in name or "단기투자" in name:
+        return "inv"
+    if "미수" in name or "외상매출" in name or "받을어음" in name or "선수금" in name:
+        return "ar"
+    if "선급" in name and "세금" not in name:
+        return "pre"
+    if "미지급세금" in name or "법인세" in name or "부가세" in name or "예수금" in name or "선납세금" in name:
+        return "tax"
+    if "미지급" in name or "외상매입" in name or "지급어음" in name:
+        return "ap"
+    return "other"
+
+
+def _cash_item(ln, x):
+    """통장 전표의 상대 줄 하나 → 현금 항목 키. x = 그 줄의 대변 − 차변 (통장에 들어온 돈이면 +)."""
+    code, name, vend = _sq(ln.get("account_code")), _sq(ln.get("account")), _sq(ln.get("vendor"))
+    k = _kind(code, name)
+    if k == "inv":
+        if "정기예" in name or "적금" in name:
+            return "정기넣음" if x < 0 else "정기찾음"
+        if "보증금" in name:
+            return "보증금"
+        if code.isdigit() and 20000 <= int(code) < 24000:
+            return "자산"
+        return "투자기타"
+    if k == "fin":
+        if code[:1] == "3" or "자본금" in name:
+            return "자본"
+        if "가수금" in name:
+            return "대표"
+        return "대출받음" if x > 0 else "대출갚음"
+    if k == "ar" or "수입수수료" in name or "매출" in name:
+        return "고객"
+    if "지원금" in name or "보조금" in name:
+        return "지원금"
+    if "이자비용" in name:
+        return "이자낸"
+    if "이자수익" in name:
+        return "이자받"
+    if "미지급비용" in name or "미지급금" in name:
+        if CARD.match(vend) or "카드" in vend:
+            return "카드"
+        if vend == "직원급여" or "급여" in vend:
+            return "급여"
+        if vend in ("사업소득", "기타소득", "해외연사") or "소득" in vend:
+            return "프리"
+        if "세무서" in vend or "공단" in vend or "구청" in vend or "시청" in vend:
+            return "원천" if "미지급비용" in name else "세금"
+        return "업체"
+    if k == "pre" or k == "ap":
+        return "업체"
+    if "급여" in name or "상여" in name or "퇴직" in name:
+        return "급여"
+    if "부가세" in name or "법인세" in name or "미지급세금" in name or "선납세금" in name:
+        return "세금"
+    if "예수금" in name or "복리후생비_건강" in name or "세금과공과금_연금" in name or "보험료_근로" in name or "보험료_고용" in name:
+        return "원천"
+    if k == "tax":
+        return "세금"
+    if code[:2] in ("61", "62", "63", "64") or "행사" in name or "외주" in name:
+        return "업체"
+    return "기타"
+
+
+def _memo_item(memo):
+    if "카드" in memo:
+        return "카드"
+    if "급여" in memo or "교통통신비" in memo:
+        return "급여"
+    if "계좌이체" in memo or "대체" in memo:
+        return None   # 계좌 사이 이체: 합하면 0
+    return "기타"
+
+
+def build_rows(journal, cash_codes):
+    """분개장 줄 → [(일자, 구분, 항목, 금액)] (날짜·항목별 합). 구분 '현금' = 통장 돈이 오간 이유, '변화' = 계정 묶음 증감(대변 − 차변)."""
+    cash = set(_sq(c) for c in cash_codes)
+    slips = collections.defaultdict(list)
+    for ln in journal:
+        if ln.get("date") is not None:
+            slips[(ln["date"], ln.get("no"), ln.get("sort", ""))].append(ln)
+    agg = collections.defaultdict(int)
+    for (d, _, _), lines in slips.items():
+        if any(w in (ln.get("memo") or "") for ln in lines for w in OPENING):
+            continue
+        mine = [ln for ln in lines if _sq(ln.get("account_code")) in cash]
+        for ln in lines:   # 변화: 통장 아닌 모든 줄 (간접법)
+            code = _sq(ln.get("account_code"))
+            if code in cash:
+                continue
+            v = (ln.get("credit") or 0) - (ln.get("debit") or 0)
+            if v:
+                agg[(d, "변화", {"pl": "이익", "ar": "받을돈", "ap": "줄돈", "pre": "선급", "tax": "세금예수",
+                                "other": "그밖", "inv": "투자", "fin": "재무"}[_kind(code, _sq(ln.get("account")))])] += v
+        if not mine:
+            continue
+        c = sum((ln.get("debit") or 0) - (ln.get("credit") or 0) for ln in mine)
+        att = 0
+        for ln in lines:
+            if _sq(ln.get("account_code")) in cash:
+                continue
+            x = (ln.get("credit") or 0) - (ln.get("debit") or 0)
+            if x:
+                agg[(d, "현금", _cash_item(ln, x))] += x
+                att += x
+        res = c - att
+        if res:
+            item = _memo_item(" ".join(ln.get("memo") or "" for ln in mine))
+            agg[(d, "현금", item or "이체")] += res
+    return sorted((d, g, k, v) for (d, g, k), v in agg.items() if v)
+
+
+def build_table(books, cfg):
+    from .convert import Table
+    if books.state != "ok" or not books.journal:
+        return Table(FILE, KEYS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
+    rows = build_rows(books.journal, cfg["cash_codes"])
+    out = [dict(zip(KEYS, [d.isoformat(), g, k, str(int(v))])) for d, g, k, v in rows]
+    days = [r[0] for r in rows]
+    note = "현금흐름표 자료 %d줄 (%s ~ %s)" % (len(out), min(days).isoformat(), max(days).isoformat()) if days else "현금흐름표 자료 없음"
+    return Table(FILE, KEYS, out, notes=[note])
+
+
+# ───────────── 보고 쪽 ─────────────
+def load(input_dir):
+    path = os.path.join(input_dir, FILE)
+    if not os.path.exists(path):
+        return None
+    out = []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                d = dt.date(*[int(x) for x in (r.get("일자") or "").split("-")])
+                v = int(float(r.get("금액") or 0))
+            except (ValueError, TypeError):
+                continue
+            out.append((d, (r.get("구분") or "").strip(), (r.get("항목") or "").strip(), v))
+    return out
+
+
+def _sum(rows, lo, hi, group):
+    s = collections.defaultdict(int)
+    for d, g, k, v in rows:
+        if g == group and lo <= d <= hi:
+            s[k] += v
+    return s
+
+
+def period(rows, lo, hi):
+    """기간 하나: 현금 항목별 합, 묶음별 합, 맞추기."""
+    c, ch = _sum(rows, lo, hi, "현금"), _sum(rows, lo, hi, "변화")
+    P = {"cash": dict(c), "total": sum(c.values()),
+         "op": sum(c.get(k, 0) for k, _, _ in OPS), "inv": sum(c.get(k, 0) for k, _, _ in INV),
+         "fin": sum(c.get(k, 0) for k, _, _ in FIN), "other": sum(v for k, v in c.items() if k not in ALL_CASH)}
+    # '기타'·'이체' 처럼 목록 밖 키는 본업 '그 밖' 줄로 (이체는 보통 0)
+    P["op"] += P["other"]
+    P["cash"]["기타"] = c.get("기타", 0) + sum(v for k, v in c.items() if k not in ALL_CASH)
+    rec = dict((k, ch.get(k, 0)) for k, _, _ in GROUPS)
+    # 변화 = 대변 − 차변 이라 그대로 현금 쪽 부호다 (자산이 늘면 −, 부채가 늘면 +, 이익이면 +)
+    rec["그밖"] = P["op"] - sum(rec[k] for k, _, _ in GROUPS)
+    P["rec"] = rec
+    return P
+
+
+def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
+    """경영관리 보고의 현금흐름표 숫자. end_balance = 기간 끝 통장 잔액 (보고서 1장과 같은 값, 정기예금 뺌)."""
+    if not rows:
+        return None
+    y0 = dt.date(p1.year, 1, 1)
+    M, Y = period(rows, p0, p1), period(rows, y0, p1)
+    have = min(d for d, _, _, _ in rows)
+    CF = {"p0": p0, "p1": p1, "y0": y0, "label": label, "M": M, "Y": Y, "end": end_balance,
+          "year_partial": have > y0, "first_day": have, "start_check": start_check}
+    if end_balance is not None:
+        CF["start"] = end_balance - M["total"]
+        CF["ystart"] = end_balance - Y["total"]
+    months = []
+    if end_balance is not None:
+        b = CF["ystart"]
+        for m in range(1, p1.month + 1):
+            lo = dt.date(p1.year, m, 1)
+            hi = min(p1, (dt.date(p1.year + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)))
+            f = period(rows, lo, hi)
+            b += f["total"]
+            months.append((m, f["op"], f["inv"], f["fin"], b))
+    CF["months"] = months
+    return CF
+
+
+def annual(rows, year, end_balance, start_balance=None):
+    """연간: 1~12월 (또는 자료 있는 마지막 날까지)."""
+    if not rows:
+        return None
+    last = max(d for d, _, _, _ in rows if d.year == year) if any(d.year == year for d, _, _, _ in rows) else None
+    if last is None:
+        return None
+    p1 = min(dt.date(year, 12, 31), last) if last.year == year else dt.date(year, 12, 31)
+    CF = compute(rows, dt.date(year, 1, 1), p1, end_balance, label="%d년" % year)
+    if CF and start_balance is not None and CF.get("ystart") is not None:
+        CF["start_check"] = ("장부 1월 1일 잔액", start_balance)
+    CF["annual"] = True
+    return CF
+
+
+def for_report(input_dir, R):
+    """월간 보고 R → 현금흐름표 숫자. 끝 잔액 = 1장 계좌 잔액 합(정기예금 줄 뺌, 잔액 모르는 계좌가 있으면 None)."""
+    rows = load(input_dir)
+    if not rows:
+        return None
+    p0, p1 = R["period"]
+    s1 = R.get("s1") or {}
+    accts = [a for a in s1.get("accounts") or [] if not str(a.get("account", "")).startswith("정기예금")]
+    end = None
+    if accts and all(a.get("balance") is not None for a in accts):
+        end = sum(a["balance"] for a in accts)
+    chk = None
+    if s1.get("start_bank") is not None and not any(str(a.get("account", "")).startswith("정기예금") for a in s1.get("accounts") or []):
+        chk = ("%s 은행 잔액" % _md(p0), s1["start_bank"])
+    label = "%d월" % p1.month if p0.day == 1 and p0.month == p1.month else "이번 기간"
+    return compute(rows, p0, p1, end, chk, label)
+
+
+# ───────────── 그리기 ─────────────
+CSS = """<style>
+.cfx .pin{color:var(--in);font-weight:700}.cfx .pout{color:var(--out);font-weight:700}.cfx .z{color:var(--sub)}
+.cfx table.cf{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.cfx table.cf th{font-size:11.5px;color:var(--sub);font-weight:700;text-align:right;padding:4px 8px;border-bottom:1.5px solid var(--ink)}
+.cfx table.cf th:first-child{text-align:left}
+.cfx table.cf tr{break-inside:avoid}
+.cfx table.cf td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:right;white-space:nowrap}
+.cfx table.cf td:first-child{text-align:left;white-space:normal}
+.cfx table.cf td .ex{display:block;font-size:10.8px;color:var(--sub);font-weight:400;line-height:1.45;margin-top:1px}
+.cfx table.cf td .nm{font-weight:700}
+.cfx table.cf tr.xgh td{background:var(--soft);border-top:2px solid var(--ink);border-bottom:1px solid var(--ink);padding-top:7px}
+.cfx table.cf tr.xgh td .gt{font-size:13.5px;font-weight:800}
+.cfx table.cf tr.xgh td .acc{font-size:10.5px;color:var(--sub);font-weight:600;margin-left:6px}
+.cfx table.cf tr.xst td{font-weight:800;border-bottom:1.5px solid var(--ink)}
+.cfx table.cf tr.xbal td{font-weight:800;font-size:13.5px;background:var(--soft);border-top:2px solid var(--ink)}
+.cfx table.cf tr.xchk td{font-size:11px;color:var(--sub);border-bottom:none}
+.cfx .how{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0 2px}
+.cfx .how .card{padding:8px 10px}.cfx .how .t{font-weight:800;font-size:13px;margin-bottom:3px}.cfx .how .d{font-size:11.2px;color:var(--sub);line-height:1.5}
+.cfx .how .k{display:inline-block;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;text-align:center;font-size:12px;line-height:20px;margin-right:6px}
+.cfx .say{font-size:12.6px;line-height:1.65;padding:8px 12px;border-left:4px solid var(--accent);background:var(--soft);border-radius:4px;margin:8px 0}
+.cfx .gl{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:11.6px;line-height:1.55}
+.cfx .gl div b{display:block;font-size:12.4px}
+.cfx .lim{font-size:11px;color:var(--sub);line-height:1.6;margin:0;padding-left:18px}.cfx .lim li{margin:2px 0}
+.cfx table.mo{width:100%;border-collapse:collapse;font-size:10.6px;font-variant-numeric:tabular-nums;table-layout:fixed}
+.cfx table.mo th,.cfx table.mo td{padding:3px 2px;text-align:right;border-bottom:1px solid var(--line)}
+.cfx table.mo th:first-child,.cfx table.mo td:first-child{text-align:left;width:92px}
+.cfx table.mo th{color:var(--sub);border-bottom:1.5px solid var(--ink)}.cfx table.mo tr.bl td{font-weight:800;border-top:1.5px solid var(--ink)}
+.cfx .dg{padding:10px 12px}.cfx .dh{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.cfx .dn{font-size:17px;font-weight:800}.cfx .db{font-size:11px;color:var(--sub)}
+.cfx .sgs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}.cfx .sg{border:1px solid var(--line);border-radius:6px;padding:6px 8px;text-align:center}
+.cfx .sg .l{font-size:11.5px;color:var(--sub);font-weight:700}.cfx .sg .v{font-size:22px;font-weight:800;line-height:1.2}.cfx .sg .w{font-size:11px;color:var(--sub)}
+.cfx .dw{font-size:13px;font-weight:700;margin:4px 0}.cfx .dy{font-size:11.8px;line-height:1.6;margin:4px 0;padding-left:18px}
+.cfx .il{font-size:11.6px;line-height:1.55}
+.cfx .ins{display:grid;grid-template-columns:1fr 1fr;gap:8px}.cfx .ins .card{padding:8px 10px;break-inside:avoid}
+.cfx .ins .it{font-weight:800;font-size:12.8px;margin-bottom:3px}.cfx .ins .ik{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;text-align:center;font-size:11px;line-height:18px;margin-right:6px}
+.cfx .ins .ib{font-size:11.6px;line-height:1.55}.cfx .ins .il{font-size:11px;color:var(--sub);margin-top:3px;line-height:1.5}
+@media (max-width:700px){.cfx .how,.cfx .gl,.cfx .ins{grid-template-columns:1fr}}
+@media print{.cfx .cfpg{break-before:page}}
+</style>"""
+
+
+def W(v):
+    return "—" if v is None else ("{:,}".format(v) if v >= 0 else "−{:,}".format(-v))
+
+
+def SW(v):
+    if not v:
+        return "<span class='z'>—</span>"
+    return "<span class='%s'>%s%s</span>" % ("pin" if v > 0 else "pout", "+" if v > 0 else "−", "{:,}".format(abs(v)))
+
+
+def eok(v):
+    a, s = abs(v), "−" if v < 0 else ""
+    if a >= 100_000_000:
+        return s + ("%.1f억" % (a / 1e8)).replace(".0억", "억")
+    if a >= 10_000:
+        return s + "{:,}만".format(int(round(a / 10000)))
+    return s + "{:,}".format(a)
+
+
+def _md(d):
+    return "%d월 %d일" % (d.month, d.day)
+
+
+def _waterfall(steps, end_label, W_=1000, H=300):
+    vals, run = [], 0
+    for lab, v, kind in steps:
+        if kind == "start":
+            vals.append((lab, 0, v, "start"))
+            run = v
+        else:
+            vals.append((lab, run, run + v, "up" if v >= 0 else "down"))
+            run += v
+    vals.append((end_label, 0, run, "end"))
+    lo = min(0, min(min(a, b) for _, a, b, _ in vals))
+    hi = max(0, max(max(a, b) for _, a, b, _ in vals))
+    if hi == lo:
+        hi = lo + 1
+    pt, pb, pl = 26, 70, 10
+    y = lambda v: pt + (hi - v) * (H - pt - pb) / float(hi - lo)
+    n = len(vals)
+    bw = (W_ - 2 * pl) / float(n)
+    col = {"start": "#1f3a5f", "end": "#1f3a5f", "up": "#2e8b57", "down": "#c0392b"}
+    s = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="이익에서 현금까지">' % (W_, H),
+         '<line x1="0" x2="%d" y1="%.1f" y2="%.1f" stroke="#9aa3b2"/>' % (W_, y(0), y(0))]
+    for i, (lab, a, b2, k) in enumerate(vals):
+        x, ww = pl + i * bw + bw * 0.16, bw * 0.68
+        top, bot = y(max(a, b2)), y(min(a, b2))
+        s.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" rx="2"/>' % (x, top, ww, max(bot - top, 1.5), col[k]))
+        v = b2 - a if k in ("up", "down") else b2
+        txt = ("+" if k == "up" else "") + eok(v)
+        ty = bot + 14 if (k == "down" or (k in ("start", "end") and v < 0)) else top - 6
+        s.append('<text x="%.1f" y="%.1f" font-size="15" font-weight="700" text-anchor="middle" fill="%s">%s</text>' % (x + ww / 2, ty, col[k], txt))
+        if i < n - 1:
+            s.append('<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="#9aa3b2" stroke-dasharray="3 3"/>'
+                     % (x + ww, pl + (i + 1) * bw + bw * 0.16, y(b2), y(b2)))
+        for j, part in enumerate(lab.split("|")):
+            s.append('<text x="%.1f" y="%.1f" font-size="13" text-anchor="middle" fill="#2b3240">%s</text>' % (x + ww / 2, H - pb + 36 + j * 16, esc(part)))
+    s.append("</svg>")
+    return "".join(s)
+
+
+def _month_bars(months, W_=1000, H=210):
+    vals = [m[1] for m in months]
+    lo, hi = min([0] + vals), max([0] + vals)
+    if hi == lo:
+        hi = lo + 1
+    pt, pb = 22, 44
+    y = lambda v: pt + (hi - v) * (H - pt - pb) / float(hi - lo)
+    bw = W_ / float(max(len(months), 1))
+    s = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="달마다 본업 현금">' % (W_, H),
+         '<line x1="0" x2="%d" y1="%.1f" y2="%.1f" stroke="#9aa3b2"/>' % (W_, y(0), y(0))]
+    for i, (m, op, _, _, _) in enumerate(months):
+        x, ww = i * bw + bw * .2, bw * .6
+        top, bot = y(max(op, 0)), y(min(op, 0))
+        c = "#2e8b57" if op >= 0 else "#c0392b"
+        s.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" rx="2"/>' % (x, top, ww, max(bot - top, 1.5), c))
+        s.append('<text x="%.1f" y="%.1f" font-size="13" font-weight="700" text-anchor="middle" fill="%s">%s</text>'
+                 % (x + ww / 2, top - 5 if op >= 0 else bot + 14, c, ("+" if op > 0 else "") + eok(op)))
+        s.append('<text x="%.1f" y="%d" font-size="13" text-anchor="middle" fill="#2b3240">%d월</text>' % (x + ww / 2, H - 6, m))
+    s.append("</svg>")
+    return "".join(s)
+
+
+def render(CF):
+    """경영관리 보고 한 영역 (HTML 조각). CF = compute()/annual() 결과."""
+    if CF is None:
+        return ("<div class='note'>현금흐름표 자료 없음 — 위하고 분개장을 받아 '자료 변환'을 다시 하면 현금흐름.csv 가 생깁니다.</div>")
+    M, Y, ann = CF["M"], CF["Y"], CF.get("annual")
+    lab = CF["label"]
+    ylab = "%d월~%d월 누적" % (CF["y0"].month, CF["p1"].month)
+    cols = [(lab, M)] if ann else [(lab, M), (ylab, Y)]
+    h = [CSS, "<div class='cfx'>"]
+    end, start, ystart = CF.get("end"), CF.get("start"), CF.get("ystart")
+    # 카드 4개
+    h.append("<div class='four top'>")
+    if ann:
+        h.append(_card("1월 1일 통장 잔액", W(ystart), "한 해가 시작할 때 있던 돈"))
+        h.append(_card("한 해 동안 늘어난·줄어든 돈", SW(M["total"]), "들어온 돈 − 나간 돈"))
+        h.append(_card("%s 통장 잔액" % _md(CF["p1"]), W(end), "보고서 통장 잔액과 같은 값"))
+        h.append(_card("① 본업으로 들어온 현금", SW(M["op"]), "장부상 이익 %s" % W(M["rec"]["이익"])))
+    else:
+        h.append(_card("%s 통장 잔액" % _md(CF["p0"]), W(start), "기간이 시작할 때 있던 돈"))
+        h.append(_card("%s 늘어난·줄어든 돈" % lab, SW(M["total"]), "들어온 돈 − 나간 돈"))
+        h.append(_card("%s 통장 잔액" % _md(CF["p1"]), W(end), "보고서 통장 잔액과 같은 값"))
+        h.append(_card("올해 %s 통장 변화" % ylab.replace(" 누적", ""), SW(Y["total"]), "1월 1일 %s → %s" % (W(ystart), _md(CF["p1"]))))
+    h.append("</div>")
+    # 한 줄 요약 (사실만)
+    r = M["rec"]
+    say = ["<b>%s</b> · 장부상 이익은 <b>%s원</b>, 본업에서 통장으로 들어온 현금은 <b>%s원</b>입니다." % (lab, W(r["이익"]), W(M["op"]))]
+    big = max(((k, v) for k, v in r.items() if k not in ("이익", "그밖")), key=lambda kv: abs(kv[1]), default=None)
+    if big and big[1]:
+        nm = dict((k, n) for k, n, _ in GROUPS)[big[0]]
+        say.append(" 차이가 가장 큰 것은 ‘%s’(%s원)입니다." % (nm, SW(big[1])))
+    if not ann:
+        say.append("<br><b>%s</b> · 장부상 이익 <b>%s원</b>, 본업 현금 <b>%s원</b>, ② 묶어 둔 돈 %s원, ③ 빌리고 갚은 돈 %s원."
+                   % (ylab, W(Y["rec"]["이익"]), W(Y["op"]), SW(Y["inv"]), SW(Y["fin"])))
+    h.append("<div class='say'>%s</div>" % "".join(say))
+    # 읽는 법
+    h.append("<div class='q'>현금흐름표 읽는 법</div><div class='how'>"
+             "<div class='card'><div class='t'><span class='k'>1</span>본업</div><div class='d'>행사를 해서 받은 돈과 행사·회사 운영에 쓴 돈. 회사가 스스로 돈을 버는 힘을 보여 줍니다. 여러 달을 묶어 보면 <b>+</b>여야 건강합니다.</div></div>"
+             "<div class='card'><div class='t'><span class='k'>2</span>묶어 둔 돈</div><div class='d'>정기예금·보증금처럼 잠시 맡겨 둔 돈. 통장에선 빠지지만 회사 재산으로 남아 있습니다.</div></div>"
+             "<div class='card'><div class='t'><span class='k'>3</span>빌리고 갚은 돈</div><div class='d'>대출 받기·갚기, 대표이사 돈 받기·돌려드리기. 들어와도 <b>번 돈이 아니라 갚을 돈</b>입니다.</div></div>"
+             "</div><div class='note'>세 칸을 더하면 통장 잔액이 늘거나 준 만큼과 정확히 같습니다. <span class='pin'>+초록</span>은 통장에 들어온 돈, <span class='pout'>−빨강</span>은 나간 돈입니다.</div>")
+    # 본표
+    h.append("<div class='q'>현금흐름표</div><div class='tw'><table class='cf'><thead><tr><th>항목</th>%s</tr></thead><tbody>"
+             % "".join("<th>%s</th>" % esc(c) for c, _ in cols))
+    for title, acc, desc, items, key, sl in (
+            ("① 본업으로 들어오고 나간 돈", "영업활동 현금흐름", "행사 대행이라는 회사 본업에서 생긴 돈의 흐름", OPS, "op", "① 본업 합계"),
+            ("② 묶어 두거나 찾은 돈", "투자활동 현금흐름", "남는 돈을 맡기거나, 나중에 돌려받을 돈을 맡긴 흐름", INV, "inv", "② 묶어 둔 돈 합계"),
+            ("③ 빌리고 갚은 돈", "재무활동 현금흐름", "회사 밖에서 돈을 빌리거나 갚은 흐름", FIN, "fin", "③ 빌리고 갚은 돈 합계")):
+        h.append("<tr class='xgh'><td colspan='%d'><span class='gt'>%s</span><span class='acc'>%s</span><span class='ex'>%s</span></td></tr>"
+                 % (len(cols) + 1, title, acc, desc))
+        for k, nm, ex in items:
+            vs = [P["cash"].get(k, 0) for _, P in cols]
+            if not any(vs):
+                continue
+            h.append("<tr><td><span class='nm'>%s</span><span class='ex'>%s</span></td>%s</tr>" % (nm, ex, "".join("<td>%s</td>" % SW(v) for v in vs)))
+        h.append("<tr class='xst'><td>%s</td>%s</tr>" % (sl, "".join("<td>%s</td>" % SW(P[key]) for _, P in cols)))
+    h.append("<tr class='xst'><td>통장에 늘어난·줄어든 돈 (① + ② + ③)</td>%s</tr>" % "".join("<td>%s</td>" % SW(P["total"]) for _, P in cols))
+    starts = [ystart] if ann else [start, ystart]
+    h.append("<tr><td>시작할 때 통장 잔액</td>%s</tr>" % "".join("<td>%s</td>" % W(v) for v in starts))
+    h.append("<tr class='xbal'><td>끝날 때 통장 잔액</td>%s</tr>" % "".join("<td>%s</td>" % W(end) for _ in cols))
+    h.append("<tr class='xchk'><td colspan='%d'>%s</td></tr>" % (len(cols) + 1, _check_text(CF)))
+    h.append("</tbody></table></div>")
+    h.append(_diag_html(CF))
+    h.append(_insight_html(CF))
+    # 이익과 현금
+    h.append("<div><div class='sec' style='break-inside:avoid'><div class='q'>이익이 났는데 왜 통장 돈은 다른가요? (%s)</div>" % esc(lab))
+    h.append("<div class='note' style='font-size:12px'>장부상 이익은 ‘일한 만큼’ 계산하고, 통장은 ‘돈이 실제로 오간 만큼’ 움직입니다. "
+             "둘 사이의 차이를 아래처럼 차례로 맞추면 ① 본업 합계와 정확히 같아집니다.</div>")
+    steps = [("장부상 이익", r["이익"], "start"), ("아직 못 받은|매출 대금", r["받을돈"], "d"), ("아직 안 준|업체·카드·급여", r["줄돈"], "d"),
+             ("미리 준 돈|정리", r["선급"], "d"), ("부가세·원천세|맡아 둔 돈", r["세금예수"], "d")]
+    if r["그밖"]:
+        steps.append(("그 밖의|차이", r["그밖"], "d"))
+    h.append("<div class='card'>%s</div></div>" % _waterfall(steps, "① 본업 현금|(%s)" % lab))
+    h.append("<div class='tw'><table class='cf' style='margin-top:8px'><thead><tr><th>맞추는 순서</th>%s</tr></thead><tbody>"
+             % "".join("<th>%s</th>" % esc(c) for c, _ in cols))
+    grp = list(GROUPS) + ([("그밖", "그 밖의 차이", "위 묶음에 들지 않는 장부 계정의 변화입니다. 크면 장부 확인이 필요합니다.")]
+                          if any(P["rec"]["그밖"] for _, P in cols) else [])
+    for i, (k, nm, ex) in enumerate(grp):
+        h.append("<tr><td><span class='nm'>%s</span><span class='ex'>%s</span></td>%s</tr>"
+                 % (nm, ex, "".join("<td>%s</td>" % (W(P["rec"][k]) if i == 0 else SW(P["rec"][k])) for _, P in cols)))
+    h.append("<tr class='xst'><td>= ① 본업으로 들어온 현금</td>%s</tr></tbody></table></div>" % "".join("<td>%s</td>" % SW(P["op"]) for _, P in cols))
+    # 달마다
+    months = CF.get("months") or []
+    if len(months) > 1:
+        h.append("<div class='sec' style='break-inside:avoid'><div class='q'>달마다 본업 현금 (%d월~%d월)</div><div class='card'>%s</div></div>" % (months[0][0], months[-1][0], _month_bars(months)))
+        h.append("<div class='tw'><table class='mo' style='margin-top:6px'><thead><tr><th></th>%s</tr></thead><tbody>"
+                 % "".join("<th>%d월</th>" % m[0] for m in months))
+        for nm, i in (("① 본업", 1), ("② 묶어 둔 돈", 2), ("③ 빌리고 갚은 돈", 3)):
+            h.append("<tr><td>%s</td>%s</tr>" % (nm, "".join("<td>%s</td>" % (eok(m[i]) if m[i] else "—") for m in months)))
+        h.append("<tr class='bl'><td>월말 통장 잔액</td>%s</tr></tbody></table></div>" % "".join("<td>%s</td>" % eok(m[4]) for m in months))
+        h.append("<div class='note'>행사 대금은 행사가 끝나고 한두 달 뒤에 들어오는 일이 많아 본업 현금은 달마다 크게 오르내립니다. "
+                 "여러 달을 묶어 보는 것이 정확합니다. (이 표의 금액은 억·만 원으로 줄여 적음)</div>")
+    h.append("</div>")
+    # 낱말 풀이 · 기준
+    h.append("<div class='cfpg'><div class='q'>낱말 풀이</div><div class='card'><div class='gl'>%s</div></div>"
+             % "".join("<div><b>%s</b>%s</div>" % (esc(a), esc(b)) for a, b in GLOSSARY))
+    h.append("<div class='q'>이 표를 만든 기준</div><div class='card'><ul class='lim'>"
+             "<li><b>통장</b>은 장부의 보통예금 계좌 전체입니다. 계좌끼리 옮긴 돈은 들어오고 나간 것이 같아 0으로 빠집니다.</li>"
+             "<li><b>정기예금</b>은 통장 밖에 묶어 둔 돈으로 보고 ②에 넣었습니다.</li>"
+             "<li><b>이자</b>는 일반기업회계기준대로 ① 본업에 넣었습니다(받은 이자·낸 이자 모두).</li>"
+             "<li>각 줄은 통장 전표의 상대 계정으로 나눴습니다. 상대 계정이 없는 통장 전표(급여·카드 대금 일부)는 적요로 나눴습니다.</li>"
+             "<li>끝날 때 잔액은 이 보고서 1장의 통장 잔액(정기예금 뺀 금액)이고, 시작 잔액은 거기서 이 기간 흐름을 거꾸로 빼서 구했습니다.</li>"
+             "</ul></div></div>")
+    h.append("</div>")
+    return "".join(h)
+
+
+def insights(CF):
+    """이 표로 알 수 있는 것 (사용자 2026-11-12: 현금흐름표를 만들 때마다 그 숫자로 쉬운 말 풀이를 아래에 붙임).
+    -> [(제목, 풀이, 볼 것, 수준)] 수준 'ok'·'warn'·'info'. 숫자에서 나오는 사실과 그래서 확인할 것만 쓴다."""
+    out = []
+    M, Y, ann = CF["M"], CF["Y"], CF.get("annual")
+    P = M if ann else Y            # 여러 달을 묶어 보는 기준 (월간은 올해 누적)
+    plab = CF["label"] if ann else "올해 %d월~%d월" % (CF["y0"].month, CF["p1"].month)
+    lab = CF["label"]
+    r, pr = M["rec"], P["rec"]
+    # 1. 이익이 현금으로 바뀐 정도
+    if pr["이익"] > 0:
+        ratio = P["op"] / float(pr["이익"])
+        if ratio >= 0.8:
+            out.append(("이익이 현금으로 잘 들어오고 있습니다",
+                        "%s 장부상 이익 %s원 중 본업 현금으로 %s원이 들어왔습니다. 이익 100원당 현금 %d원입니다." % (plab, W(pr["이익"]), W(P["op"]), round(ratio * 100)),
+                        "지금처럼 행사 뒤 대금을 제때 받는지 계속 보면 됩니다.", "ok"))
+        else:
+            out.append(("이익만큼 현금이 들어오지 않았습니다",
+                        ("%s 장부상 이익은 %s원인데 본업 현금은 %s원입니다. " % (plab, W(pr["이익"]), W(P["op"])))
+                        + ("이익 100원당 현금 %d원입니다. " % round(ratio * 100) if P["op"] > 0 else "이익은 났는데 본업 현금은 오히려 빠져나갔습니다. ")
+                        + "돈이 아직 다른 곳(주로 받을 돈)에 묶여 있다는 뜻입니다.",
+                        "‘못 받은 매출 대금’ 풀이와 계산서·수금 장의 미수금 목록을 함께 보세요.", "warn"))
+    elif pr["이익"] < 0:
+        out.append(("장부상 손실입니다",
+                    "%s 장부상 이익이 %s원(손실)입니다. 본업 현금은 %s원입니다." % (plab, W(pr["이익"]), W(P["op"])),
+                    "손실이 이어지면 통장 돈이 줄어듭니다. 매출·손익 장의 비용 항목을 보세요.", "warn"))
+    # 2. 받을 돈
+    for nm_, PP in ((lab, M), (plab, P)) if not ann else ((lab, M),):
+        v = PP["rec"]["받을돈"]
+        if v < 0 and abs(v) >= max(abs(PP["rec"]["이익"]) * 0.3, 10_000_000):
+            out.append(("못 받은 매출 대금이 늘었습니다 (%s)" % nm_,
+                        "%s 아직 입금되지 않은 매출 대금이 %s원 늘었습니다. 그만큼 이익은 났지만 통장에는 아직 없습니다." % (nm_, W(-v)),
+                        "입금일이 지난 고객이 있는지 계산서·수금 장에서 확인하세요.", "warn"))
+            break
+        if v > 0 and v >= 10_000_000:
+            out.append(("밀린 대금을 많이 받았습니다 (%s)" % nm_,
+                        "%s 예전에 매출로 잡아 둔 대금 중 %s원이 들어와 받을 돈이 줄었습니다." % (nm_, W(v)),
+                        "이번 기간 현금이 이익보다 많은 이유입니다. 다음 기간에도 같은 수준을 기대하긴 어렵습니다.", "info"))
+            break
+    # 3. 줄 돈이 늘었으면 곧 나갈 돈
+    if r["줄돈"] > 0 and r["줄돈"] >= 10_000_000:
+        out.append(("곧 나갈 돈이 쌓였습니다",
+                    "%s 아직 주지 않은 업체·카드·급여 대금이 %s원 늘었습니다. 이번 통장 잔액에는 이 돈이 아직 남아 있습니다." % (lab, W(r["줄돈"])),
+                    "다음 달 지급 일정(입금·지급 일정 장)에 이 금액이 잡혀 있는지 확인하세요.", "info"))
+    # 4. 본업 연속 마이너스
+    months = CF.get("months") or []
+    run = 0
+    for m in reversed(months):
+        if m[1] < 0:
+            run += 1
+        else:
+            break
+    if run >= 2:
+        out.append(("본업 현금이 %d달 연속 마이너스입니다" % run,
+                    "최근 %d달 동안 본업에서 들어온 돈보다 나간 돈이 많았습니다 (합계 %s원)." % (run, W(sum(m[1] for m in months[-run:]))),
+                    "행사가 몰려 비용이 먼저 나간 것인지, 대금 회수가 늦어진 것인지 받을 돈 변화와 같이 보세요.", "warn"))
+    # 5. 부족한 돈을 무엇으로 메웠나
+    if P["op"] < 0 and P["fin"] > 0:
+        out.append(("본업에서 빠진 돈을 빌린 돈으로 메웠습니다",
+                    "%s 본업 현금은 %s원인데 빌리고 갚은 돈으로 %s원이 들어왔습니다." % (plab, W(P["op"]), W(P["fin"])),
+                    "빌린 돈은 갚을 돈입니다. 대출 만기·상환 일정과 앞으로의 대금 회수를 같이 보세요.", "warn"))
+    elif P["op"] < 0 and P["total"] < 0:
+        out.append(("본업에서 빠진 만큼 통장 돈이 줄었습니다",
+                    "%s 본업 현금 %s원, 통장 잔액은 %s원 줄었습니다." % (plab, W(P["op"]), W(-P["total"])),
+                    "남은 잔액으로 몇 달을 버틸 수 있는지 자금 전망 표를 함께 보세요.", "warn"))
+    elif P["op"] > 0 and P["fin"] < 0:
+        out.append(("번 돈으로 빚을 갚았습니다",
+                    "%s 본업 현금 %s원 중 %s원을 대출·대표이사 돈 갚는 데 썼습니다." % (plab, W(P["op"]), W(-P["fin"])),
+                    "빚이 줄어 이자 부담이 가벼워집니다.", "ok"))
+    # 6. 나간 돈에서 큰 몫
+    outs = [(k, nm, -P["cash"].get(k, 0)) for k, nm, _ in OPS if P["cash"].get(k, 0) < 0]
+    tot_out = sum(v for _, _, v in outs)
+    if tot_out > 0:
+        k, nm, v = max(outs, key=lambda x: x[2])
+        out.append(("본업에서 가장 많이 나간 곳은 ‘%s’입니다" % nm,
+                    "%s 본업으로 나간 돈 %s원 중 %s원(%d%%)이 %s입니다." % (plab, W(tot_out), W(v), round(v * 100.0 / tot_out), nm),
+                    "법인카드 대금이 크면 카드로 먼저 쓰고 나중에 갚는 돈이 많다는 뜻이라, 카드 결제일에 통장 돈이 한꺼번에 빠집니다."
+                    if k == "카드" else "이 항목이 매출과 같은 비율로 움직이는지 달마다 보세요.", "info"))
+    # 7. 정기예금
+    dep = P["cash"].get("정기넣음", 0) + P["cash"].get("정기찾음", 0)
+    if P["cash"].get("정기넣음") and abs(dep) >= 1_000_000:
+        out.append(("정기예금으로 옮긴 돈이 있습니다",
+                    "%s 정기예금에 %s원을 넣고 %s원을 찾았습니다 (차이 %s%s원)." % (plab, W(-P["cash"].get("정기넣음", 0)), W(P["cash"].get("정기찾음", 0)), "+" if dep > 0 else "", W(dep)),
+                    "정기예금은 통장 잔액에서 빠져 있지만 회사 돈입니다. 급할 때 깰 수 있는지(만기) 확인해 두세요.", "info"))
+    # 8. 월말 잔액 가장 낮았던 달
+    if len(months) > 1:
+        low = min(months, key=lambda m: m[4])
+        out.append(("월말 통장 잔액이 가장 낮았던 달은 %d월입니다" % low[0],
+                    "%d월 말 잔액 %s원. 지금(%s 말) 잔액은 %s원입니다." % (low[0], W(low[4]), "%d월" % months[-1][0], W(months[-1][4])),
+                    "행사 대금이 들어오기 전 달에 잔액이 낮아지는지 해마다 같은 때를 비교해 보세요.", "info"))
+    return out
+
+
+# 세 칸 부호 조합 → 회사 상태 (사용자 2026-11-12: 본업·투자·재무를 비교해 지금 상태를 쉬운 말로)
+STATES = {
+    "+--": ("안정형", "ok", "본업으로 번 돈으로 묶어 둘 돈도 마련하고 빚도 갚고 있습니다.",
+            "가장 건강한 모습입니다. 회사가 스스로 번 돈으로 움직입니다."),
+    "+-+": ("확장형", "info", "본업으로 돈을 벌면서, 빌린 돈까지 보태 맡기거나 투자하고 있습니다.",
+            "본업이 받쳐 주는 동안은 괜찮습니다. 빌린 돈의 쓰임과 갚을 일정을 같이 보세요."),
+    "++-": ("정리형", "ok", "본업으로 번 돈에 맡겨 둔 돈까지 찾아 빚을 갚고 있습니다.",
+            "빚이 줄어드는 중입니다. 맡겨 둔 돈이 얼마나 남았는지 보세요."),
+    "+++": ("현금 쌓기형", "info", "본업으로 번 돈, 찾은 돈, 빌린 돈이 모두 통장에 쌓이고 있습니다.",
+            "큰 지출을 앞두고 모으는 것이면 괜찮지만, 이유 없이 빌린 돈이 놀고 있다면 이자만 나갑니다."),
+    "--+": ("빌린 돈 의존형", "warn", "본업에서 돈이 빠져나가고, 그 빈자리를 빌린 돈으로 메우고 있습니다.",
+            "일이 늘며 대금 회수가 늦어질 때 흔한 모습입니다. 못 받은 돈이 제때 들어오는지, 빌린 돈을 언제 갚는지 꼭 확인하세요."),
+    "-++": ("버티기형", "warn", "본업에서 돈이 빠져나가 맡겨 둔 돈을 찾고 돈도 빌려 메우고 있습니다.",
+            "이 상태가 길어지면 쓸 수 있는 돈이 빠르게 줄어듭니다. 대금 회수와 지출 시기를 먼저 점검하세요."),
+    "-+-": ("주의형", "warn", "본업에서 돈이 빠지는데 맡겨 둔 돈을 찾아 빚까지 갚고 있습니다.",
+            "통장 잔액이 빠르게 줄 수 있는 모습입니다. 남은 잔액으로 몇 달을 버틸지 자금 전망과 함께 보세요."),
+    "---": ("잔액 소진형", "warn", "본업·묶어 둔 돈·빌리고 갚은 돈이 모두 마이너스라 통장 잔액으로 버티고 있습니다.",
+            "잔액이 줄어드는 만큼만 버틸 수 있습니다. 대금 회수 일정과 큰 지출을 먼저 확인하세요."),
+}
+SIGN_WORD = {"+": "들어옴", "-": "나감", "0": "거의 없음"}
+
+
+def _sign(v, th):
+    return "+" if v > th else ("-" if v < -th else "0")
+
+
+def diagnose(CF):
+    """세 칸 부호로 지금 상태 판정. 월간은 올해 누적(여러 달), 연간은 그해로 판정하고 이번 기간 조합은 참고로."""
+    ann = CF.get("annual")
+    P = CF["M"] if ann else CF["Y"]
+    gross = sum(abs(v) for v in P["cash"].values()) or 1
+    th = max(1_000_000, gross * 0.005)   # 오간 돈 전체의 0.5% 또는 100만 원보다 작으면 '거의 없음'
+
+    def key(Q):
+        sg = [_sign(Q["op"], th), _sign(Q["inv"], th), _sign(Q["fin"], th)]
+        k = sg[0].replace("0", "+") + sg[1].replace("0", "-") + sg[2].replace("0", "-")
+        return sg, k
+    sg, k = key(P)
+    name, lv, what, look = STATES[k]
+    why = []
+    r = P["rec"]
+    if P["op"] < 0 and r["받을돈"] < 0:
+        why.append("본업이 마이너스인 가장 큰 이유는 아직 못 받은 매출 대금이 %s원 늘었기 때문입니다. 장부상 이익은 %s원입니다." % (W(-r["받을돈"]), W(r["이익"])))
+    elif P["op"] < 0 and r["이익"] < 0:
+        why.append("본업이 마이너스인 이유는 장부상 손실(%s원)입니다." % W(r["이익"]))
+    elif P["op"] > 0:
+        why.append("본업에서 %s원이 들어왔습니다 (장부상 이익 %s원)." % (W(P["op"]), W(r["이익"])))
+    fin_in = P["cash"].get("대출받음", 0) + max(P["cash"].get("자본", 0), 0)
+    if fin_in > 0:
+        why.append("빌리거나 받은 돈 %s원이 들어왔고, 갚은 돈은 %s원입니다." % (W(fin_in), W(-(P["fin"] - fin_in))))
+    elif P["fin"] < 0:
+        why.append("빚·대표이사 돈으로 %s원을 갚았습니다." % W(-P["fin"]))
+    if sg[1] == "0":
+        why.append("묶어 두거나 찾은 돈은 크지 않아(%s원) 판단에 영향이 거의 없습니다." % W(P["inv"]))
+    out = {"name": name, "level": lv, "what": what, "look": look, "signs": sg, "why": why,
+           "basis": CF["label"] if ann else "올해 %d월~%d월 누적" % (CF["y0"].month, CF["p1"].month), "P": P}
+    if not ann:
+        msg, mk = key(CF["M"])
+        out["month"] = (CF["label"], msg, STATES[mk][0])
+    return out
+
+
+def _diag_html(CF):
+    D = diagnose(CF)
+    col = {"ok": "var(--in)", "warn": "var(--out)", "info": "var(--accent)"}[D["level"]]
+    P = D["P"]
+    chips = "".join("<div class='sg'><div class='l'>%s</div><div class='v %s'>%s</div><div class='w'>%s · %s원</div></div>"
+                    % (t, {"+": "pin", "-": "pout", "0": "z"}[s], {"+": "+", "-": "−", "0": "0"}[s], SIGN_WORD[s], W(v))
+                    for t, s, v in zip(("① 본업", "② 묶어 둔 돈", "③ 빌리고 갚은 돈"), D["signs"], (P["op"], P["inv"], P["fin"])))
+    h = ["<div class='q'>지금 회사 상태 (세 칸 비교)</div><div class='card dg' style='border-left:5px solid %s'>" % col,
+         "<div class='dh'><span class='dn' style='color:%s'>%s</span><span class='db'>판정 기준: %s</span></div>" % (col, esc(D["name"]), esc(D["basis"])),
+         "<div class='sgs'>%s</div>" % chips,
+         "<div class='dw'>%s</div>" % esc(D["what"])]
+    if D["why"]:
+        h.append("<ul class='dy'>%s</ul>" % "".join("<li>%s</li>" % esc(x) for x in D["why"]))
+    h.append("<div class='il'><b>그래서</b> %s</div>" % esc(D["look"]))
+    if D.get("month"):
+        lab, sg, nm = D["month"]
+        h.append("<div class='note'>참고: %s 한 달만 보면 본업 %s · 묶어 둔 돈 %s · 빌리고 갚은 돈 %s (%s). 행사 대금은 1~2달 늦게 들어와 한 달 조합은 자주 바뀌므로 판정은 누적으로 합니다.</div>"
+                 % (esc(lab), SIGN_WORD[sg[0]], SIGN_WORD[sg[1]], SIGN_WORD[sg[2]], esc(nm)))
+    h.append("<div class='note'>판정 방법: 세 칸이 각각 들어왔는지(+) 나갔는지(−) 조합으로 봅니다. 본업 +, 묶어 둔 돈 −, 빌리고 갚은 돈 − 가 가장 건강한 조합입니다.</div></div>")
+    return "".join(h)
+
+
+def _insight_html(CF):
+    items = insights(CF)
+    if not items:
+        return ""
+    icon = {"ok": ("✓", "var(--in)"), "warn": ("!", "var(--out)"), "info": ("i", "var(--accent)")}
+    h = ["<div class='q'>이 표로 알 수 있는 것</div><div class='note'>숫자에서 자동으로 뽑은 풀이입니다. 표를 다시 만들면 문장도 그 숫자로 바뀝니다.</div><div class='ins'>"]
+    for t, body, look, lv in items:
+        mark, col = icon[lv]
+        h.append("<div class='card'><div class='it'><span class='ik' style='background:%s'>%s</span>%s</div><div class='ib'>%s</div>"
+                 "<div class='il'><b>볼 것</b> %s</div></div>" % (col, mark, esc(t), esc(body), esc(look)))
+    h.append("</div>")
+    return "".join(h)
+
+
+def _card(lab, big, foot):
+    return "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>" % (esc(lab), big, esc(foot))
+
+
+def _check_text(CF):
+    out = []
+    sc = CF.get("start_check")
+    if CF.get("end") is None:
+        return "통장 잔액을 몰라 시작·끝 잔액은 비웠습니다 (계좌 잔액 자료 확인 필요)."
+    if sc:
+        name, v = sc
+        base = CF["ystart"] if CF.get("annual") else CF["start"]
+        if v == base:
+            out.append("✓ 시작 잔액이 %s(%s원)과 같습니다." % (name, W(v)))
+        else:
+            out.append("[확인] 시작 잔액 %s원 ≠ %s %s원 (차이 %s원) — 통장 잔액 기준일과 장부 날짜가 다르거나 장부가 바뀜."
+                       % (W(base), name, W(v), W(base - v)))
+    if CF.get("year_partial"):
+        out.append("장부가 %s부터라 그 전 흐름은 없습니다 (1월 1일 잔액은 거꾸로 계산한 값)." % CF["first_day"].isoformat())
+    elif not CF.get("annual"):
+        out.append("1월 1일 잔액은 끝 잔액에서 올해 흐름을 거꾸로 빼서 구했습니다.")
+    return " ".join(out)
