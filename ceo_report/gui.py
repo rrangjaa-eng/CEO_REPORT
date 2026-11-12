@@ -996,6 +996,11 @@ class Window(object):
             if pdfs:
                 open_path(pdfs[-1])
                 self.say("열었음: %s" % os.path.basename(pdfs[-1]))
+            else:   # 자금계획서·분개장 미반영이면 대표 보고 대신 '만들지 않음' 안내만 생긴다 → 그걸 연다
+                stops = [f for f in files if f.endswith("대표보고.html")]
+                if stops:
+                    open_path(stops[-1])
+                    self.say("대표 보고를 만들지 않았습니다 — 연 안내 화면의 까닭을 확인하세요")
         else:
             self.say("%s 끝 — 오류가 있습니다 (위 글을 확인하세요)" % task)
         self.set_busy(False, line, ok=ok)

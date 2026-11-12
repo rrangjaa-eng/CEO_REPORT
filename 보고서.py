@@ -413,8 +413,22 @@ def main(argv=None):
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
     pdf_failed = False
+    # 자금계획서·분개장 미반영이면 대표·팀장 보고를 만들지 않는다 (사용자 2026-11-12: 다시는 이런 실수가 없어야 함)
+    from ceo_report import gate
+    stop = gate.problems(R)
+    if stop:
+        _say("대표·팀장 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
+        _say("경영관리 보고는 맨 위에 경고를 달고 만듭니다.")
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
+        if mode == "ceo" and stop:
+            try:   # 같은 이름의 예전 보고가 최신처럼 남지 않게 '만들지 않음' 안내로 덮는다. PDF 는 만들지 않는다
+                with open(base + ".html", "w", encoding="utf-8") as f:
+                    f.write(gate.stop_page("%s %s" % (label, who), stop))
+            except OSError as e:
+                _say(_write_help(a.출력, e))
+                return 7
+            continue
         page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
@@ -433,7 +447,17 @@ def main(argv=None):
                 made.append(pdf)
                 for gone in pdfname.prune(base):
                     _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
-    if kind == "monthly" and a.팀장용 == "만듦":
+    if kind == "monthly" and a.팀장용 == "만듦" and stop:
+        from ceo_report.teamreport import team_names
+        folder = os.path.join(a.출력, "팀장용")
+        try:
+            os.makedirs(folder, exist_ok=True)
+            for team in team_names(data):
+                with open(os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat(), team)), "w", encoding="utf-8") as f:
+                    f.write(gate.stop_page("월간 팀장 보고 · %s" % team, stop))
+        except OSError as e:
+            _say(_write_help(folder, e))
+    elif kind == "monthly" and a.팀장용 == "만듦":
         # 팀장용 월간 실적 (사용자 2026-11-09 목업 승인): 팀마다 출력/팀장용/ 에 HTML·PDF. 급여 금액은 넣지 않는다
         from ceo_report.teamreport import write_all as write_team_reports
         try:

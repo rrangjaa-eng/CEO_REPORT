@@ -8,6 +8,8 @@
 실패하면 그 실패가 RED 증거이며 고치는 곳은 해당 모듈의 별도 'fix' 커밋이다.
 """
 import collections
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import datetime as dt
 import os
 import re
