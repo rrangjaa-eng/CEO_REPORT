@@ -66,6 +66,22 @@ class Hiring(unittest.TestCase):
         self.assertEqual(r[1], "해당")
         self.assertEqual(r[2], 4 * 8_500_000)   # 2025년 +2명(첫해, 0명에서) + 2026년 +2명, 수도권 그 밖 850만
 
+    def test_young_and_officer_from_staff_file(self):
+        pay = dict(("2025-%02d" % m, ["대표", "임원", "a", "b"]) for m in range(1, 13))
+        pay.update(("2026-%02d" % m, ["대표", "임원", "a", "b", "c", "d"]) for m in range(1, 13))
+        d = folder(pay)
+        with open(os.path.join(d, "사원.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["사원명", "생년월일", "임원"])
+            w.writerows([["임원", "1970-01-01", "예"], ["a", "1980-01-01", ""], ["b", "1980-01-01", ""],
+                         ["c", "2000-01-01", ""], ["d", "1980-01-01", ""]])
+        from ceo_report import taxlaw
+        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000", "고용공제_수도권청년": "14,500,000"}, "세무사")
+        r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
+        # 2025 +2명(a,b, 청년 0) · 2026 +2명(c 청년 26세, d) → 청년 1명 1,450만 + 3명 850만
+        self.assertEqual(r[2], 14_500_000 + 3 * 8_500_000)
+        self.assertIn("청년·60세 이상 늘어난 1.0명", r[3])
+
     def test_prev_year_unknown(self):
         pay = dict(("2026-%02d" % m, ["a"]) for m in range(1, 11))
         r = row(tb.check(folder(pay), 2026, YES), "통합고용")

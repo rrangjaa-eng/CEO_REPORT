@@ -390,6 +390,8 @@ def main(argv=None):
         from ceo_report import filehelp
         from ceo_report.util import esc as _esc
         R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
+        R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)

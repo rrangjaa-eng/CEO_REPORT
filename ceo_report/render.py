@@ -465,6 +465,9 @@ def render(R, mode):
             from . import filing
             toc.append("신고 일정·도우미")
             chap.append("<h2>신고 일정 (장부 기준)</h2>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or ""))
+        if R.get("payroll"):   # 급여 점검·연말정산 예상 (사용자 2026-11-12)
+            toc.append("급여 점검·연말정산 예상")
+            chap.append(R["payroll"])
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
     hi = sum(1 for r in R["risks"] if r["level"] == "높음")

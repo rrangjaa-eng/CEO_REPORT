@@ -109,6 +109,26 @@ class Window(object):
         root.after(300, self.refresh_state)
         root.after(500, self.refresh_checks)
         root.after(AUTO_CHECK_MS, self.watch)
+        root.after(2000, self.law_auto)
+
+    def law_auto(self):
+        """1월·7월 첫 실행 때 법령 조문 자동 확인 (사용자 2026-11-12). OC 아이디가 있을 때만."""
+        from . import lawwatch
+        try:
+            if not lawwatch.due(self.paths.input, self.today):
+                return
+        except Exception:
+            return
+        self.say("법령 조문 자동 확인 (1월·7월) 시작…")
+        year = self.today.year
+
+        def work():
+            try:
+                lines = app.law_check(self.paths.input, year)
+            except Exception as e:
+                lines = ["법령 조문 자동 확인 못 함: %s" % e]
+            self.q.put(("call", lambda: self._law_done(lines)))
+        threading.Thread(target=work, daemon=True).start()
 
     # ───────────── 모양 ─────────────
     def _style(self):
@@ -581,6 +601,11 @@ class Window(object):
         self._btn(r, "배당 판단 질문 열기", self.open_questions)
         self.q_now = tk.StringVar(value=app.question_text(self.paths.input))
         ttk.Label(r, textvariable=self.q_now, style="S.TLabel").pack(side="left", padx=(8, 0))
+        # 세법·노동법 기준 확인 (사용자 2026-11-12: 해마다 개정부터 확인, 법령정보센터에서 조문 받아 비교)
+        r = self._row(f, pady=(4, 0))
+        self._btn(r, "세법 기준 확인", self.open_law)
+        self.law_now = tk.StringVar(value=app.law_text(self.paths.input, self.today.year))
+        ttk.Label(r, textvariable=self.law_now, style="S.TLabel").pack(side="left", padx=(8, 0))
 
     # ───────────── 오른쪽: 자료 상태 · 진행 ─────────────
     def _side(self, side):
@@ -1400,6 +1425,94 @@ class Window(object):
         self._btn(b, "저장", self.save_questions)
         self._btn(b, "닫기", w.destroy)
         self._mark_questions()
+
+    def open_law(self):
+        """세법·노동법 기준 확인 창: OC 아이디, 조문 받아 개정 확인, 항목별 값 확인(세무사 확인 값 입력)."""
+        from . import lawwatch, taxlaw
+        if getattr(self, "law_win", None) is not None and self.law_win.winfo_exists():
+            self.law_win.lift()
+            return
+        year = self.today.year
+        w = self.law_win = tk.Toplevel(self.root)
+        w.title("%d년 세법·노동법 기준 확인" % year)
+        w.transient(self.root)
+        body = ttk.Frame(w, style="Card.TFrame", padding=(14, 10, 14, 10))
+        body.pack(fill="both", expand=True)
+        top = ttk.Frame(body, style="Card.TFrame")
+        top.grid(row=0, column=0, columnspan=8, sticky="w")
+        ttk.Label(top, text="법령정보 Open API 아이디(OC)").pack(side="left")
+        self.law_oc = tk.StringVar(value=lawwatch.load(self.paths.input).get("oc", ""))
+        ttk.Entry(top, textvariable=self.law_oc, width=14).pack(side="left", padx=(4, 6))
+        self._btn(top, "아이디 저장", lambda: (lawwatch.save_oc(self.paths.input, self.law_oc.get()), self.law_msg.set("아이디 저장됨")))
+        self._btn(top, "개정 확인 받기", self.law_fetch)
+        ttk.Label(body, text="체크한 항목을 '확인함'으로 저장합니다. 값이 다르면 세무사·고시에서 확인한 값을 고쳐 넣고 체크하세요.",
+                  style="S.TLabel").grid(row=1, column=0, columnspan=8, sticky="w", pady=(6, 4))
+        T = taxlaw.status(self.paths.input, year)
+        self.law_vars = {}
+        half = (len(T["rows"]) + 1) // 2
+        for i, (k, name, v, ok, why, mine) in enumerate(T["rows"]):
+            col, row = (0, 2 + i) if i < half else (4, 2 + i - half)
+            chk = tk.BooleanVar(value=False)
+            val = tk.StringVar(value="" if v is None else (str(v) if taxlaw.UNIT.get(k) == "글" else taxlaw.show(k, v)))
+            self.law_vars[k] = (chk, val, val.get())
+            ttk.Checkbutton(body, variable=chk).grid(row=row, column=col, sticky="w")
+            lab = ttk.Label(body, text=name, style="TLabel" if ok else "Need.TLabel")
+            lab.grid(row=row, column=col + 1, sticky="w", padx=(0, 6))
+            ttk.Entry(body, textvariable=val, width=12).grid(row=row, column=col + 2, sticky="w")
+            ttk.Label(body, text="확인함" if mine else ("자료확인" if ok else "확인 필요"), style="S.TLabel").grid(
+                row=row, column=col + 3, sticky="w", padx=(4, 16))
+        end = 2 + half
+        src = ttk.Frame(body, style="Card.TFrame")
+        src.grid(row=end, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        ttk.Label(src, text="확인한 곳").pack(side="left")
+        self.law_src = tk.StringVar(value="세무사")
+        ttk.Entry(src, textvariable=self.law_src, width=16).pack(side="left", padx=(4, 8))
+        self._btn(src, "체크한 항목 확인함으로 저장", self.law_save)
+        self._btn(src, "닫기", w.destroy)
+        self.law_msg = tk.StringVar(value="빨간 항목은 미확인 — 확인 전에는 그 값을 쓰는 계산을 합계에 넣지 않습니다.")
+        ttk.Label(body, textvariable=self.law_msg, style="S.TLabel", wraplength=760, justify="left").grid(
+            row=end + 1, column=0, columnspan=8, sticky="w", pady=(6, 0))
+
+    def law_fetch(self):
+        from . import lawwatch
+        lawwatch.save_oc(self.paths.input, self.law_oc.get())
+        self.law_msg.set("국가법령정보센터에서 조문 받는 중…")
+        year = self.today.year
+
+        def work():
+            try:
+                lines = app.law_check(self.paths.input, year)
+            except Exception as e:   # 아이디 없음·네트워크
+                lines = ["받지 못함: %s" % e]
+            self.q.put(("call", lambda: self._law_done(lines)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _law_done(self, lines):
+        for x in lines:
+            self.say(x)
+        if getattr(self, "law_win", None) is not None and self.law_win.winfo_exists():
+            self.law_msg.set(lines[0] + (" — 자세한 결과는 진행 기록" if len(lines) > 1 else ""))
+        self.law_now.set(app.law_text(self.paths.input, self.today.year))
+
+    def law_save(self):
+        from . import taxlaw
+        # 보이는 값 그대로면 None(지금 값 확인), 고쳤으면 고친 값
+        pick = dict((k, None if val.get() == shown else val.get().replace("원", "").replace("시간", "").strip())
+                    for k, (chk, val, shown) in self.law_vars.items() if chk.get())
+        if not pick:
+            self.law_msg.set("체크한 항목이 없습니다.")
+            return
+        try:
+            n = taxlaw.confirm(self.paths.input, self.today.year, pick, self.law_src.get().strip())
+        except (ValueError, OSError) as e:
+            self.law_msg.set("저장하지 못함: %s" % e)
+            return
+        self.law_now.set(app.law_text(self.paths.input, self.today.year))
+        self.say("세법 기준 %d개 확인함으로 저장 — 다음 보고부터 반영" % n)
+        self.law_win.destroy()
+        self.law_win = None
+        self.open_law()
+        self.law_msg.set("%d개 저장됨" % n)
 
     def _mark_questions(self):
         """꼭 넣을 값 중 빈 칸은 빨간 글씨 (답에 따라 필요한 칸 포함)."""

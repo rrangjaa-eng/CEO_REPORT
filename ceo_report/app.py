@@ -599,3 +599,24 @@ def card_list(input_dir):
     from . import tax
     current, _ = tax.read_card_days(input_dir)
     return " · ".join("%s %d일(기산 %d일)" % (c, p, s) for c, (p, s) in sorted(current.items())) or "없음"
+
+
+def law_text(input_dir, year):
+    """세법·노동법 기준표 상태 한 줄 (창 '세법 기준 확인' 옆)."""
+    from . import taxlaw
+    try:
+        T = taxlaw.status(input_dir, year)
+    except Exception:
+        return ""
+    if not T["todo"]:
+        return "%d년 기준 모두 확인됨" % year
+    return "%d년 기준 %d개 미확인 — 확인 전에는 그 계산을 합계에 넣지 않습니다" % (year, len(T["todo"]))
+
+
+def law_check(input_dir, year):
+    """법령 조문 받아 개정 확인 -> 결과 글 줄들 (네트워크: 창에서 따로 돌림)."""
+    from . import lawwatch
+    rows = lawwatch.check(input_dir, year)
+    bad = [r for r in rows if r[2] in ("개정됨", "못 찾음", "실패") or "안 보임" in r[4]]
+    head = "법령 조문 %d개 받음 — 다시 볼 것 %d개" % (len(rows), len(bad))
+    return [head] + ["%s: %s%s · %s" % (tag, st, (" (시행 %s)" % eff) if eff else "", note) for _, tag, st, eff, note in rows]

@@ -112,7 +112,7 @@ def _parse(key, text):
         return str(text).strip()
     pct = t.endswith("%")
     v = float(t.rstrip("%"))
-    if pct:
+    if pct or (UNIT.get(key) == "비율" and v > 1):   # '9.5'처럼 % 없이 넣어도 퍼센트로 봄
         v /= 100.0
     return int(v) if UNIT.get(key) in ("원", "시간") else v
 

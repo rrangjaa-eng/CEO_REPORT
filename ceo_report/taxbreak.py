@@ -42,13 +42,40 @@ def corp_base(input_dir, year):
     return None
 
 
-def headcount(input_dir, exclude=()):
-    """사원급여.csv -> {연도: (월평균 인원, 들어온 달 수)}. 주주(대표·가족)는 상시근로자가 아니라 뺀다."""
-    ex = set(n.strip() for n in exclude if n)
+def _staff_info(input_dir):
+    """사원.csv(위하고 인사 자료) -> ({임원 이름}, {이름: 생년월일}). 없으면 빈 값."""
+    import datetime as dt
+    officers, birth = set(), {}
+    for r in _read_csv(os.path.join(input_dir, "사원.csv")):
+        n = (r.get("사원명") or "").strip()
+        if not n:
+            continue
+        if (r.get("임원") or "").strip() in ("예", "Y", "y", "1", "임원"):
+            officers.add(n)
+        try:
+            birth[n] = dt.date.fromisoformat((r.get("생년월일") or "").strip()[:10])
+        except ValueError:
+            pass
+    return officers, birth
+
+
+def young_or_old(birth, year):
+    """청년(15~34세)·60세 이상이면 True (통합고용 우대 대상, 장애인·경력단절은 사원 정보로 몰라 세무사 확인)."""
+    age = year - birth.year
+    return 15 <= age <= 34 or age >= 60
+
+
+def headcount(input_dir, exclude=(), young=False):
+    """사원급여.csv -> {연도: (월평균 인원, 들어온 달 수)}. 주주(대표·가족)·임원(사원.csv)은 상시근로자가 아니라 뺀다.
+    young=True 면 사원.csv 생년월일로 청년·60세 이상만 센다 (생년월일 모르는 사원은 안 셈)."""
+    officers, birth = _staff_info(input_dir)
+    ex = set(n.strip() for n in exclude if n) | officers
     per = collections.defaultdict(set)
     for r in _read_csv(os.path.join(input_dir, "사원급여.csv")):
         ym, name = (r.get("연월") or "").strip(), (r.get("사원명") or "").strip()
         if len(ym) >= 7 and name and name not in ex:
+            if young and not (name in birth and young_or_old(birth[name], int(ym[:4]))):
+                continue
             per[ym[:7]].add(name)
     years = collections.defaultdict(list)
     for ym, names in per.items():
@@ -137,6 +164,14 @@ def check(input_dir, year, answers, holders=(), assets=None):
                 inc.append((y, c[0] - p[0]))
         n = sum(v for _, v in inc)
         amt = int(n * per_other) if per_other and n > 0 else (0 if n <= 0 else None)
+        _, births = _staff_info(input_dir)
+        ny = 0.0
+        if births and amt and per_young:   # 사원.csv 가 있으면 청년·60세 이상 증가분은 우대 금액으로
+            hy = headcount(input_dir, holders, young=True)
+            for y, v in inc:
+                c, p = (hy.get(y) or (0.0, 0))[0], (hy.get(y - 1) or (0.0, 0))[0] if y - 1 >= FOUNDED else 0.0
+                ny += min(max(c - p, 0.0), v)
+            amt = int(ny * per_young + (n - ny) * per_other)
         why = "월평균 직원(주주 뺌) %d년 %.1f명 ← %d년 %.1f명%s. %s" % (
             year, cur[0], year - 1, prev[0], " (%d달만 있음)" % cur[1] if cur[1] < 12 else "",
             " · ".join("%d년 +%.1f명" % (y, v) for y, v in inc) if inc else "늘어난 인원 없음")
@@ -147,7 +182,9 @@ def check(input_dir, year, answers, holders=(), assets=None):
                          "세법 기준 확인 화면에서 %d년 1명당 금액(세무사 확인)을 넣으면 계산" % year))
         else:
             rows.append(("통합고용세액공제", "해당" if cur[1] >= 12 else "확인 필요", amt,
-                         why + " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(per_young) if per_young else "더 큼"),
+                         why + (" · 청년·60세 이상 늘어난 %.1f명은 1명당 %s원, 나머지 %s원 (사원 생년월일 기준)" % (ny, W(per_young), W(per_other))
+                                if births and per_young and n > 0 else
+                                " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(per_young) if per_young else "더 큼")),
                          "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈"))
     # 4) 작년(2025)분 놓친 감면·공제 — 5년 안 경정청구
     if year - 1 >= FOUNDED:

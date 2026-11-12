@@ -39,5 +39,17 @@ class Law(unittest.TestCase):
         self.assertIn("적용한 세법 기준", tl.render(T, esc))
 
 
+class AppLines(unittest.TestCase):
+    def test_law_text_and_percent_without_sign(self):
+        import tempfile
+        from ceo_report import app, taxlaw
+        d = tempfile.mkdtemp()
+        self.assertIn("미확인", app.law_text(d, 2026))
+        taxlaw.confirm(d, 2026, {"국민연금요율": "9.5"}, "세무사")
+        self.assertEqual(taxlaw.value(d, 2026, "국민연금요율")[0], 0.095)
+        with self.assertRaises(ValueError):
+            app.law_check(d, 2026)   # OC 아이디 없음
+
+
 if __name__ == "__main__":
     unittest.main()
