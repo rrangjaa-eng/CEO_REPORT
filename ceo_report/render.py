@@ -458,6 +458,10 @@ def render(R, mode):
         from . import cashflow   # 9장 현금흐름표 (사용자 2026-11-12: 경영관리 보고에만, 영역 인쇄로 PDF)
         toc.append("현금흐름표")
         chap.append(cashflow.render(R.get("cf")))
+        if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 월간은 결산 앞 11·12월에만
+            from . import credit
+            toc.append("기업신용평가 미리보기")
+            chap.append(credit.render(R.get("credit")))
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
     hi = sum(1 for r in R["risks"] if r["level"] == "높음")
