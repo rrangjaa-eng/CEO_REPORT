@@ -77,9 +77,17 @@ class TestOnSample(unittest.TestCase):
         self.assertIn("여유 자금", insights_render.ceo_alert(I))
 
     def test_tax_after_period(self):
+        """기간 뒤 다음 달 말까지 꼭 나갈 돈 + 그 뒤 세금만 더 뺀다 (사용자 2026-11-12 결정). 기간 안 것은 다시 빼지 않음."""
         T = insights.taxes_set_aside(self.R)
-        self.assertEqual(T["after"], T["avail"] - T["later_total"])
-        self.assertTrue(all(t["due"] > self.R["s2"]["periods"][-1]["end"] for t in T["later"]))
+        end = self.R["s2"]["periods"][-1]["end"]
+        self.assertEqual(T["upto"], D(2026, 12, 31))
+        self.assertEqual(T["after"], T["avail"] - T["must_total"] - T["later_total"])
+        self.assertTrue(T["must"])
+        self.assertTrue(all(end < e["date"] <= T["upto"] for e in T["must"]))
+        self.assertTrue(all(t["due"] > T["upto"] for t in T["later"]))
+        cats = set(e["cat"] for e in T["must"])
+        self.assertFalse(any("남은 예산" in c or "구독" in c or "임차" in c or "카드" in c for c in cats), cats)
+        self.assertIn("12/31까지 급여·세금·대출", insights_render.ceo_tax_line(insights.compute(self.R)))
 
     def test_mgmt_report_has_auto_area(self):
         from ceo_report.render import render
@@ -146,3 +154,54 @@ class TestIssueDeadline(unittest.TestCase):
         import re
         self.assertNotIn("예산", re.sub(r"<[^>]+>", "", h[h.index("<body"):]))   # 대표용엔 '예산' 글자 없음
         self.assertNotIn("<!--ins-->", strip_ui(h))
+
+
+class TestForecastTrack(unittest.TestCase):
+    """예측 입금 vs 실제 입금 (사용자 2026-11-12)."""
+
+    def test_weeks_and_months(self):
+        rec = [(D(2026, 9, 25), [{"date": "2026-10-05", "io": "in", "amount": 100, "firm": True},
+                                  {"date": "2026-10-20", "io": "in", "amount": 50, "firm": False},
+                                  {"date": "2026-10-06", "io": "out", "amount": 999, "firm": True}])]
+        tx = [{"date": D(2026, 10, 6), "io": "입금", "amount": 80, "cat": ""},
+              {"date": D(2026, 10, 7), "io": "입금", "amount": 500, "cat": "계좌간이체"},
+              {"date": D(2026, 10, 31), "io": "입금", "amount": 30, "cat": ""}]
+        tx.append({"date": D(2026, 10, 8), "io": "출금", "amount": 900, "cat": ""})
+        tx.append({"date": D(2026, 9, 20), "io": "입금", "amount": 7, "cat": ""})   # 통장 자료가 보고 전부터 있어야 견줌
+        self.assertEqual(insights.forecast_track(rec, tx[:3])["months"], [])     # 10/6부터만 있으면 10월·그 보고는 견주지 않음
+        K = insights.forecast_track(rec, tx)
+        m = K["months"][0]
+        self.assertEqual((m["ym"], m["in"]["firm"], m["in"]["all"], m["in"]["actual"]), ("2026-10", 100, 150, 110))
+        self.assertEqual((m["out"]["firm"], m["out"]["actual"]), (999, 900))
+        w = K["weeks"][0]
+        self.assertEqual((w["to"], w["in"]["firm"], w["in"]["all"], w["in"]["actual"], w["part"]), (D(2026, 10, 23), 100, 150, 80, False))
+
+    def test_profit_forecast_vs_book(self):
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        ym = "2026-10"
+        actual = insights.booked_profit(R, ym)
+        K = insights.forecast_track([], [], R, [(D(2026, 10, 9), ym, 1000), (D(2026, 10, 23), ym, 2000), (D(2026, 11, 6), "2026-11", 5)])
+        self.assertEqual([(p["ym"], p["made"], p["forecast"], p["actual"]) for p in K["profit"]], [(ym, D(2026, 10, 23), 2000, actual)])
+
+    def test_profit_record_written(self):
+        import tempfile
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        with tempfile.TemporaryDirectory() as t:
+            insights.write_record(t, R)
+            got = insights.load_profit_forecasts(t)
+        self.assertEqual(got, [(D(2026, 11, 6), "2026-11", insights.month_forecast(R)["forecast"])])
+
+    def test_no_records(self):
+        self.assertEqual(insights.forecast_track([], [])["weeks"], [])
+
+    def test_records_roundtrip(self):
+        import tempfile
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        with tempfile.TemporaryDirectory() as t:
+            insights.write_record(t, R)
+            got = insights.load_records(t)
+        self.assertEqual(got[0][0], D(2026, 11, 6))
+        self.assertTrue(got[0][1])

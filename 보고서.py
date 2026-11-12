@@ -382,6 +382,9 @@ def main(argv=None):
     R["auto_facts"] = insights.read_facts(a.입력)
     R["_invoices"] = data.invoices
     R["auto_prev"] = insights.load_previous(a.출력, asof)
+    R["auto_records"] = insights.load_records(a.출력)
+    R["auto_profits"] = insights.load_profit_forecasts(a.출력)
+    R["_txns"] = data.txns   # 예측 입금 vs 실제 입금
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
