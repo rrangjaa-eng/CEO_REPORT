@@ -83,7 +83,7 @@ class TestCashflow(unittest.TestCase):
         self.assertIn(dg["name"], [v[0] for v in C.STATES.values()])
         self.assertEqual(len(dg["signs"]), 3)
         html = C.render(self.CF)
-        for t in ("지금 회사 상태", "이 표로 알 수 있는 것", "영업활동 현금흐름", "투자활동 현금흐름", "재무활동 현금흐름", "낱말 풀이"):
+        for t in ("지금 회사 상태", "이 표로 알 수 있는 것", "현금흐름을 좋게 하려면", "영업활동 현금흐름", "투자활동 현금흐름", "재무활동 현금흐름", "낱말 풀이"):
             self.assertIn(t, html)
 
     def test_states_cover_every_sign_combination(self):

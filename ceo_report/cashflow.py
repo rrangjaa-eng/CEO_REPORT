@@ -331,6 +331,8 @@ CSS = """<style>
 .cfx .sg .l{font-size:11.5px;color:var(--sub);font-weight:700}.cfx .sg .v{font-size:22px;font-weight:800;line-height:1.2}.cfx .sg .w{font-size:11px;color:var(--sub)}
 .cfx .dw{font-size:13px;font-weight:700;margin:4px 0}.cfx .dy{font-size:11.8px;line-height:1.6;margin:4px 0;padding-left:18px}
 .cfx .il{font-size:11.6px;line-height:1.55}
+.cfx .imp{display:grid;grid-template-columns:1fr;gap:6px}.cfx .imp .card{padding:8px 10px;break-inside:avoid}
+.cfx .imp .it{font-weight:800;font-size:12.8px;margin-bottom:3px}.cfx .imp .ik{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;text-align:center;font-size:11px;line-height:18px;margin-right:6px}.cfx .imp .ib{font-size:11.6px;line-height:1.55}
 .cfx .ins{display:grid;grid-template-columns:1fr 1fr;gap:8px}.cfx .ins .card{padding:8px 10px;break-inside:avoid}
 .cfx .ins .it{font-weight:800;font-size:12.8px;margin-bottom:3px}.cfx .ins .ik{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;text-align:center;font-size:11px;line-height:18px;margin-right:6px}
 .cfx .ins .ib{font-size:11.6px;line-height:1.55}.cfx .ins .il{font-size:11px;color:var(--sub);margin-top:3px;line-height:1.5}
@@ -485,6 +487,7 @@ def render(CF):
     h.append("</tbody></table></div>")
     h.append(_diag_html(CF))
     h.append(_insight_html(CF))
+    h.append(_improve_html(CF))
     # 이익과 현금
     h.append("<div><div class='sec' style='break-inside:avoid'><div class='q'>이익이 났는데 왜 통장 돈은 다른가요? (%s)</div>" % esc(lab))
     h.append("<div class='note' style='font-size:12px'>장부상 이익은 ‘일한 만큼’ 계산하고, 통장은 ‘돈이 실제로 오간 만큼’ 움직입니다. "
@@ -702,6 +705,64 @@ def _diag_html(CF):
         h.append("<div class='note'>참고: %s 한 달만 보면 본업 %s · 묶어 둔 돈 %s · 빌리고 갚은 돈 %s (%s). 행사 대금은 1~2달 늦게 들어와 한 달 조합은 자주 바뀌므로 판정은 누적으로 합니다.</div>"
                  % (esc(lab), SIGN_WORD[sg[0]], SIGN_WORD[sg[1]], SIGN_WORD[sg[2]], esc(nm)))
     h.append("<div class='note'>판정 방법: 세 칸이 각각 들어왔는지(+) 나갔는지(−) 조합으로 봅니다. 본업 +, 묶어 둔 돈 −, 빌리고 갚은 돈 − 가 가장 건강한 조합입니다.</div></div>")
+    return "".join(h)
+
+
+def improve(CF):
+    """현금흐름을 좋게 하려면 (사용자 2026-11-12): 이 표의 숫자에서 나온 할 일과 그 근거·기대 효과.
+    -> [(할 일, 근거, 기대 효과)]. 효과는 이 표의 숫자로 계산할 수 있는 것만 쓴다."""
+    ann = CF.get("annual")
+    P = CF["M"] if ann else CF["Y"]
+    plab = CF["label"] if ann else "올해 %d월~%d월" % (CF["y0"].month, CF["p1"].month)
+    r, c = P["rec"], P["cash"]
+    days = max((CF["p1"] - (CF["p0"] if ann else CF["y0"])).days + 1, 1)
+    weeks = days / 7.0
+    out = []
+    if r["받을돈"] < 0 and abs(r["받을돈"]) >= 10_000_000:
+        out.append(("행사 대금 받는 날을 앞당기기",
+                    "%s 못 받은 매출 대금이 %s원 늘었습니다. 본업 현금이 이익보다 적은 가장 큰 이유입니다." % (plab, W(-r["받을돈"])),
+                    "행사가 끝나면 바로 계산서를 내고, 입금일이 지난 건은 주마다 담당자가 고객에게 확인합니다. 받는 만큼 본업 현금이 그대로 늘어납니다 (예: 늘어난 금액의 절반이면 %s원)." % W(-r["받을돈"] // 2)))
+    if P["op"] < 0 or r["선급"] < 0:
+        pre = "업체에 먼저 준 계약금이 %s원 늘었습니다. " % W(-r["선급"]) if r["선급"] < 0 else ""
+        out.append(("큰 행사는 고객에게서도 계약금 받기",
+                    "%s%s 본업 현금은 %s원입니다. 행사 전에 업체 돈은 먼저 나가는데 고객 돈은 행사 뒤에 들어옵니다." % (pre, plab, W(P["op"])),
+                    "계약할 때 고객 계약금(선금)을 받으면 업체에 먼저 주는 돈을 회사 돈 대신 고객 돈으로 낼 수 있습니다. 계약서·견적서 조건에 넣는 것이 시작입니다."))
+    biz = -c.get("업체", 0)
+    if P["op"] < 0 and biz > 0:
+        wk = int(biz / weeks)
+        out.append(("업체 대금 지급일을 고객 입금일에 맞추기",
+                    "%s 행사 업체에 보낸 돈이 %s원, 한 주 평균 %s원입니다." % (plab, W(biz), W(wk)),
+                    "업체와 '행사 후 ○일 지급'처럼 기한을 정해 고객 대금이 들어온 뒤에 나가게 하면, 지급을 한 주만 늦춰도 통장에 %s원쯤 더 남습니다 (거래처와의 약속 범위 안에서)." % W(wk)))
+    card = -c.get("카드", 0)
+    outs = sum(-v for k, v in c.items() if v < 0 and k in dict((x, 1) for x, _, _ in OPS))
+    if card > 0 and outs and card * 1.0 / outs >= 0.15:
+        out.append(("법인카드 결제일 정리",
+                    "%s 법인카드 대금이 %s원으로 본업에서 나간 돈의 %d%%입니다." % (plab, W(card), round(card * 100.0 / outs)),
+                    "카드사별 결제일이 고객 대금이 많이 들어오는 날 뒤에 오도록 맞추면 결제일에 통장 잔액이 바닥나는 것을 막을 수 있습니다."))
+    paid, got = -c.get("이자낸", 0), c.get("이자받", 0)
+    if P["cash"].get("대출받음", 0) > 0 or (paid > 0 and P["fin"] > 0):
+        line = "%s 대출로 %s원이 들어왔고, 대출 이자로 %s원을 냈습니다." % (plab, W(c.get("대출받음", 0)), W(paid))
+        if c.get("정기넣음") and got:
+            line += " 같은 기간 정기예금 이자는 %s원 받았습니다." % W(got)
+        out.append(("대출 갚는 계획을 대금 회수에 맞추기",
+                    line,
+                    "못 받은 대금이 들어오면 그 돈으로 대출 원금을 먼저 갚는 순서를 정해 두면 이자가 줄고 ‘빌린 돈 의존형’에서 벗어납니다. 빌린 돈이 있는데 남는 돈을 정기예금에 넣으면 보통 받는 이자보다 내는 이자가 큽니다."))
+    if P["op"] > 0 and P["fin"] >= 0 and P["inv"] >= 0 and P["total"] > 0:
+        out.append(("남는 돈 쓰임 정하기",
+                    "%s 본업으로 %s원이 들어와 통장 돈이 %s원 늘었습니다." % (plab, W(P["op"]), W(P["total"])),
+                    "앞으로 3달 지급 예정만큼은 통장에 두고, 그보다 남는 돈은 대출 상환이나 짧은 정기예금으로 옮기면 놀고 있는 돈이 줄어듭니다."))
+    return out
+
+
+def _improve_html(CF):
+    items = improve(CF)
+    if not items:
+        return ""
+    h = ["<div class='q'>현금흐름을 좋게 하려면</div><div class='note'>이 표의 숫자에서 나온 할 일입니다. 실제로 할지는 거래처·고객과의 관계를 보고 정하세요.</div><div class='imp'>"]
+    for i, (t, why, eff) in enumerate(items, 1):
+        h.append("<div class='card'><div class='it'><span class='ik' style='background:var(--accent)'>%d</span>%s</div>"
+                 "<div class='ib'>%s</div><div class='il'><b>이렇게 하면</b> %s</div></div>" % (i, esc(t), esc(why), esc(eff)))
+    h.append("</div>")
     return "".join(h)
 
 
