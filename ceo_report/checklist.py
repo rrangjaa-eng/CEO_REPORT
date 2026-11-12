@@ -65,7 +65,7 @@ def convert_items(tables, cross, notes):
         n = str(n)
         if n.startswith("[확인] 카드 전표 입력 전"):
             out.append({"id": "카드|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
-                        "title": "카드 전표를 아직 넣지 않은 달이 있음 (카드대금은 최근 3달 평균으로 잡음)",
+                        "title": "카드 전표를 아직 넣지 않은 달이 있음 (빠진 카드는 최근 3달 평균으로 예상)",
                         "detail": n.replace("[확인] ", ""), "choices": ["명세서 오면 확정 금액 넣음", "확인함"]})
     return out
 

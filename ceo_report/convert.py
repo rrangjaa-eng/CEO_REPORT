@@ -976,7 +976,7 @@ def build_tax(books, cfg, asof, input_dir=None):
     notes.extend(card_notes)
     thin = [r for r in rows if r["세목"] == "카드대금" and r["근거"].startswith(tax.CARD_THIN_MARK)]
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
-        notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 최근 3달 평균으로 카드대금을 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
+        notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
                      % ", ".join(r["대상기간"].replace(" (전표 입력 전 추정)", "") for r in thin))
     notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")

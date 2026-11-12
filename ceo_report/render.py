@@ -760,7 +760,7 @@ def _card_thin(R):
            and t.get("due") is not None]
     if not got:
         return ""
-    return ("카드 전표 입력 전: %s 결제는 최근 3달 평균 사용액으로 잡음. 카드로 쓴 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
+    return ("카드 전표 입력 전: %s 은 전표가 덜 들어간 카드의 최근 3달 평균을 예상으로 더 잡은 것. 카드로 쓴 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
             % ", ".join("%s %s %s" % (str(t["period"]).split("카드")[0], _md(t["due"]), won(t["amount"])) for t in got))
 
 

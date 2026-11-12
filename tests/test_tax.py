@@ -205,43 +205,70 @@ class TestCards(unittest.TestCase):
         self.assertEqual(tax.card_due(D(2026, 10, 5), 25, 12), D(2026, 10, 26))    # 9/12~10/11 사용 → 10/25 일 → 10/26
         self.assertEqual(tax.card_due(D(2026, 10, 31), 14, 31), D(2026, 12, 14))   # 10/31~11/29 사용 → 12/14
 
+    @staticmethod
+    def paid(day, no, amount, vendor="신한_0001"):
+        """통장에서 나간 카드 결제 전표 (미지급비용 차변 / 보통예금 대변)."""
+        return [ln(day, no, "26200", debit=amount, vendor=vendor), ln(day, no, "10300", credit=amount, vendor="신한은행")]
+
     def test_payments_clear_oldest_and_unknown_card_has_no_date(self):
         j = [ln(D(2026, 9, 10), "1", "26200", credit=100, vendor="신한_0001"),
              ln(D(2026, 10, 10), "2", "26200", credit=200, vendor="신한_0001"),
-             ln(D(2026, 10, 15), "3", "26200", debit=100, vendor="신한_0001"),
+             *self.paid(D(2026, 10, 15), "3", 100),
              ln(D(2026, 9, 20), "4", "26200", credit=30, vendor="롯데_0002"),
              ln(D(2026, 10, 1), "5", "26200", credit=50, vendor="삼성_0003")]
         rows = tax.cards(j, D(2026, 11, 3), {"신한": (15, 1), "롯데": (14, 1)})
         got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
-        self.assertEqual(got, [("롯데카드 11월 16일 결제", "2026-11-16", "30", "예상"),   # 10/14 지났는데 남음 → 다음 납부일
+        # 사용자 2026-11-12: 전표로 들어간 사용 − 결제는 확정 (여유 자금에서 뺌)
+        self.assertEqual(got, [("롯데카드 11월 16일 결제", "2026-11-16", "30", "확정(전표)"),   # 10/14 지났는데 남음 → 다음 납부일
                                ("삼성카드 미결제 잔액", "", "50", "납부일 확인 필요"),
-                               ("신한카드 11월 16일 결제", "2026-11-16", "200", "예상")])
+                               ("신한카드 11월 16일 결제", "2026-11-16", "200", "확정(전표)")])
+
+    def history(self, vendor, amounts, no=""):
+        """6~9월 사용, 다음 달 15일에 통장 결제."""
+        j = []
+        for m, a in zip((6, 7, 8, 9), amounts):
+            j.append(ln(D(2026, m, 10), "u%d%s" % (m, no), "26200", credit=a, vendor=vendor))
+            j.extend(self.paid(D(2026, m + 1, 15), "p%d%s" % (m, no), a, vendor))
+        return j
 
     def test_month_not_entered_yet_uses_three_month_average(self):
-        """사용자 2026-11-04: 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 → 입력 전 달은 최근 3달 평균으로 예상 + 표시."""
-        j = []
-        for m, a in ((6, 100), (7, 200), (8, 300)):   # 7/15·8/17·9/15 결제분, 모두 결제됨
-            j.append(ln(D(2026, m, 10), "u%d" % m, "26200", credit=a, vendor="신한_0001"))
-            j.append(ln(D(2026, m + 1, 15), "p%d" % m, "26200", debit=a, vendor="신한_0001"))
-        j.append(ln(D(2026, 9, 10), "u9", "26200", credit=210, vendor="신한_0001"))   # 9월은 다 넣음 (10/15 결제 → 평균에 들어감)
-        j.append(ln(D(2026, 10, 15), "p9", "26200", debit=210, vendor="신한_0001"))
+        """사용자 2026-11-04: 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 → 입력 전 달은 최근 3달 평균으로 예상 + 표시.
+        사용자 2026-11-12: 입력된 부분은 확정, 평균과의 차이만 예상."""
+        j = self.history("신한_0001", (100, 200, 300, 210))
         j.append(ln(D(2026, 10, 3), "u10", "26200", credit=20, vendor="신한_0001"))   # 10월은 조금만 넣음
         rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
-        got = [(r["대상기간"], r["납부예정일"], r["금액"]) for r in rows]
-        self.assertEqual(got, [("신한카드 11월 16일 결제 (전표 입력 전 추정)", "2026-11-16", str((200 + 300 + 210) // 3)),
-                               ("신한카드 12월 15일 결제 (전표 입력 전 추정)", "2026-12-15", str((200 + 300 + 210) // 3))])
-        self.assertTrue(rows[0]["근거"].startswith(tax.CARD_THIN_MARK))
+        avg = (200 + 300 + 210) // 3
+        got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got, [("신한카드 11월 16일 결제", "2026-11-16", "20", "확정(전표)"),
+                               ("신한카드 11월 16일 결제 (전표 입력 전 추정)", "2026-11-16", str(avg - 20), "예상"),
+                               ("신한카드 12월 15일 결제 (전표 입력 전 추정)", "2026-12-15", str(avg), "예상")])
+        self.assertTrue(rows[1]["근거"].startswith(tax.CARD_THIN_MARK))
 
-    def test_entered_month_is_not_replaced_by_average(self):
-        j = []
-        for m, a in ((6, 100), (7, 100), (8, 100), (9, 100)):
-            j.append(ln(D(2026, m, 10), "u%d" % m, "26200", credit=a, vendor="신한_0001"))
-            j.append(ln(D(2026, m + 1, 15), "p%d" % m, "26200", debit=a, vendor="신한_0001"))
-        j.append(ln(D(2026, 10, 10), "u10", "26200", credit=90, vendor="신한_0001"))
-        j.append(ln(D(2026, 11, 2), "u11", "26200", credit=80, vendor="신한_0001"))
+    def test_thin_is_judged_per_card_number(self):
+        """사용자 2026-11-12: 한 카드사에서 일부 카드만 10월 전표가 들어간 달도 빠진 카드만 평균으로 채운다."""
+        j = self.history("신한_0001", (100, 100, 100, 100), "a") + self.history("신한_0002", (50, 50, 50, 50), "b")
+        j.append(ln(D(2026, 10, 3), "u10a", "26200", credit=100, vendor="신한_0001"))   # 0001 은 10월분 다 넣음, 0002 는 아직
+        j.append(ln(D(2026, 11, 2), "u11a", "26200", credit=100, vendor="신한_0001"))
+        j.append(ln(D(2026, 11, 2), "u11b", "26200", credit=50, vendor="신한_0002"))
         rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
-        self.assertEqual([(r["대상기간"], r["금액"]) for r in rows], [("신한카드 11월 16일 결제", "90"),
-                                                                    ("신한카드 12월 15일 결제", "80")])
+        got = [(r["대상기간"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got, [("신한카드 11월 16일 결제", "100", "확정(전표)"),
+                               ("신한카드 11월 16일 결제 (전표 입력 전 추정)", "50", "예상"),
+                               ("신한카드 12월 15일 결제", "150", "확정(전표)")])
+        self.assertIn("신한_0002", rows[1]["근거"])
+
+    def test_pay_as_you_go_card_and_reversal(self):
+        """사용자 2026-11-12: 한도 증액 카드는 쓰는 대로 은행에서 먼저 갚고(일반전표), 임시로 넣은 사용은 나중에 대체로 되돌린다.
+        통장 없는 차변(대체)은 결제가 아니라 사용 취소, 쓰는 대로 갚는 카드는 평균으로 채우지 않는다."""
+        j = []
+        for m in (6, 7, 8, 9, 10):
+            j.append(ln(D(2026, m, 5), "u%d" % m, "26200", credit=1000, vendor="롯데_1842"))
+            j.extend(self.paid(D(2026, m, 6), "p%d" % m, 1000, "롯데_1842"))
+        j.append(ln(D(2026, 11, 6), "t1", "26200", credit=600, vendor="롯데_1842"))      # 임시 사용
+        j.append(ln(D(2026, 11, 6), "t2", "26200", debit=600, vendor="롯데_1842"))       # 대체 (통장 없음)
+        j.extend(self.paid(D(2026, 11, 6), "t3", 600, "롯데_1842"))                       # 은행 출금
+        rows = tax.cards(j, D(2026, 11, 12), {"롯데": (14, 1)})
+        self.assertEqual(rows, [])   # 갚을 것 없음, 평균 채움 없음 (11월 사용 전표가 들어오면 미리 낸 600과 상계)
 
     def test_card_file_and_defaults(self):
         import tempfile, shutil
@@ -300,3 +327,13 @@ class TestCardMatchNeedsSameCompany(unittest.TestCase):
         self.assertIsNone(info[0]["matched"])
         self.assertEqual(info[1]["matched"]["desc"], "신한카드")
         self.assertEqual(len(events), 2)
+
+    def test_statement_amount_replaces_both_firm_and_estimated_rows(self):
+        """명세서 금액을 일정에 넣으면 같은 카드사·결제일의 확정분·추정분 둘 다 넣지 않는다 (이중으로 빠지지 않게)."""
+        sched = [{"date": D(2026, 11, 16), "io": "out", "amount": 900, "firm": True, "cat": "카드대금", "desc": "신한카드", "basis": ""}]
+        t = [{"kind": "카드대금", "period": "신한카드 11월 16일 결제", "due": D(2026, 11, 16), "amount": 500, "state": "확정(전표)", "basis": ""},
+             {"kind": "카드대금", "period": "신한카드 11월 16일 결제 (전표 입력 전 추정)", "due": D(2026, 11, 16), "amount": 300,
+              "state": "예상", "basis": tax.CARD_THIN_MARK}]
+        events, info = tax.merge(sched, t)
+        self.assertEqual(len(events), 1)
+        self.assertIsNotNone(info[1]["matched"])
