@@ -4,6 +4,7 @@
 · 분개장(회계 반영) 자료일을 모르거나 오래됐어도 막는다.
 막히면 대표·팀장 보고는 만들지 않고(같은 이름 파일은 '만들지 않음' 안내로 덮음), 경영관리 보고·지금 현황 맨 위에 큰 경고를 띄운다.
 """
+import datetime as dt
 import html
 import os
 
@@ -21,20 +22,31 @@ def problems(R):
         out.append("자금계획서 없음 (수집\\위하고에 자금계획 파일이 없음 — 확장에서 '모두 받기' 또는 '바뀐 것 확인')")
     elif not fp.get("used"):
         out.append(fp.get("reason") or "자금계획서를 쓰지 못함")
-    book = [a for a in (R.get("s7") or {}).get("asof") or [] if "회계" in (a.get("name") or "")]
-    if not book or not book[0].get("date"):
+    bd = book_date(R)
+    if bd is None:
         out.append("분개장 자료일을 모름 (자료 변환을 다시 하세요)")
-    elif book[0].get("age") is not None and book[0]["age"] > days:
-        out.append("분개장 자료일 %s — 기준일보다 %d일 전 (허용 %d일)" % (book[0]["date"].isoformat(), book[0]["age"], days))
+    elif (R["asof"] - bd).days > days:
+        out.append("분개장 자료일 %s — 기준일보다 %d일 전 (허용 %d일)" % (bd.isoformat(), (R["asof"] - bd).days, days))
     return out
+
+
+def book_date(R):
+    """분개장(위하고 장부) 기준일. 변환이 입력\\자동분석.json 에 적은 것 → 없으면 자료기준일.csv 의 '회계' 줄."""
+    v = (R.get("auto_facts") or {}).get("book_date")
+    if v:
+        try:
+            return dt.date.fromisoformat(str(v)[:10])
+        except ValueError:
+            pass
+    book = [a for a in (R.get("s7") or {}).get("asof") or [] if "회계" in (a.get("name") or "")]
+    return book[0]["date"] if book and book[0].get("date") else None
 
 
 def sources_line(R):
     """보고에 쓴 자료와 날짜 한 줄."""
     parts = []
-    book = [a for a in (R.get("s7") or {}).get("asof") or [] if "회계" in (a.get("name") or "")]
-    if book and book[0].get("date"):
-        parts.append("분개장 %s" % book[0]["date"].isoformat())
+    bd = book_date(R)
+    parts.append("분개장 %s" % bd.isoformat() if bd else "분개장 날짜 모름")
     fp = R.get("fundplan")
     if fp and fp.get("used"):
         months = fp.get("months") or []
