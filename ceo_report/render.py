@@ -2388,7 +2388,7 @@ def _issue_card(R):
     """행사 후 미발행 중 늦게 내면 자금이 모자라는 것과 발행 기한 (사용자 2026-11-12: 작성일 뒤 60일 입금). 실패해도 보고서는 만든다."""
     from . import insights, insights_render
     try:
-        return _ins(insights_render.ceo_issue(insights.issue_deadline(R)))
+        return _ins(insights_render.ceo_issue(insights.issue_deadline(R), compact=bool(R.get("_issue_compact"))))
     except Exception:   # 이 칸 때문에 보고서를 못 만들면 안 된다
         return ""
 

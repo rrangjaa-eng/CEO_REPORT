@@ -106,8 +106,9 @@ def _md(d):
     return "%d/%d" % (d.month, d.day)
 
 
-def ceo_issue(D, top=3):
-    """행사 후 미발행 중 자금에 영향 있는 것: 언제까지 발행해야 자금이 모자라기 전에 들어오나 (사용자 2026-11-12)."""
+def ceo_issue(D, top=3, compact=False):
+    """행사 후 미발행 중 자금에 영향 있는 것: 언제까지 발행해야 자금이 모자라기 전에 들어오나 (사용자 2026-11-12).
+    compact: 표 없이 두어 줄만 (출금 목록이 길어 대표 보고 쪽 수를 넘을 때, 2026-11-13 실제 자료 21건에서 4쪽이 됨)."""
     if not D or not D["rows"]:
         return ""
     if D["short"]:
@@ -122,6 +123,10 @@ def ceo_issue(D, top=3):
         return ("<div class='ins-line'>행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함): 지금 일정으로는 %s까지 잔액이 "
                 "늘 남겨 둘 돈 아래로 내려가지 않아 발행이 늦어도 자금은 모자라지 않습니다 (작성일 뒤 %d일 입금 기준).</div>"
                 % (len(D["rows"]), W(D["total"]), D["horizon"].strftime("%Y-%m-%d"), D["days"]))
+    if compact:
+        big = D["rows"][0]
+        return ("<div class='ins-line'><b>계산서 늦으면 자금에 영향</b> · 행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함, 가장 큰 것 [%s] %s %s원). %s</div>"
+                % (len(D["rows"]), W(D["total"]), esc(big["id"]), esc(big["name"]), W(big["amount"]), head))
     rows = D["rows"][:top]
     body = "".join("<tr><td>[%s] %s</td><td>%s일</td><td class='vin'>%s</td><td>%s</td></tr>"
                    % (esc(r["id"]), esc(r["name"]), r["days"], W(r["amount"]), _md(r["pay_if_today"])) for r in rows)

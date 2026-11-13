@@ -447,7 +447,17 @@ def main(argv=None):
         made.append(base + ".html")
         if browser:
             pdf = pdfname.stamped(base)   # 만든 시각을 이름에 (사용자 2026-11-12)
-            err = fit_pdf(browser, base + ".html", pdf, ceo_pages(base + ".html"))
+            limit = ceo_pages(base + ".html")
+            err = fit_pdf(browser, base + ".html", pdf, limit)
+            if not err and limit and (pdf_pages(pdf) or 0) > limit and not R.get("_issue_compact"):
+                # 출금 목록이 길어 글자를 줄여도 넘치면 '계산서 발행 기한' 표를 두어 줄로 줄여 다시 만든다 (2026-11-13 실제 21건에서 주간 4쪽)
+                R["_issue_compact"] = True
+                try:
+                    with open(base + ".html", "w", encoding="utf-8") as f:
+                        f.write(render(R, mode))
+                    err = fit_pdf(browser, base + ".html", pdf, limit)
+                finally:
+                    R.pop("_issue_compact", None)
             if err:
                 _say("%s — %s" % (err, os.path.basename(pdf)))
                 pdf_failed = True
