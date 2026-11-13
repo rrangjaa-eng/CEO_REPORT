@@ -6,6 +6,7 @@
 자료 변환 때 만드는 파일 (입력 폴더):
   사원.csv      인사_사원등록: 사원명, 생년월일(주민번호 앞 6자리+성별 자리로), 입사일, 퇴사일, 임원, 부서
   급여명세.csv   인사_월별급상여수당지급현황(올해·작년): 사원별 달별 지급 합계·공제 합계 (항목별 명세는 이 화면에 없음)
+               + 인사_소득자별근로소득원천징수부: 사원별 달별 소득세·지방소득세 (공제 합계 안에 든 몫, 환급 예상용)
   연말정산.csv   연말정산_연말정산현황: 사원별 총급여·공제 인원·공제 금액·결정세액
   고정자산.csv   결산_고정자산관리대장: 자산별 취득일·취득가·상각률·전기말 누계·당기 상각 예정
 개인정보: 주민번호는 생년월일로만 바꾸고 성별·뒷자리는 저장하지 않는다. 전화·메일·주소·계좌는 원본에도 없음.
@@ -23,6 +24,7 @@ ASSET_FILE = "고정자산.csv"
 ASSET_COLUMNS = ["기준연도", "자산", "계정", "취득일", "취득가", "상각률", "전기말상각누계", "당기상각", "당기말상각누계"]
 OFFICER_WORDS = ("대표", "이사", "감사", "회장", "사장", "전무", "상무")   # 직급·직책 이름에 들어가면 임원
 TOTAL_PAY, TOTAL_DED = "지급합계", "공제합계"   # 월별 급상여 화면은 사원별 합계만 준다
+WH_TAX, WH_LOCAL = "소득세(공제합계 안)", "지방소득세(공제합계 안)"   # 원천징수부에서 — 공제합계에 이미 들어 있음
 
 
 def _num(v):
@@ -105,6 +107,7 @@ def employees(F):
         for i in _resp(d, "/info") or []:
             if any(w in str(i.get("nm_offpos") or "") for w in OFFICER_WORDS):
                 officers.add(str(i.get("cd_emp") or ""))
+    wh_emps = _withholding(F)[0]   # 원천징수부 사원 목록: 공제대상 가족 수 (배우자·자녀·60세 이상)
     names = dict((x.get("position_rank_no"), str(x.get("position_rank_name") or ""))
                  for x in (data.get("rank") or []) + (data.get("position") or []))   # 직급(rank)·직책(position) 번호 → 이름
     rows = []
@@ -116,9 +119,12 @@ def employees(F):
         titles = [names.get(e.get(k)) or "" for k in ("rank_no", "position_rank_no")]
         if any(w in t for t in titles for w in OFFICER_WORDS):
             officers.add(code)
+        w = wh_emps.get(code) or {}
+        deps = sum(_num(w.get(k)) for k in ("num_wife", "num_childs", "num_60over")) if w else None
         rows.append({"사원명": name, "생년월일": birth_from_social(e.get("no_social")), "입사일": _date(e.get("da_enter")),
                      "퇴사일": _date(e.get("da_retire")), "고용형태": "", "주소정근로시간": "",
-                     "임원": "예" if code in officers else "", "부양가족수": "", "자녀수": "",
+                     "임원": "예" if code in officers else "", "부양가족수": "" if deps is None else str(deps),
+                     "자녀수": str(_num(w.get("num_childs"))) if w else "",
                      "부서": str(e.get("nm_dept") or ""), "사번": code, "직급": " ".join(t for t in titles if t)})
     return rows
 
@@ -138,7 +144,60 @@ def pay_rows(F):
                     rows.append({"연월": ym, "사원명": name, "구분": "지급", "항목": TOTAL_PAY, "금액": str(ji)})
                 if gong:
                     rows.append({"연월": ym, "사원명": name, "구분": "공제", "항목": TOTAL_DED, "금액": str(gong)})
+    # 원천징수부의 사원별 소득세·지방소득세 (공제합계 안에 들어 있는 몫 — 따로 적어 환급 예상에 씀)
+    emps, wh = _withholding(F)
+    names = dict((c, str(e.get("nm_krname") or "").strip()) for c, e in emps.items())
+    for e in (_resp(_pick(F, "인사_사원등록")[0][1], "/condition") or {}).get("emp", []) if _pick(F, "인사_사원등록") else []:
+        names.setdefault(str(e.get("cd_emp") or ""), str(e.get("nm_krname") or "").strip())
+    for _, code, ym, inc, loc in wh:
+        if not names.get(code):
+            continue
+        if inc:
+            rows.append({"연월": ym, "사원명": names[code], "구분": "공제", "항목": WH_TAX, "금액": str(inc)})
+        if loc:
+            rows.append({"연월": ym, "사원명": names[code], "구분": "공제", "항목": WH_LOCAL, "금액": str(loc)})
     return rows
+
+
+def _find(x, key, depth=0):
+    """dict/list 안에서 key 를 처음 찾는 값 (응답 감싸기가 조금 달라도 읽게)."""
+    if depth > 4:
+        return None
+    if isinstance(x, dict):
+        if key in x:
+            return x[key]
+        for v in x.values():
+            got = _find(v, key, depth + 1)
+            if got is not None:
+                return got
+    elif isinstance(x, list):
+        for v in x[:3]:
+            got = _find(v, key, depth + 1)
+            if got is not None:
+                return got
+    return None
+
+
+def _withholding(F):
+    """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)])."""
+    emps, out = {}, []
+    for year, d in _pick(F, "인사_소득자별근로소득원천징수부"):
+        for r in d.get("응답") or []:
+            path = str(r.get("path") or "").rstrip("/")
+            data = r.get("data")
+            if path.endswith("/emp"):
+                for e in data if isinstance(data, list) else (_find(data, "data") or []):
+                    if isinstance(e, dict) and e.get("cd_emp"):
+                        emps[str(e["cd_emp"])] = e
+            elif path.endswith("/emp/income"):
+                code = r.get("cd_emp") or _find(data, "cd_emp")
+                rows = _find(data, "group1") or []
+                for g in rows if isinstance(rows, list) else []:
+                    ym = re.sub(r"\D", "", str(g.get("ym_rvrs") or g.get("ym_pay") or ""))
+                    if len(ym) != 6 or not code:
+                        continue
+                    out.append((year, str(code), "%s-%s" % (ym[:4], ym[4:]), _num(g.get("am_income1")), _num(g.get("am_inhabit1"))))
+    return emps, out
 
 
 def _child_count(amount):

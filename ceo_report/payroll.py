@@ -66,6 +66,15 @@ def load(input_dir):
     return emps, dict(slips), detail
 
 
+INSURANCE_WORDS = ("국민연금", "건강", "장기요양", "고용")
+
+
+def _only_totals(slip):
+    """위하고 월별 합계(+원천징수부 소득세)만 있고 4대보험 항목은 없는 명세인가."""
+    return set(slip["pay"]) <= {"지급합계"} and "공제합계" in slip["ded"] and \
+        not any(w in k for k in slip["ded"] for w in INSURANCE_WORDS)
+
+
 def _ded(slip, key):
     return sum(v for k, v in slip["ded"].items() if key in k and not (key == "소득세" and "지방" in k))
 
@@ -99,9 +108,9 @@ def check(input_dir, ym, holders=()):
             out.append((n, "최저임금", "ok" if detail else "info", "시급 환산 %s원%s" % (format(int(base / h), ",") if base else "–", "" if detail else " (명세 없어 총액 기준)")))
         if not detail:
             continue
-        if set(s["pay"]) <= {"지급합계"} and set(s["ded"]) <= {"공제합계"}:   # 위하고 월별 급상여 화면: 사원별 합계만 (사용자 2026-11-13)
+        if _only_totals(s):   # 위하고 월별 급상여 화면: 사원별 합계만 (사용자 2026-11-13)
             out.append((n, "4대보험", "info", "위하고 월별 합계만 있어 항목별 공제는 못 봄 (지급 %s원, 공제 %s원)"
-                        % (format(total, ","), format(sum(s["ded"].values()), ","))))
+                        % (format(total, ","), format(s["ded"].get("공제합계", 0), ","))))
         else:
             _insurance(out, n, s, e, ym, year, total, rates, week)
         _tenure(out, n, s, e, ym, year, total, week, slips)
@@ -204,7 +213,8 @@ def yearend(input_dir, year, asof, holders=()):
         gross = int((pay - meal) * scale)
         ins = lambda key: int(sum(_ded(s, key) for s in ss) * scale)
         pension, health = ins("국민연금"), ins("건강") + ins("장기요양") + ins("고용")
-        totals = all(set(s["pay"]) <= {"지급합계"} and set(s["ded"]) <= {"공제합계"} for s in ss)
+        totals = all(_only_totals(s) for s in ss)
+        has_tax = any(any("소득세" in kk and "지방" not in kk for kk in s["ded"]) for s in ss)
         if totals:   # 위하고 월별 합계만 (사용자 2026-11-13): 4대보험 근로자 몫은 요율로 어림
             r = lambda key: taxlaw.value(input_dir, year, key)[0] or 0
             months = 12 if scale != 1.0 else k
@@ -229,9 +239,11 @@ def yearend(input_dir, year, asof, holders=()):
         calc = basic_tax(base)
         child = CHILD.get(kids, 0) if kids <= 2 else CHILD[2] + CHILD_MORE * (kids - 2)
         tax = max(calc - wage_credit(calc, gross) - child - credits - std, 0)
-        paid = int(sum(_ded(s, "소득세") for s in ss) * scale) if detail and not totals else None
+        paid = int(sum(_ded(s, "소득세") for s in ss) * scale) if detail and (not totals or has_tax) else None
         if not detail:
             notes.append("급여 명세 없음 — 장부 총액으로 어림, 기납부 세액 모름")
+        elif totals and has_tax:
+            notes.append("4대보험은 요율로 어림, 낸 소득세는 위하고 원천징수부")
         elif totals:
             notes.append("위하고 월별 지급·공제 합계만 있음 — 4대보험은 요율로 어림, 원천징수한 소득세를 나눌 수 없어 환급·추가 납부는 모름")
         if not e and not P:
