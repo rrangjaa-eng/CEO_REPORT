@@ -7,8 +7,12 @@ import unittest
 from ceo_report import wehago_raw as w
 
 # 가짜 사람·숫자
-EMP = {"emp": [{"cd_emp": "00001", "nm_krname": "가대표", "no_social": "800101-1", "nm_dept": "본부", "da_enter": "20250201", "da_retire": None},
-               {"cd_emp": "00002", "nm_krname": "나직원", "no_social": "010203-4", "nm_dept": "1팀", "da_enter": "20250401", "da_retire": "20260331"}]}
+EMP = {"rank": [{"position_rank_no": 1, "position_rank_name": "사원"}, {"position_rank_no": 9, "position_rank_name": "상무"}],
+       "position": [{"position_rank_no": 5, "position_rank_name": "팀원"}],
+       "emp": [{"cd_emp": "00001", "nm_krname": "가대표", "no_social": "800101-1", "nm_dept": "본부", "da_enter": "20250201", "da_retire": None},
+               {"cd_emp": "00003", "nm_krname": "다상무", "no_social": "700101-1", "nm_dept": "본부", "da_enter": "20250201", "da_retire": None,
+                "rank_no": 9},
+               {"cd_emp": "00002", "rank_no": 1, "position_rank_no": 5, "nm_krname": "나직원", "no_social": "010203-4", "nm_dept": "1팀", "da_enter": "20250401", "da_retire": "20260331"}]}
 PAY = [{"cd_emp": "00001", "nm_krname": "가대표", "cd_code": "00001", "total_ji": 0, "total_gong": 0,
         **dict(("mon_%02d_ji" % m, 5000000 if m <= 2 else 0) for m in range(1, 13)),
         **dict(("mon_%02d_gong" % m, 700000 if m <= 2 else 0) for m in range(1, 13))}]
@@ -54,8 +58,10 @@ class Raw(unittest.TestCase):
 
     def test_employees(self):
         e = w.employees(self.F)
-        self.assertEqual([r["임원"] for r in e], ["예", ""])
-        self.assertEqual(e[1]["퇴사일"], "2026-03-31")
+        self.assertEqual([r["임원"] for r in e], ["예", "예", ""])
+        self.assertEqual(e[2]["직급"], "사원 팀원")
+        self.assertEqual(e[2]["퇴사일"], "2026-03-31")
+        e = e[1:]
         self.assertNotIn("no_social", " ".join(e[1].values()))
         self.assertFalse(any("-4" in v for v in e[1].values() if v))   # 성별 자리 저장 안 함
 

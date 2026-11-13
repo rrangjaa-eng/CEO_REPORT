@@ -17,11 +17,11 @@ import re
 
 from .payroll import YE_COLUMNS
 
-EMP_COLUMNS = ["사원명", "생년월일", "입사일", "퇴사일", "고용형태", "주소정근로시간", "임원", "부양가족수", "자녀수", "부서", "사번"]
+EMP_COLUMNS = ["사원명", "생년월일", "입사일", "퇴사일", "고용형태", "주소정근로시간", "임원", "부양가족수", "자녀수", "부서", "사번", "직급"]
 PAY_COLUMNS = ["연월", "사원명", "구분", "항목", "금액"]
 ASSET_FILE = "고정자산.csv"
 ASSET_COLUMNS = ["기준연도", "자산", "계정", "취득일", "취득가", "상각률", "전기말상각누계", "당기상각", "당기말상각누계"]
-OFFICER_WORDS = ("대표", "이사", "감사")
+OFFICER_WORDS = ("대표", "이사", "감사", "회장", "사장", "전무", "상무")   # 직급·직책 이름에 들어가면 임원
 TOTAL_PAY, TOTAL_DED = "지급합계", "공제합계"   # 월별 급상여 화면은 사원별 합계만 준다
 
 
@@ -95,7 +95,7 @@ def _pick(F, screen, year=None):
 
 
 def employees(F):
-    """인사_사원등록 + 월별 급상여 화면 info(직책) -> 사원.csv 줄."""
+    """인사_사원등록(직급 rank·직책 position 표로 이름을 이음) + 월별 급상여 화면 info(직책) -> 사원.csv 줄."""
     got = _pick(F, "인사_사원등록")
     if not got:
         return []
@@ -105,16 +105,21 @@ def employees(F):
         for i in _resp(d, "/info") or []:
             if any(w in str(i.get("nm_offpos") or "") for w in OFFICER_WORDS):
                 officers.add(str(i.get("cd_emp") or ""))
+    names = dict((x.get("position_rank_no"), str(x.get("position_rank_name") or ""))
+                 for x in (data.get("rank") or []) + (data.get("position") or []))   # 직급(rank)·직책(position) 번호 → 이름
     rows = []
     for e in data.get("emp") or []:
         name = str(e.get("nm_krname") or "").strip()
         if not name:
             continue
         code = str(e.get("cd_emp") or "")
+        titles = [names.get(e.get(k)) or "" for k in ("rank_no", "position_rank_no")]
+        if any(w in t for t in titles for w in OFFICER_WORDS):
+            officers.add(code)
         rows.append({"사원명": name, "생년월일": birth_from_social(e.get("no_social")), "입사일": _date(e.get("da_enter")),
                      "퇴사일": _date(e.get("da_retire")), "고용형태": "", "주소정근로시간": "",
                      "임원": "예" if code in officers else "", "부양가족수": "", "자녀수": "",
-                     "부서": str(e.get("nm_dept") or ""), "사번": code})
+                     "부서": str(e.get("nm_dept") or ""), "사번": code, "직급": " ".join(t for t in titles if t)})
     return rows
 
 
