@@ -407,10 +407,11 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                "team_rate_n": sum(1 for P in plist if P.get("cost_rate_source") == "팀 목표"
                                  and P.get("cost_rate") != R["settings_num"]["예산_원가율"])}   # 기본과 다른 원가율을 쓴 프로젝트 수
     linked_lines = sum(len(P["lines"]) for P in plist)
+    old_lines = sum(len(P["lines"]) for P in proj.values() if (P.get("state") or "").strip() == OLD_STATE)   # 예전 인트라넷 끝난 행사 줄 (표에서 빠지지만 셈에는 넣음)
     compare_only = 0 if INTRANET_IN_FUNDS else sum(1 for e in d.execs if from_intranet(e))
-    counted = linked_lines + len(unlinked_exec) + compare_only + len(prior_exec)
+    counted = linked_lines + old_lines + len(unlinked_exec) + compare_only + len(prior_exec)
     checks.append(("프로젝트집행 줄 수 = 프로젝트 반영 줄 + 미연결 줄" + (" + 인트라넷 비교만 줄" if compare_only else "")
-                   + (" + 지난해 참고 줄" if prior_exec else ""),
+                   + (" + 지난해 참고 줄" if prior_exec else "") + (" + 예전 인트라넷 끝난 행사 줄" if old_lines else ""),
                    len(d.execs), counted, len(d.execs) == counted))
     shown_exp = sum(P["expected"] for P in shown) + sum(P["expected"] for P in rest)
     checks.append(("첫 화면 표시 + 나머지 프로젝트 예상총집행 = 전체 합계", shown_exp, tot["expected"],
