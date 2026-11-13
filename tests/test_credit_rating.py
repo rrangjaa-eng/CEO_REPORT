@@ -69,7 +69,7 @@ class TestCredit(unittest.TestCase):
         self.assertEqual(B["cl"], 750_000_000)   # 미지급금 7억 + 가수금 0.5억
         self.assertEqual(B["nl"], 300_000_000)
         self.assertEqual(B["equity"], 1_240_000_000 - 1_050_000_000)   # 자본금 1억 + 올해 이익 0.9억
-        self.assertEqual(B["loan"], 300_000_000)
+        self.assertEqual(B["loan"], 350_000_000)   # 장기차입금 + 대표 가수금 (평가사 기준)
         self.assertEqual(B["suspense"], 50_000_000)
 
     def test_ratios_and_judge(self):
@@ -142,6 +142,35 @@ class TestCredit(unittest.TestCase):
         v = K.read_inputs(d)
         self.assertEqual(v.get("설립일"), "2025-03-02")
         self.assertNotIn("체납", v)
+
+    def test_balance_from_last_year_report_when_journal_is_partial(self):
+        # 사용자 2026-11-13: 2025 분개장 없이 평가서 총자산·자기자본 + 올해 장부 증감
+        d = self.mk(start=False, inputs={"작년_결산연도": "2025", "작년_총자산": "1000000000", "작년_자기자본": "100000000",
+                                         "작년_차입금": "200000000", "작년_매출액": "1100000000", "설립일": "2025-02-01"})
+        C = K.compute(d, D(2026, 12, 31), annual=True)
+        B = C["E"]["B"]
+        self.assertTrue(B["approx"])
+        # 올해 자산 증감: 현금(−2+3−0.1+0.5−0.1=1.3억) + 미수금 10억 + 보증금 0.1억, 부채 증감: 7억 + 0.5억 + 3억
+        self.assertEqual(B["assets"], 1_000_000_000 + 1_140_000_000)
+        self.assertEqual(B["liab"], 900_000_000 + 1_050_000_000)
+        self.assertEqual(B["equity"], 100_000_000 + 90_000_000)
+        self.assertEqual(B["loan"], 200_000_000 + 300_000_000 + 50_000_000)   # 장기차입금 + 가수금
+        self.assertAlmostEqual(C["V"]["debt"], 100.0 * 1_950_000_000 / 190_000_000)
+        self.assertIsNone(C["V"]["current"])
+        # 설립 해 11개월 매출 11억 → 연 12억 환산과 비교 (올해는 1월 장부뿐 → 1월 31일치로 연 환산)
+        size = 1_000_000_000 / (31 / 365.0)
+        self.assertAlmostEqual(C["V"]["growth"], 100.0 * (size - 1_200_000_000) / 1_200_000_000)
+        self.assertIn("추정", K.render(C))
+        self.assertTrue(any(t[0] == "부채비율 낮추기" for t in C["todo"]))
+
+    def test_explain_names_last_grade_and_biggest_weakness(self):
+        d = self.mk(inputs={"작년_결산연도": "2025", "작년_등급": "B+", "작년_평가사": "NICE D&B", "작년_부채비율": "586.4"})
+        C = K.compute(d, D(2026, 12, 31), annual=True)
+        lines = K.explain(C)
+        self.assertIn("B+", lines[0])
+        self.assertIn("투자 적격(BBB- 이상)보다 4칸 아래", lines[0])
+        self.assertIn("부채비율 586.4%", lines[1])
+        self.assertIn("B+", K.brief(C))
 
     def test_render_none(self):
         self.assertIn("계정잔액.csv", K.render(None))
