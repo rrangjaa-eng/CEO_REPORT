@@ -1790,6 +1790,9 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
     if row and row.get("base") is not None and base is not None and row["base"] != base:
         h.append(_mg(mode, "<div class='note'>%s</div>" % esc("자금 일정의 법인세는 변환 때 장부로 계산한 과세표준 %s 기준 (이 표 %s와 다름 — 기간·자료 확인)"
                                                                 % (won(row["base"]), won(base)))))
+    if R.get("taxret_dir"):   # 실제 법인세 신고서 (사용자 2026-11-13, 경영관리에만). 보고서.py 가 파일 있을 때만 폴더를 넣음
+        from . import taxreturn
+        h.append(_mg(mode, taxreturn.render(taxreturn.for_report(R["taxret_dir"], R["asof"], base, corp), esc)))
     if R.get("taxadj"):   # 세무조정 예상 (사용자 2026-11-12, 경영관리에만). 세법 기준 확인은 10장
         from . import taxadj
         h.append(_mg(mode, taxadj.render(R["taxadj"], esc)))

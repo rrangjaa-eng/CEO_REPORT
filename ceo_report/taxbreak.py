@@ -187,7 +187,13 @@ def check(input_dir, year, answers, holders=(), assets=None):
                                 " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(per_young) if per_young else "더 큼")),
                          "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈"))
     # 4) 작년(2025)분 놓친 감면·공제 — 5년 안 경정청구
-    if year - 1 >= FOUNDED:
+    from . import taxreturn
+    filed = taxreturn.load(input_dir).get((year - 1, "확정"))
+    if filed and taxreturn.at_min_tax(filed, law("최저한세율")[0] or MIN_TAX):   # 실제 신고서 (사용자 2026-11-13)
+        rows.append(("%d년분 경정청구" % (year - 1), "해당 없음", None,
+                     "%d년 신고서: 공제·감면 %s원을 받아 세금이 이미 최저한세(과세표준의 7%%)까지 줄었음 — 더 돌려받을 감면 없음"
+                     % (year - 1, W(filed["공제감면세액"])), "최저한세와 상관없는 공제(중소기업 연구개발비 등)만 세무사와 확인"))
+    elif year - 1 >= FOUNDED:
         got = a.get("작년감면")
         miss = []
         if got in ("없음", "고용공제", "모름") and rows[0][1] in ("해당", "확인 필요"):

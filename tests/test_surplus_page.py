@@ -34,6 +34,8 @@ class Articles(unittest.TestCase):
         self.assertIn("임원퇴직금지급규정", h)
         self.assertIn("중간배당", h)
         self.assertEqual(len(articles.todo({"임원퇴직금규정": "있음", "임원보수한도": "있음"})), 1)
+        t = articles.todo({"임원퇴직금규정": "없음", "임원보수한도": "없음"})
+        self.assertIn("2) 임원 보수 추인과 내년 한도 · 3) 임원퇴직금지급규정 제정", t[-1])
         self.assertEqual(articles.SHARES * articles.PAR, 20_000_000)
 
 

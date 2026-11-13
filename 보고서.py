@@ -386,6 +386,8 @@ def main(argv=None):
         # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
         from ceo_report import taxadj, filing
         R["taxadj"] = taxadj.load(a.입력)
+        from ceo_report import taxreturn   # 실제 법인세 신고서 (사용자 2026-11-13)
+        R["taxret_dir"] = a.입력 if taxreturn.load(a.입력) else None
         R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
         from ceo_report import filehelp
         from ceo_report.util import esc as _esc
