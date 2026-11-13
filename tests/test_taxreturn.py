@@ -106,6 +106,18 @@ class Detail(unittest.TestCase):
         n, v, on, why = taxadj._car_dep(detail_folder(9_000_000), 2026, (8_000_000, True, ""))
         self.assertEqual(v, 0)                        # 직접 넣은 해: 1년 치 8백만 − 한도 8백만
 
+    def test_car_dep_with_ledger(self):
+        from ceo_report import taxadj, corptax
+        d = detail_folder()
+        with open(os.path.join(d, corptax.LEDGER_FILE), "w", encoding="utf-8-sig", newline="") as f:
+            f.write("기준연도,자산,계정,취득일,취득가,상각률,전기말상각누계,당기상각,당기말상각누계\n2026,차,차량운반구,2025-07-01,40000000,0.2,4000000,10000000,14000000\n")
+        self.assertEqual(corptax.read_ledger(d), {"2026": 10_000_000})
+        n, v, on, why = taxadj._car_dep(d, 2026, (8_000_000, True, ""))
+        self.assertEqual(v, 2_000_000)                # 대장 1년 치 1천만 − 한도 8백만
+        self.assertIn("고정자산대장", why)
+        D = corptax.depreciation([], {}, "2026-10", ledger=corptax.read_ledger(d))
+        self.assertEqual((D["annual"], D["source"]), (10_000_000, "고정자산대장"))
+
     def test_taxbreak_rows(self):
         from ceo_report import taxbreak
         T = taxbreak.check(detail_folder(), 2026, {"과밀억제": "예", "수도권": "예", "청년창업": "아니오"})

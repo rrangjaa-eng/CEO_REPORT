@@ -223,6 +223,10 @@ def compute(input_dir, year, settings=None, D=None):
     dep_est = manual.get(Y)
     dep_src = "직접 입력"
     if dep_est is None:
+        from .corptax import read_ledger   # 위하고 고정자산관리대장 (사용자 2026-11-13)
+        dep_est = read_ledger(input_dir).get(Y)
+        dep_src = "고정자산대장"
+    if dep_est is None:
         dep_est, dep_src = (Lp["dep"] if Lp else None), "작년 장부"
     A["dep_est"], A["dep_src"] = dep_est, dep_src
     A["closed"] = Yp["dep"] > 0   # 12월 결산 전표(감가상각비)가 들어왔는지

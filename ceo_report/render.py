@@ -1802,7 +1802,7 @@ def _dep_into(R, T, ytd):
     if amount is None:
         return
     apply(T["nonop"], amount)
-    src = "작년" if dep.get("source") == "작년 장부" else "입력"
+    src = {"작년 장부": "작년", "고정자산대장": "위하고 고정자산대장"}.get(dep.get("source"), "입력")
     if ytd:
         T["nonop"]["dep_note"] = ", %s %s × %d/12" % (src, won(dep["annual"]), dep["months"]) if dep.get("mode") == "prorate" \
             else ", %s 연간 %s" % (src, won(dep["annual"]))

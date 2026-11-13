@@ -56,12 +56,34 @@ def _int(text):
     return int(t) if t.isdigit() else None
 
 
+LEDGER_FILE = "고정자산.csv"   # 위하고 고정자산관리대장 (wehago_raw 가 자료 변환 때 만듦)
+
+
+def read_ledger(input_dir, wehago_dir=None):
+    """위하고 고정자산관리대장의 당기 상각 예정액 -> {연도: 합계} (사용자 2026-11-13: 올해 감가상각비 예상은 대장 금액).
+    wehago_dir 가 있으면 원본을 바로 읽는다 (같은 변환 안에서 고정자산.csv 가 아직 안 써졌을 때)."""
+    rows = []
+    if wehago_dir:
+        from . import wehago_raw
+        rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
+    if not rows and input_dir and os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
+        try:
+            with open(os.path.join(input_dir, LEDGER_FILE), encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+        except (OSError, UnicodeDecodeError, csv.Error):
+            rows = []
+    out = {}
+    for r in rows:
+        y, v = (r.get("기준연도") or "").strip(), _int(r.get("당기상각"))
+        if y.isdigit() and v is not None:
+            out[y] = out.get(y, 0) + v
+    return out
+
+
 def read(input_dir):
-    """-> {연도: 연간 감가상각비}. 없거나 읽지 못하면 {}."""
+    """-> {연도: 연간 감가상각비 직접 입력, ("대장", 연도): 위하고 고정자산대장 당기 상각}. 없거나 읽지 못하면 {}."""
     path = os.path.join(input_dir, DEP_FILE)
     out = {}
-    if not os.path.exists(path):
-        return out
     try:
         with open(path, encoding="utf-8-sig", newline="") as f:
             for r in csv.DictReader(f):
@@ -69,7 +91,9 @@ def read(input_dir):
                 if y.isdigit() and v is not None:
                     out[y] = v
     except (OSError, UnicodeDecodeError, csv.Error):
-        return {}
+        out = {}
+    for y, v in read_ledger(input_dir).items():   # 위하고 고정자산대장 (사용자 2026-11-13): 직접 입력이 없는 해에 씀
+        out[("대장", y)] = v
     return out
 
 
@@ -80,7 +104,7 @@ def save(input_dir, year, amount):
         raise ValueError("연도는 4자리 (예: 2026)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
-    cur = read(input_dir)
+    cur = dict((k, v) for k, v in read(input_dir).items() if isinstance(k, str))   # 대장 값은 파일에 쓰지 않음
     if str(amount or "").strip():
         v = _int(amount)
         if v is None:
@@ -107,7 +131,7 @@ def _dep_rows(accounts, year):
 DEP_MODE = "full"
 
 
-def depreciation(accounts, manual, ym, mode=None):
+def depreciation(accounts, manual, ym, mode=None, ledger=None):
     """-> {"annual", "source", "booked", "extra"(누적), "cur"(이번 달), "months"}. annual None = 모름 (extra·cur 도 None).
 
     감가상각비는 연말 결산 때 한 번에 들어가므로 작년 금액을 올해 예상으로 보고 비용으로 먼저 뺀다 (사용자 2026-11-04).
@@ -119,6 +143,8 @@ def depreciation(accounts, manual, ym, mode=None):
     booked_cur = sum(r["amount"] or 0 for r in booked_rows if r["ym"] == ym)
     if manual.get(year) is not None:
         annual, source = manual[year], "직접 입력"
+    elif (ledger or {}).get(year) is not None or manual.get(("대장", year)) is not None:
+        annual, source = (ledger or {}).get(year, manual.get(("대장", year))), "고정자산대장"
     else:
         last = _dep_rows(accounts, int(year) - 1)
         annual = sum(r["amount"] or 0 for r in last) if last else None
@@ -206,7 +232,7 @@ def _last_full_month(asof):
     return prev.strftime("%Y-%m")
 
 
-def adjust_for(journal, cfg, asof, input_dir=None):
+def adjust_for(journal, cfg, asof, input_dir=None, wehago_dir=None):
     """세무조정 예상 (taxadj) — 법인세 예상과 같은 기간·같은 매출 기준."""
     from .convert_pl import _classify, _net
     from . import taxadj, dividend
@@ -222,10 +248,10 @@ def adjust_for(journal, cfg, asof, input_dir=None):
         ans = dividend.read_settings(input_dir) if input_dir else {}
     except OSError:
         ans = {}
-    return taxadj.adjust(journal, cfg, ym, input_dir, rev, ans)
+    return taxadj.adjust(journal, cfg, ym, input_dir, rev, ans, wehago_dir)
 
 
-def from_journal(journal, cfg, asof, manual=None, input_dir=None):
+def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=None):
     """-> (세금예상 줄 목록, 메모). 올해 1월~마지막 달 장부로 세전 이익(감가상각비 예상 뺀) → 법인세 − 선납세금, 지방소득세.
 
     납부일 = 다음 해 3월 31일(법인세), 4월 30일(지방소득세), 토·일이면 월요일. 상태는 '예상'."""
@@ -267,9 +293,9 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None):
             unknown += 1
         else:
             pretax += sign * v
-    dep = depreciation(dep_lines, manual or {}, ym)
+    dep = depreciation(dep_lines, manual or {}, ym, ledger=read_ledger(input_dir, wehago_dir))
     bd = bad_debt(journal, cfg, ym, input_dir)
-    adj = adjust_for(journal, cfg, asof, input_dir)
+    adj = adjust_for(journal, cfg, asof, input_dir, wehago_dir)
     base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
     nat, corp, C = national(base, year, input_dir)
     local = int(corp * LOCAL_RATE)
