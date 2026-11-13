@@ -36,7 +36,8 @@ def numbers_of(html):
 
     대표 보고는 요약 화면만 싣는다 (문서 1~2쪽, 사용자 2026-11-03). 그래서 상세 목차부터 끝까지(경영관리용에만 있음)도 뺀다."""
     # 경영관리 1쪽 요약·본문(2026-11-12)은 같은 숫자를 다시 모아 보이는 곳이라 뺀다 (대표용에는 없음)
-    html = re.sub(r"<section class='area' id='a-one'.*?</section>", "", html, flags=re.S)
+    html = re.sub(r"<section class='area' id='a-(?:one|docs)'.*?</section>", "", html, flags=re.S)
+    html = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", html, flags=re.S)   # 쉬운 설명·제안 상자는 경영관리용에만
     html = html.split("<div class='toc'>")[0]
     html = re.sub(r" data-label='[^']*'|<div class='apager'>.*?</div>", "", html, flags=re.S)   # 영역 이름(부록 A-1 등)은 화면 장치
     html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
