@@ -558,10 +558,17 @@ def missing_entries(R, facts, small=100000, thin=0.3):
             if asof.day > usual + 5:
                 out.append((kind, "지난 3달 매달 %d일쯤까지 들어왔는데 이번 달은 아직 없음" % usual))
         base = [val.get(ym) for ym in before3]
-        if all(base) and sum(base) / 3.0 >= small and (val.get(last) or 0) < thin * sum(base) / 3.0:
-            out.append((kind, "%s월 %s원 — 앞 3달 평균 %s원의 %d%% (덜 들어감 의심)" % (
-                last[5:], "{:,}".format(int(val.get(last) or 0)), "{:,}".format(int(sum(base) / 3.0)),
-                int(100 * (val.get(last) or 0) / (sum(base) / 3.0)))))
+        # 카드는 금액으로 '덜 들어감'을 보지 않는다: 카드 사용은 달마다 크게 오르내리고(롯데_1842 한도결제대체·선결제),
+        # 전표는 전월분을 카드사 묶음으로 한꺼번에 넣으므로 빠졌다면 그달 카드사 전표가 하나도 없다 (사용자 2026-11-13: 9월도 다 넣음)
+        low = 0 if kind.endswith("(카드사 합계)") else thin
+        if all(base) and sum(base) / 3.0 >= small and (val.get(last) or 0) <= low * sum(base) / 3.0:
+            if low == 0:
+                out.append((kind, "%s월 사용 전표가 하나도 없음 — 앞 3달은 매달 있었음 (평균 %s원)" % (
+                    last[5:], "{:,}".format(int(sum(base) / 3.0)))))
+            else:
+                out.append((kind, "%s월 %s원 — 앞 3달 평균 %s원의 %d%% (덜 들어감 의심)" % (
+                    last[5:], "{:,}".format(int(val.get(last) or 0)), "{:,}".format(int(sum(base) / 3.0)),
+                    int(100 * (val.get(last) or 0) / (sum(base) / 3.0)))))
     for r in facts.get("recurring") or []:
         if cur not in (r.get("months") or {}) and asof.day > r["day"] + 5:
             out.append((r["name"], "매달 %d일쯤 %s원 나가던 지급이 이번 달 %d일 지나도록 장부에 없음" % (

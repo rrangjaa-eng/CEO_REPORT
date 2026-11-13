@@ -49,7 +49,10 @@ class TestMissing(unittest.TestCase):
                               "급여": {"2026-08": [1, 31], "2026-09": [1, 30], "2026-10": [1, 31]}},
                  "recurring": [{"name": "하나캐피탈", "amount": 1534390, "day": 5, "months": {"2026-10": 1}}]}
         got = dict(insights.missing_entries(self.R(D(2026, 11, 12)), facts))
-        self.assertIn("덜 들어감", got["카드 롯데 사용 (카드사 합계)"])
+        self.assertNotIn("카드 롯데 사용 (카드사 합계)", got)   # 카드는 금액이 적다고 경고하지 않음 (2026-11-13)
+        facts["presence"]["카드 롯데_7344 사용"]["2026-10"] = [0, 0]
+        got = dict(insights.missing_entries(self.R(D(2026, 11, 12)), facts))
+        self.assertIn("하나도 없음", got["카드 롯데 사용 (카드사 합계)"])
         self.assertNotIn("급여", got)             # 급여는 보통 31일쯤: 11/12엔 아직 빠졌다고 하지 않음
         self.assertIn("하나캐피탈", got)          # 5일+5일 지남
 
@@ -65,6 +68,16 @@ class TestMissing(unittest.TestCase):
                                                    "2026-10": [6989076, 31]}}}
         got = dict(insights.missing_entries(self.R(D(2026, 11, 13)), facts))
         self.assertEqual(got, {})
+
+
+    def test_lumpy_limit_card_month_is_not_thin(self):
+        """사용자 2026-11-13 ("9월 카드도 전부 넣었어"): 10-31 보고에서 롯데 9월 1,378만이 앞 3달 평균 5,394만의 25%라 경고.
+        평균은 롯데_1842 한도결제대체·선결제 전표가 부풀린 것. 전표가 있으면 경고하지 않는다."""
+        facts = {"presence": {"카드 롯데_1842 사용": {"2026-06": [130000000, 30], "2026-07": [14751760, 3],
+                                                   "2026-08": [43817340, 26], "2026-09": [6835340, 22]},
+                              "카드 롯데_7344 사용": {"2026-06": [3000000, 30], "2026-07": [3115504, 31],
+                                                   "2026-08": [4644203, 31], "2026-09": [6895888, 29]}}}
+        self.assertEqual(insights.missing_entries(self.R(D(2026, 10, 31)), facts), [])
 
 
 class TestOnSample(unittest.TestCase):
