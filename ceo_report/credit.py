@@ -116,6 +116,22 @@ def build_table(books):
         kind = "분할" if "분할" in (ln.get("memo") or "") or "할부" in (ln.get("memo") or "") else ("일시" if "일시" in (ln.get("memo") or "") else "")
         out.append(dict(zip(KEYS, [LOAN_ROW + ln["date"].isoformat(), code, "|".join([_sq(ln.get("vendor")), mat, kind]),
                                    str(int(ln.get("debit") or 0)), str(int(ln.get("credit") or 0))])))
+    # 대출 연장 (2026-11-13 실제: 4/3 '대출연장보증료_기술보증기금대출_311244508383'): 적요의 대출 계좌번호로 대출을 찾아 연장 줄
+    loan_vendors = set(_sq(ln.get("vendor")) for ln in books.journal if _sq(ln.get("account_code")).startswith(LOAN_DETAIL_PREFIX))
+    acct = {}
+    for ln in books.journal:
+        if _sq(ln.get("vendor")) in loan_vendors:
+            for n_ in re.findall(r"\d{9,}", ln.get("memo") or ""):
+                acct.setdefault(n_, _sq(ln.get("vendor")))
+    seen = set()
+    for ln in books.journal:
+        memo = ln.get("memo") or ""
+        if ln.get("date") is None or "연장" not in memo:
+            continue
+        hit = [acct[n_] for n_ in re.findall(r"\d{9,}", memo) if n_ in acct]
+        if hit and (ln["date"], hit[0]) not in seen:
+            seen.add((ln["date"], hit[0]))
+            out.append(dict(zip(KEYS, [LOAN_ROW + ln["date"].isoformat(), EXTEND, "|".join([hit[0], "", EXTEND]), "0", "0"])))
     yms = sorted(set(k[0] for k in agg))
     note = "계정잔액 %d줄 (%s ~ %s, %s)" % (len(out) - 1, yms[0] if yms else "", yms[-1] if yms else "",
                                          "처음부터 있음 — 재무상태표 계산 가능" if start else "처음부터가 아님 — 잔액 항목은 작년 분개장이 있어야 계산")
@@ -199,9 +215,15 @@ def loans_at(L, asof, close):
     for d_, code, v, mat, kind, dr, cr in (L or {}).get("loans", []):
         if d_ is None or d_ > asof:
             continue
-        x = by.setdefault(v, {"bal": 0, "mat": None, "kind": "", "paid": []})
+        if code == EXTEND:   # 연장 보증료 등: 만기 앞뒤 3달 안이면 1년 연장으로 봄 (새 만기를 적요에 넣으면 그 날짜가 우선)
+            x = by.get(v)
+            if x and x["mat"] and abs((d_ - x["mat"]).days) <= 92:
+                x["mat"], x["ext"] = dt.date(x["mat"].year + 1, x["mat"].month, min(x["mat"].day, 28 if x["mat"].month == 2 else x["mat"].day)), d_
+            continue
+        x = by.setdefault(v, {"bal": 0, "mat": None, "kind": "", "paid": [], "ext": None})
         x["bal"] += cr - dr
-        x["mat"] = mat or x["mat"]
+        if mat:
+            x["mat"], x["ext"] = mat, None
         x["kind"] = kind or x["kind"]
         if dr > 0:
             x["paid"].append((d_, dr))
@@ -216,7 +238,7 @@ def loans_at(L, asof, close):
         elif mat < asof:
             cur, st = x["bal"], "만기 지남"
         elif mat <= edge:
-            cur, st = x["bal"], "1년 안"
+            cur, st = x["bal"], ("1년 안, %s 연장해 1년 늘었다고 봄" % x["ext"].isoformat() if x.get("ext") else "1년 안")
         elif x["kind"] == "분할":
             last = sorted(x["paid"])[-1][1] if x["paid"] else 0
             cur, st = min(x["bal"], last * 12), "분할 일부"   # 최근 한 달 원금 × 12 (다음 1년 낼 원금 근사)
@@ -246,6 +268,7 @@ def _kind(code, name):
 LOAN_PREFIX = ("257", "260", "264", "291", "293")
 LOAN_DETAIL_PREFIX = ("260", "264", "291", "293")   # 대출별 만기를 보는 계정 (가수금 뺌)
 LOAN_ROW = "대출:"
+EXTEND = "연장"
 MATURITY = re.compile(r"만기\s*일자?\s*[:：]\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})")
 LONG_LOAN_PREFIX = ("293",)
 AR_PREFIX = ("108", "110")                   # 외상매출금(이 회사 '수입수수료미수금')·받을어음
@@ -724,7 +747,7 @@ def todo(C):
     elif not inp.get("대출만기일") and B and B.get("long_loan", 0) > 0:
         out.append(("대출 만기일 넣기", "장기 대출 %s원이 있습니다. 만기일을 체크리스트에 넣으면 결산 때 유동부채로 옮겨지는지 계산합니다." % W(B["long_loan"]), ""))
     if B and B.get("suspense", 0) > 0:
-        out.append(("대표 가수금 정리", "결산일에 남은 가수금 %s원은 부채로 잡혀 부채비율을 높입니다. 갚거나 자본금으로 바꿀지(출자전환) 세무사와 정합니다." % W(B["suspense"]),
+        out.append(("대표 가수금 정리", "장부에 남은 가수금 %s원은 부채로 잡혀 부채비율을 높입니다. 갚거나 자본금으로 바꿀지(출자전환) 세무사와 정합니다. 이미 갚았다면 상환 전표가 장부에 빠진 것이니 결산 전에 넣어야 합니다." % W(B["suspense"]),
                     _debt_effect(B, B["suspense"])))
     for key, item in (("delinq", "금융연체"), ("tax", "체납")):
         if inp.get(item) == "있음":
