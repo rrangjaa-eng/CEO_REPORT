@@ -436,6 +436,7 @@ EXPLAIN = {
     "c3": "급여가 최저임금·4대보험·원천세·수당 규칙에 맞게 처리됐는지 점검하고, 직원 연말정산 결과를 미리 어림합니다.",
     "c4": "지금까지 쌓인 이익(이익잉여금)을 배당할지 회사에 남길지 판단하는 곳입니다. 처분계산서는 그 결정을 적는 양식입니다.",
     "c5": "결산 숫자로 은행·보증기관이 매길 신용등급을 미리 어림하고, 12월 31일 전에 하면 등급에 유리한 일을 알려 줍니다.",
+    "gasu": "대표이사가 회사에 잠시 넣어 둔 돈(가수금)을 언제 돌려드려야 통장이 늘 남겨 둘 돈(최소 보유현금) 아래로 내려가지 않는지 날짜별로 계산한 곳입니다.",
     "track": "지난 보고 때 ‘앞으로 이만큼 들어오고 나갈 것’이라고 한 예측이 실제 통장과 얼마나 맞았는지 봅니다. 차이가 크면 자금 예측을 그만큼 덜 믿어야 합니다.",
 }
 NONE = "이 장에서 걸린 것이 없어 지금 따로 할 일은 없습니다."
@@ -501,6 +502,9 @@ def suggest(key, R, I=None, L=None):
         return _uniq(acts(("자료",), lambda r: "잔액" in r["fact"]))
     if key == "s2":
         return _uniq(acts(("자금",)))
+    if key == "gasu":
+        from . import gasu
+        return gasu.advice(R.get("gasu"))
     if key == "s3":
         return _uniq(acts(("프로젝트",)))
     if key == "s4":
@@ -628,6 +632,8 @@ def docs_section(R, I, L):
     for i, nm in ((1, "현재 자금·입출금"), (2, "입금·지급 일정"), (3, "프로젝트 예산·집행"), (4, "매출·손익"), (5, "계산서·수금"),
                   (6, "프로젝트 밖 지급"), (7, "변동·자료 범위")):
         add(nm, here("s%d" % i, "부록 B-%d" % i), yes, suggest("s%d" % i, R, I, L), EXPLAIN["s%d" % i])
+    if "gasu" in R:   # 사용자 2026-11-13
+        add("가수금 갚을 시기 (확정분만·예상 포함)", here("gasu", "부록 B-2-1"), yes, suggest("gasu", R, I, L), EXPLAIN["gasu"])
     if mon:
         add("위하고 대조·실행가 차이", here("s8", "부록 B-8"), yes, suggest("s8", R, I, L), EXPLAIN["s8"])
         add("현금흐름표 (쉬운 풀이·회사 상태·개선 할 일)", here("s9", "부록 B-9"), yes, suggest("s9", R, I, L), EXPLAIN["s9"])

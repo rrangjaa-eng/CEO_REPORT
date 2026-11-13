@@ -413,6 +413,8 @@ def main(argv=None):
     from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
     R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)
+    from ceo_report import gasu   # 가수금 갚을 시기 (사용자 2026-11-13: 전부 갚아도 자금에 영향 없는지) — 경영관리 B-2-1
+    R["gasu"] = gasu.for_report(a.입력, R)
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous

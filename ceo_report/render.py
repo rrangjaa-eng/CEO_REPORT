@@ -484,6 +484,10 @@ def render(R, mode):
     rest = [("risk", "A-3 위험 분석·해결방안", G1, _risk_section(R), hi or None),
             ("auto", "A-4 자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None)]
     rest += [("s%d" % i, "B-%d %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
+    if "gasu" in R:   # B-2-1 가수금 갚을 시기 (사용자 2026-11-13) — 2장 바로 뒤
+        from . import gasu
+        i2 = [x[0] for x in rest].index("s2") + 1
+        rest.insert(i2, ("gasu", "B-2-1 가수금 갚을 시기", G2, gasu.render(R["gasu"]), None))
     rest += [(k, lab, G3, b, None) for k, lab, b in _periodic(R, digest.periodic(R))]
     # 쉬운 설명 · 제안 상자를 모든 장 맨 위에 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
     R["docs_files"] = R.get("docs_files") or {}

@@ -814,6 +814,9 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         R["xchk"] = load_xchk(folder)
         from ceo_report import credit   # 자료 안내의 신용평가 한 줄은 CLI 가 붙인다 (2026-11-13)
         R["credit_brief"] = credit.brief(credit.compute(folder, dt.date(2026, 10, 31)))
+        from ceo_report import insights, gasu   # 가수금 갚을 시기도 CLI 가 붙인다 (2026-11-13)
+        R["auto_facts"] = insights.read_facts(folder)
+        R["gasu"] = gasu.for_report(folder, R)
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
