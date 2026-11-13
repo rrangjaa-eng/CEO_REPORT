@@ -747,7 +747,7 @@ def todo(C):
     elif not inp.get("대출만기일") and B and B.get("long_loan", 0) > 0:
         out.append(("대출 만기일 넣기", "장기 대출 %s원이 있습니다. 만기일을 체크리스트에 넣으면 결산 때 유동부채로 옮겨지는지 계산합니다." % W(B["long_loan"]), ""))
     if B and B.get("suspense", 0) > 0:
-        out.append(("대표 가수금 정리", "장부에 남은 가수금 %s원은 부채로 잡혀 부채비율을 높입니다. 갚거나 자본금으로 바꿀지(출자전환) 세무사와 정합니다. 이미 갚았다면 상환 전표가 장부에 빠진 것이니 결산 전에 넣어야 합니다." % W(B["suspense"]),
+        out.append(("대표 가수금 정리", "장부에 남은 가수금 %s원은 부채로 잡혀 부채비율을 높입니다. 갚거나 자본금으로 바꿀지(출자전환) 세무사와 정합니다." % W(B["suspense"]),
                     _debt_effect(B, B["suspense"])))
     for key, item in (("delinq", "금융연체"), ("tax", "체납")):
         if inp.get(item) == "있음":
