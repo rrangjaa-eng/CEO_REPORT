@@ -3,18 +3,39 @@
 const KEEP = ["da_date", "no_acct", "nm_yuh", "nm_gubun_bungae", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2",
   "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2"];
 const PLAN_KEEP = ["cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
-const BRIDGE_VERSION = 5;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
+const BRIDGE_VERSION = 6;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
 const planCap = [];
 let closingArmed = false;   // {kind, date, cd_fitem, rows}
+let autoCap = null;   // 결산·인사급여 자동 받기: 이 화면 코드의 응답만 모은다 [{path, data}]
+
+// 개인정보·비밀값 빼기 (사용자 2026-11-12): 비밀번호·전화·메일·주소·계좌는 버리고, 주민번호는 생년월일-성별 자리(YYMMDD-G)만 남긴다.
+const DROP_KEY = /(^pw_|passw|^cel_|^tel_|^em_|email|^zip|^add_|addr|bank|deposit|card_no|no_card|account_no|account_holder|profile_url|^ip_|token|secret)/i;
+const ID_KEY = /(social|no_res|jumin)/i;
+function scrub(v, key = "") {
+  if (Array.isArray(v)) return v.map((x) => scrub(x));
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) if (!DROP_KEY.test(k)) o[k] = scrub(x, k);
+    return o;
+  }
+  if (typeof v === "string" && ID_KEY.test(key)) {
+    const d = v.replace(/\D/g, "");
+    return d.length >= 7 ? `${d.slice(0, 6)}-${d[6]}` : d.slice(0, 6);
+  }
+  return v;
+}
+const screenCode = () => (location.hash.match(/\/(?:account|humanresource)\/([A-Z0-9]+)/) || [])[1] || "";
 
 window.addEventListener("message", (e) => {
   const m = e.data;
   if (e.source !== window || !m || m.__ceoReport !== 1) return;
   let j;
   try { j = JSON.parse(m.text); } catch (err) { return; }
-  if (m.kind === "결산원본") {   // 결산 자료 받기: 받을 준비 중일 때 온 응답을 그대로 배경으로 (화면 이름·주소 경로만 붙임)
-    if (closingArmed) chrome.runtime.sendMessage({type: "closingCaptured", path: m.path, data: j, screen: (document.title || "").split(" - ")[0],
-      code: (location.hash.match(/\/account\/([A-Z0-9]+)/) || [])[1] || ""});
+  if (m.kind === "결산원본") {   // 결산 자료 받기: 받을 준비 중일 때 온 응답을 배경으로 (화면 이름·주소 경로만 붙임, 회사정보 응답은 버림)
+    if (/companyinfo/i.test(m.path)) return;
+    if (autoCap && m.path.toLowerCase().includes("/" + autoCap.code.toLowerCase() + "/")) autoCap.got.push({path: m.path, data: scrub(j)});
+    if (closingArmed) chrome.runtime.sendMessage({type: "closingCaptured", path: m.path, data: scrub(j), screen: (document.title || "").split(" - ")[0],
+      code: screenCode()});
     return;
   }
   if (m.kind === "자금계획목록" || m.kind === "자금계획상세") {
@@ -122,7 +143,60 @@ async function collectPlan(months) {
   chrome.runtime.sendMessage({type: "planResult", rows, done, errors, company: (title.split(" - ")[1] || "").trim()});
 }
 
+// 위하고 안내 창 중 '불러오기'·'조회 조건 누락' 같은 읽기용 창만 [확인]을 누른다. 저장·삭제를 묻는 창은 건드리지 않는다.
+function clickLoadDialog() {
+  const oks = [...document.querySelectorAll("button, a, span, div")].filter((el) =>
+    el.getBoundingClientRect().width > 0 && el.children.length === 0 && (el.innerText || "").trim() === "확인");
+  for (const b of oks) {
+    let box = b;
+    for (let i = 0; i < 8 && box; i++) {
+      box = box.parentElement;
+      const t = box ? (box.innerText || "") : "";
+      if (t.length > 400) break;
+      if (/저장하시겠|삭제|변경하시겠|마감/.test(t)) return "";
+      if (/불러오시겠/.test(t)) { (b.closest("button") || b).click(); return "불러오기"; }
+    }
+  }
+  return "";
+}
+
+// 화면 하나 받기: 같은 탭 안에서 화면 주소(#/smarta/모듈/코드)만 바꾸고, [조회]를 눌러 그 화면 코드의 응답을 모은다.
+// onOpen: 화면을 열기만 해도 자료가 오는 화면(사원등록) — [조회]를 누르지 않는다.
+async function runScreen(msg) {
+  autoCap = {code: msg.code, got: []};
+  window.postMessage({__ceoArm: 1, ms: msg.ms * 2 + 15000}, location.origin);
+  const want = `#/smarta/${msg.mod}/${msg.code}`;
+  if (!location.hash.startsWith(want + "?")) {
+    const q = location.hash.slice(location.hash.indexOf("?"));
+    location.hash = want + q;
+    await sleep(3500);
+  }
+  let clicked = false;
+  if (!msg.onOpen) {
+    const b = await waitFor(findQueryButton, 8000);
+    if (b) { b.click(); clicked = true; }
+  }
+  let dialog = "";
+  const t0 = Date.now();
+  while (Date.now() - t0 < msg.ms && !autoCap.got.length) {
+    dialog = clickLoadDialog() || dialog;
+    await sleep(300);
+  }
+  // 첫 응답 뒤 딸린 응답(본표·목록·합계)까지: 새 응답이 2초 동안 없을 때까지 더 받는다 (길어도 ms 더)
+  for (let n = -1, quiet = 0, t1 = Date.now(); autoCap.got.length && quiet < 2000 && Date.now() - t1 < msg.ms; ) {
+    dialog = clickLoadDialog() || dialog;
+    await sleep(250);
+    if (autoCap.got.length !== n) { n = autoCap.got.length; quiet = 0; } else quiet += 250;
+  }
+  const got = autoCap.got; autoCap = null;
+  return {ok: got.length > 0, clicked, dialog, screen: (document.title || "").split(" - ")[0], code: screenCode(), got, v: BRIDGE_VERSION};
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg && msg.type === "runScreen") {
+    runScreen(msg).then(reply, (e) => { autoCap = null; reply({ok: false, error: String(e.message || e), got: [], v: BRIDGE_VERSION}); });
+    return true;
+  }
   if (msg && msg.type === "clickQuery") {
     const b = findQueryButton();
     if (b) b.click();
@@ -134,7 +208,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     setTimeout(() => { closingArmed = false; }, msg.ms || 15000);
     const b = findQueryButton();
     if (b) b.click();
-    reply({ok: !!b, screen: (document.title || "").split(" - ")[0], code: (location.hash.match(/\/account\/([A-Z0-9]+)/) || [])[1] || "", v: BRIDGE_VERSION});
+    reply({ok: !!b, screen: (document.title || "").split(" - ")[0], code: screenCode(), v: BRIDGE_VERSION});
   }
   if (msg && msg.type === "collectPlan") {
     collectPlan(msg.months).catch((e) => chrome.runtime.sendMessage({type: "planResult", rows: [], done: [], errors: [String(e.message || e)]}));
