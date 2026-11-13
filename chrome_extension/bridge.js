@@ -202,6 +202,43 @@ async function fillEarners() {
   await sleep(500);
 }
 
+// 소득자별 근로소득원천징수부: [조회] 뒤 왼쪽 사원 표(그림 표, 머리줄·줄 28px)를 한 줄씩 눌러 사원마다 달별 소득세 응답을 받는다.
+// 받은 응답에는 사원코드가 없어서, 누른 뒤 오른쪽 '사원코드' 칸 값을 붙인다. 화면을 보기만 한다.
+function panelEmpCode() {
+  const lab = [...document.querySelectorAll("*")].find((e) => e.children.length === 0 && e.textContent.trim() === "사원코드" && vis(e));
+  let p = lab;
+  for (let i = 0; i < 3 && p; i++) {
+    p = p.parentElement;
+    const m = ((p && p.innerText) || "").match(/사원코드\s*(\d{3,})/);
+    if (m) return m[1];
+  }
+  return "";
+}
+async function walkEmployeeRows(subPath) {
+  const list = await waitFor(() => autoCap.got.find((g) => Array.isArray(g.data) && g.data.length && g.data[0].cd_emp !== undefined), 10000);
+  if (!list) throw new Error("사원 목록이 오지 않음");
+  const n = list.data.length;
+  const canvas = [...document.querySelectorAll("canvas")].filter(vis)[0];
+  if (!canvas) throw new Error("사원 표를 찾지 못함");
+  const r = canvas.getBoundingClientRect();
+  if (42 + 28 * n > r.height) throw new Error(`사원이 ${n}명이라 표에 다 안 보임`);
+  for (let i = 0; i < n; i++) {
+    const before = autoCap.got.length;
+    pointerClick(canvas, r.x + Math.min(150, r.width - 20), r.y + 42 + 28 * i);
+    const g = await waitFor(() => autoCap.got.slice(before).find((x) => x.path.includes(subPath)), 8000);
+    if (!g) {
+      if (i === 0) continue;   // 첫 줄은 [조회] 때 이미 받았을 수 있음
+      throw new Error(`${i + 1}번째 사원 응답이 오지 않음`);
+    }
+    await sleep(300);
+    g.cd_emp = panelEmpCode();
+    g.row = i;
+  }
+  // 첫 줄(조회 때 받은 것)에도 사원코드를 붙인다
+  const first = autoCap.got.find((x) => x.path.includes(subPath) && x.cd_emp === undefined);
+  if (first) first.cd_emp = list.data[0].cd_emp;
+}
+
 // 화면 하나 받기: 같은 탭 안에서 화면 주소(#/smarta/모듈/코드)만 바꾸고, [조회]를 눌러 그 화면 코드의 응답을 모은다.
 // onOpen: 화면을 열기만 해도 자료가 오는 화면(사원등록) — [조회]를 누르지 않는다.
 async function runScreen(msg) {
@@ -225,6 +262,10 @@ async function runScreen(msg) {
     await fillEarners();
     const b = await waitFor(findQueryButton, 3000);
     if (b) { b.click(); clicked = true; }
+  } else if (msg.fill === "rows") {
+    const b = await waitFor(findQueryButton, 8000);
+    if (b) { b.click(); clicked = true; }
+    await walkEmployeeRows(msg.sub || "/income/");
   } else if (!msg.onOpen) {
     const b = await waitFor(findQueryButton, 8000);
     if (b) { b.click(); clicked = true; }

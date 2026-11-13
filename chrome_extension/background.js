@@ -348,10 +348,12 @@ const AUTO_SCREENS = [
   // 사업·기타소득조회: 귀속년월(1~12월)과 소득자(코드도움에서 전체 체크)를 채워야 조회된다 (2026-11-13 실제 화면 확인)
   {prefix: "인사", mod: "humanresource", code: "SWBU0103", name: "사업소득조회", years: [0, -1], fill: "earners"},
   {prefix: "인사", mod: "humanresource", code: "SWET0107", name: "기타소득조회", years: [0, -1], fill: "earners"},
+  // 소득자별 근로소득원천징수부: 사원마다 줄을 눌러 달별 소득세·지방소득세를 받는다 (세무: 연말정산 환급·추가 납부 예상)
+  {prefix: "인사", mod: "humanresource", code: "SWYM0107", name: "소득자별근로소득원천징수부", years: [0, -1], fill: "rows"},
   // 연말정산현황: 작년 해로 열면 '계속근무자' 쪽이 정산년월(작년 1월~올해 2월)을 스스로 채워 조회한다 (2026-11-13 실제 화면 확인)
   {prefix: "연말정산", mod: "humanresource", code: "SWYM0102", name: "연말정산현황", years: [-1], tab: "계속근무자 연말정산현황"},
 ];
-const SCREEN_MS = 15000;
+const SCREEN_MS = 15000;   // 응답을 기다리는 시간 (사원 줄 누르기는 따로 사원당 8초까지)
 let booksRun = false;
 
 async function collectBooks() {
