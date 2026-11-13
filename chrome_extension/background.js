@@ -338,13 +338,16 @@ async function collectClosing(prefix = "결산") {
 // 결산·인사급여 모두 받기 (사용자 2026-11-13: 화면마다 열고 [조회] 누르는 손일을 없앰).
 // 위하고 화면을 한 탭에 띄워 아래 화면을 차례로 열고 [조회]를 누른 뒤, 그 화면의 응답만 'YYMMDD 결산_재무상태표 자동수집.json' 처럼 저장한다.
 // 결산은 올해와 작년(결산 끝난 해) 두 해, 인사·급여는 올해. 위하고에서는 화면 열기·[조회]·'불러오시겠습니까' [확인]만 한다 (읽기 전용).
-// 연말정산현황은 작년 해 탭에서 '계속근무자' 쪽을 눌러 받는다. 사업/기타소득조회는 달을 골라도 위하고가 '조회조건 누락'을 띄워 아직 못 받는다.
+// 연말정산현황은 작년 해 탭에서 '계속근무자' 쪽을 눌러 받는다. 사업/기타소득조회는 귀속년월 1~12월과 소득자 전체를 골라 [조회]한다.
 const AUTO_SCREENS = [
   {prefix: "결산", mod: "account", code: "SACL0105", name: "재무상태표", years: [0, -1]},
   {prefix: "결산", mod: "account", code: "SACL0108", name: "이익잉여금처분계산서", years: [0, -1]},
   {prefix: "결산", mod: "account", code: "SAAS0107", name: "고정자산관리대장", years: [0]},
   {prefix: "인사", mod: "humanresource", code: "SWPM0108", name: "사원등록", years: [0], onOpen: true},
   {prefix: "인사", mod: "humanresource", code: "SWSA0105", name: "월별급상여수당지급현황", years: [0, -1]},
+  // 사업·기타소득조회: 귀속년월(1~12월)과 소득자(코드도움에서 전체 체크)를 채워야 조회된다 (2026-11-13 실제 화면 확인)
+  {prefix: "인사", mod: "humanresource", code: "SWBU0103", name: "사업소득조회", years: [0, -1], fill: "earners"},
+  {prefix: "인사", mod: "humanresource", code: "SWET0107", name: "기타소득조회", years: [0, -1], fill: "earners"},
   // 연말정산현황: 작년 해로 열면 '계속근무자' 쪽이 정산년월(작년 1월~올해 2월)을 스스로 채워 조회한다 (2026-11-13 실제 화면 확인)
   {prefix: "연말정산", mod: "humanresource", code: "SWYM0102", name: "연말정산현황", years: [-1], tab: "계속근무자 연말정산현황"},
 ];
@@ -372,7 +375,7 @@ async function collectBooks() {
       for (const sc of list) {
         await setStatus({progress: `결산·인사급여: ${year} ${sc.name} 받는 중…`});
         let r;
-        try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, onOpen: !!sc.onOpen, tab: sc.tab || "", year, ms: SCREEN_MS}); }
+        try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, onOpen: !!sc.onOpen, tab: sc.tab || "", fill: sc.fill || "", year, ms: SCREEN_MS}); }
         catch (e) { r = null; }
         if (!r || (r.v || 0) < 6) {
           fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요");

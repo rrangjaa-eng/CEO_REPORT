@@ -160,6 +160,48 @@ function clickLoadDialog() {
   return "";
 }
 
+// 사업·기타소득조회 조건 채우기: 귀속년월 달력에서 1월~12월을 고르고, 소득자 코드도움을 열어 머리줄 체크(전체)를 누른 뒤 [확인].
+// 조회 조건만 고른다 (자료는 바꾸지 않음).
+const vis = (e) => e.getBoundingClientRect().width > 0;
+function pointerClick(el, x, y) {
+  for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    const E = t.startsWith("pointer") ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new E(t, {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0,
+      buttons: t.endsWith("down") ? 1 : 0, pointerId: 1, isPrimary: true, view: window}));
+  }
+}
+async function fillEarners() {
+  const dateBtn = await waitFor(() => [...document.querySelectorAll("span.icon_datefield")].filter(vis)[0], 8000);
+  if (!dateBtn) throw new Error("귀속년월 칸을 찾지 못함");
+  (dateBtn.closest("button") || dateBtn).click();
+  const cal = await waitFor(() => [...document.querySelectorAll(".LS_calendar")].find(vis), 3000);
+  if (!cal) throw new Error("귀속년월 달력이 열리지 않음");
+  const boxes = [...cal.querySelectorAll(".LS_date_day_bx")];
+  const pick = (b, m) => [...b.querySelectorAll("td.date_day button")].find((x) => x.textContent.trim() === m + "월");
+  const a = pick(boxes[0], 1), z = pick(boxes[boxes.length - 1], 12);
+  if (!a || !z) throw new Error("달력에서 1월·12월을 찾지 못함");
+  a.click(); await sleep(150); z.click(); await sleep(150);
+  [...cal.querySelectorAll("button")].find((x) => x.textContent.trim() === "확인").click();
+  await sleep(400);
+  const field = [...document.querySelectorAll(".LS_ngh_input2.righticon")].filter(vis).find((e) => !e.classList.contains("datedisabled") && e.querySelector("button"));
+  if (!field) throw new Error("소득자 칸을 찾지 못함");
+  field.querySelector("button").click();
+  const title = await waitFor(() => [...document.querySelectorAll("*")].find((e) => e.children.length === 0 && /코드도움$/.test(e.textContent.trim()) && vis(e)), 5000);
+  if (!title) throw new Error("소득자 코드도움 창이 열리지 않음");
+  let dlg = title;
+  while (dlg && !dlg.querySelector("canvas")) dlg = dlg.parentElement;
+  const canvas = dlg && [...dlg.querySelectorAll("canvas")].find(vis);
+  if (!canvas) throw new Error("소득자 목록 표를 찾지 못함");
+  await sleep(600);   // 목록이 그려진 뒤
+  const r = canvas.getBoundingClientRect();
+  pointerClick(canvas, r.x + 11, r.y + 10);   // 머리줄 체크 = 전체 선택
+  await sleep(400);
+  const ok = [...dlg.querySelectorAll("button")].filter(vis).find((b) => /^확인/.test(b.textContent.trim()));
+  if (!ok) throw new Error("코드도움 [확인]을 찾지 못함");
+  ok.click();
+  await sleep(500);
+}
+
 // 화면 하나 받기: 같은 탭 안에서 화면 주소(#/smarta/모듈/코드)만 바꾸고, [조회]를 눌러 그 화면 코드의 응답을 모은다.
 // onOpen: 화면을 열기만 해도 자료가 오는 화면(사원등록) — [조회]를 누르지 않는다.
 async function runScreen(msg) {
@@ -179,6 +221,10 @@ async function runScreen(msg) {
     const t = await waitFor(() => [...document.querySelectorAll("button, a")].find((e) =>   // 탭 줄(li)이 아니라 단추를 눌러야 조회됨
       e.getBoundingClientRect().width > 0 && (e.innerText || "").trim() === msg.tab), 8000);
     if (t) { t.click(); clicked = true; }
+  } else if (msg.fill === "earners") {
+    await fillEarners();
+    const b = await waitFor(findQueryButton, 3000);
+    if (b) { b.click(); clicked = true; }
   } else if (!msg.onOpen) {
     const b = await waitFor(findQueryButton, 8000);
     if (b) { b.click(); clicked = true; }
