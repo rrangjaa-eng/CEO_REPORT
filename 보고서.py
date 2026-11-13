@@ -380,6 +380,9 @@ def main(argv=None):
         # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
         from ceo_report import cashflow
         R["cf"] = cashflow.for_report(a.입력, R)
+        if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 앞 11·12월 경영관리 보고에만
+            from ceo_report import credit
+            R["credit"] = credit.compute(a.입력, R["period"][1])
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)

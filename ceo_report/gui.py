@@ -505,6 +505,9 @@ class Window(object):
         self._enter((e_d,), self.save_dep)
         self.dep_now = tk.StringVar(value=self.dep_text())
         self._hint(f, "", self.dep_now, wrap=430)
+        # 기업신용평가 미리보기 체크리스트 (사용자 2026-11-12): 비재무 항목·대출 만기·작년 평가 결과
+        r = self._row(f, pady=(4, 0))
+        self._btn(r, "신용평가 체크리스트", self.credit_checklist)
 
         # 내년 예산 (사용자 2026-11-10: 노란 칸 값은 여기서 넣고, 초안 만들기로 다시 계산, 확정하면 월간 보고 '예산 대비')
         f = self.f_budget = self._card(tab, "내년 예산", "목표 수익률은 '팀 목표' 칸", 3, 1)
@@ -1319,6 +1322,44 @@ class Window(object):
                                    "나중에 값을 바꾸고 다시 확정하면 새 숫자로 바뀝니다." % y, parent=self.root):
             return
         self.start("예산확정")
+
+    def credit_checklist(self):
+        """입력/신용평가.csv 를 고치는 창. 고를 수 있는 항목은 목록, 나머지는 글 칸."""
+        from . import credit
+        cur = credit.read_inputs(self.paths.input)
+        top = tk.Toplevel(self.root)
+        top.title("신용평가 체크리스트")
+        top.transient(self.root)
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="월간(11·12월)·연간 경영관리 보고의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
+                  wraplength=560).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        vars_ = {}
+        for i, (k, hint) in enumerate(credit.INPUT_ITEMS, 1):
+            if k == "작년_평가사":
+                ttk.Label(frm, text="작년에 받은 평가 (평가서 숫자를 넣으면 같은 규칙으로 비교·보정)", style="Sec.TLabel").grid(
+                    row=i + 100, column=0, columnspan=3, sticky="w", pady=(8, 2))
+            row = i + (101 if k.startswith("작년_") else 0)
+            ttk.Label(frm, text=k.replace("작년_", "")).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=1)
+            v = tk.StringVar(value=cur.get(k, ""))
+            opts = [o.strip() for o in hint.split("/")] if "/" in hint and "YYYY" not in hint and "(" not in hint else None
+            w = ttk.Combobox(frm, textvariable=v, values=opts, width=24) if opts else ttk.Entry(frm, textvariable=v, width=26)
+            w.grid(row=row, column=1, sticky="w", pady=1)
+            ttk.Label(frm, text=hint, foreground=C["sub"]).grid(row=row, column=2, sticky="w", padx=(8, 0))
+            vars_[k] = v
+        r = ttk.Frame(frm)
+        r.grid(row=999, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+
+        def save():
+            try:
+                credit.save_inputs(self.paths.input, dict((k, v.get()) for k, v in vars_.items()))
+            except OSError as e:
+                self.say("저장하지 못함: %s" % (e.strerror or type(e).__name__))
+                return
+            self.say("신용평가 체크리스트 저장 — 다음 월간(11·12월)·연간 경영관리 보고부터 반영")
+            top.destroy()
+        self._go(r, "저장", save).pack(side="right")
+        ttk.Button(r, text="닫기", command=top.destroy).pack(side="right", padx=6)
 
     def save_dep(self):
         try:
