@@ -233,28 +233,46 @@ class TestCards(unittest.TestCase):
 
     def test_month_not_entered_yet_uses_three_month_average(self):
         """사용자 2026-11-04: 카드 전표는 한 달에 한 번 전월분을 한꺼번에 넣음 → 입력 전 달은 최근 3달 평균으로 예상 + 표시.
-        사용자 2026-11-12: 입력된 부분은 확정, 평균과의 차이만 예상."""
-        j = self.history("신한_0001", (100, 200, 300, 210))
-        j.append(ln(D(2026, 10, 3), "u10", "26200", credit=20, vendor="신한_0001"))   # 10월은 조금만 넣음
+        사용자 2026-11-12: 입력된 부분은 확정, 평균과의 차이만 예상.
+        사용자 2026-11-13: 끝난 이용기간에 전표가 하나도 없을 때만 '입력 전' 경고. 지금 이용기간은 경고 없이 '이번 달 사용 추정'."""
+        K = 10000
+        j = self.history("신한_0001", (100 * K, 200 * K, 300 * K, 210 * K))
         rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
-        avg = (200 + 300 + 210) // 3
+        avg = (200 + 300 + 210) * K // 3
         got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
-        self.assertEqual(got, [("신한카드 11월 16일 결제", "2026-11-16", "20", "확정(전표)"),
-                               ("신한카드 11월 16일 결제 (전표 입력 전 추정)", "2026-11-16", str(avg - 20), "예상"),
-                               ("신한카드 12월 15일 결제 (전표 입력 전 추정)", "2026-12-15", str(avg), "예상")])
-        self.assertTrue(rows[1]["근거"].startswith(tax.CARD_THIN_MARK))
+        self.assertEqual(got, [("신한카드 11월 16일 결제 (전표 입력 전 추정)", "2026-11-16", str(avg), "예상"),
+                               ("신한카드 12월 15일 결제 (이번 달 사용 추정)", "2026-12-15", str(avg), "예상")])
+        self.assertTrue(rows[0]["근거"].startswith(tax.CARD_THIN_MARK))
+        self.assertTrue(rows[1]["근거"].startswith(tax.CARD_OPEN_MARK))
+
+    def test_entered_month_with_low_use_is_not_thin(self):
+        """사용자 2026-11-13 ("카드 전표가 다 들어갔는데 왜 덜 들어갔다고 나와"): 지난달 전표가 들어간 카드는 적게 썼어도 채우지 않는다."""
+        K = 10000
+        j = self.history("신한_0001", (100 * K, 200 * K, 300 * K, 210 * K))
+        j.append(ln(D(2026, 10, 3), "u10", "26200", credit=20 * K, vendor="신한_0001"))   # 10월은 적게 씀 (전표는 넣음)
+        rows = tax.cards(j, D(2026, 11, 13), {"신한": (15, 1)})
+        got = [(r["대상기간"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got[0], ("신한카드 11월 16일 결제", str(20 * K), "확정(전표)"))
+        self.assertFalse(any(r["근거"].startswith(tax.CARD_THIN_MARK) for r in rows))
+
+    def test_rarely_used_card_is_not_filled(self):
+        """평균 10만 원 밑 카드(한 달 몇천 원)는 전표가 없어도 채우지 않는다 (사용자 2026-11-13)."""
+        j = self.history("롯데_0359", (2700, 5400, 4050, 4050))
+        rows = tax.cards(j, D(2026, 11, 13), {"롯데": (14, 1)})
+        self.assertEqual(rows, [])
 
     def test_thin_is_judged_per_card_number(self):
         """사용자 2026-11-12: 한 카드사에서 일부 카드만 10월 전표가 들어간 달도 빠진 카드만 평균으로 채운다."""
-        j = self.history("신한_0001", (100, 100, 100, 100), "a") + self.history("신한_0002", (50, 50, 50, 50), "b")
-        j.append(ln(D(2026, 10, 3), "u10a", "26200", credit=100, vendor="신한_0001"))   # 0001 은 10월분 다 넣음, 0002 는 아직
-        j.append(ln(D(2026, 11, 2), "u11a", "26200", credit=100, vendor="신한_0001"))
-        j.append(ln(D(2026, 11, 2), "u11b", "26200", credit=50, vendor="신한_0002"))
+        K = 10000
+        j = self.history("신한_0001", (100 * K,) * 4, "a") + self.history("신한_0002", (50 * K,) * 4, "b")
+        j.append(ln(D(2026, 10, 3), "u10a", "26200", credit=100 * K, vendor="신한_0001"))   # 0001 은 10월분 다 넣음, 0002 는 아직
+        j.append(ln(D(2026, 11, 2), "u11a", "26200", credit=100 * K, vendor="신한_0001"))
+        j.append(ln(D(2026, 11, 2), "u11b", "26200", credit=50 * K, vendor="신한_0002"))
         rows = tax.cards(j, D(2026, 11, 4), {"신한": (15, 1)})
         got = [(r["대상기간"], r["금액"], r["상태"]) for r in rows]
-        self.assertEqual(got, [("신한카드 11월 16일 결제", "100", "확정(전표)"),
-                               ("신한카드 11월 16일 결제 (전표 입력 전 추정)", "50", "예상"),
-                               ("신한카드 12월 15일 결제", "150", "확정(전표)")])
+        self.assertEqual(got, [("신한카드 11월 16일 결제", str(100 * K), "확정(전표)"),
+                               ("신한카드 11월 16일 결제 (전표 입력 전 추정)", str(50 * K), "예상"),
+                               ("신한카드 12월 15일 결제", str(150 * K), "확정(전표)")])
         self.assertIn("신한_0002", rows[1]["근거"])
 
     def test_pay_as_you_go_card_and_reversal(self):

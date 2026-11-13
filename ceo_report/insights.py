@@ -513,6 +513,30 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     return out
 
 
+def _merge_cards(presence):
+    """카드는 카드 번호가 아니라 카드사별로 본다 (사용자 2026-11-13: "카드 전표가 다 들어갔는데 왜 덜 들어갔다고 나와").
+    카드를 바꾸면(롯데_7344 → 롯데_7972) 옛 카드는 0이 되고 새 카드는 앞 3달이 없어, 번호별로 보면 다 넣었어도 '덜 들어감'이 된다.
+    카드 전표는 전월분을 카드사 묶음으로 한꺼번에 넣으므로 카드사 합계로 빠짐·덜 들어감을 판단한다."""
+    out = {}
+    for kind, per in presence.items():
+        m = re.match(r"^카드 ([^_\s]+)_\S+ 사용$", kind)
+        if not m:
+            out[kind] = per
+            continue
+        key = "카드 %s 사용 (카드사 합계)" % m.group(1)
+        acc = out.setdefault(key, {})
+        for ym, v in per.items():
+            a, d = (v[0], v[1]) if isinstance(v, list) else (v, None)
+            old = acc.get(ym)
+            if old is None:
+                acc[ym] = [a, d] if d is not None else a
+            else:
+                oa, od = (old[0], old[1]) if isinstance(old, list) else (old, None)
+                nd = max(x for x in (od, d) if x is not None) if (od is not None or d is not None) else None
+                acc[ym] = [oa + a, nd] if nd is not None else oa + a
+    return out
+
+
 def missing_entries(R, facts, small=100000, thin=0.3):
     """13: 매달 있던 전표가 빠졌거나 덜 들어감 -> [(종류, 글)].
 
@@ -526,7 +550,7 @@ def missing_entries(R, facts, small=100000, thin=0.3):
     last = prev3[-1]
     before3 = _months_back(dt.date(int(last[:4]), int(last[5:]), 1), 3)
     out = []
-    for kind, per in (facts.get("presence") or {}).items():
+    for kind, per in _merge_cards(facts.get("presence") or {}).items():
         val = dict((k, v[0] if isinstance(v, list) else v) for k, v in per.items())
         days = [v[1] for k, v in per.items() if isinstance(v, list) and k in prev3]
         if all(val.get(ym) for ym in prev3) and not val.get(cur) and days:
