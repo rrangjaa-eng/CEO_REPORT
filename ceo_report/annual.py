@@ -223,6 +223,10 @@ def compute(input_dir, year, settings=None, D=None):
     dep_est = manual.get(Y)
     dep_src = "직접 입력"
     if dep_est is None:
+        from .corptax import read_ledger   # 위하고 고정자산관리대장 (사용자 2026-11-13)
+        dep_est = read_ledger(input_dir).get(Y)
+        dep_src = "고정자산대장"
+    if dep_est is None:
         dep_est, dep_src = (Lp["dep"] if Lp else None), "작년 장부"
     A["dep_est"], A["dep_src"] = dep_est, dep_src
     A["closed"] = Yp["dep"] > 0   # 12월 결산 전표(감가상각비)가 들어왔는지
@@ -230,16 +234,18 @@ def compute(input_dir, year, settings=None, D=None):
         Yp["dep_pending"] = dep_est
         Yp["pre"] -= dep_est   # 결산 전: 월간과 같게 감가상각비 예상을 먼저 비용으로
     pre_est = Yp["pre"] + (Yp["dep"] - (dep_est or 0) if A["closed"] else 0)
-    c_est = corp_tax(pre_est, Y)
-    A["tax_est"] = c_est + c_est // 10
+    from .corptax import national   # 작년 신고서 감면·넘어온 공제 (사용자 2026-11-13). 지방소득세는 감면 없이 산출세액 10%
+    n_est, c_est, _ = national(pre_est, Y, input_dir)
+    A["tax_est"] = n_est + c_est // 10
     booked = dict((n, v) for n, _, v in get(Y, "결산"))
     A["prepaid"] = booked.get("선납세금", 0)
     if booked.get("법인세등"):
         A["tax"], A["tax_fixed"] = booked["법인세등"], True
         A["corp"] = int(round(A["tax"] * 10 / 11.0))
     else:
-        A["corp"] = corp_tax(Yp["pre"], Y)
-        A["tax"], A["tax_fixed"] = A["corp"] + A["corp"] // 10, False
+        n_now, c_now, _ = national(Yp["pre"], Y, input_dir)
+        A["corp"] = n_now
+        A["tax"], A["tax_fixed"] = n_now + c_now // 10, False
     A["local"] = A["tax"] - A["corp"]
     Yp["net"] = Yp["pre"] - A["tax"]
     if Lp:
@@ -269,6 +275,8 @@ def compute(input_dir, year, settings=None, D=None):
     A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"])
     if A["cfs"]:
         A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
+    from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
+    A["re"] = surplus.for_report(input_dir, year)
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
@@ -740,7 +748,7 @@ def render(A, mode):
     h.append("<div class='sec pgb'>" + _q("6. %d년 준비" % (year + 1), "근거 6-1~6-2"))
     h.append("<div class='four c3'>")
     h.append(_card("법인세 납부 (%s)" % "%d/%d" % (A["pay_corp_day"].month, A["pay_corp_day"].day), W(max(A["corp"] - A["prepaid"], 0)),
-                   "산출 %s − 중간예납 등 %s%s" % (W(A["corp"]), W(A["prepaid"]), "" if A["tax_fixed"] else " · 예상")))
+                   "법인세 %s − 중간예납 등 %s%s" % (W(A["corp"]), W(A["prepaid"]), "" if A["tax_fixed"] else " · 예상")))
     h.append(_card("지방소득세 납부 (%s)" % "%d/%d" % (A["pay_local_day"].month, A["pay_local_day"].day), W(A["local"]), "법인세 산출세액 × 10%"))
     dep_next = Yp["dep"] if A["closed"] else A["dep_est"]
     h.append(_card("%d년 감가상각비 예상" % (year + 1), W(dep_next), "%d년 %s 금액 · 월간 보고가 미리 비용으로 뺌" % (year, "확정" if A["closed"] else "예상")))
@@ -938,4 +946,7 @@ def _detail(A):
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12: 연간 누적으로도). 경영관리용에만
     d.append("<h2 id='d7'>7. 현금흐름표</h2>" + cashflow.render(A.get("cfs")))
     cut("d7", "7. 현금흐름표")
+    from . import surplus
+    d.append("<h2 id='d8'>8. 이익잉여금처분계산서</h2>" + surplus.render(A.get("re")))
+    cut("d8", "8. 이익잉여금처분계산서")
     return out

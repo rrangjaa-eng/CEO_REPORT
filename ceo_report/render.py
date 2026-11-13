@@ -458,6 +458,16 @@ def render(R, mode):
         from . import cashflow   # 9장 현금흐름표 (사용자 2026-11-12: 경영관리 보고에만, 영역 인쇄로 PDF)
         toc.append("현금흐름표")
         chap.append(cashflow.render(R.get("cf")))
+        from . import surplus   # 10장 이익잉여금처분계산서 (사용자 2026-11-12: 경영관리 보고에만)
+        toc.append("이익잉여금처분계산서")
+        chap.append(surplus.render(R.get("re")))
+        if R.get("filing") or R.get("filing_help"):   # 11장 신고 일정·도우미 (사용자 2026-11-12)
+            from . import filing
+            toc.append("신고 일정·도우미")
+            chap.append("<h2>신고 일정 (장부 기준)</h2>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or ""))
+        if R.get("payroll"):   # 급여 점검·연말정산 예상 (사용자 2026-11-12)
+            toc.append("급여 점검·연말정산 예상")
+            chap.append(R["payroll"])
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
     hi = sum(1 for r in R["risks"] if r["level"] == "높음")
@@ -1607,6 +1617,8 @@ def _nonop_rows(N, before, after):
     rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut")]
     if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
         rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
+    if N.get("bad"):   # 대손충당금 예상 (사용자 2026-11-12)
+        rows.append(("− 대손충당금 (예상%s)" % N.get("bad_note", ""), N["bad"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
     if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
         rows.append(("− 법인세 예상 (지방소득세 포함)", N["tax"], "mut"))
@@ -1668,7 +1680,8 @@ def _team_table(R, part="month", mode="mgmt"):
     Y = build(src["table"], dept, ym, True)
     if Y is not None:
         _dep_into(R, Y, True)
-        _tax_into(Y, ym)
+        _bad_into(R, Y)
+        _tax_into(Y, ym, R.get("taxret_dir"))
         out = [_expected_strip(R, mode, Y), _ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
     else:
         out = [_expected_strip(R, mode), "<div class='card brk'>"]
@@ -1704,16 +1717,31 @@ def _team_table(R, part="month", mode="mgmt"):
     return "".join(out)
 
 
-def _tax_into(Y, ym):
+def _tax_into(Y, ym, taxret_dir=None):
     """누적 결산 줄 끝: 세전 이익 − 법인세 예상(지방소득세 포함) = 당기순이익 예상 (사용자 2026-11-04).
-    법인세 예상 표와 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음)."""
-    from .corptax import LOCAL_RATE, corp_tax
+    법인세 예상 표와 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음). 작년 신고서가 있으면 감면·이월공제 뒤 금액."""
+    from .corptax import LOCAL_RATE, national
     N = Y["nonop"]
-    corp = corp_tax(N["pretax"], ym[:4])
+    nat, corp, _ = national(N["pretax"], ym[:4], taxret_dir)
     if corp is None:
         return
-    N["tax"] = corp + int(corp * LOCAL_RATE)
+    N["tax"] = nat + int(corp * LOCAL_RATE)
     N["net_income"] = N["pretax"] - N["tax"]
+
+
+def _bad_into(R, T):
+    """대손충당금 예상 (사용자 2026-11-12): 누적 결산 줄에 넣고 세전 이익에서 뺀다. 변환이 세금예상.csv 법인세 줄에 적은 금액."""
+    import re
+    row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
+    m = re.search(r"대손충당금 예상 ([\d,]+)", (row or {}).get("basis") or "")   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
+    amount = int(m.group(1).replace(",", "")) if m else None
+    if not amount or T["nonop"].get("pretax") is None:
+        return
+    N = T["nonop"]
+    N["bad"] = amount
+    N["pretax"] -= amount
+    note = (row.get("basis") or "").split("대손충당금 = ")[-1] if "대손충당금 = " in (row.get("basis") or "") else ""
+    N["bad_note"] = ", " + note if note else ""
 
 
 def _dep_into(R, T, ytd):
@@ -1724,7 +1752,7 @@ def _dep_into(R, T, ytd):
     if amount is None:
         return
     apply(T["nonop"], amount)
-    src = "작년" if dep.get("source") == "작년 장부" else "입력"
+    src = {"작년 장부": "작년", "고정자산대장": "위하고 고정자산대장"}.get(dep.get("source"), "입력")
     if ytd:
         T["nonop"]["dep_note"] = ", %s %s × %d/12" % (src, won(dep["annual"]), dep["months"]) if dep.get("mode") == "prorate" \
             else ", %s 연간 %s" % (src, won(dep["annual"]))
@@ -1737,47 +1765,57 @@ def _dep_into(R, T, ytd):
 def _corptax_table(R, Y, ym, mode="mgmt"):
     """법인세 예상 (사용자 2026-11-04): 최종 세전 이익(감가상각비 예상 뺀 값) 하나로만. 중간예납 등 선납세금을 빼고 납부할 금액,
     지방소득세. 선납세금은 변환이 분개장으로 만든 세금예상.csv 법인세 줄에서 읽고, 그 줄이 자금 일정에 들어간다."""
-    from .corptax import LOCAL_RATE, brackets, corp_tax
+    from .corptax import LOCAL_RATE, brackets, national
     N = Y["nonop"]
     base = N["pretax"]
-    corp = corp_tax(base, ym[:4])
+    nat, corp, C = national(base, ym[:4], R.get("taxret_dir"))
     local = None if corp is None else int(corp * LOCAL_RATE)
     row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
     prepaid = row.get("prepaid") if row else None
-    pay = None if corp is None or prepaid is None else max(corp - prepaid, 0)
+    pay = None if nat is None or prepaid is None else max(nat - prepaid, 0)
     total = None if pay is None else pay + local
     due = row["due"] if row and row.get("due") else None
     h = ["<div class='wsub'>법인세 예상 (1월~%s 누적 세전 이익 기준)</div>" % esc(_ym_text(ym)),
-         "<table class='pt tx'><thead><tr><th>세전 이익</th><th>법인세</th><th>− 중간예납 등 기납부</th><th>납부할 법인세</th>"
-         "<th>지방소득세</th><th>납부 합계</th></tr></thead><tbody>",
+         "<table class='pt tx'><thead><tr><th>세전 이익</th><th>%s</th><th>− 중간예납 등 기납부</th><th>납부할 법인세</th>"
+         "<th>지방소득세</th><th>납부 합계</th></tr></thead><tbody>" % ("법인세 (감면 뒤·농특세 포함)" if C else "법인세"),
          "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
-         % (W(base), W(corp), W(prepaid, "미확인"), W(pay), W(local), W(total))]
+         % (W(base), W(nat), W(prepaid, "미확인"), W(pay), W(local), W(total))]
     d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ⑨에 연간 금액 입력)"
+    if N.get("bad"):
+        d_txt += ", 대손충당금 예상 뺌"
     rate = "·".join("%g%%" % (r * 100) for _, r in brackets(ym[:4])[:2])
     pay_txt = "자금 일정에 %s 납부 예상으로 넣음" % d2s(due) if due else "자금 일정에 넣지 못함 (자료 변환 필요)"
     h.append("<div class='note'>%s</div>" % esc(
-        "과세표준 = %s · 세율 %s, 지방세 10%% · 기납부 = 장부 선납세금 · 세무조정·공제 미반영 · %s" % (d_txt, rate, pay_txt)))
+        "과세표준 = %s · 세율 %s, 지방세 10%% · 기납부 = 장부 선납세금 · %s · %s"
+        % (d_txt, rate, "산출세액 %s에서 작년 신고서의 감면·넘어온 공제를 빼고 최저한세까지 (아래 표)" % won(corp) if C else "세무조정·공제 미반영", pay_txt)))
     if row and row.get("base") is not None and base is not None and row["base"] != base:
         h.append(_mg(mode, "<div class='note'>%s</div>" % esc("자금 일정의 법인세는 변환 때 장부로 계산한 과세표준 %s 기준 (이 표 %s와 다름 — 기간·자료 확인)"
                                                                 % (won(row["base"]), won(base)))))
+    if R.get("taxret_dir"):   # 실제 법인세 신고서 (사용자 2026-11-13, 경영관리에만). 보고서.py 가 파일 있을 때만 폴더를 넣음
+        from . import taxreturn
+        h.append(_mg(mode, taxreturn.render(taxreturn.for_report(R["taxret_dir"], R["asof"], base, corp), esc)))
+    if R.get("taxadj"):   # 세무조정 예상 (사용자 2026-11-12, 경영관리에만). 세법 기준 확인은 10장
+        from . import taxadj
+        h.append(_mg(mode, taxadj.render(R["taxadj"], esc)))
     return "".join(h)
 
 
 def _corptax_line(R, Y, ym):
     """대표용 법인세 예상 한 줄 (사용자 2026-11-04: 월간 3쪽). 계산은 경영관리용 표와 같다."""
-    from .corptax import LOCAL_RATE, corp_tax
-    corp = corp_tax(Y["nonop"]["pretax"], ym[:4])
+    from .corptax import LOCAL_RATE, national
+    nat, corp, C = national(Y["nonop"]["pretax"], ym[:4], R.get("taxret_dir"))
     if corp is None:
         return ""
     local = int(corp * LOCAL_RATE)
     row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
     prepaid = row.get("prepaid") if row else None
     due = row["due"] if row and row.get("due") else None
+    lab = "법인세 예상(감면 뒤)" if C else "법인세 예상"
     if prepaid is None:
-        txt = "법인세 예상 %s + 지방소득세 %s (기납부 미확인)" % (won(corp), won(local))
+        txt = "%s %s + 지방소득세 %s (기납부 미확인)" % (lab, won(nat), won(local))
     else:
-        txt = "법인세 예상 %s + 지방소득세 %s − 중간예납 등 기납부 %s = 납부 %s%s" % (
-            won(corp), won(local), won(prepaid), won(max(corp - prepaid, 0) + local), " (%s 예상)" % d2s(due) if due else "")
+        txt = "%s %s + 지방소득세 %s − 중간예납 등 기납부 %s = 납부 %s%s" % (
+            lab, won(nat), won(local), won(prepaid), won(max(nat - prepaid, 0) + local), " (%s 예상)" % d2s(due) if due else "")
     return "<div class='note'>%s</div>" % esc(txt)
 
 
@@ -1911,6 +1949,8 @@ def _ytd_strip(Y, ym):
     parts = ["영업외 손익 %s%s" % ("+" if nn >= 0 else "", won(nn))]
     if N.get("dep") is not None:
         parts.append("감가상각비 −%s" % won(N["dep"]))
+    if N.get("bad"):
+        parts.append("대손충당금 −%s" % won(N["bad"]))
     cards = [("%s 매출" % per, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
              ("%s 영업이익" % per, W(c["net"], "확인 필요"), "영업이익률 %s" % esc(pct(c["net"], c["revenue"]))),
              ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]

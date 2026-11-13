@@ -380,6 +380,20 @@ def main(argv=None):
         # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
         from ceo_report import cashflow
         R["cf"] = cashflow.for_report(a.입력, R)
+        # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고 10장. 보고 기준 해(1~3월이면 아직 처분 전인 작년)
+        from ceo_report import surplus
+        R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
+        # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
+        from ceo_report import taxadj, filing
+        R["taxadj"] = taxadj.load(a.입력)
+        from ceo_report import taxreturn   # 실제 법인세 신고서 (사용자 2026-11-13)
+        R["taxret_dir"] = a.입력 if taxreturn.load(a.입력) else None
+        R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
+        from ceo_report import filehelp
+        from ceo_report.util import esc as _esc
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
+        R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)
@@ -433,6 +447,25 @@ def main(argv=None):
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
                         _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+    if kind == "monthly" and R.get("re"):
+        # 이익잉여금 쉬운 설명·처분계산서·결산 처리 제안 양식 (사용자 2026-11-13): 출력/결산/ 에 따로 한 부
+        from ceo_report import surplus
+        try:
+            re_page = surplus.write_page(R["re"], a.출력, asof)
+        except OSError as e:
+            _say(_write_help(os.path.join(a.출력, "결산"), e))
+            re_page = None
+        if re_page:
+            made.append(re_page)
+            if browser:
+                pdf_path = pdfname.stamped(re_page[:-5])
+                err = to_pdf(browser, re_page, pdf_path)
+                if err:
+                    _say("%s — %s" % (err, os.path.basename(pdf_path)))
+                    pdf_failed = True
+                else:
+                    made.append(pdf_path)
+                    pdfname.prune(re_page[:-5])
     try:
         insights.write_record(a.출력, R)
     except OSError as e:

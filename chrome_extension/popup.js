@@ -20,16 +20,20 @@ async function show() {
   $("jmsg").innerHTML = line(status["분개장"], (j) => `전표 ${j.slips}건 · ${j.rows}줄`);
   $("pmsg").innerHTML = line(status["자금계획"], (p) => `${p.months}개월 · ${p.rows}줄 (${p.seconds}초)`);
   if (status.progress) $("pmsg").innerHTML += `<br>${status.progress}`;
+  const {closingLog = []} = await chrome.storage.local.get("closingLog");
+  const {hrLog = []} = await chrome.storage.local.get("hrLog");
+  $("hmsg").innerHTML = hrLog.length ? hrLog.map((c) => `${c.at} · ${c.screen || c.code} · ${c.file}`).join("<br>") : "아직 받은 적 없음";
+  $("cmsg").innerHTML = closingLog.length ? closingLog.map((c) => `${c.at} · ${c.screen || c.code} · ${c.file}`).join("<br>") : "아직 받은 적 없음";
   if (status.error) $("pmsg").innerHTML += `<br><span class="err">${status.error}</span>`;
 }
 
 async function run(btn, msgId, label, message) {
-  $("all").disabled = $("journal").disabled = $("plan").disabled = true;
+  $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = true;
   $(msgId).textContent = label;
   const timer = setInterval(show, 2000);
   const r = await chrome.runtime.sendMessage(message);
   clearInterval(timer);
-  $("all").disabled = $("journal").disabled = $("plan").disabled = false;
+  $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = false;
   await show();
   if (r && r.parts) for (const [k, p] of Object.entries(r.parts)) if (p && p.same) $(msgId).innerHTML += `<br>${k}: 바뀐 것 없음`;
   if (r && r.same) $(msgId).innerHTML += "<br>바뀐 것 없음 — 새 파일 만들지 않음";
@@ -39,6 +43,8 @@ async function run(btn, msgId, label, message) {
 $("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
 $("journal").onclick = () => run("journal", "jmsg", "받는 중… (1분 안쪽)", {type: "collectNow"});
 $("plan").onclick = () => run("plan", "pmsg", "받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectPlan", months: +$("months").value});
+$("closing").onclick = () => run("closing", "cmsg", "이 화면에서 [조회]를 누르고 15초 동안 받는 중… 화면을 닫지 마세요.", {type: "collectClosing"});
+$("hr").onclick = () => run("hr", "hmsg", "이 화면에서 [조회]를 누르고 15초 동안 받는 중… 화면을 닫지 마세요.", {type: "collectHr"});
 $("folder").onclick = () => chrome.tabs.create({url: chrome.runtime.getURL("saver.html")});
 $("months").onchange = () => chrome.storage.local.set({planMonths: +$("months").value});
 show();
