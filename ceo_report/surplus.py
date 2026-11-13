@@ -127,11 +127,11 @@ def balances(journal, first_year):
     return out
 
 
-def estimate(journal, cfg, asof):
+def estimate(journal, cfg, asof, input_dir=None):
     """아직 결산 안 한 해의 당기순이익 예상 -> (연도, 금액, 근거) 또는 None. 법인세 예상과 같은 계산."""
     from . import corptax
     try:
-        rows, _ = corptax.from_journal(journal, cfg, asof)
+        rows, _ = corptax.from_journal(journal, cfg, asof, None, input_dir)
     except Exception:   # 장부가 모자라면 예상하지 않는다
         return None
     corp = [r for r in rows if r.get("세목") == "법인세"]
@@ -140,6 +140,7 @@ def estimate(journal, cfg, asof):
     r = corp[0]
     base, tax = int(r["과세표준"]), int(r.get("산출세액") or 0)
     local = int(tax * corptax.LOCAL_RATE)
+    tax = corptax.national(base, corptax._last_full_month(asof)[:4], input_dir)[0] if input_dir else tax   # 작년 신고서 감면·공제 (사용자 2026-11-13)
     ym = corptax._last_full_month(asof)
     why = ("%s년 1~%d월 장부: %s → 당기순이익 = 과세표준 − 법인세 %s − 지방소득세 %s"
            % (ym[:4], int(ym[5:]), (r.get("근거") or "").split(" → ")[0], "{:,}".format(tax), "{:,}".format(local)))
@@ -203,12 +204,12 @@ def raw_files(wehago_dir):
         return []
 
 
-def build_table(books, cfg, asof, wehago_dir=None):
+def build_table(books, cfg, asof, wehago_dir=None, input_dir=None):
     from .convert import Table
     if books.state != "ok" or not books.journal:
         return Table(FILE, KEYS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
     years, first = collect(books.journal, cfg.get("closing_sorts", ()))
-    est = estimate(books.journal, cfg, asof)
+    est = estimate(books.journal, cfg, asof, input_dir)
     rows, notes = [], []
     bal = balances(books.journal, first)
     from . import taxbreak

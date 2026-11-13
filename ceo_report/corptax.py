@@ -39,6 +39,18 @@ def corp_tax(base, year):
     return int(tax)
 
 
+def national(base, year, input_dir=None):
+    """-> (낼 법인세: 감면·이월공제 뒤 + 농어촌특별세, 산출세액, credits dict 또는 None).
+    작년 상세 신고서(입력/법인세신고.csv 특별감면·공제이월)가 있으면 그 감면을 적용 (사용자 2026-11-13). 없으면 산출세액 그대로.
+    지방소득세는 감면 없이 산출세액 × 10% 그대로."""
+    corp = corp_tax(base, year)
+    if corp is None or not input_dir:
+        return corp, corp, None
+    from . import taxreturn
+    C = taxreturn.credits(input_dir, int(year), base, corp)
+    return (C["national"] if C else corp), corp, C
+
+
 def _int(text):
     t = str(text or "").replace(",", "").replace("원", "").strip()
     return int(t) if t.isdigit() else None
@@ -259,14 +271,17 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None):
     bd = bad_debt(journal, cfg, ym, input_dir)
     adj = adjust_for(journal, cfg, asof, input_dir)
     base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
-    corp = corp_tax(base, year)
+    nat, corp, C = national(base, year, input_dir)
     local = int(corp * LOCAL_RATE)
-    pay = max(corp - prepaid, 0)
+    pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
     basis = ("세전 이익 %s − 감가상각비 예상 %s − 대손충당금 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
              % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
                 "{:,}".format(corp), "{:,}".format(prepaid)))
+    if C:
+        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
+                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
     if adj["total"]:
         basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
     basis += " · 대손충당금 = " + bd["note"]
@@ -276,5 +291,5 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None):
                  과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"])),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
                       "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="")]
-    return rows, "법인세 %s → %s원 (산출 %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "{:,}".format(corp),
+    return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))
