@@ -267,7 +267,7 @@ def for_report(input_dir, year, R=None):
         return None
     ys = sorted(S)
     y = year if year in S else ys[-1]
-    out = {"year": y, "cur": S[y], "years": [(k, S[k]) for k in ys if k <= y]}
+    out = {"year": y, "cur": S[y], "years": [(k, S[k]) for k in ys if k <= y], "input_dir": input_dir}
     from . import dividend
     first = S[y].get("미처분", (None,))[0]
     asof = R["asof"] if R else dt.date(y, 12, 31)
@@ -332,8 +332,8 @@ CHOICES = [("이월 (그대로 둠)", "그대로", "현금이 회사에 남아 �
             "주주별 다른 소득과 함께 보고 금액을 정해야 함")]
 
 STEPS = [("12월 31일", "장부 마감 — 올해 손익을 미처분이익잉여금으로 옮김 (위하고 잉여금관련전표)"),
-         ("1~2월", "결산과 처분안 작성 — 세무사와 재무제표·이익잉여금처분계산서(안)를 만들고 처리 방법을 고름"),
-         ("3월 중", "정기 주주총회 — 재무제표 승인, 이월·배당·적립 금액 확정. 이날 장부에 처분 전표를 넣음"),
+         ("1월~2월 중순", "결산과 처분안 작성 — 세무사와 재무제표·이익잉여금처분계산서(안)를 만들고 처리 방법을 고름 (정관 39조: 주총 6주 전까지)"),
+         ("3월 31일까지", "정기 주주총회 (정관 22조, 주주 전원 서면 동의로 갈음 가능) — 재무제표 승인, 이월·배당·적립·임원 보수 한도 확정. 이날 장부에 처분 전표를 넣음"),
          ("3월 31일", "법인세 신고·납부 (지방소득세는 4월 30일까지)"),
          ("주총 뒤 1달 안", "배당금 지급 (배당을 정한 경우만) — 15.4%를 떼고 지급, 다음 달 10일까지 원천세 신고·납부")]
 
@@ -391,6 +391,9 @@ def render(S, brief=False):
         from . import taxlaw
         h.append(taxlaw.render(S.get("law"), esc))
     h.append(dividend.render(S.get("div"), esc))
+    # 정관 규칙 (사용자 2026-11-13: 정관 제공)
+    from . import articles
+    h.append(articles.render(dividend.read_settings(S["input_dir"]) if S.get("input_dir") else {}, esc))
     # 처리 순서
     h.append("<div class='q'>결산 때 처리 순서</div><ol class='steps'>")
     for when, what in STEPS:

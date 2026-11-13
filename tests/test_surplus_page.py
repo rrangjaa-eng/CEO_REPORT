@@ -26,5 +26,16 @@ class Page(unittest.TestCase):
         self.assertIsNone(surplus.write_page(None, d, dt.date(2026, 11, 13)))
 
 
+class Articles(unittest.TestCase):
+    def test_rules_and_todo(self):
+        from ceo_report import articles
+        from ceo_report.util import esc
+        h = articles.render({}, esc)
+        self.assertIn("임원퇴직금지급규정", h)
+        self.assertIn("중간배당", h)
+        self.assertEqual(len(articles.todo({"임원퇴직금규정": "있음", "임원보수한도": "있음"})), 1)
+        self.assertEqual(articles.SHARES * articles.PAR, 20_000_000)
+
+
 if __name__ == "__main__":
     unittest.main()
