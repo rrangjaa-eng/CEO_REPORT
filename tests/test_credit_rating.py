@@ -172,6 +172,23 @@ class TestCredit(unittest.TestCase):
         self.assertIn("부채비율 586.4%", lines[1])
         self.assertIn("B+", K.brief(C))
 
+    def test_loan_maturity_from_memo_and_overdue(self):
+        # 적요 '[만기일자:YYYY.MM.DD]'에서 대출별 만기를 읽음 (사용자 2026-11-13 실제 2025 분개장)
+        d = tempfile.mkdtemp()
+        self.dirs = getattr(self, "dirs", []) + [d]
+        j = journal() + [ln(D(2026, 1, 20), "9", "10300", "보통예금", dr=200_000_000),
+                         ln(D(2026, 1, 20), "9", "29300", "장기차입금", cr=200_000_000, memo="기보 대출 [만기일자:2026.04.17]"),
+                         ln(D(2026, 6, 30), "10", "80200", "직원급여(판)", dr=1), ln(D(2026, 6, 30), "10", "10300", "보통예금", cr=1)]   # 장부가 만기 뒤까지
+        j[13]["memo"] = "[만기일자:2027.04.21]"
+        t = K.build_table(types.SimpleNamespace(state="ok", journal=j))
+        with open(os.path.join(d, K.FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, K.KEYS)
+            w.writeheader()
+            w.writerows(t.rows)
+        C = K.compute(d, D(2026, 12, 31), annual=True)
+        self.assertEqual(C["E"]["moved"], 500_000_000)
+        self.assertTrue(any(t[0] == "만기 지난 대출 확인" for t in C["todo"]))
+
     def test_render_none(self):
         self.assertIn("계정잔액.csv", K.render(None))
 

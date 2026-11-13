@@ -106,6 +106,16 @@ def build_table(books):
     start = journal_from_start(books.journal)
     out = [dict(zip(KEYS, [FROM_START, "", "예" if start else "아니오", "", ""]))]
     out += [dict(zip(KEYS, [ym, c, n, str(int(d)), str(int(cr))])) for (ym, c, n), (d, cr) in sorted(agg.items())]
+    # 대출 줄 (2026-11-13 실제 2025 분개장: 적요 '[만기일자:YYYY.MM.DD]'): 결산일부터 1년 안 만기 금액을 대출별로 계산
+    for ln in books.journal:
+        code = _sq(ln.get("account_code"))
+        if ln.get("date") is None or not code.startswith(LOAN_DETAIL_PREFIX):
+            continue
+        m = MATURITY.search(ln.get("memo") or "")
+        mat = "%s-%02d-%02d" % (m.group(1), int(m.group(2)), int(m.group(3))) if m else ""
+        kind = "분할" if "분할" in (ln.get("memo") or "") or "할부" in (ln.get("memo") or "") else ("일시" if "일시" in (ln.get("memo") or "") else "")
+        out.append(dict(zip(KEYS, [LOAN_ROW + ln["date"].isoformat(), code, "|".join([_sq(ln.get("vendor")), mat, kind]),
+                                   str(int(ln.get("debit") or 0)), str(int(ln.get("credit") or 0))])))
     yms = sorted(set(k[0] for k in agg))
     note = "계정잔액 %d줄 (%s ~ %s, %s)" % (len(out) - 1, yms[0] if yms else "", yms[-1] if yms else "",
                                          "처음부터 있음 — 재무상태표 계산 가능" if start else "처음부터가 아님 — 잔액 항목은 작년 분개장이 있어야 계산")
@@ -162,15 +172,58 @@ def load(input_dir):
     if not rows:
         return None
     start = any(r.get("연월") == FROM_START and r.get("계정") == "예" for r in rows)
-    out = []
+    out, loans = [], []
     for r in rows:
+        ym = r.get("연월") or ""
+        if ym.startswith(LOAN_ROW):
+            d_ = _date(ym[len(LOAN_ROW):])
+            v, mat, kind = ((r.get("계정") or "") + "||").split("|")[:3]
+            try:
+                loans.append((d_, _sq(r.get("계정코드")), v, _date(mat), kind, int(float(r.get("차변") or 0)), int(float(r.get("대변") or 0))))
+            except ValueError:
+                pass
+            continue
         if not re.match(r"^\d{4}-\d{2}$", r.get("연월") or ""):
             continue
         try:
             out.append((r["연월"], _sq(r.get("계정코드")), _sq(r.get("계정")), int(float(r.get("차변") or 0)), int(float(r.get("대변") or 0))))
         except ValueError:
             continue
-    return {"start": start, "rows": out}
+    return {"start": start, "rows": out, "loans": loans}
+
+
+def loans_at(L, asof, close):
+    """asof 날 대출별 잔액과 결산일(close)부터 1년 안에 갚을 몫. -> [(거래처, 잔액, 만기, 방식, 1년 안 몫, 상태)].
+    상태: '만기 지남'(만기가 asof 전인데 잔액 남음) · '1년 안' · '분할 일부' · '1년 넘음' · '만기 모름'."""
+    by = collections.OrderedDict()
+    for d_, code, v, mat, kind, dr, cr in (L or {}).get("loans", []):
+        if d_ is None or d_ > asof:
+            continue
+        x = by.setdefault(v, {"bal": 0, "mat": None, "kind": "", "paid": []})
+        x["bal"] += cr - dr
+        x["mat"] = mat or x["mat"]
+        x["kind"] = kind or x["kind"]
+        if dr > 0:
+            x["paid"].append((d_, dr))
+    out = []
+    edge = dt.date(close.year + 1, close.month, close.day)
+    for v, x in by.items():
+        if x["bal"] <= 0:
+            continue
+        mat = x["mat"]
+        if mat is None:
+            cur, st = 0, "만기 모름"
+        elif mat < asof:
+            cur, st = x["bal"], "만기 지남"
+        elif mat <= edge:
+            cur, st = x["bal"], "1년 안"
+        elif x["kind"] == "분할":
+            last = sorted(x["paid"])[-1][1] if x["paid"] else 0
+            cur, st = min(x["bal"], last * 12), "분할 일부"   # 최근 한 달 원금 × 12 (다음 1년 낼 원금 근사)
+        else:
+            cur, st = 0, "1년 넘음"
+        out.append((v, x["bal"], mat, x["kind"], cur, st))
+    return out
 
 
 def _kind(code, name):
@@ -191,6 +244,9 @@ def _kind(code, name):
 # 단기차입금·유동성장기부채·사채·장기차입금·가수금. 가수금(대표에게 빌린 돈)도 넣는다 (2026-11-13: 2025 NICE 평가서 차입금의존도 36.4% = 약 4억인데
 # 이자보상배율 2,497배로 이자가 거의 없음 → 대표 가수금을 차입금으로 본 것으로 추정)
 LOAN_PREFIX = ("257", "260", "264", "291", "293")
+LOAN_DETAIL_PREFIX = ("260", "264", "291", "293")   # 대출별 만기를 보는 계정 (가수금 뺌)
+LOAN_ROW = "대출:"
+MATURITY = re.compile(r"만기\s*일자?\s*[:：]\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})")
 LONG_LOAN_PREFIX = ("293",)
 AR_PREFIX = ("108", "110")                   # 외상매출금(이 회사 '수입수수료미수금')·받을어음
 SUSPENSE_PREFIX = ("257",)                   # 가수금
@@ -400,7 +456,18 @@ def _fin_values(L, y, mon, cf_op=None, collect_days=None, inp=None, maturity_shi
         cl = B["cl"]
         mat = _date((inp or {}).get("대출만기일"))
         E["mat"] = mat
-        if maturity_shift and mat and B.get("long_loan", 0) > 0 and mat <= dt.date(y + 1, 12, 31):
+        asof = min(dt.date(y, 12, 31), dt.date(y + (mon == 12), mon % 12 + 1, 1) - dt.timedelta(days=1))
+        LD = loans_at(L, asof, dt.date(y, 12, 31)) if L.get("loans") else []
+        if mat:   # 적요에 만기가 없는 대출은 체크리스트의 대출 만기일로 본다
+            LD = [(v, bal, mat, k, bal if mat <= dt.date(y + 1, 12, 31) else 0, "1년 안 (입력 만기)" if mat <= dt.date(y + 1, 12, 31) else "1년 넘음 (입력 만기)")
+                  if st == "만기 모름" else (v, bal, m_, k, cur, st) for v, bal, m_, k, cur, st in LD]
+        E["loans"] = LD
+        if maturity_shift and LD:
+            mv = sum(cur for v, bal, m_, k, cur, st in LD if not v.startswith(("가수", "대표")))
+            if mv:
+                cl += mv   # 결산일부터 1년 안에 갚을 장기 대출 → 결산 재무상태표에서 유동부채(유동성장기부채)
+                E["moved"] = mv
+        elif maturity_shift and mat and B.get("long_loan", 0) > 0 and mat <= dt.date(y + 1, 12, 31):
             cl += B["long_loan"]   # 결산일(12/31)부터 1년 안 만기 → 결산 재무상태표에서 유동부채(유동성장기부채)
             E["moved"] = B["long_loan"]
         E["cl_adj"] = cl
@@ -632,11 +699,21 @@ def todo(C):
             t += " 12/31 전에 받을 돈을 당겨 받으면 그만큼 본업 현금이 늘어납니다."
             eff = "예: %s원 회수 시 본업 현금 %s원 → %s원" % (W(min(inc, -ocf)), W(ocf), W(ocf + min(inc, -ocf))) if inc > 0 else ""
         out.append(("미수금 회수를 결산일 전으로 당기기", t, eff))
+    for v, bal, m_, k, cur, st in E.get("loans") or []:
+        if st == "만기 지남":
+            out.append(("만기 지난 대출 확인", "%s 대출 %s원은 만기(%s)가 지났는데 장부에 갚은 전표가 없습니다. 연장했으면 새 만기를 적요에 넣고, "
+                        "갚았으면 상환 전표를 넣어야 결산 재무상태표의 부채가 맞습니다. 그대로면 1년 안에 갚을 빚으로 잡혀 유동비율이 낮아집니다."
+                        % (v, W(bal), m_.isoformat()), ""))
     if E.get("moved"):
         before = 100.0 * B["ca"] / B["cl"] if B and B["cl"] > 0 else None
         after = V.get("current")
-        t = ("장기 대출 %s원의 만기(%s)가 결산일(%d-12-31)부터 1년 안이라 결산 재무상태표에서 '1년 안에 갚을 빚(유동부채)'으로 옮겨집니다."
-             " 연장·대환을 결산 전에 정해 두면 유동비율 하락을 피할 수 있습니다." % (W(E["moved"]), E["mat"].isoformat(), y))
+        if E.get("loans"):
+            parts = ", ".join("%s %s원(%s)" % (v, W(cur), st) for v, bal, m_, k, cur, st in E["loans"] if cur)
+            t = ("결산일(%d-12-31)부터 1년 안에 갚을 장기 대출 %s원(%s)이 결산 재무상태표에서 '1년 안에 갚을 빚(유동부채)'으로 옮겨집니다."
+                 " 연장·대환을 결산 전에 정해 두면 유동비율 하락을 피할 수 있습니다." % (y, W(E["moved"]), parts))
+        else:
+            t = ("장기 대출 %s원의 만기(%s)가 결산일(%d-12-31)부터 1년 안이라 결산 재무상태표에서 '1년 안에 갚을 빚(유동부채)'으로 옮겨집니다."
+                 " 연장·대환을 결산 전에 정해 두면 유동비율 하락을 피할 수 있습니다." % (W(E["moved"]), E["mat"].isoformat(), y))
         eff = "유동비율 %s → %s (옮기기 전 → 후)" % (fmt("current", before), fmt("current", after)) if before is not None and after is not None else ""
         out.append(("1년 안 만기 대출 정리", t, eff))
     elif (not B or B.get("approx")) and E.get("mat") is None and _date(inp.get("대출만기일")) and _date(inp.get("대출만기일")) <= dt.date(y + 1, 12, 31) \
@@ -832,7 +909,11 @@ def render(C):
                  " 차입금 %s원. 영업이익·매출은 1~%d월 장부.</div>"
                  % (C["mon"], W(B["assets"]), W(B["ca"]), W(B["na"]), W(B["liab"]), W(B["cl"]),
                     (" → 결산 때 %s" % W(E["cl_adj"])) if E.get("moved") else "", W(B["nl"]), W(B["equity"]), W(B.get("loan", 0)), C["mon"]))
-    else:
+    if E.get("loans"):
+        h.append("<div class='note'>대출별 (적요의 만기일자): %s. 차입금에는 대표 가수금 %s원도 넣었습니다 (평가사 기준과 같게).</div>" % (
+            esc(" · ".join("%s %s원 만기 %s → %s%s" % (v, W(bal), m_.isoformat() if m_ else "모름", st, (" %s원" % W(cur)) if cur and cur != bal else "")
+                           for v, bal, m_, k, cur, st in E["loans"])), W((B or {}).get("suspense", 0))))
+    if not B:
         h.append("<div class='note'>부채비율·자기자본비율·차입금의존도·유동비율·총자산회전율은 회사 처음부터의 잔액이 필요합니다. "
                  "작년(설립 해) 분개장을 수집\\위하고에 넣고 '자료 변환'을 하면 채워집니다.</div>")
 
