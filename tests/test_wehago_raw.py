@@ -44,6 +44,10 @@ def folder():
     save(d, "261113 결산_이익잉여금처분계산서 자동수집.json", "결산원본", "이익잉여금처분계산서", 2026, [{"path": "/smarta/sacl0108/plusforw/", "data": PLUS}])
     save(d, "261113 결산_재무상태표_2025 자동수집.json", "결산원본", "재무상태표", 2025, [{"path": "/smarta/sacl0105/main/", "data": BS}])
     save(d, "261113 결산_고정자산관리대장 자동수집.json", "결산원본", "고정자산관리대장", 2026, [{"path": "/smarta/saas0107/allfixlist/", "data": FIX}])
+    wh = [{"path": "/smarta/swym0107/emp/", "data": [{"cd_emp": "00002", "nm_krname": "나직원", "num_wife": 1, "num_childs": 2, "num_60over": 0}]},
+          {"path": "/smarta/swym0107/emp/income/", "cd_emp": "00001",
+           "data": {"group1": [{"ym_pay": "202601", "am_income1": 300000, "am_inhabit1": 30000}, {"ym_pay": "", "am_income1": 0}]}}]
+    save(d, "261113 인사_소득자별근로소득원천징수부 자동수집.json", "인사원본", "소득자별근로소득원천징수부", 2026, wh)
     return d
 
 
@@ -61,13 +65,15 @@ class Raw(unittest.TestCase):
         self.assertEqual([r["임원"] for r in e], ["예", "예", ""])
         self.assertEqual(e[2]["직급"], "사원 팀원")
         self.assertEqual(e[2]["퇴사일"], "2026-03-31")
+        self.assertEqual((e[2]["부양가족수"], e[2]["자녀수"]), ("3", "2"))
         e = e[1:]
         self.assertNotIn("no_social", " ".join(e[1].values()))
         self.assertFalse(any("-4" in v for v in e[1].values() if v))   # 성별 자리 저장 안 함
 
     def test_pay(self):
         p = w.pay_rows(self.F)
-        self.assertEqual(len(p), 4)
+        self.assertEqual(len(p), 6)
+        self.assertIn({"연월": "2026-01", "사원명": "가대표", "구분": "공제", "항목": w.WH_TAX, "금액": "300000"}, p)
         self.assertEqual(p[0], {"연월": "2026-01", "사원명": "가대표", "구분": "지급", "항목": "지급합계", "금액": "5000000"})
 
     def test_yearend(self):
@@ -101,6 +107,8 @@ class Raw(unittest.TestCase):
                 c.writerows(t.rows)
         out = payroll.check(d, "2026-01")
         self.assertFalse(any(r[1] == "4대보험" and r[2] == "warn" for r in out))
+        Y = payroll.yearend(d, 2026, __import__("datetime").date(2026, 2, 28))
+        self.assertIsNotNone(Y[0]["paid"])        # 원천징수부 소득세가 있으면 낸 세금을 셈
 
 
 if __name__ == "__main__":
