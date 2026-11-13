@@ -99,44 +99,56 @@ def check(input_dir, ym, holders=()):
             out.append((n, "최저임금", "ok" if detail else "info", "시급 환산 %s원%s" % (format(int(base / h), ",") if base else "–", "" if detail else " (명세 없어 총액 기준)")))
         if not detail:
             continue
-        # 2) 4대보험 근로자 몫
-        meal = sum(v for k, v in s["pay"].items() if "식대" in k)
-        taxable = total - min(meal, rates["식대비과세"][0] or 0)
-        birth = _d(e.get("생년월일"))
-        age = (dt.date(year, int(ym[5:]), 1) - birth).days // 365 if birth else None
-        exp = {}
-        if rates["국민연금요율"][1] and (age is None or age < 60):
-            cap = rates["국민연금상한"][0] or taxable
-            exp["국민연금"] = int(min(taxable, cap) * rates["국민연금요율"][0] / 2) // 10 * 10
-        if rates["건강보험료율"][1]:
-            exp["건강"] = int(taxable * rates["건강보험료율"][0] / 2) // 10 * 10
-            if rates["장기요양비율"][1]:
-                exp["장기요양"] = int(exp["건강"] * rates["장기요양비율"][0]) // 10 * 10
-        if rates["고용보험요율"][1]:
-            exp["고용"] = int(taxable * rates["고용보험요율"][0] / 2) // 10 * 10
-        got = dict((k, _ded(s, k)) for k in ("국민연금", "건강", "장기요양", "고용"))
-        if not any(got.values()) and week >= 15:
-            out.append((n, "4대보험", "warn", "공제된 4대보험이 없음 (주 %g시간 근무) — 가입 여부 확인" % week))
+        if set(s["pay"]) <= {"지급합계"} and set(s["ded"]) <= {"공제합계"}:   # 위하고 월별 급상여 화면: 사원별 합계만 (사용자 2026-11-13)
+            out.append((n, "4대보험", "info", "위하고 월별 합계만 있어 항목별 공제는 못 봄 (지급 %s원, 공제 %s원)"
+                        % (format(total, ","), format(sum(s["ded"].values()), ","))))
         else:
-            off = [(k, got[k], v) for k, v in exp.items() if v and abs(got[k] - v) > max(1000, v * 0.1)]
-            out.append((n, "4대보험", "info" if off else "ok",
-                        ("요율대로면 " + ", ".join("%s %s원(공제 %s원)" % (k, format(v, ","), format(g, ",")) for k, g, v in off) +
-                         " — 보수월액 신고 기준이라 차이 날 수 있음") if off else "요율대로 공제됨"))
-        # 3) 연장·야간·휴일 수당 (시간 자료가 있을 때만: 항목 이름에 '시간' 들어간 지급 줄은 아직 없음)
-        # 4) 퇴직금·연차
-        join = _d(e.get("입사일"))
-        if join:
-            yrs = (dt.date(year, int(ym[5:]), 28) - join).days / 365.0
-            if yrs >= 1 and week >= 15:
-                avg3 = _avg3(slips, n, ym)
-                out.append((n, "퇴직금", "info", "근속 %.1f년 — 지금 퇴사하면 약 %s원 (최근 3달 평균 %s × 근속)" % (yrs, format(int(avg3 * yrs), ","), format(int(avg3), ","))))
-            leave = min(11, int(yrs * 12)) if yrs < 1 else 15 + int((yrs - 1) // 2)
-            out.append((n, "연차", "info", "근속 %.1f년 → 연차 %d일 발생 (1년 미만은 달마다 1일)" % (yrs, min(leave, 25))))
-            if join.year == year and join.strftime("%Y-%m") == ym and join.day > 1:
-                nxt = slips.get((_next(ym), n))
-                if nxt and total >= sum(nxt["pay"].values()) * 0.95:
-                    out.append((n, "입사 달 일할", "warn", "%s 입사인데 그 달 급여가 다음 달과 같음 — 일할 계산 확인" % join.isoformat()))
+            _insurance(out, n, s, e, ym, year, total, rates, week)
+        _tenure(out, n, s, e, ym, year, total, week, slips)
     return out
+
+
+def _insurance(out, n, s, e, ym, year, total, rates, week):
+    # 2) 4대보험 근로자 몫
+    meal = sum(v for k, v in s["pay"].items() if "식대" in k)
+    taxable = total - min(meal, rates["식대비과세"][0] or 0)
+    birth = _d(e.get("생년월일"))
+    age = (dt.date(year, int(ym[5:]), 1) - birth).days // 365 if birth else None
+    exp = {}
+    if rates["국민연금요율"][1] and (age is None or age < 60):
+        cap = rates["국민연금상한"][0] or taxable
+        exp["국민연금"] = int(min(taxable, cap) * rates["국민연금요율"][0] / 2) // 10 * 10
+    if rates["건강보험료율"][1]:
+        exp["건강"] = int(taxable * rates["건강보험료율"][0] / 2) // 10 * 10
+        if rates["장기요양비율"][1]:
+            exp["장기요양"] = int(exp["건강"] * rates["장기요양비율"][0]) // 10 * 10
+    if rates["고용보험요율"][1]:
+        exp["고용"] = int(taxable * rates["고용보험요율"][0] / 2) // 10 * 10
+    got = dict((k, _ded(s, k)) for k in ("국민연금", "건강", "장기요양", "고용"))
+    if not any(got.values()) and week >= 15:
+        out.append((n, "4대보험", "warn", "공제된 4대보험이 없음 (주 %g시간 근무) — 가입 여부 확인" % week))
+    else:
+        off = [(k, got[k], v) for k, v in exp.items() if v and abs(got[k] - v) > max(1000, v * 0.1)]
+        out.append((n, "4대보험", "info" if off else "ok",
+                    ("요율대로면 " + ", ".join("%s %s원(공제 %s원)" % (k, format(v, ","), format(g, ",")) for k, g, v in off) +
+                     " — 보수월액 신고 기준이라 차이 날 수 있음") if off else "요율대로 공제됨"))
+
+
+def _tenure(out, n, s, e, ym, year, total, week, slips):
+    # 3) 연장·야간·휴일 수당 (시간 자료가 있을 때만: 항목 이름에 '시간' 들어간 지급 줄은 아직 없음)
+    # 4) 퇴직금·연차
+    join = _d(e.get("입사일"))
+    if join:
+        yrs = (dt.date(year, int(ym[5:]), 28) - join).days / 365.0
+        if yrs >= 1 and week >= 15:
+            avg3 = _avg3(slips, n, ym)
+            out.append((n, "퇴직금", "info", "근속 %.1f년 — 지금 퇴사하면 약 %s원 (최근 3달 평균 %s × 근속)" % (yrs, format(int(avg3 * yrs), ","), format(int(avg3), ","))))
+        leave = min(11, int(yrs * 12)) if yrs < 1 else 15 + int((yrs - 1) // 2)
+        out.append((n, "연차", "info", "근속 %.1f년 → 연차 %d일 발생 (1년 미만은 달마다 1일)" % (yrs, min(leave, 25))))
+        if join.year == year and join.strftime("%Y-%m") == ym and join.day > 1:
+            nxt = slips.get((_next(ym), n))
+            if nxt and total >= sum(nxt["pay"].values()) * 0.95:
+                out.append((n, "입사 달 일할", "warn", "%s 입사인데 그 달 급여가 다음 달과 같음 — 일할 계산 확인" % join.isoformat()))
 
 
 def _next(ym):
@@ -192,6 +204,14 @@ def yearend(input_dir, year, asof, holders=()):
         gross = int((pay - meal) * scale)
         ins = lambda key: int(sum(_ded(s, key) for s in ss) * scale)
         pension, health = ins("국민연금"), ins("건강") + ins("장기요양") + ins("고용")
+        totals = all(set(s["pay"]) <= {"지급합계"} and set(s["ded"]) <= {"공제합계"} for s in ss)
+        if totals:   # 위하고 월별 합계만 (사용자 2026-11-13): 4대보험 근로자 몫은 요율로 어림
+            r = lambda key: taxlaw.value(input_dir, year, key)[0] or 0
+            months = 12 if scale != 1.0 else k
+            cap = r("국민연금상한") or gross / float(months)
+            pension = int(min(gross / float(months), cap) * months * r("국민연금요율") / 2)
+            h = gross * r("건강보험료율") / 2
+            health = int(h + h * r("장기요양비율") + gross * r("고용보험요율") / 2)
         P = prev.get(n)
         notes = []
         if P:   # 작년 연말정산 결과의 공제를 올해도 같다고 봄 (부양가족·카드·의료비 등)
@@ -209,9 +229,11 @@ def yearend(input_dir, year, asof, holders=()):
         calc = basic_tax(base)
         child = CHILD.get(kids, 0) if kids <= 2 else CHILD[2] + CHILD_MORE * (kids - 2)
         tax = max(calc - wage_credit(calc, gross) - child - credits - std, 0)
-        paid = int(sum(_ded(s, "소득세") for s in ss) * scale) if detail else None
+        paid = int(sum(_ded(s, "소득세") for s in ss) * scale) if detail and not totals else None
         if not detail:
             notes.append("급여 명세 없음 — 장부 총액으로 어림, 기납부 세액 모름")
+        elif totals:
+            notes.append("위하고 월별 지급·공제 합계만 있음 — 4대보험은 요율로 어림, 원천징수한 소득세를 나눌 수 없어 환급·추가 납부는 모름")
         if not e and not P:
             notes.append("사원 정보·작년 연말정산 없음 — 부양가족 0명으로 봄")
         out.append({"name": n, "months": k, "gross": gross, "tax": int(tax * 1.1), "paid": None if paid is None else int(paid * 1.1),

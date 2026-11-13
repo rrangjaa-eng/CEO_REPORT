@@ -8,7 +8,7 @@
   · 처분: 결산 전표가 아닌 전표에서 이익준비금·미지급배당금·적립금으로 옮긴 금액 (주총일 전표).
   · 전기이월: 분개장에 전기이월 줄이 있으면 그것, 없으면 회사 첫해(FOUNDED)부터 분개장이 있을 때만 앞 해들로 계산.
     첫해 분개장이 없고 전기이월 줄도 없으면 '모름'으로 둔다 (지어내지 않음).
-- 위하고 결산 화면 원본(확장 '결산 자료 받기', 수집\\위하고\\*결산_*.json)은 아직 응답 모양 확인 전이라 목록만 알린다.
+- 위하고 결산 화면 원본(확장이 수집\\위하고\\*결산_*.json 으로 자동 저장)은 wehago_raw.closing 으로 읽어 '위하고_' 줄로 대조한다.
 - 보고 쪽: load(input_dir) → 줄, for_report(input_dir, year) → 숫자, render(S) → 경영관리 보고 한 영역.
 """
 import collections
@@ -230,9 +230,25 @@ def build_table(books, cfg, asof, wehago_dir=None, input_dir=None):
         notes.append("%d년 처분계산서: 당기순이익 %s(%s), 차기이월 %s" % (
             st["year"], "모름" if st["당기순이익"] is None else "{:,}".format(st["당기순이익"]), st["상태"],
             "모름" if st["차기이월"] is None else "{:,}".format(st["차기이월"])))
-    raws = raw_files(wehago_dir) if wehago_dir else []
-    if raws:
-        notes.append("위하고 결산 화면 원본 %d개 (%s) — 응답 모양 확인 뒤 대조에 씀" % (len(raws), ", ".join(raws[:5])))
+    if wehago_dir:   # 위하고 결산 화면(처분계산서·재무상태표)과 대조 (사용자 2026-11-13, 확장 자동 수집)
+        from . import wehago_raw
+        C = wehago_raw.closing(wehago_raw.files(wehago_dir))
+        mine = dict(((int(r["연도"]), r["항목"]), r["금액"]) for r in rows)
+        for y in sorted(C):
+            for k, mk in (("처분_차기이월", "차기이월"), ("처분_당기순이익", "당기순이익"), ("자본금", "자본금"), ("이익준비금", "이익준비금잔액")):
+                if k not in C[y]:
+                    continue
+                v = C[y][k]
+                ours = mine.get((y, mk))
+                same = ours not in (None, "") and int(ours) == v
+                rows.append(dict(zip(KEYS, [str(y), "위하고_" + mk, str(v), "같음" if same else ("다름" if ours not in (None, "") else "위하고만"),
+                                            "위하고 결산 화면 %s%s" % (k.replace("처분_", "처분계산서 "),
+                                                                  "" if same or ours in (None, "") else " (장부 계산 %s)" % "{:,}".format(int(ours)))])))
+                if ours not in (None, "") and not same:
+                    notes.append("%d년 %s: 위하고 %s vs 장부 계산 %s — 확인 필요" % (y, mk, "{:,}".format(v), "{:,}".format(int(ours))))
+        n = sum(1 for r in rows if r["항목"].startswith("위하고_") and r["상태"] == "같음")
+        if n:
+            notes.append("위하고 결산 화면과 대조: %d개 항목 같음" % n)
     if not rows:
         return Table(FILE, KEYS, [], written=False, reason="잉여금 계산할 장부 없음 (기존 파일 그대로)")
     return Table(FILE, KEYS, rows, notes=notes)
@@ -383,6 +399,13 @@ def render(S, brief=False):
             h.append("<tr><td class='l'>%d년</td><td>%s%s</td><td>%s</td><td>%s</td></tr>"
                      % (yy, W(g("당기순이익")[0]), _tag(g("당기순이익")[1]), W(g("처분액")[0]), W(g("차기이월")[0])))
         h.append("</table>")
+    # 위하고 결산 화면 대조 (사용자 2026-11-13)
+    chk = [(yy, k[4:], d[k]) for yy, d in S["years"] for k in sorted(d) if k.startswith("위하고_")]
+    if chk:
+        bad = [(yy, k, v) for yy, k, v in chk if v[1] == "다름"]
+        h.append("<div class='note'>%s</div>" % esc(
+            "위하고 결산 화면과 대조: " + (" · ".join("%d년 %s 위하고 %s (%s)" % (yy, k, W(v[0]), v[2]) for yy, k, v in bad) + " — 확인 필요"
+                                         if bad else "%d개 항목 모두 같음 (%s)" % (len(chk), ", ".join("%d년 %s" % (yy, k) for yy, k, _ in chk)))))
     # 이번 시기 제안 · 배당 권장액 (사용자 2026-11-12)
     from . import dividend
     from . import taxbreak
