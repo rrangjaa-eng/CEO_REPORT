@@ -205,3 +205,19 @@ class TestForecastTrack(unittest.TestCase):
             got = insights.load_records(t)
         self.assertEqual(got[0][0], D(2026, 11, 6))
         self.assertTrue(got[0][1])
+
+
+class TestIssueCompact(unittest.TestCase):
+    def test_compact_has_no_table(self):
+        """출금 목록이 길어 대표 주간이 넘치면 발행 기한을 표 없이 두어 줄로 (2026-11-13 실제 21건에서 4쪽)."""
+        import datetime as _dt
+        from ceo_report import insights_render as IR
+        D = {"rows": [{"id": "26116", "name": "Games on AWS 2026", "days": 17, "amount": 34332100, "pay_if_today": _dt.date(2027, 1, 12)},
+                      {"id": "26249", "name": "부스", "days": 17, "amount": 1000000, "pay_if_today": _dt.date(2027, 1, 12)}],
+             "total": 35332100, "short": (_dt.date(2026, 12, 4), 6933596, _dt.date(2026, 12, 18), 107495066),
+             "late": True, "deadline": _dt.date(2026, 10, 5), "days": 60, "horizon": _dt.date(2027, 4, 30)}
+        full, small = IR.ceo_issue(D), IR.ceo_issue(D, compact=True)
+        self.assertIn("<table", full)
+        self.assertNotIn("<table", small)
+        for t in ("2건", "35,332,100", "[26116] Games on AWS 2026", "12/4", "10/5까지 발행했어야"):
+            self.assertIn(t, small)
