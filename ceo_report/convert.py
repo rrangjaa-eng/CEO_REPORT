@@ -842,7 +842,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 계정별 연월 합 → 재무상태표·손익
     tables.append(credit.build_table(books))
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고에만, 분개장이 오면 바로 반영
-    tables.append(surplus.build_table(books, cfg, asof, wehago_dir))
+    tables.append(surplus.build_table(books, cfg, asof, wehago_dir, input_dir))
     from . import taxadj   # 세무조정 예상 (사용자 2026-11-12)
     tables.append(taxadj.build_table(books, cfg, asof, input_dir))
     from . import filing   # 신고 일정 (사용자 2026-11-12: 제출기한도 장부를 보고 알려 줌)

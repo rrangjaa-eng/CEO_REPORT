@@ -120,8 +120,14 @@ def check(input_dir, year, answers, holders=(), assets=None):
         else:
             rate = 0.0
     last = FOUNDED + SME_START_YEARS - 1
+    from . import taxreturn
+    filed = taxreturn.load(input_dir).get((year - 1, "확정"))   # 실제 신고서 (사용자 2026-11-13)
+    sp_filed = filed.get("특별감면") if filed else None
     if year > last:
         rows.append(("창업중소기업 세액감면", "해당 없음", None, "감면 기간(%d~%d년)이 지남" % (FOUNDED, last), ""))
+    elif sp_filed:
+        rows.append(("창업중소기업 세액감면", "해당 없음", None,
+                     "%d년 신고서에서 창업 감면이 아니라 중소기업 특별세액감면을 받음 (둘은 한 해에 하나만)" % (year - 1), ""))
     elif rate == 0.0:
         rows.append(("창업중소기업 세액감면", "해당 없음", None, "과밀억제권역 안에서 만 35세 이상 창업은 감면 대상이 아님",
                      "본점을 과밀억제권역 밖으로 옮기는 경우는 세무사와 따로 검토"))
@@ -140,9 +146,19 @@ def check(input_dir, year, answers, holders=(), assets=None):
             rows.append(("창업중소기업 세액감면", "해당", amt, why + " · 법인세 산출세액 × 감면율", "법인세 신고 때 세액감면신청서 제출"))
     # 2) 중소기업 특별세액감면 (조특법 7조) — 창업 감면과 같은 해 함께 못 받음
     st1 = rows[0][1]
-    rows.append(("중소기업 특별세액감면", "나중" if st1 in ("해당", "확인 필요") else "확인 필요", None,
-                 "창업 감면과 한 해에 같이 받지 못함 — 창업 감면이 안 되는 해의 대안. 감면율은 업종·회사 크기·지역에 따라 5~30%",
-                 "창업 감면이 안 되면 세무사에게 업종·소기업 여부 확인"))
+    if sp_filed:
+        sp_rate = sp_filed / float(filed.get("산출세액") or 1)
+        rows.append(("중소기업 특별세액감면", "해당", int(tax * sp_rate) if tax is not None else None,
+                     "%d년 신고서 실제 감면 %s원 = 산출세액의 %.1f%% (감면율 × 감면 대상 소득 비율). 올해도 같은 비율"
+                     % (year - 1, W(sp_filed), sp_rate * 100), "법인세 신고 때 세액감면신청서 제출 (세무사)"))
+    else:
+        rows.append(("중소기업 특별세액감면", "나중" if st1 in ("해당", "확인 필요") else "확인 필요", None,
+                     "창업 감면과 한 해에 같이 받지 못함 — 창업 감면이 안 되는 해의 대안. 감면율은 업종·회사 크기·지역에 따라 5~30%",
+                     "창업 감면이 안 되면 세무사에게 업종·소기업 여부 확인"))
+    if filed and filed.get("공제이월"):
+        rows.append(("통합고용세액공제 (넘어온 몫)", "해당", filed["공제이월"],
+                     "%d년 공제 중 최저한세 때문에 못 쓰고 넘어온 금액 (10년 안에 사용)" % (year - 1),
+                     "법인세 신고 때 세액공제조정명세서에 이월분으로 (세무사)"))
     # 3) 통합고용세액공제 (조특법 29조의8) — 상시근로자 증가 1명당, 3년간
     hc = headcount(input_dir, holders)
     zone = "수도권" if metro == "예" else ("지방" if metro == "아니오" else None)
@@ -187,8 +203,6 @@ def check(input_dir, year, answers, holders=(), assets=None):
                                 " × 1명당 %s원 (청년·60세 이상 등은 %s원으로 더 큼)" % (W(per_other), W(per_young) if per_young else "더 큼")),
                          "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈"))
     # 4) 작년(2025)분 놓친 감면·공제 — 5년 안 경정청구
-    from . import taxreturn
-    filed = taxreturn.load(input_dir).get((year - 1, "확정"))
     if filed and taxreturn.at_min_tax(filed, law("최저한세율")[0] or MIN_TAX):   # 실제 신고서 (사용자 2026-11-13)
         rows.append(("%d년분 경정청구" % (year - 1), "해당 없음", None,
                      "%d년 신고서: 공제·감면 %s원을 받아 세금이 이미 최저한세(과세표준의 7%%)까지 줄었음 — 더 돌려받을 감면 없음"

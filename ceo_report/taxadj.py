@@ -4,6 +4,7 @@
   · 접대비(기업업무추진비) 한도 초과 → 비용 인정 안 함 (+)
   · 벌금·과태료·가산세·과징금·범칙금 (적요로 찾음) → 비용 인정 안 함 (+)
   · 업무용 승용차 비용: 운행기록부 없으면 1대 연 1,500만 원 넘는 몫 (+, 승용차인지 몰라 '확인 필요')
+  · 업무용 승용차 감가상각비: 작년 신고서의 승용차 상각비로 올해 1년 치 한도(연 800만) 조정 (±)
   · 대표·임직원 가지급금 인정이자 → 수익으로 더함 (+)
   · 기부금 → 한도 계산은 세무사 (확인 필요)
 '넣음' 항목만 법인세 예상 과세표준에 더하고, '확인 필요'는 보여 주기만 한다. 세율·한도는 taxlaw 연도별 기준표.
@@ -80,6 +81,10 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None):
             items.append(("업무용 승용차 비용", 0, False, why + " — 운행기록부를 쓰거나 승용차가 아니라 조정 없음"))
         else:
             items.append(("업무용 승용차 비용", over, False, why + " — 승용차 대수·운행기록부 확인 필요 (차가 여러 대면 한도도 늘어남)"))
+    # 업무용 승용차 감가상각비 한도 (사용자 2026-11-13: 작년 상세 신고서의 업무용승용차 관련비용 명세서)
+    car_dep = _car_dep(input_dir, year, law("승용차상각한도"))
+    if car_dep:
+        items.append(car_dep)
     # 가지급금 인정이자
     irate, ok4, _ = law("인정이자율")
     if by_month:
@@ -99,6 +104,47 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None):
         items.append(("기부금 한도", None, False, "1~%d월 기부금 %s원 — 종류별 한도는 세무사 계산" % (months, "{:,}".format(int(gift)))))
     total = sum(int(v) for _, v, on, _ in items if on and v)
     return {"items": items, "total": total}
+
+
+def _car_dep(input_dir, year, lim_info):
+    """작년 신고서의 승용차 감가상각비로 올해 조정 -> (이름, 금액, 넣음, 근거) 또는 None.
+
+    법인세 예상의 감가상각비는 작년 장부 금액(이 차는 산 달부터 몇 달 치만)으로 먼저 잡는다. 올해는 1년 치를 상각하지만
+    세법은 1대 연 800만 원까지만 비용으로 인정하므로, 실제 비용 인정액 = min(1년 치, 한도). 조정 = 작년 상각비 − 올해 인정액
+    (보통 음수: 작년보다 비용 인정이 늘어 과세표준이 줄어듦). 창에 올해 감가상각비를 직접 넣은 해는 1년 치가 들어 있다고 보고 한도 넘는 몫을 더한다."""
+    import datetime as dt
+    if not input_dir:
+        return None
+    from . import taxreturn
+    filed = taxreturn.load(input_dir).get((year - 1, "확정"))
+    if not filed or not filed.get("승용차상각비"):
+        return None
+    lim, ok, _ = lim_info
+    if not lim:
+        return None
+    try:
+        acq = dt.date.fromisoformat((filed.get("승용차취득일") or "").strip()[:10])
+    except ValueError:
+        acq = None
+    owned = (12 - acq.month + 1) if acq and acq.year == year - 1 else 12
+    last_dep = filed["승용차상각비"]
+    annual = int(last_dep * 12 / float(owned))
+    allowed = min(annual, int(lim))
+    from .corptax import read as read_dep
+    manual = read_dep(input_dir).get(str(year)) is not None
+    head = ("%d년 신고서: 승용차(%s 취득) 감가상각비 %s원(%d달 치) 중 한도 넘은 %s원은 비용 인정 안 됨. "
+            % (year - 1, acq.isoformat() if acq else "작년", "{:,}".format(last_dep), owned, "{:,}".format(filed.get("승용차상각초과") or 0)))
+    if manual:   # 창 ⑨ 에 올해 감가상각비를 직접 넣었으면 그 안에 이 차 1년 치가 들어 있다고 본다
+        adj = annual - allowed
+        why = head + ("올해 감가상각비는 창에 직접 넣은 금액(이 차 1년 치 약 %s원이 들어 있다고 봄) → 한도 %s원 넘는 %s원을 과세표준에 더함 (직접 넣은 금액에 이 차가 빠져 있으면 세무사 확인)"
+                      % ("{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(adj)))
+    else:
+        adj = last_dep - allowed
+        why = head + ("올해 감가상각비 예상은 작년 금액이라 이 차는 %s원만 들어 있지만, 올해 1년 치 약 %s원 중 세법이 인정하는 건 한도 %s원 → 과세표준 %s원 %s. "
+                      "장부 감가상각비 예상은 1년 치보다 약 %s원 적게 잡혀 있음 (창 ⑨에 올해 감가상각비를 넣으면 장부 이익도 맞춰짐)"
+                      % ("{:,}".format(last_dep), "{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(abs(adj)),
+                         "줄어듦" if adj < 0 else "늘어남", "{:,}".format(max(annual - last_dep, 0))))
+    return ("업무용 승용차 감가상각비 한도", adj, bool(ok), why)
 
 
 def build_table(books, cfg, asof, input_dir=None):
