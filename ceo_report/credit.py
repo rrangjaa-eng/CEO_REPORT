@@ -60,6 +60,7 @@ NONFIN = [
     ("delinq", "최근 1년 금융 연체 (회사·대표)", ("없음", "있음"), "있으면 등급이 크게 깎임"),
     ("tax", "국세·지방세·4대보험 체납", ("없음", "있음"), "체납은 바로 감점"),
     ("suit", "소송·압류·가압류", ("없음", "있음"), "우발 위험"),
+    ("exp", "대표자 동종업계 경력", None, "경영진 경험. 업력이 짧은 회사는 대표 경력을 크게 봄"),
     ("conc", "매출 거래처 쏠림", None, "한 곳에 쏠리면 그곳과 거래가 끊길 때 위험"),
     ("staff", "상시 직원 수", None, "규모·고용 안정"),
     ("cert", "인증 (벤처·이노비즈·메인비즈·여성기업 등)", None, "가점 요소"),
@@ -69,13 +70,15 @@ NONFIN = [
 # 체크리스트 입력 항목 (입력/신용평가.csv 의 '항목' 칸)
 INPUT_ITEMS = [
     ("설립일", "YYYY-MM-DD"), ("대표신용점수", "900 이상 / 800~899 / 800 미만"), ("금융연체", "없음 / 있음"),
-    ("체납", "없음 / 있음"), ("소송압류", "없음 / 있음"), ("인증", "있으면 종류 (예: 벤처), 없으면 '없음'"),
+    ("대표동종경력", "년 (예: 18.5)"), ("체납", "없음 / 있음"), ("소송압류", "없음 / 있음"), ("인증", "있으면 종류 (예: 벤처), 없으면 '없음'"),
     ("결산방식", "세무사 결산 / 외부감사"), ("사업장", "임차 / 자가 (비우면 장부의 보증금으로 판단)"),
     ("대출만기일", "가장 이른 장기 대출 만기 YYYY-MM-DD"),
     ("작년_평가사", "예: 이크레더블"), ("작년_평가일", "YYYY-MM-DD"), ("작년_결산연도", "예: 2025"),
     ("작년_등급", "예: BB+"), ("작년_현금흐름등급", "예: CR-3"),
     ("작년_부채비율", "%"), ("작년_자기자본비율", "%"), ("작년_차입금의존도", "%"), ("작년_유동비율", "%"),
-    ("작년_영업이익률", "%"), ("작년_이자보상배율", "배"), ("작년_매출액", "원"), ("작년_지적사항", "평가서에 적힌 약점 한 줄"),
+    ("작년_영업이익률", "%"), ("작년_이자보상배율", "배"), ("작년_매출액", "원"),
+    ("작년_총자산", "원 (평가서 요약 재무)"), ("작년_자기자본", "원 (평가서 요약 재무)"), ("작년_차입금", "원 (모르면 비움)"),
+    ("작년_지적사항", "평가서에 적힌 약점 한 줄"),
 ]
 LAST_KEYS = {"debt": "작년_부채비율", "equity": "작년_자기자본비율", "borrow": "작년_차입금의존도", "current": "작년_유동비율",
              "opm": "작년_영업이익률", "icr": "작년_이자보상배율"}
@@ -185,7 +188,9 @@ def _kind(code, name):
     return None
 
 
-LOAN_PREFIX = ("260", "264", "291", "293")   # 단기차입금·유동성장기부채·사채·장기차입금
+# 단기차입금·유동성장기부채·사채·장기차입금·가수금. 가수금(대표에게 빌린 돈)도 넣는다 (2026-11-13: 2025 NICE 평가서 차입금의존도 36.4% = 약 4억인데
+# 이자보상배율 2,497배로 이자가 거의 없음 → 대표 가수금을 차입금으로 본 것으로 추정)
+LOAN_PREFIX = ("257", "260", "264", "291", "293")
 LONG_LOAN_PREFIX = ("293",)
 AR_PREFIX = ("108", "110")                   # 외상매출금(이 회사 '수입수수료미수금')·받을어음
 SUSPENSE_PREFIX = ("257",)                   # 가수금
@@ -224,6 +229,35 @@ def moves(L, y, m_to, prefixes=None, name_word=None):
     lo, hi = "%04d-01" % y, "%04d-%02d" % (y, m_to)
     return sum(d - c for m, code, name, d, c in (L or {}).get("rows", [])
                if lo <= m <= hi and ((prefixes and code.startswith(prefixes)) or (name_word and name_word in name)))
+
+
+def balance_from_report(L, inp, y, mon):
+    """분개장이 처음부터가 아닐 때 (사용자 2026-11-13: 작년 평가서): 작년 말 총자산·자기자본(평가서) + 올해 장부 증감.
+    유동/비유동 나눔은 모름 → 유동비율은 계산하지 않는다. 차입금은 작년_차입금을 넣었을 때만."""
+    ta, eq = _num(inp.get("작년_총자산")), _num(inp.get("작년_자기자본"))
+    ly = int(_num(inp.get("작년_결산연도")) or 0)
+    if not L or ta is None or eq is None or ly != y - 1:
+        return None
+    lo, hi = "%04d-01" % y, "%04d-%02d" % (y, mon)
+    da = dl = 0
+    loan = 0
+    for m, code, name, d, c in L["rows"]:
+        if not (lo <= m <= hi):
+            continue
+        k = _kind(code, name)
+        if k in ("ca", "na"):
+            da += d - c
+        elif k in ("cl", "nl"):
+            dl += c - d
+        if code.startswith(LOAN_PREFIX):
+            loan += c - d
+    B = {"ca": None, "na": None, "cl": None, "nl": None, "assets": int(ta) + da, "liab": int(ta - eq) + dl, "approx": True,
+         "open_assets": int(ta), "open_equity": int(eq), "d_assets": da, "d_liab": dl}
+    B["equity"] = B["assets"] - B["liab"]
+    lo_ = _num(inp.get("작년_차입금"))
+    if lo_ is not None:
+        B["loan"] = int(lo_) + loan
+    return B
 
 
 def income(L, y, m_from, m_to):
@@ -328,6 +362,8 @@ def _fin_values(L, y, mon, cf_op=None, collect_days=None, inp=None, maturity_shi
     frac = frac or mon / 12.0
     P = income(L, y, 1, mon)
     B = balance_sheet(L, "%04d-%02d" % (y, mon))
+    if B is None and inp:
+        B = balance_from_report(L, inp, y, mon)
     V, E = dict((f[0], None) for f in FIN), {"P": P, "B": B}
     if P and P["rev"]:
         n = len([m for m in P["months"]])
@@ -339,11 +375,28 @@ def _fin_values(L, y, mon, cf_op=None, collect_days=None, inp=None, maturity_shi
         V["size"] = P["rev"] / frac
         E["annual_rev"] = V["size"]
         Q = income(L, y - 1, 1, mon)
+        lrev = _num((inp or {}).get("작년_매출액"))
         if Q and Q["rev"] > 0 and len(Q["months"]) == mon:
             V["growth"] = 100.0 * (P["rev"] - Q["rev"]) / Q["rev"]
+        elif lrev and int(_num((inp or {}).get("작년_결산연도")) or 0) == y - 1:
+            # 작년 평가서 매출 (사용자 2026-11-13). 설립 해는 영업한 달 수로 연 환산해 비교
+            est = _date((inp or {}).get("설립일"))
+            lm = 12 - (est.month - 1) if est and est.year == y - 1 else 12
+            V["growth"] = 100.0 * (V["size"] - lrev * 12.0 / lm) / (lrev * 12.0 / lm)
+            E["growth_src"] = "작년 평가서 매출 %s원%s 대비 올해 연 환산" % (W(int(lrev)), (" (%d개월 → 12개월 환산)" % lm) if lm != 12 else "")
         else:
             E["growth_why"] = "작년 같은 달(1~%d월) 장부가 다 있지 않음" % mon if Q else "작년 장부 없음"
-    if B and B["assets"] > 0:
+    if B and B.get("approx") and B["assets"] > 0:
+        if B["equity"] > 0:
+            V["debt"] = 100.0 * B["liab"] / B["equity"]
+        else:
+            E["neg_equity"] = True
+        V["equity"] = 100.0 * B["equity"] / B["assets"]
+        if B.get("loan") is not None:
+            V["borrow"] = 100.0 * max(B["loan"], 0) / B["assets"]
+        if P and P["rev"]:
+            V["turn"] = (P["rev"] / frac) / B["assets"]
+    elif B and B["assets"] > 0:
         cl = B["cl"]
         mat = _date((inp or {}).get("대출만기일"))
         E["mat"] = mat
@@ -390,6 +443,12 @@ def _nonfin(L, inp, asof, P, input_dir):
         out.append((key, v or "입력 필요", "입력", lv))
         if v == "있음" and key in ("delinq", "tax"):
             cap = CAP_DEFAULT
+    ex = _num(inp.get("대표동종경력"))
+    if ex is not None:
+        lv = "좋음" if ex >= 10 else ("보통" if ex >= 5 else ("주의" if ex >= 3 else "나쁨"))
+        out.append(("exp", "%g년" % ex, "입력", lv))
+    else:
+        out.append(("exp", "입력 필요", "입력", None))
     # 거래처 쏠림: 매출 거래처 (연간자료.csv 매출거래처, 올해)
     conc = _concentration(input_dir, asof.year)
     if conc:
@@ -580,7 +639,7 @@ def todo(C):
              " 연장·대환을 결산 전에 정해 두면 유동비율 하락을 피할 수 있습니다." % (W(E["moved"]), E["mat"].isoformat(), y))
         eff = "유동비율 %s → %s (옮기기 전 → 후)" % (fmt("current", before), fmt("current", after)) if before is not None and after is not None else ""
         out.append(("1년 안 만기 대출 정리", t, eff))
-    elif not B and E.get("mat") is None and _date(inp.get("대출만기일")) and _date(inp.get("대출만기일")) <= dt.date(y + 1, 12, 31) \
+    elif (not B or B.get("approx")) and E.get("mat") is None and _date(inp.get("대출만기일")) and _date(inp.get("대출만기일")) <= dt.date(y + 1, 12, 31) \
             and moves(C["_L"], y, C["mon"], LONG_LOAN_PREFIX) != 0:
         mat = _date(inp.get("대출만기일"))
         out.append(("1년 안 만기 대출 정리", "장기 대출의 만기(%s)가 결산일(%d-12-31)부터 1년 안이라 결산 재무상태표에서 '1년 안에 갚을 빚(유동부채)'으로 옮겨져 "
@@ -594,10 +653,46 @@ def todo(C):
         if inp.get(item) == "있음":
             out.append(("%s 해소" % item, "%s이 있으면 재무 점수와 상관없이 등급이 %s 아래로 묶입니다. 평가 전에 해소하고 완납 증명을 준비합니다." % (item, CAP_DEFAULT), ""))
     if V.get("debt") is not None and V["debt"] > 200:
-        out.append(("부채비율 낮추기", "부채비율 %s로 기준(200%%)을 넘습니다. 결산 전 갚을 수 있는 미지급금·차입금을 먼저 갚으면 부채와 자산이 같이 줄어 비율이 낮아집니다." % fmt("debt", V["debt"]), ""))
+        need = int(B["liab"] / 2.0 - B["equity"]) if B and B["equity"] > 0 else None
+        t = ("부채비율 %s로 기준(200%%)을 넘습니다. 올해 이익을 배당하지 않고 남겨 두면 자본이 그만큼 커져 비율이 낮아집니다. "
+             "결산 전 갚을 수 있는 미지급금·차입금을 먼저 갚으면 부채와 자산이 같이 줄어 비율이 더 낮아집니다." % fmt("debt", V["debt"]))
+        eff = ("200%%까지 낮추려면 자본이 %s원 더 필요 (증자·가수금 출자전환 등). 배당하면 그만큼 비율이 다시 올라감" % W(need)) if need and need > 0 else ""
+        out.append(("부채비율 낮추기", t, eff))
     miss = [n for k, n, val, s_, lv, why in C["nonfin"] if lv is None and s_ == "입력"]
     if miss:
         out.append(("체크리스트 채우기", "아직 입력하지 않은 항목: %s. 채우면 등급 범위가 좁아집니다." % ", ".join(miss), ""))
+    return out
+
+
+def explain(C):
+    """쉬운 설명 (사용자 2026-11-13: 모든 자료에 쉬운 설명과 제안). 정해진 문장틀에 이 장의 숫자만 넣는다."""
+    out, V, LY = [], C["V"], C.get("last")
+    names = dict((f[0], f[2]) for f in FIN)
+    plain = {"debt": "빚이 내 돈의 %.1f배", "equity": "회사 재산 중 내 돈이 %.0f%%", "borrow": "재산 중 이자 내는 빚이 %.0f%%",
+             "current": "1년 안 갚을 빚 대비 1년 안 돈이 될 재산 %.0f%%"}
+    def say_v(k, v):
+        if k == "debt":
+            return plain[k] % (v / 100.0)
+        return plain[k] % v if k in plain else fmt(k, v)
+    if LY and LY.get("grade") in NOTCHES:
+        g = LY["grade"]
+        n = NOTCHES.index(g) - NOTCHES.index("BBB-")
+        pos = ("투자 적격(BBB- 이상)보다 %d칸 아래" % n) if n > 0 else "투자 적격(BBB- 이상) 안"
+        out.append("작년(%d년 결산) %s 평가는 %s입니다. 22칸 등급 중 %d번째로, %s입니다." % (LY["year"], LY["agency"] or "평가사", g, NOTCHES.index(g) + 1, pos))
+        bad = [(k, LY["V"][k]) for k in ("debt", "equity", "borrow", "current") if LY["V"].get(k) is not None and judge(k, LY["V"][k]) in ("나쁨", "주의")]
+        if bad:
+            k, v = bad[0]
+            line = "작년 등급을 가장 끌어내린 것은 %s %s(%s)입니다." % (names[k], fmt(k, v), say_v(k, v))
+            if V.get(k) is not None:
+                better = (V[k] < v) if k in ("debt", "borrow") else (V[k] > v)
+                line += " 올해는 %s(%s)로 %s." % (fmt(k, V[k]), say_v(k, V[k]), "좋아졌습니다" if better else "나빠졌습니다")
+            out.append(line)
+    out.append("올해 추정 범위는 %s입니다%s. 모르는 칸(%d개)을 채울수록 범위가 좁아집니다." % (
+        grade_text(C["grade"]), " (작년 실제 등급에 맞춰 보정)" if LY and LY.get("adj") else "",
+        sum(1 for _, _, lv in C["fin"] if lv is None) + sum(1 for x in C["nonfin"] if x[4] is None)))
+    if C["worst"]:
+        k = C["worst"][0]
+        out.append("올해 가장 걸리는 것은 %s %s입니다 — %s." % (names[k], fmt(k, V[k]), dict((f[0], f[7]) for f in FIN)[k]))
     return out
 
 
@@ -621,6 +716,19 @@ def _best_worst(C):
 
 def W(v):
     return "—" if v is None else ("{:,}".format(int(v)) if v >= 0 else "−{:,}".format(-int(v)))
+
+
+def brief(C):
+    """경영관리 '자료 안내'용 한 줄 (사용자 2026-11-13: 정기 자료도 최근 결과를 경영관리에서)."""
+    if C is None:
+        return "기업신용평가 미리보기: 계산 자료 없음"
+    LY = C.get("last") or {}
+    t = "기업신용평가 미리보기 (%d년 결산 기준): 추정 %s" % (C["year"], grade_text(C["grade"]))
+    if LY.get("grade"):
+        t += " · 작년 %s %s" % (LY.get("agency") or "", LY["grade"])
+    if C["worst"]:
+        t += " · 가장 걸리는 점 %s" % dict((f[0], f[2]) for f in FIN)[C["worst"][0]]
+    return t + " · 결산 전 할 일 %d가지" % len(C["todo"])
 
 
 def grade_text(g):
@@ -668,6 +776,9 @@ def render(C):
     when = "%d년 결산 기준 (%d월까지 장부 반영)" % (C["year"], C["mon"]) if not C["annual"] else "%d년 결산 기준" % C["year"]
     h.append("<div class='note'>%s. 평가 회사(NICE·한국기업데이터·이크레더블 등)의 실제 모형은 공개되지 않아 <b>등급은 추정 범위</b>로만 보입니다. "
              "판정 기준은 재무분석에서 널리 쓰이는 값이고, 모든 문구는 정해진 규칙으로 만듭니다.</div>" % when)
+    easy = explain(C)
+    if easy:
+        h.append("<div class='say'><b>쉬운 설명</b><br>%s</div>" % "<br>".join(esc(x) for x in easy))
     best, worst = C["best"], C["worst"]
     adj = (C.get("last") or {}).get("adj")
     foot = "점수 %.0f점 (모르는 칸에 따라 %.0f~%.0f점)." % (C["score"][1], C["score"][0], C["score"][2])
@@ -708,7 +819,15 @@ def render(C):
                      % (area_td, esc(s[2]), esc(s[3]), val, esc(threshold_text(k)), _tag(lv), esc(s[7])))
     h.append("</tbody></table>")
     B = E.get("B")
-    if B:
+    if E.get("growth_src") and V.get("growth") is not None:
+        h.append("<div class='note'>매출액증가율: %s.</div>" % esc(E["growth_src"]))
+    if B and B.get("approx"):
+        h.append("<div class='note'>잔액은 <b>추정</b>입니다: 작년 평가서의 %d년 말 총자산 %s원·자기자본 %s원에 올해 1~%d월 장부 증감(자산 %s원, 부채 %s원)을 더함 → "
+                 "총자산 %s원, 부채 %s원, 자본 %s원. 법인세는 아직 빼지 않은 금액이라 결산 뒤 자본은 조금 줄어듭니다. "
+                 "유동비율은 유동·비유동을 나눈 작년 잔액이 있어야 하고%s, 작년 분개장을 넣으면 정확한 장부 잔액으로 바뀝니다.</div>"
+                 % (C["year"] - 1, W(B["open_assets"]), W(B["open_equity"]), C["mon"], W(B["d_assets"]), W(B["d_liab"]),
+                    W(B["assets"]), W(B["liab"]), W(B["equity"]), "" if B.get("loan") is not None else ", 차입금의존도는 작년 말 차입금을 넣어야 계산됩니다"))
+    elif B:
         h.append("<div class='note'>%d월 말 장부 잔액: 총자산 %s원 (유동 %s · 비유동 %s), 부채 %s원 (유동 %s%s · 비유동 %s), 자본 %s원 (= 자산 − 부채)."
                  " 차입금 %s원. 영업이익·매출은 1~%d월 장부.</div>"
                  % (C["mon"], W(B["assets"]), W(B["ca"]), W(B["na"]), W(B["liab"]), W(B["cl"]),
