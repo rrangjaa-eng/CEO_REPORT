@@ -477,6 +477,25 @@ def main(argv=None):
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
                         _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+    if kind == "monthly" and R.get("re"):
+        # 이익잉여금 쉬운 설명·처분계산서·결산 처리 제안 양식 (사용자 2026-11-13): 출력/결산/ 에 따로 한 부
+        from ceo_report import surplus
+        try:
+            re_page = surplus.write_page(R["re"], a.출력, asof)
+        except OSError as e:
+            _say(_write_help(os.path.join(a.출력, "결산"), e))
+            re_page = None
+        if re_page:
+            made.append(re_page)
+            if browser:
+                pdf_path = pdfname.stamped(re_page[:-5])
+                err = to_pdf(browser, re_page, pdf_path)
+                if err:
+                    _say("%s — %s" % (err, os.path.basename(pdf_path)))
+                    pdf_failed = True
+                else:
+                    made.append(pdf_path)
+                    pdfname.prune(re_page[:-5])
     try:
         digest.write_record(a.출력, R)
     except OSError as e:
