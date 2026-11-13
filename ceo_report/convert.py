@@ -830,7 +830,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
     tables.append(convert_pl.build_dept_accounts(books, cfg, _read_prev_rows(input_dir, data.DEPT_ACCOUNT_FILE,
                                                                              data.DEPT_ACCOUNT_KEYS)))
-    tables.append(build_tax(books, cfg, asof, input_dir))
+    tables.append(build_tax(books, cfg, asof, input_dir, wehago_dir))
     tables.extend(build_bank(books, cfg))
     tables.append(build_debts(books, cfg))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
@@ -844,7 +844,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고에만, 분개장이 오면 바로 반영
     tables.append(surplus.build_table(books, cfg, asof, wehago_dir, input_dir))
     from . import taxadj   # 세무조정 예상 (사용자 2026-11-12)
-    tables.append(taxadj.build_table(books, cfg, asof, input_dir))
+    tables.append(taxadj.build_table(books, cfg, asof, input_dir, wehago_dir))
     from . import filing   # 신고 일정 (사용자 2026-11-12: 제출기한도 장부를 보고 알려 줌)
     tables.append(filing.build_table(books, cfg, asof, input_dir))
     from . import filehelp   # 신고 도우미 (사용자 2026-11-12)
@@ -967,7 +967,7 @@ def build_bank(books, cfg):
                   notes=["보통예금 입출금 %d줄 (같은 전표에 차변·대변 모두 있으면 계좌간이체)" % len(txns)])]
 
 
-def build_tax(books, cfg, asof, input_dir=None):
+def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     """세금예상.csv 표 (사용자 2026-11-03): 분개장으로 부가세(분기)·원천세·4대보험(회사분 포함) 납부 예상. 계산할 줄이 없으면 빈 표를 쓴다."""
     from . import tax
     mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
@@ -978,7 +978,7 @@ def build_tax(books, cfg, asof, input_dir=None):
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
-    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir)
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir, wehago_dir)
     rows += ct_rows
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",

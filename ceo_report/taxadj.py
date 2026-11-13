@@ -21,7 +21,7 @@ def _sq(t):
     return re.sub(r"\s+", "", str(t or ""))
 
 
-def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None):
+def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_dir=None):
     """-> {"items": [(이름, 금액, 넣음, 근거)], "total": 넣은 합}."""
     from . import taxlaw
     year, months = int(ym[:4]), int(ym[5:7])
@@ -82,7 +82,7 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None):
         else:
             items.append(("업무용 승용차 비용", over, False, why + " — 승용차 대수·운행기록부 확인 필요 (차가 여러 대면 한도도 늘어남)"))
     # 업무용 승용차 감가상각비 한도 (사용자 2026-11-13: 작년 상세 신고서의 업무용승용차 관련비용 명세서)
-    car_dep = _car_dep(input_dir, year, law("승용차상각한도"))
+    car_dep = _car_dep(input_dir, year, law("승용차상각한도"), wehago_dir)
     if car_dep:
         items.append(car_dep)
     # 가지급금 인정이자
@@ -106,12 +106,12 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None):
     return {"items": items, "total": total}
 
 
-def _car_dep(input_dir, year, lim_info):
+def _car_dep(input_dir, year, lim_info, wehago_dir=None):
     """작년 신고서의 승용차 감가상각비로 올해 조정 -> (이름, 금액, 넣음, 근거) 또는 None.
 
     법인세 예상의 감가상각비는 작년 장부 금액(이 차는 산 달부터 몇 달 치만)으로 먼저 잡는다. 올해는 1년 치를 상각하지만
     세법은 1대 연 800만 원까지만 비용으로 인정하므로, 실제 비용 인정액 = min(1년 치, 한도). 조정 = 작년 상각비 − 올해 인정액
-    (보통 음수: 작년보다 비용 인정이 늘어 과세표준이 줄어듦). 창에 올해 감가상각비를 직접 넣은 해는 1년 치가 들어 있다고 보고 한도 넘는 몫을 더한다."""
+    (보통 음수: 작년보다 비용 인정이 늘어 과세표준이 줄어듦). 창에 올해 감가상각비를 직접 넣었거나 위하고 고정자산대장 금액을 쓰는 해는 1년 치가 들어 있다고 보고 한도 넘는 몫을 더한다."""
     import datetime as dt
     if not input_dir:
         return None
@@ -130,14 +130,20 @@ def _car_dep(input_dir, year, lim_info):
     last_dep = filed["승용차상각비"]
     annual = int(last_dep * 12 / float(owned))
     allowed = min(annual, int(lim))
-    from .corptax import read as read_dep
+    from .corptax import read as read_dep, read_ledger
     manual = read_dep(input_dir).get(str(year)) is not None
+    ledger = read_ledger(input_dir, wehago_dir).get(str(year)) is not None
+    car_now = _ledger_car(input_dir, year, wehago_dir)
+    if car_now:
+        annual = car_now   # 위하고 고정자산관리대장의 올해 상각 예정액 (사용자 2026-11-13)
+        allowed = min(annual, int(lim))
     head = ("%d년 신고서: 승용차(%s 취득) 감가상각비 %s원(%d달 치) 중 한도 넘은 %s원은 비용 인정 안 됨. "
             % (year - 1, acq.isoformat() if acq else "작년", "{:,}".format(last_dep), owned, "{:,}".format(filed.get("승용차상각초과") or 0)))
-    if manual:   # 창 ⑨ 에 올해 감가상각비를 직접 넣었으면 그 안에 이 차 1년 치가 들어 있다고 본다
+    if manual or ledger:   # 창 ⑨ 직접 입력이나 위하고 고정자산대장 금액이면 이 차 1년 치가 들어 있다고 본다
         adj = annual - allowed
-        why = head + ("올해 감가상각비는 창에 직접 넣은 금액(이 차 1년 치 약 %s원이 들어 있다고 봄) → 한도 %s원 넘는 %s원을 과세표준에 더함 (직접 넣은 금액에 이 차가 빠져 있으면 세무사 확인)"
-                      % ("{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(adj)))
+        why = head + ("올해 감가상각비 예상은 %s(이 차 1년 치 %s원) → 한도 %s원 넘는 %s원을 과세표준에 더함%s"
+                      % ("창에 직접 넣은 금액" if manual else "위하고 고정자산대장 금액", "{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(adj),
+                         " (직접 넣은 금액에 이 차가 빠져 있으면 세무사 확인)" if manual else ""))
     else:
         adj = last_dep - allowed
         why = head + ("올해 감가상각비 예상은 작년 금액이라 이 차는 %s원만 들어 있지만, 올해 1년 치 약 %s원 중 세법이 인정하는 건 한도 %s원 → 과세표준 %s원 %s. "
@@ -147,14 +153,29 @@ def _car_dep(input_dir, year, lim_info):
     return ("업무용 승용차 감가상각비 한도", adj, bool(ok), why)
 
 
-def build_table(books, cfg, asof, input_dir=None):
+def _ledger_car(input_dir, year, wehago_dir=None):
+    """고정자산 대장에서 올해 승용차(차량운반구) 상각 예정액 합. 없으면 None."""
+    import csv
+    import os
+    rows = []
+    if wehago_dir:
+        from . import wehago_raw
+        rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
+    if not rows and input_dir and os.path.exists(os.path.join(input_dir, "고정자산.csv")):
+        with open(os.path.join(input_dir, "고정자산.csv"), encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+    v = sum(int(r.get("당기상각") or 0) for r in rows if str(r.get("기준연도")) == str(year) and "차량" in (r.get("계정") or ""))
+    return v or None
+
+
+def build_table(books, cfg, asof, input_dir=None, wehago_dir=None):
     """세무조정.csv: 법인세 예상과 같은 기간·같은 계산."""
     from .convert import Table
     from . import corptax
     if books.state != "ok" or not books.journal:
         return Table(FILE, COLUMNS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
     ym = corptax._last_full_month(asof)
-    A = corptax.adjust_for(books.journal, cfg, asof, input_dir)
+    A = corptax.adjust_for(books.journal, cfg, asof, input_dir, wehago_dir)
     rows = [dict(zip(COLUMNS, [ym[:4], n, "" if v is None else str(int(v)), "넣음" if on else ("조정 없음" if v == 0 and "확인 필요" not in why else "확인 필요"), why]))
             for n, v, on, why in A["items"]]
     return Table(FILE, COLUMNS, rows, notes=["세무조정 예상 (1~%d월): 법인세 예상에 +%s원 넣음, 확인 필요 %d건"
