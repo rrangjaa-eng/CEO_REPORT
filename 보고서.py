@@ -380,6 +380,11 @@ def main(argv=None):
         # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
         from ceo_report import cashflow
         R["cf"] = cashflow.for_report(a.입력, R)
+        try:   # 자료 안내: 신용평가 최근 결과 한 줄은 달마다 (사용자 2026-11-13)
+            from ceo_report import credit as _cr
+            R["credit_brief"] = _cr.brief(_cr.compute(a.입력, R["period"][1]))
+        except Exception as e:   # 한 줄 때문에 보고서를 못 만들면 안 된다
+            R["credit_brief"] = "기업신용평가 미리보기: 계산하지 못함 (%s)" % type(e).__name__
         if R["period"][1].month == 9:   # 기업신용평가 미리보기: 9월분 '결산 준비' 부록 C-5 (사용자 2026-11-12 카드, 예전 11·12월) + 연간 보고
             from ceo_report import credit
             R["credit"] = credit.compute(a.입력, R["period"][1])

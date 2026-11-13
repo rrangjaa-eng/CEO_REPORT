@@ -66,6 +66,14 @@ class TestReport(unittest.TestCase):
                     self.assertIn("<b class='gk'>쉬운 설명</b>", body)
                     self.assertIn("<b class='gk'>제안</b>", body)
 
+    def test_credit_brief_line_in_docs(self):
+        import copy as _c
+        R = _c.copy(self.oct)
+        R["credit_brief"] = "기업신용평가 미리보기 (2026년 결산 기준): 추정 BB0 ~ BBB-"
+        page = render(R, "mgmt")
+        docs = page[page.index("id='a-docs'"):page.index("id='a-sum'")]
+        self.assertIn("최근 결과: 기업신용평가 미리보기 (2026년 결산 기준): 추정 BB0 ~ BBB-", docs)
+
     def test_track_suggestions(self):
         K = {"months": [{"ym": "2026-10", "made": dt.date(2026, 9, 25),
                          "in": {"firm": 88000000, "all": 110000000, "actual": 70000000},

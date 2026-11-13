@@ -439,7 +439,8 @@ EXPLAIN = {
     "track": "지난 보고 때 ‘앞으로 이만큼 들어오고 나갈 것’이라고 한 예측이 실제 통장과 얼마나 맞았는지 봅니다. 차이가 크면 자금 예측을 그만큼 덜 믿어야 합니다.",
 }
 NONE = "이 장에서 걸린 것이 없어 지금 따로 할 일은 없습니다."
-GBOX_CSS = (".gbox{border:1px solid #c9d6ea;background:#f5f8fd;border-radius:10px;padding:8px 12px;margin:6px 0 10px;font-size:12.5px;break-inside:avoid}"
+GBOX_CSS = ("table.pt.dgx td,table.pt.dgx th{text-align:left!important;white-space:normal!important;vertical-align:top}"
+            ".gbox{border:1px solid #c9d6ea;background:#f5f8fd;border-radius:10px;padding:8px 12px;margin:6px 0 10px;font-size:12.5px;break-inside:avoid}"
             ".gbox b.gk{color:var(--accent)}.gbox ul{margin:3px 0 0;padding-left:18px}.gbox li{margin:2px 0}")
 
 
@@ -617,7 +618,7 @@ def docs_section(R, I, L):
 
     def add(name, where, state, sg, explain):
         rows.append("<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
-                    % (esc(name), where, state, esc(explain), esc(sg[0]) if sg else esc("—")))
+                    % (esc(name), where, state, esc(explain), "<br>".join(esc(x) for x in sg[:2]) if sg else esc("지금 걸린 것 없음 — 할 일 없음")))
     yes = "<span class='lt ok'><i></i>있음</span>"
     add("1쪽 요약·신호등·해야 할 일", here("one", "1쪽 요약"), yes, suggest("one", R, I, L), EXPLAIN["one"])
     add("대표 보고 (주간·월간, 출금 목록)", here("sum", "부록 A-1"), yes, suggest("sum", R, I, L), EXPLAIN["sum"])
@@ -640,7 +641,9 @@ def docs_section(R, I, L):
                                       ("h", "c4", "이익잉여금처분계산서·배당 판단·감면 후보", "부록 C-4", "반기(6·12월)"),
                                       ("prep", "c5", "기업신용평가 미리보기·결산 전 할 일", "부록 C-5", "결산 준비(9월)")):
         w, st, sg = periodic_where(code, nm, area, lab, gone)
-        add(nm, w, yes if code in P else st, sg, EXPLAIN[area])
+        if area == "c5" and R.get("credit_brief"):   # 신용평가 최근 결과 한 줄 (사용자 2026-11-13)
+            sg = ["최근 결과: " + R["credit_brief"]] + list(sg)
+        add(nm, w, yes if code in P else st, sg[:1] if area != "c5" else sg[:2], EXPLAIN[area])
     add("신고 도우미 (홈택스·위하고 칸별 값)", esc("창 ‘신고 도우미’"), esc("창에서 늘"), suggest("c2", R, I, L), EXPLAIN["c2"])
     add("연간 보고 (이익잉여금 8장·신용평가 9장 포함)", file("annual", "마지막 연간 경영관리 보고") or esc("창 3단계 ‘연간 보고’로 만듦"),
         esc("따로 만듦 (결산 뒤)"), [], "한 해 손익·현금흐름·처분계산서·신용평가를 결산 숫자로 묶은 보고입니다.")
@@ -652,7 +655,7 @@ def docs_section(R, I, L):
     add("세법 기준 확인 (해마다)", esc("창 ‘세법 기준 확인’"), esc("1·7월 자동 확인"), [],
         "세율·공제 금액이 바뀌었는지 법령 조문을 받아 확인하고, 확인 안 된 값은 계산에서 ‘확인 필요’로 둡니다.")
     return ("<style>%s</style><div class='dg1'><h2 id='docs'>자료 안내 · 요청하신 자료 전부</h2>%s"
-            "<div class='tw'><table class='pt evt'><thead><tr><th>자료</th><th>어디서 보나</th><th>이번 보고</th><th>쉬운 설명</th><th>제안</th></tr></thead>"
+            "<div class='tw'><table class='pt evt dgx nofold'><thead><tr><th>자료</th><th>어디서 보나</th><th>이번 보고</th><th>쉬운 설명</th><th>제안</th></tr></thead>"
             "<tbody>%s</tbody></table></div>"
             "<div class='note'>새 자료를 만들 때마다 이 표에 한 줄씩 더하고, 그 장 맨 위에 ‘쉬운 설명 · 제안’ 상자를 붙입니다 (사용자 2026-11-13).</div></div>"
             % (CSS, guide_box("docs", R, I, L), "".join(rows)))

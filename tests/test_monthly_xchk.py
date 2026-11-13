@@ -812,6 +812,8 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         from ceo_report.convert_xchk import load_xchk
         R = compute(load(folder), "monthly", dt.date(2026, 10, 31))
         R["xchk"] = load_xchk(folder)
+        from ceo_report import credit   # 자료 안내의 신용평가 한 줄은 CLI 가 붙인다 (2026-11-13)
+        R["credit_brief"] = credit.brief(credit.compute(folder, dt.date(2026, 10, 31)))
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
