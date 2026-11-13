@@ -22,8 +22,9 @@ ON = {gate.TEST_OFF: ""}
 
 
 def _R(fp, book_age=1):
-    return {"settings_num": {"위험_자료경과일": 7}, "fundplan": fp,
-            "s7": {"asof": [{"name": "회계 반영 (WEHAGO)", "date": D(2026, 11, 11), "age": book_age}]}}
+    bd = D(2026, 11, 12) - dt.timedelta(days=book_age)
+    return {"asof": D(2026, 11, 12), "settings_num": {"위험_자료경과일": 7}, "fundplan": fp,
+            "s7": {"asof": [{"name": "회계 반영 (WEHAGO)", "date": bd, "age": book_age}]}}
 
 
 class TestProblems(unittest.TestCase):
@@ -33,6 +34,18 @@ class TestProblems(unittest.TestCase):
         self.assertIn("오래", gate.problems(_R({"used": False, "reason": "자금계획서 자료일 2026-10-01이 오래됨"}))[0])
         self.assertIn("분개장 자료일", gate.problems(_R({"used": True, "stamp": D(2026, 11, 12)}, book_age=9))[0])
         self.assertEqual(gate.problems(_R({"used": True, "stamp": D(2026, 11, 12), "months": ["2026-10", "2026-12"]})), [])
+
+    @mock.patch.dict(os.environ, ON)
+    def test_book_date_from_convert_facts(self):
+        """실제 자료: 자료기준일.csv 가 비어 있어도 변환이 자동분석.json 에 적은 장부 기준일로 판단 (2026-11-13 실제 자료에서 잘못 막힘)."""
+        ok = {"used": True, "stamp": D(2026, 11, 12)}
+        R = dict(_R(ok), s7={"asof": []}, auto_facts={"book_date": "2026-11-12"})
+        self.assertEqual(gate.problems(R), [])
+        self.assertIn("분개장 2026-11-12", gate.sources_line(R))
+        R["auto_facts"] = {"book_date": "2026-11-01"}
+        self.assertIn("11일 전", gate.problems(R)[0])
+        R["auto_facts"] = {}
+        self.assertIn("모름", gate.problems(R)[0])
 
     @mock.patch.dict(os.environ, ON)
     def test_sources_line(self):
