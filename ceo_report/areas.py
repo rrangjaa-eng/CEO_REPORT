@@ -176,7 +176,7 @@ JS = r"""
   go2.addEventListener('click',function(){printKeys(boxes.filter(function(b){return b.checked;}).map(function(b){return b.value;}));});
   // 긴 목록 표: 화면에서는 앞 10줄만 (인쇄에는 전부)
   areas.forEach(function(s){[].slice.call(s.querySelectorAll('table')).forEach(function(t){
-    if(t.querySelector('[rowspan]')||!t.tBodies.length)return;
+    if(t.querySelector('[rowspan]')||!t.tBodies.length||t.classList.contains('nofold'))return;
     // 설명 줄(xsub)은 바로 위 줄에 딸린 것: 세지 않고, 위 줄과 같이 숨긴다
     var rows=[].slice.call(t.tBodies[0].rows).filter(function(r){return !r.classList.contains('tot')&&!r.classList.contains('xsub');});
     if(rows.length<=16)return;
@@ -204,6 +204,9 @@ def strip_ui(page):
     import re
     # 자동 분석 영역(2026-11-12 추가)은 새 내용이라 예전과 비교할 때 뺀다
     page = re.sub(r"<section class='area' id='a-auto'.*?</section>", "", page, flags=re.S)
+    # 1쪽 요약·본문과 부록 C 정기 절(2026-11-12 추가)도 새 내용이라 뺀다
+    page = re.sub(r"<section class='area' id='a-(?:one|docs|c\d)'.*?</section>", "", page, flags=re.S)
+    page = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", page, flags=re.S)   # 쉬운 설명·제안 상자 (2026-11-13)
     page = re.sub(r"<!--ins-->.*?<!--/ins-->|/\*ins\*/.*?/\*/ins\*/", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'><style>.*?</nav></div>", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'>상세자료: .*?</div>", "", page, flags=re.S)

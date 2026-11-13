@@ -61,7 +61,8 @@ def changes(prev, now):
         return []
     out = []
     for key, name in (("bank", "통장 잔액"), ("avail_firm", "여유 자금 (%s, 확정)" % now.get("avail_label")),
-                      ("avail_all", "여유 자금 (%s, 예상 포함)" % now.get("avail_label")), ("tax_total", "곧 낼 세금·카드·보험·급여")):
+                      ("avail_all", "여유 자금 (%s, 예상 포함)" % now.get("avail_label")), ("tax_total", "곧 낼 세금·카드·보험·급여"),
+                      ("re_first", "미처분이익잉여금 (이번 주총에서 처리할 돈)")):
         a, b = prev.get(key), now.get(key)
         if a != b:
             out.append((name, a, b))
@@ -121,6 +122,8 @@ def render(R, now_snap, diff, meta, auto_html=""):
          "<title>지금 현황</title><style>%s</style></head><body>" % (CSS + _ins_css())]
     h.append("<header><h1>지금 현황 · %s 기준</h1><span class='m'>%s</span></header><main>"
              % (_e(asof.isoformat()), _e(meta)))
+    from . import gate   # 자금계획서·분개장 미반영이면 맨 위에 큰 경고 (사용자 2026-11-12)
+    h.append(gate.banner(gate.problems(R), "지금 현황의 자금 숫자"))
     # 바뀐 것
     if diff:
         h.append("<section class='chg'><h2>지난 현황 뒤 바뀐 것</h2><ul>")
@@ -220,6 +223,10 @@ def build(input_dir, output_dir, asof=None, now=None):
     R = compute(d, "weekly", asof)
     R["evid_month"] = getattr(d, "evid_month", None)
     snap = snapshot(R)
+    # 이익잉여금 (사용자 2026-11-12: 분개장이 오면 자금·매입매출처럼 바로 반영)
+    from . import surplus
+    RE = surplus.for_report(input_dir, asof.year if asof.month > 3 else asof.year - 1)
+    snap["re_first"] = ((RE or {}).get("cur") or {}).get("미처분", (None,))[0]
     snap["at"] = now.strftime("%Y-%m-%d %H:%M")
     os.makedirs(output_dir, exist_ok=True)
     hist_path = os.path.join(output_dir, HISTORY)
@@ -238,8 +245,16 @@ def build(input_dir, output_dir, asof=None, now=None):
     R["auto_facts"] = insights.read_facts(input_dir)
     R["_invoices"] = d.invoices
     R["auto_prev"] = hist[-1].get("events") if hist else None
+    R["auto_records"] = insights.load_records(output_dir)
+    R["auto_profits"] = insights.load_profit_forecasts(output_dir)
+    R["_txns"] = d.txns
     I, why = insights.for_report(R)
     auto_html = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2><p class='muted'>계산하지 못함 (%s)</p>" % _e(why)
+    auto_html = surplus.live_line(RE) + auto_html
+    from . import filing   # 2주 안 신고 기한·지난 것 (사용자 2026-11-12)
+    fl = filing.live_lines(filing.load(input_dir), asof)
+    if fl:
+        auto_html = "<div class='note'><b>신고 기한</b><br>%s</div>" % "<br>".join(_e(x) for x in fl) + auto_html
     snap["events"] = insights.events_for_record(R)
     page = render(R, snap, diff, meta, auto_html)
     path = os.path.join(output_dir, FILE)

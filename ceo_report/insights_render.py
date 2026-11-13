@@ -1,6 +1,6 @@
 """자동 분석(insights) 을 보고서 조각으로 (사용자 2026-11-12).
 
-대표 보고: 2 세금 떼고 · 4 경보(자금 부족만, 적자 프로젝트는 뺌 — 사용자 2026-11-12) · 1 바뀐 이유 3건 · 12 입금 지연 위험 3건 · 3 이달 예상 영업이익.
+대표 보고: 2 세금 떼고 · 4 경보(자금 부족만, 적자 프로젝트는 뺌) · 1 바뀐 이유 · 3 이달 예상 영업이익 · 계산서 발행 기한. 12 입금 지연 위험은 대표 보고에서 뺌 (사용자 2026-11-12).
 팀장 보고: 그 팀 것만 — 8 이익 흐름 · 4 예산 80%·100%·적자 · 7 계산서 짝 · 6 미수금 나이 · 11 목표 달성률.
 경영관리 보고: 13가지 모두.
 """
@@ -57,11 +57,16 @@ def ceo_alert(I):
 
 
 def ceo_tax_line(I):
+    """마지막 기간 여유 자금 칸 밑: 기간 뒤 다음 달 말까지 꼭 나갈 돈·그 뒤 세금까지 떼면 (사용자 2026-11-12)."""
     T = I["tax"]
-    if not T["later"] or T["after"] is None:
+    if T["after"] is None or not (T["must"] or T["later"]):
         return ""
-    return ("<div class='ins-line'>그 뒤에 낼 세금 %s원(이미 쌓인 부가세·원천세 등)까지 떼면 <b>%s</b>원</div>"
-            % (W(T["later_total"]), W(T["after"])))
+    parts = []
+    if T["must"]:
+        parts.append("%d/%d까지 급여·세금·대출 %s원" % (T["upto"].month, T["upto"].day, W(T["must_total"])))
+    if T["later"]:
+        parts.append("그 뒤 낼 세금 %s원" % W(T["later_total"]))
+    return "<div class='ins-line'>%s까지 떼면 <b>%s</b>원</div>" % (" · ".join(parts), W(T["after"]))
 
 
 def ceo_reasons(I, n=3, head=""):
@@ -253,10 +258,15 @@ def mgmt_section(I, R):
     T = I["tax"]
     body = _tbl(["세금", "대상", "납부일", "금액", "상태"], [[esc(t["kind"]), esc(t.get("period")), esc(t["due"]), W(t["amount"]), esc(t.get("state"))]
                                                    for t in T["rows"]], nums=(3,)) if T["rows"] else _none("앞으로 낼 세금 계산값 없음")
+    if T["must"]:
+        body += _tbl(["날짜", "기간 뒤 꼭 나갈 돈", "금액", "상태"],
+                     [[e["date"].strftime("%m/%d"), esc(e.get("cat")) + " · " + esc(e.get("desc") or ""), W(e["amount"]),
+                       "확정" if e.get("firm") else "예상"] for e in T["must"]], nums=(2,))
     if T["after"] is not None:
-        body += "<p class='note'>%s 여유 자금 %s원 − 그 뒤에 낼 세금 %s원 = <b>%s원</b> (기간 안에 낼 세금은 이미 여유 자금 계산에 들어 있음)</p>" % (
-            esc(T["label"]), W(T["avail"]), W(T["later_total"]), W(T["after"]))
-    sub(3, "이미 쌓인 세금 (낼 돈으로 떼어 봄)", body)
+        body += ("<p class='note'>%s 여유 자금 %s원 − %s까지 꼭 나갈 돈(급여·4대보험·세금·대출 원금·이자) %s원 − 그 뒤 낼 세금 %s원 = <b>%s원</b> "
+                 "(기간 안에 나갈 돈은 이미 여유 자금 계산에 들어 있어 다시 빼지 않음)</p>" % (
+                     esc(T["label"]), W(T["avail"]), T["upto"].strftime("%m/%d"), W(T["must_total"]), W(T["later_total"]), W(T["after"])))
+    sub(3, "기간 뒤 꼭 나갈 돈·이미 쌓인 세금 (떼어 봄)", body)
     # 3 이달 손익 예측
     M = I["month"]
     if not M or M["booked"] is None:
@@ -336,4 +346,41 @@ def mgmt_section(I, R):
     else:
         body = ceo_issue(D, top=len(D["rows"]))
     sub(14, "계산서 발행 기한 (늦으면 자금이 모자라는 것)", body)
+    # 15 지난 예상 대비 실제 오차 (사용자 2026-11-12: 기록을 나중 장부와 맞춰 매번)
+    K = I.get("track") or {}
+
+    def gap(p, a):
+        return "%s <small>(%s)</small>" % (S(a - p), "-" if not p else "%+.0f%%" % ((a - p) * 100.0 / p))
+
+    def cash_rows(items, first):
+        rows = []
+        for r in items:
+            for io, name in (("in", "입금"), ("out", "출금")):
+                c = r[io]
+                rows.append([first(r) if io == "in" else "", name, W(c["firm"]), W(c["all"]), W(c["actual"]),
+                             gap(c["firm"], c["actual"]), gap(c["all"], c["actual"])])
+        return rows
+    head = ["예측 (확정분)", "예측 (예상 포함)", "실제 (통장)", "실제 − 확정분", "실제 − 예상 포함"]
+    body = ""
+    if K.get("months"):
+        body += "<div class='lab'>달별 (그 달 1일 전 마지막 보고의 예측)</div>" + _tbl(
+            ["달 · 예측한 날", "구분"] + head,
+            cash_rows(K["months"], lambda r: "%s · %s" % (r["ym"], r["made"].strftime("%m/%d"))), nums=(2, 3, 4, 5, 6))
+    if K.get("weeks"):
+        body += "<div class='lab'>보고마다 그 뒤 4주</div>" + _tbl(
+            ["보고일 · 견준 기간", "구분"] + head,
+            cash_rows(K["weeks"], lambda r: "%s → %s%s" % (r["made"].strftime("%m/%d"), r["to"].strftime("%m/%d"),
+                                                           " (진행 중)" if r["part"] else "")), nums=(2, 3, 4, 5, 6))
+    if K.get("profit"):
+        body += "<div class='lab'>이번 달 예상 영업이익 vs 지금 장부</div>" + _tbl(
+            ["달", "예측한 날", "예상 영업이익", "지금 장부 영업이익", "차이"],
+            [[esc(p["ym"]), p["made"].strftime("%m/%d"), W(p["forecast"]), W(p["actual"]),
+              "-" if p["actual"] is None else S(p["actual"] - p["forecast"])] for p in K["profit"]], nums=(2, 3, 4))
+    if not body:
+        body = _none("지난 보고 기록이 아직 없어 견줄 수 없음 (보고를 만들 때마다 예측이 쌓이고, 그 뒤 장부가 들어오면 나옴)")
+    else:
+        body += ("<p class='note'>실제 = 분개장 보통예금에 들어오고 나간 돈 (계좌 간 이체 뺌) · 통장 자료 %s까지. 입금 + 는 예측보다 더 들어옴, "
+                 "출금 + 는 더 나감. 대출·예금처럼 일정에 없던 돈도 실제에 들어감. 영업이익 '지금 장부'는 늦게 들어온 전표에 따라 바뀜.</p>"
+                 % (K["last_txn"].isoformat() if K.get("last_txn") else "-"))
+    sub(15, "지난 예상 대비 실제 오차 (보고 기록 ↔ 나중 장부)", body)
     return "".join(h)

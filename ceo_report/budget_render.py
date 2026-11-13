@@ -361,7 +361,8 @@ def _areas(page):
     for n, c in enumerate(chunks):
         prev = (keys[n - 1], labels[n - 1]) if n else None
         nxt = (keys[n + 1], labels[n + 1]) if n + 1 < len(chunks) else None
-        parts.append(areas.section(keys[n], labels[n], "<div class='fs mon'>%s</div>" % c + areas.pager(prev, nxt), "예산"))
+        from . import digest   # 쉬운 설명 · 제안 상자 (사용자 2026-11-13)
+        parts.append(areas.section(keys[n], labels[n], digest.budget_box(labels[n]) + "<div class='fs mon'>%s</div>" % c + areas.pager(prev, nxt), "예산"))
         if n == 0:
             parts.append(areas.nav([(k, l, "예산", None) for k, l in zip(keys, labels)]))
     # 요약 영역을 담던 div.page.fs 는 비워 닫는다 (쪽 나눔은 절의 pgb 가 그대로 맡음)

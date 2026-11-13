@@ -435,9 +435,12 @@ def render(R, mode):
     h.append("<table class='dinfo'><tr><th>보고 기준일</th><td>%s</td><th>집계 기간</th><td>%s ~ %s</td></tr>"
              "<tr><th>작성</th><td>%s</td><th>금액 단위</th><td>원</td></tr></table>"
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
-    h.append("<div class='meta dsrc'>%s</div>" % esc(
-        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])))
+    from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-12: 자금계획서 없이 계산한 보고가 다시 나오면 안 됨)
+    h.append("<div class='meta dsrc'>%s%s</div>" % (esc(
+        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])),
+        _ins("<br>" + esc(gate.sources_line(R)))))
     h.append("</div>")
+    h.append(_ins(gate.banner(gate.problems(R))))
 
     fs_i = len(h)
     h.append(_first_screen(R, mode, per))
@@ -449,7 +452,11 @@ def render(R, mode):
         h.append("</div></body></html>")
         return "".join(h)
 
-    # 경영관리용 영역별 보기 (사용자 2026-11-11: 보기 불편 → 영역별로 나눠 보고, 필요하면 전체 출력)
+    # 경영관리용: 1쪽 요약·본문 + 부록 A·B(지금까지의 모든 장 그대로) + 정기 절 부록 C
+    # (사용자 2026-11-12 승인: 경영관리보고 짧게. 상세는 하나도 빼지 않고 부록에서 모두 볼 수 있게.
+    #  결산·세무·신용평가는 분기·반기·연간 보고로 — 3·6·9·12월분 월간 뒤에 부록 C)
+    # 영역별 보기·인쇄 (사용자 2026-11-11) 는 그대로
+    from . import digest
     toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
     chap = [_s1(R, per), _s2(R), _s3(R, per), _s4(R), _s5(R), _s6(R), _s7(R)]
     if R["kind"] == "monthly":
@@ -458,34 +465,79 @@ def render(R, mode):
         from . import cashflow   # 9장 현금흐름표 (사용자 2026-11-12: 경영관리 보고에만, 영역 인쇄로 PDF)
         toc.append("현금흐름표")
         chap.append(cashflow.render(R.get("cf")))
-        if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 월간은 결산 앞 11·12월에만
-            from . import credit
-            toc.append("기업신용평가 미리보기")
-            chap.append(credit.render(R.get("credit")))
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
     hi = sum(1 for r in R["risks"] if r["level"] == "높음")
-    G1, G2 = "보고 요약", "상세 자료"
-    top = [("sum", "요약 (대표 보고 화면)", G1, summ, None), ("ev", "근거자료 · 확인할 것", G1, evid, None)]
-    rest = [("risk", "위험 분석·해결방안", G1, _risk_section(R), hi or None)]
-    # 자동 분석 13가지 (사용자 2026-11-12: 경영관리 보고에는 전부)
+    # 자동 분석 15가지 (사용자 2026-11-12: 경영관리 보고에는 전부)
     from . import insights, insights_render
     I, why = insights.for_report(R)
     body = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2>" + _na("계산하지 못함 (%s)" % why)
-    rest.append(("auto", "자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None))
-    rest += [("s%d" % i, "%d. %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
-    allk = top + rest
+    # 1쪽 요약·본문
+    Lt = digest.lights(R, I)
+    todo = digest.todos(R, I)
+    prev = R.get("lights_prev")
+    digest.decide(Lt, prev, set(k for k, _, _ in todo if k))
+    R["_lights"] = Lt   # 보고서.py 가 다음 보고 비교용으로 남긴다
+    G0, G1, G2, G3 = "요약", "부록 A · 보고 요약 묶음", "부록 B · 상세 장", "부록 C · 정기 (결산·세무·신용평가)"
+    one = [("one", "1쪽 요약 · 본문", G0, digest.render(R, I, Lt, todo, digest.filing_line(R), prev), None)]
+    top = [("sum", "A-1 대표 보고 화면", G1, summ, None), ("ev", "A-2 근거자료 · 확인할 것", G1, evid, None)]
+    rest = [("risk", "A-3 위험 분석·해결방안", G1, _risk_section(R), hi or None),
+            ("auto", "A-4 자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None)]
+    rest += [("s%d" % i, "B-%d %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
+    rest += [(k, lab, G3, b, None) for k, lab, b in _periodic(R, digest.periodic(R))]
+    # 쉬운 설명 · 제안 상자를 모든 장 맨 위에 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
+    R["docs_files"] = R.get("docs_files") or {}
+    one.append(("docs", "자료 안내 (요청 자료 전부)", G0, digest.docs_section(R, I, Lt), None))
+    top = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in top]
+    rest = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in rest]
+    allk = one + top + rest
 
     def sec(i):
         k, lab, g, body, _ = allk[i]
-        prev = allk[i - 1][:2] if i else None
+        prev_ = allk[i - 1][:2] if i else None
         nxt = allk[i + 1][:2] if i + 1 < len(allk) else None
-        return areas.section(k, lab, body + areas.pager(prev, nxt), g)
-    out = h[:fs_i] + [sec(i) for i in range(len(top))]
+        return areas.section(k, lab, body + areas.pager(prev_, nxt), g)
+    n_top = len(one) + len(top)
+    out = h[:fs_i] + [sec(i) for i in range(n_top)]
     out.append(areas.nav([(k, lab, g, b) for k, lab, g, _, b in allk]))   # 예전 목차 자리 (첫 화면 | 상세 장 경계)
-    out += [sec(i) for i in range(len(top), len(allk))]
+    out += [sec(i) for i in range(n_top, len(allk))]
     out.append("</div>" + areas.JS + "</body></html>")
     return "".join(out)
+
+
+def _periodic(R, P):
+    """부록 C 정기 절 (사용자 2026-11-12 시안 승인). P = digest.periodic(R).
+    분기(3·6·9·12월분): 법인세 예상·세무조정, 신고 일정·도우미, 급여 점검·연말정산 예상
+    반기(6·12월분): 이익잉여금처분계산서·배당 판단·감면 후보
+    결산 준비(9월분): 기업신용평가 미리보기·결산 전 할 일 (연간 보고에는 늘 있음)"""
+    out = []
+    if "q" in P:
+        body = "<h2 id='c1'>C-1 법인세 예상 · 세무조정 예상 (분기)</h2>"
+        body += "<div class='note'>법인세 예상 표(누적)는 부록 A-1 대표 보고 화면의 누적 절에 그대로 있습니다. 여기에는 세무조정 예상을 둡니다.</div>"
+        if R.get("taxadj"):
+            from . import taxadj
+            body += taxadj.render(R["taxadj"], esc)
+        else:
+            body += _na("세무조정 예상 자료 없음 (자료 변환을 하면 세무조정.csv 가 생김)")
+        out.append(("c1", "C-1 법인세·세무조정 (분기)", body))
+        body = "<h2 id='c2'>C-2 신고 일정 · 신고 도우미 (분기)</h2>"
+        if R.get("filing") or R.get("filing_help"):
+            from . import filing
+            body += "<h3>신고 일정 (장부 기준)</h3>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or "")
+        else:
+            body += _na("신고 일정 자료 없음")
+        out.append(("c2", "C-2 신고 일정·도우미 (분기)", body))
+        body = "<h2 id='c3'>C-3 급여 점검 · 연말정산 예상 (분기)</h2>" + (R.get("payroll") or _na("위하고 인사·급여 자료가 없어 만들지 않음"))
+        out.append(("c3", "C-3 급여 점검·연말정산 (분기)", body))
+    if "h" in P:
+        from . import surplus
+        out.append(("c4", "C-4 이익잉여금처분계산서 (반기)",
+                    "<h2 id='c4'>C-4 이익잉여금처분계산서 · 배당 판단 (반기 미리보기, 확정은 연간 보고)</h2>" + surplus.render(R.get("re"))))
+    if "prep" in P:
+        from . import credit
+        out.append(("c5", "C-5 기업신용평가 미리보기 (결산 준비)",
+                    "<h2 id='c5'>C-5 기업신용평가 미리보기 · 결산 전 할 일 (결산 준비, 확정은 연간 보고)</h2>" + credit.render(R.get("credit"))))
+    return out
 
 
 # 용어 풀이 (2026-11-04 대표 이해도 점검 U2): 첫 화면에 나오는 말만, 한 줄씩. 두 판 같음 (숫자 없음)
@@ -1611,6 +1663,8 @@ def _nonop_rows(N, before, after):
     rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut")]
     if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
         rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
+    if N.get("bad"):   # 대손충당금 예상 (사용자 2026-11-12)
+        rows.append(("− 대손충당금 (예상%s)" % N.get("bad_note", ""), N["bad"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
     if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
         rows.append(("− 법인세 예상 (지방소득세 포함)", N["tax"], "mut"))
@@ -1672,6 +1726,7 @@ def _team_table(R, part="month", mode="mgmt"):
     Y = build(src["table"], dept, ym, True)
     if Y is not None:
         _dep_into(R, Y, True)
+        _bad_into(R, Y)
         _tax_into(Y, ym)
         out = [_expected_strip(R, mode, Y), _ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
     else:
@@ -1720,6 +1775,21 @@ def _tax_into(Y, ym):
     N["net_income"] = N["pretax"] - N["tax"]
 
 
+def _bad_into(R, T):
+    """대손충당금 예상 (사용자 2026-11-12): 누적 결산 줄에 넣고 세전 이익에서 뺀다. 변환이 세금예상.csv 법인세 줄에 적은 금액."""
+    import re
+    row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
+    m = re.search(r"대손충당금 예상 ([\d,]+)", (row or {}).get("basis") or "")   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
+    amount = int(m.group(1).replace(",", "")) if m else None
+    if not amount or T["nonop"].get("pretax") is None:
+        return
+    N = T["nonop"]
+    N["bad"] = amount
+    N["pretax"] -= amount
+    note = (row.get("basis") or "").split("대손충당금 = ")[-1] if "대손충당금 = " in (row.get("basis") or "") else ""
+    N["bad_note"] = ", " + note if note else ""
+
+
 def _dep_into(R, T, ytd):
     """감가상각비 예상을 결산 줄에 넣고 세전 이익에서 뺀다 (사용자 2026-11-04). 작년 금액을 모르면 줄을 넣지 않는다."""
     from .corptax import apply
@@ -1757,6 +1827,8 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
          "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
          % (W(base), W(corp), W(prepaid, "미확인"), W(pay), W(local), W(total))]
     d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ⑨에 연간 금액 입력)"
+    if N.get("bad"):
+        d_txt += ", 대손충당금 예상 뺌"
     rate = "·".join("%g%%" % (r * 100) for _, r in brackets(ym[:4])[:2])
     pay_txt = "자금 일정에 %s 납부 예상으로 넣음" % d2s(due) if due else "자금 일정에 넣지 못함 (자료 변환 필요)"
     h.append("<div class='note'>%s</div>" % esc(
@@ -1764,6 +1836,7 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
     if row and row.get("base") is not None and base is not None and row["base"] != base:
         h.append(_mg(mode, "<div class='note'>%s</div>" % esc("자금 일정의 법인세는 변환 때 장부로 계산한 과세표준 %s 기준 (이 표 %s와 다름 — 기간·자료 확인)"
                                                                 % (won(row["base"]), won(base)))))
+    # 세무조정 예상은 분기 보고 부록 C-1 로 옮김 (사용자 2026-11-12: 결산·세무·신용평가는 분기·반기·연간 보고로)
     return "".join(h)
 
 
@@ -1915,6 +1988,8 @@ def _ytd_strip(Y, ym):
     parts = ["영업외 손익 %s%s" % ("+" if nn >= 0 else "", won(nn))]
     if N.get("dep") is not None:
         parts.append("감가상각비 −%s" % won(N["dep"]))
+    if N.get("bad"):
+        parts.append("대손충당금 −%s" % won(N["bad"]))
     cards = [("%s 매출" % per, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
              ("%s 영업이익" % per, W(c["net"], "확인 필요"), "영업이익률 %s" % esc(pct(c["net"], c["revenue"]))),
              ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]
@@ -2332,9 +2407,9 @@ def _first_screen(R, mode, per):
         flow = (esc("기간별 자금 흐름 (시작: 오늘 쓸 수 있는 돈 %s%s)" % (_won_or_unknown(s2["start"]), _bal_note(s1))), chart(s2, H=270, simple=True))
     from . import insights_render as IR
     I = _insights(R)
-    # 자동 분석 (사용자 2026-11-12 목업 확인): 큰 입금이 늦으면 · 이번 달 예상 영업이익(주간) · 바뀐 이유(월간은 여기, 주간은 지난주 대비 밑)
-    risk = "" if I is None else _ins((IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것") if monthly else "")
-                                     + IR.ceo_risk_card(I, month=False))   # 예상 영업이익은 ③ 이번 달 매출 칸 밑 (주간)
+    # 자동 분석 (사용자 2026-11-12 목업 확인): 바뀐 이유(월간은 여기, 주간은 지난주 대비 밑). 예상 영업이익은 ③ 이번 달 매출 칸 밑 (주간).
+    # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12 "전부 삭제") — 경영관리 보고 자동 분석에만
+    risk = "" if I is None or not monthly else _ins(IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것"))
     funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + risk + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)

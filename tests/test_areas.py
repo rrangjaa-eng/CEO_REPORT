@@ -16,7 +16,7 @@ from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 
-WEEK = ["sum", "ev", "risk", "auto", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+WEEK = ["one", "docs", "sum", "ev", "risk", "auto", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]   # 1쪽 요약·본문 맨 앞 (2026-11-12)
 
 
 def area_ids(page):
@@ -66,7 +66,7 @@ class TestAreas(unittest.TestCase):
     def test_risk_badge_counts_high_risks(self):
         page = render(self.month, "mgmt")
         hi = sum(1 for r in self.month["risks"] if r["level"] == "높음")
-        m = re.search(r"data-k='risk'>위험 분석·해결방안(?: <span class='abg'>(\d+)</span>)?</a>", page)
+        m = re.search(r"data-k='risk'>A-3 위험 분석·해결방안(?: <span class='abg'>(\d+)</span>)?</a>", page)
         self.assertIsNotNone(m)
         self.assertEqual(int(m.group(1) or 0), hi)
 

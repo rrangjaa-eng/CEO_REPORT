@@ -380,14 +380,37 @@ def main(argv=None):
         # 현금흐름표 (사용자 2026-11-12): 경영관리 보고 9장. 끝 잔액은 1장 통장 잔액(장부 정기예금 뺌)
         from ceo_report import cashflow
         R["cf"] = cashflow.for_report(a.입력, R)
-        if R["period"][1].month in (11, 12):   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 앞 11·12월 경영관리 보고에만
+        try:   # 자료 안내: 신용평가 최근 결과 한 줄은 달마다 (사용자 2026-11-13)
+            from ceo_report import credit as _cr
+            R["credit_brief"] = _cr.brief(_cr.compute(a.입력, R["period"][1]))
+        except Exception as e:   # 한 줄 때문에 보고서를 못 만들면 안 된다
+            R["credit_brief"] = "기업신용평가 미리보기: 계산하지 못함 (%s)" % type(e).__name__
+        if R["period"][1].month == 9:   # 기업신용평가 미리보기: 9월분 '결산 준비' 부록 C-5 (사용자 2026-11-12 카드, 예전 11·12월) + 연간 보고
             from ceo_report import credit
             R["credit"] = credit.compute(a.입력, R["period"][1])
+        # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고 10장. 보고 기준 해(1~3월이면 아직 처분 전인 작년)
+        from ceo_report import surplus
+        R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
+        # 세무조정 예상·세법 기준 확인 (사용자 2026-11-12)
+        from ceo_report import taxadj, filing
+        R["taxadj"] = taxadj.load(a.입력)
+        R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
+        from ceo_report import filehelp
+        from ceo_report.util import esc as _esc
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
+        R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)
     R["_invoices"] = data.invoices
     R["auto_prev"] = insights.load_previous(a.출력, asof)
+    R["auto_records"] = insights.load_records(a.출력)
+    R["auto_profits"] = insights.load_profit_forecasts(a.출력)
+    R["_txns"] = data.txns   # 예측 입금 vs 실제 입금
+    from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
+    R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
+    R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)
     if kind == "weekly":
         # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
@@ -396,8 +419,22 @@ def main(argv=None):
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
     pdf_failed = False
+    # 자금계획서·분개장 미반영이면 대표·팀장 보고를 만들지 않는다 (사용자 2026-11-12: 다시는 이런 실수가 없어야 함)
+    from ceo_report import gate
+    stop = gate.problems(R)
+    if stop:
+        _say("대표·팀장 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
+        _say("경영관리 보고는 맨 위에 경고를 달고 만듭니다.")
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
+        if mode == "ceo" and stop:
+            try:   # 같은 이름의 예전 보고가 최신처럼 남지 않게 '만들지 않음' 안내로 덮는다. PDF 는 만들지 않는다
+                with open(base + ".html", "w", encoding="utf-8") as f:
+                    f.write(gate.stop_page("%s %s" % (label, who), stop))
+            except OSError as e:
+                _say(_write_help(a.출력, e))
+                return 7
+            continue
         page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
@@ -416,7 +453,17 @@ def main(argv=None):
                 made.append(pdf)
                 for gone in pdfname.prune(base):
                     _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
-    if kind == "monthly" and a.팀장용 == "만듦":
+    if kind == "monthly" and a.팀장용 == "만듦" and stop:
+        from ceo_report.teamreport import team_names
+        folder = os.path.join(a.출력, "팀장용")
+        try:
+            os.makedirs(folder, exist_ok=True)
+            for team in team_names(data):
+                with open(os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat(), team)), "w", encoding="utf-8") as f:
+                    f.write(gate.stop_page("월간 팀장 보고 · %s" % team, stop))
+        except OSError as e:
+            _say(_write_help(folder, e))
+    elif kind == "monthly" and a.팀장용 == "만듦":
         # 팀장용 월간 실적 (사용자 2026-11-09 목업 승인): 팀마다 출력/팀장용/ 에 HTML·PDF. 급여 금액은 넣지 않는다
         from ceo_report.teamreport import write_all as write_team_reports
         try:
@@ -436,6 +483,10 @@ def main(argv=None):
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
                         _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+    try:
+        digest.write_record(a.출력, R)
+    except OSError as e:
+        _say("경영관리 신호등 기록을 남기지 못했습니다 (다음 보고 '바뀜' 표시에 쓰임): %s" % e)
     try:
         insights.write_record(a.출력, R)
     except OSError as e:
@@ -461,15 +512,15 @@ def main(argv=None):
              "계산했습니다 (실제보다 낮을 수 있음)." % ", ".join(R["s2"]["in_missing"]))
     n = len(R["s7"]["issues"])
     if n:
-        _say("입력 자료 확인 필요 %d건 — 경영관리보고 맨 끝 '7. 지난 보고 이후 변동과 자료 반영 범위' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
+        _say("입력 자료 확인 필요 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
     bad = [c for c in R["s7"]["checks"] if not c[3]]
     if bad:
-        _say("대조 불일치 %d건 — 경영관리보고 맨 끝 '7. …' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
+        _say("대조 불일치 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
     if kind == "monthly" and R["xchk"]["state"] != "ok":
         if R["xchk"]["state"] == "자료 없음":
-            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '8. WEHAGO 기준 대조'에 들어갑니다.")
+            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다.")
         else:
-            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '8. WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
+            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
     return 0
 
 

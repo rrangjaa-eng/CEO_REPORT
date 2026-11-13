@@ -3,14 +3,20 @@
 const KEEP = ["da_date", "no_acct", "nm_yuh", "nm_gubun_bungae", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2",
   "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2"];
 const PLAN_KEEP = ["cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
-const BRIDGE_VERSION = 4;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
-const planCap = [];   // {kind, date, cd_fitem, rows}
+const BRIDGE_VERSION = 5;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
+const planCap = [];
+let closingArmed = false;   // {kind, date, cd_fitem, rows}
 
 window.addEventListener("message", (e) => {
   const m = e.data;
   if (e.source !== window || !m || m.__ceoReport !== 1) return;
   let j;
   try { j = JSON.parse(m.text); } catch (err) { return; }
+  if (m.kind === "결산원본") {   // 결산 자료 받기: 받을 준비 중일 때 온 응답을 그대로 배경으로 (화면 이름·주소 경로만 붙임)
+    if (closingArmed) chrome.runtime.sendMessage({type: "closingCaptured", path: m.path, data: j, screen: (document.title || "").split(" - ")[0],
+      code: (location.hash.match(/\/account\/([A-Z0-9]+)/) || [])[1] || ""});
+    return;
+  }
   if (m.kind === "자금계획목록" || m.kind === "자금계획상세") {
     if (Array.isArray(j)) planCap.push({kind: m.kind, date: m.params.date || "", cd_fitem: m.params.cd_fitem || "", rows: j});
     return;
@@ -121,6 +127,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     const b = findQueryButton();
     if (b) b.click();
     reply({ok: !!b});
+  }
+  if (msg && msg.type === "armClosing") {   // 결산 자료 받기: 지금 열린 화면에서 [조회]를 한 번 누르고 그 응답을 받는다
+    closingArmed = true;
+    window.postMessage({__ceoArm: 1, ms: msg.ms || 15000}, location.origin);
+    setTimeout(() => { closingArmed = false; }, msg.ms || 15000);
+    const b = findQueryButton();
+    if (b) b.click();
+    reply({ok: !!b, screen: (document.title || "").split(" - ")[0], code: (location.hash.match(/\/account\/([A-Z0-9]+)/) || [])[1] || "", v: BRIDGE_VERSION});
   }
   if (msg && msg.type === "collectPlan") {
     collectPlan(msg.months).catch((e) => chrome.runtime.sendMessage({type: "planResult", rows: [], done: [], errors: [String(e.message || e)]}));

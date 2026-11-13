@@ -12,6 +12,8 @@
  .muted{color:#666;font-size:12px;line-height:1.5}
  label{display:flex;gap:6px;align-items:center;margin-bottom:8px}
  select{font-size:14px;padding:2px 4px}
+ .trio{display:flex;gap:6px}.trio button{padding:9px 4px}
+ summary{cursor:pointer}
 </style></head>
 <body>
 <h1>대표보고 위하고 수집</h1>
@@ -28,8 +30,22 @@
   <button id="plan">자금계획 받기</button>
   <div class="row" id="pmsg"></div>
 </div>
+<div class="box">
+  <h2>결산 · 인사급여 · 연말정산 <span style="font-weight:normal;font-size:12px;color:#666">(지금 열린 화면)</span></h2>
+  <div class="trio">
+    <button id="closing" style="background:#6b4fbb">결산</button>
+    <button id="hr" style="background:#0f766e">인사·급여</button>
+    <button id="ye" style="background:#8a5a00">연말정산</button>
+  </div>
+  <div class="row" id="cmsg"></div><div class="row" id="hmsg"></div><div class="row" id="ymsg"></div>
+  <details class="muted" style="margin-top:6px"><summary>어떤 화면을 열고 누르나요?</summary>
+    <b>결산</b>: 재무상태표 · 이익잉여금처분계산서 · 고정자산(감가상각) — 연도 고르고 화면마다 한 번 (결산 뒤, 주총 뒤).<br>
+    <b>인사·급여</b>: 사원등록 · 급여자료입력(달) · 사업소득 · 기타소득 — 급여 처리 뒤 매달 한 번.<br>
+    <b>연말정산</b>: 연말정산자료입력 또는 근로소득 원천징수영수증 — 2025년 귀속, 해마다 한 번. 직원별 부양가족·자녀 공제를 올해 예상에 씁니다.
+  </details>
+</div>
 <div class="box"><h2>저장 폴더</h2><div class="row" id="fmsg" style="margin:0 0 8px"></div><button id="folder" style="background:#555">저장 폴더 고르기·확인</button></div>
-<div class="muted">위하고에 로그인하고 SmartA(회계) 화면을 한 번 열어 두면 됩니다. 받은 파일은 고른 저장 폴더(F:\CLAUDE\CEO_REPORT\수집\위하고)에 바로 저장됩니다. 지난번과 같으면 새 파일을 만들지 않습니다. 위하고에서는 달 고르기·[조회]만 하고 아무것도 바꾸지 않습니다.</div>
+<div class="muted">위하고 SmartA 화면을 한 번 열어 두면 됩니다. 지난번과 같으면 새 파일을 만들지 않습니다. 위하고에서는 달 고르기·[조회]만 하고 아무것도 바꾸지 않습니다.</div>
 <script src="folder.js"></script>
 <script src="popup.js"></script>
 </body></html>

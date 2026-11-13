@@ -102,6 +102,34 @@ class TestCashflow(unittest.TestCase):
         self.assertIn("현금흐름표 자료 없음", C.render(None))
 
 
+class TestShortDeposit(unittest.TestCase):
+    """만기 3개월 이내 정기예금 = 현금성자산 (사용자 2026-11-12): 통장 ↔ 짧은 예금은 안쪽 이동, 끝 잔액에 더함."""
+    def test_short_deposit_is_cash_and_long_one_is_investment(self):
+        j = journal()
+        j += [ln(D(2026, 9, 1), "7", "10500", "정기예.적금", dr=300, vendor="신한260901", memo="정기예금 가입"),
+              ln(D(2026, 9, 1), "7", "10300", "보통예금", cr=300, vendor="신한은행", memo="정기예금 가입"),
+              ln(D(2026, 10, 1), "8", "10300", "보통예금", dr=300, vendor="신한은행", memo="정기예금 만기"),
+              ln(D(2026, 10, 1), "8", "10500", "정기예.적금", cr=300, vendor="신한260901", memo="정기예금 만기"),
+              ln(D(2026, 10, 25), "9", "10500", "정기예.적금", dr=200, vendor="신한261025", memo="정기예금 가입"),
+              ln(D(2026, 10, 25), "9", "10300", "보통예금", cr=200, vendor="신한은행", memo="정기예금 가입")]
+        rows = C.build_rows(j, ("10300",))
+        CF = C.compute(rows, D(2026, 10, 1), D(2026, 10, 31), 5000, ("10/1 은행 잔액", 100), "10월")
+        M = CF["M"]
+        self.assertEqual(M["cash"].get("정기넣음"), -400)       # 만기 모르는 '신한은행' 적금만 (정기예금 메모 없음)
+        self.assertNotIn("정기찾음", M["cash"])
+        self.assertEqual(M["total"], 1100 - 300 - 200 - 110 - 400)   # 짧은 예금 넣고 찾은 돈은 흐름에 없음
+        self.assertEqual(CF["short_end"], 200)                     # 10/25 가입분 (만기 전, 지난 것이 짧아 현금성)
+        self.assertEqual(CF["end"], 5200)
+        self.assertEqual(CF["start_check"][1], 100 + 300)          # 9/30 짧은 예금 300 더함
+        kinds = dict((v, k) for v, k, _, _ in CF["deposits"])
+        self.assertEqual(kinds["신한260901"], "현금성")
+        self.assertEqual(kinds["신한261025"], "현금성")
+        self.assertEqual(kinds["신한은행"], "단기금융상품")
+        html = C.render(CF)
+        self.assertIn("단기금융상품", html)
+        self.assertIn("만기 3개월 이내 정기예금 200원", html)
+
+
 class TestCollection(unittest.TestCase):
     def folder(self, rows):
         import tempfile
@@ -149,7 +177,7 @@ class TestCashflowInReport(unittest.TestCase):
         R = compute(load(SAMPLE), "monthly", D(2026, 10, 31))
         rows = C.build_rows(journal(), ("10300",))
         R["cf"] = C.compute(rows, D(2026, 10, 1), D(2026, 10, 31), 5000, None, "10월")
-        self.assertIn("9. 현금흐름표", render(R, "mgmt"))
+        self.assertIn("B-9 현금흐름표", render(R, "mgmt"))
         self.assertNotIn("현금흐름표", render(R, "ceo"))
 
 
