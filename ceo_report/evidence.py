@@ -33,7 +33,8 @@ def _block(mgmt_html, target):
     if target.startswith("ev-"):   # render._ev_block 이 끝에 <!-- /ev-번호 --> 를 붙인다
         m = re.search(r"<div class='evb' id='%s'>.*?<!-- /%s -->" % (re.escape(target), re.escape(target)), mgmt_html, re.S)
         return m.group(0) if m else None
-    m = re.search(r"<h2 id='%s'>.*?(?=<h2 id=|</div></body>|$)" % re.escape(target), mgmt_html, re.S)
+    # 영역별 보기(2026-11-11): 장 끝에 이전·다음 단추(apager)와 </section> 이 붙는다 → 그 앞에서 끊는다
+    m = re.search(r"<h2 id='%s'>.*?(?=<h2 id=|<div class='apager'>|</section>|</div></body>|$)" % re.escape(target), mgmt_html, re.S)
     return m.group(0) if m else None
 
 

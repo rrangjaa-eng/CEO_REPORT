@@ -520,6 +520,50 @@ def build_staff(books, cfg, prev_rows=()):
     return Table(data.STAFF_FILE, data.STAFF_KEYS, rows, notes=notes)
 
 
+def build_dept_accounts(books, cfg, prev_rows=()):
+    """부서계정비용.csv Table (사용자 2026-11-09: 팀장용 월간 실적의 팀 판관비 내역).
+
+    부서비용.csv 의 판관비와 같은 줄(공통비(판) 중 급여 계정이 아닌 줄)을 달·부서·계정으로 나눈다. 금액 = 차변 − 대변.
+    금액 없는 줄이 있는 칸은 비운다. 분개장에 부서명 칸이 없으면 만들지 않고 기존 파일을 그대로 둔다. 새 분개장에 없는 달의 이전 줄은 잇는다."""
+    if not any("dept" in ln for ln in books.journal):
+        return Table(data.DEPT_ACCOUNT_FILE, data.DEPT_ACCOUNT_KEYS, [], written=False,
+                     reason="분개장에 부서명(관리항목) 칸 없음 (기존 파일 그대로)")
+    salary = set(_squash(c) for c in cfg["salary_codes"])
+    cells, months = OrderedDict(), set()
+    per_dept = {}
+    for ln in books.journal:
+        if _classify(ln, cfg) not in ("common", "common_unmarked") or ln["date"] is None:
+            continue
+        ym = ln["date"].strftime("%Y-%m")
+        months.add(ym)
+        code = _squash(ln["account_code"])
+        if code in salary:
+            continue
+        dept = ln.get("dept") or NO_DEPT
+        c = cells.setdefault((ym, dept, code), {"name": _squash(ln["account"]), "sum": [0, 0]})
+        amount = _net(ln, "common")
+        t = per_dept.setdefault((ym, dept), [0, 0])
+        if amount is None:
+            c["sum"][1] += 1
+            t[1] += 1
+        else:
+            c["sum"][0] += amount
+            t[0] += amount
+    rows = [r for r in prev_rows if r.get("연월") not in months]
+    for (ym, dept, code), c in sorted(cells.items()):
+        rows.append(dict(zip(data.DEPT_ACCOUNT_KEYS, [ym, dept, code, c["name"], cell_amount(_cell(c["sum"]))])))
+    rows.sort(key=lambda r: (r.get("연월", ""), r.get("부서", ""), r.get("계정코드", "")))
+    total = None if any(t[1] for t in per_dept.values()) else sum(t[0] for t in per_dept.values())
+    csv_total = 0
+    for r in rows:
+        if r.get("연월") in months:
+            v = num(r.get("금액"))
+            csv_total = None if v is None or csv_total is None else csv_total + v
+    notes = ["부서별 판관비(급여 계정 %s 뺀 공통비) 계정과목별 · 부서는 분개장 관리항목 부서명" % ",".join(cfg["salary_codes"])]
+    return Table(data.DEPT_ACCOUNT_FILE, data.DEPT_ACCOUNT_KEYS, rows,
+                 checks=[Check("부서계정비용 합계 = 분개장 판관비(급여 뺀 공통비) 합계", total, csv_total)], notes=notes)
+
+
 def _dept_cell():
     return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": set(), "nameless": 0}
 

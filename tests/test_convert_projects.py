@@ -114,30 +114,30 @@ def new_tmp(test):
 
 
 PROJECT_COLUMNS = ["프로젝트번호", "프로젝트명", "팀", "클라이언트", "상태", "사전견적예산", "예산수정일", "계약금액", "매출반영누계",
-                   "행사일", "완료일", "실행가"]
+                   "행사일", "완료일", "실행가", "견적금액", "승인단계"]
 
 # ───────────── Task 1 (tracer): 스냅숏 프로젝트 + 매출 연결 -> build_projects -> CSV -> data.load -> 보고서 예산 ─────────────
 EXPECTED_PROJECTS = [
     ("26201", "가상 컨퍼런스", "1팀", "가상고객A", "진행", "400000000", "2026-09-15", "360000000", "100000000", "2026-11-20", "",
-     "300000000"),
-    ("26220", "가상 전시", "2팀", "가상고객B", "", "300000000", "", "", "0", "2026-11-12", "", "250000000"),
-    ("26221", "가상 워크숍", "1팀", "가상고객C", "", "50000000", "", "", "0", "2026-11-25", "", ""),
+     "300000000", "420000000", ""),
+    ("26220", "가상 전시", "2팀", "가상고객B", "", "300000000", "", "", "0", "2026-11-12", "", "250000000", "320000000", ""),
+    ("26221", "가상 워크숍", "1팀", "가상고객C", "", "50000000", "", "", "0", "2026-11-25", "", "", "55000000", ""),
     ("26203", "가상 전시부스", "2팀", "가상고객D", "진행", "70000000", "2026-10-29", "170000000", "75000000", "2026-11-12", "",
-     "60000000"),
+     "60000000", "75000000", ""),
 ]
 
 
 # 02-REVIEW WR-03: 샘플 이전 프로젝트.csv 에만 있는 프로젝트는 스냅숏 줄 뒤에 번호 순으로 그대로 옮긴다 (예전: 버림)
 CARRIED_PROJECTS = [
     ("P26202", "B사 고객 세미나", "기획2팀", "B사", "완료", "80000000", "2026-08-20", "100000000", "100000000", "2026-09-18",
-     "2026-09-19", ""),
-    ("P26204", "D사 신제품 런칭", "기획1팀", "D사", "진행", "", "", "50000000", "0", "2026-12-03", "", ""),
+     "2026-09-19", "", "", ""),
+    ("P26204", "D사 신제품 런칭", "기획1팀", "D사", "진행", "", "", "50000000", "0", "2026-12-03", "", "", "", ""),
     ("P26205", "E사 파트너 포럼", "기획1팀", "E사", "완료", "45000000", "2026-08-01", "60000000", "60000000", "2026-09-19",
-     "2026-09-20", ""),
+     "2026-09-20", "", "", ""),
     ("P26206", "F사 임직원 워크숍", "기획2팀", "F사", "완료", "40000000", "2026-09-01", "50000000", "50000000", "2026-10-15",
-     "2026-10-16", ""),
-    ("P26207", "G사 VIP 초청행사", "기획2팀", "G사", "진행", "30000000", "2026-10-10", "38000000", "0", "2026-11-28", "", ""),
-    ("P26208", "H사 사내 행사", "기획1팀", "H사", "준비", "20000000", "2026-10-20", "", "0", "2027-01-20", "", ""),
+     "2026-10-16", "", "", ""),
+    ("P26207", "G사 VIP 초청행사", "기획2팀", "G사", "진행", "30000000", "2026-10-10", "38000000", "0", "2026-11-28", "", "", "", ""),
+    ("P26208", "H사 사내 행사", "기획1팀", "H사", "준비", "20000000", "2026-10-20", "", "0", "2027-01-20", "", "", "", ""),
 ]
 
 
@@ -154,7 +154,7 @@ class TestBuildProjects(unittest.TestCase):
     def test_columns_are_the_schema_plus_execution_price(self):
         t = project_table()
         self.assertEqual(t.name, "프로젝트.csv")
-        self.assertEqual(t.columns, mod("data").SCHEMA["프로젝트.csv"] + ["실행가"])
+        self.assertEqual(t.columns, mod("data").SCHEMA["프로젝트.csv"] + ["실행가", "견적금액", "승인단계"])
         self.assertEqual(t.columns, PROJECT_COLUMNS)
         self.assertTrue(t.written)
 
@@ -393,10 +393,10 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertEqual(by_slip(t, 22)[0], "")
         self.assertEqual(by_slip(t, 23)[0], "26999")
 
-    def test_card_use_is_one_total_row_without_vat_until_it_is_paid(self):
+    def test_card_use_is_one_row_with_supply_and_vat_until_it_is_paid(self):
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA)))
         row = by_slip(t, 50)
-        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드사용미결제", "363000", "", "", "확정"))
+        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드사용미결제", "330000", "33000", "", "확정"))   # 회계자료 기준: 부가세 뺀 금액 (사용자 2026-11-11)
         self.assertEqual(row[8], "WEHAGO 2026-10-30 전표 50")
         portions = dict((r[8], p) for r, p in zip(cell_rows(t), t.extra["cost_portions"]))
         self.assertEqual(portions["WEHAGO 2026-10-30 전표 50"], 330000)
@@ -418,7 +418,7 @@ class TestBuildExecsBooks(unittest.TestCase):
     def test_card_bill_payment_makes_it_paid_on_the_payment_date(self):
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA, CARD_PAID_EXTRA)))
         row = by_slip(t, 50)
-        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드결제완료", "363000", "", "2026-10-31", "확정"))
+        self.assertEqual(row[:8], ("26201", "[26201] 카드 사용", "가상카드", "카드결제완료", "330000", "33000", "2026-10-31", "확정"))
         self.assertEqual(row[8], "WEHAGO 2026-10-30 전표 50 · 지급 2026-10-31 전표 51")
         lines = check_lines(t)
         self.assertIn("원가 줄 합계 ((도) 차변−대변): 원본 259,830,000 · CSV 259,830,000 → 일치", lines)
@@ -467,11 +467,11 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertEqual(mod("convert").check_result(chk), "판단 불가")
         self.assertEqual(mod("convert").check_result([c for c in t.checks if c.label == "원가 줄 수"][0]), "일치")
 
-    def test_card_total_is_blank_when_the_vat_is_unknown(self):
+    def test_card_supply_stays_when_the_vat_is_unknown(self):
         unknown = [_jl(_D, 50, "13500", "부가세대급금", None, None, "가상카드", "[26201] 부가세 금액 없음")]
         t = exec_table(exec_inputs(journal_with(CARD_EXTRA, unknown)))
         row = by_slip(t, 50)
-        self.assertEqual((row[3], row[4], row[5]), ("카드사용미결제", "", ""))
+        self.assertEqual((row[3], row[4], row[5]), ("카드사용미결제", "330000", ""))
 
     def test_unknown_cost_amount_is_blank_and_the_cost_check_cannot_decide(self):
         unknown = [_jl(dt.date(2026, 10, 30), 70, "61101", "행사외주비(도)", None, None, "가상기타", "[26201] 금액 없음"),

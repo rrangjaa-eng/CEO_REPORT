@@ -1,0 +1,249 @@
+"""자동 분석 13가지 (사용자 2026-11-12)."""
+import datetime as dt
+import os
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from ceo_report import insights, insights_render  # noqa: E402
+from ceo_report.calc import compute  # noqa: E402
+from ceo_report.data import load  # noqa: E402
+
+D = dt.date
+SAMPLE = os.path.join(ROOT, "입력양식", "샘플")
+
+
+def bank_out(day, no, amount, payee, account="미지급금", code="25300"):
+    return [{"date": day, "no": no, "account_code": "10300", "account": "보통예금", "debit": None, "credit": amount, "vendor": "신한은행"},
+            {"date": day, "no": no, "account_code": code, "account": account, "debit": amount, "credit": None, "vendor": payee}]
+
+
+class TestBookFacts(unittest.TestCase):
+    def test_recurring_found_and_salary_card_skipped(self):
+        J = []
+        for m in (7, 8, 9, 10):
+            J += bank_out(D(2026, m, 21), "1", 1534390, "하나캐피탈")
+            J += bank_out(D(2026, m, 5), "2", 30000000 + m, "직원급여")              # 급여는 다른 계산
+            J += bank_out(D(2026, m, 15), "3", 5000000, "신한_5860", "미지급비용", "26200")   # 카드대금도
+        J += bank_out(D(2026, 8, 3), "4", 999000, "한번만")
+        rec = insights.recurring(J, D(2026, 11, 12))
+        self.assertEqual([r["name"] for r in rec], ["하나캐피탈"])
+        self.assertEqual((rec[0]["amount"], rec[0]["day"]), (1534390, 21))
+
+    def test_amounts_must_be_close(self):
+        J = []
+        for m, a in ((7, 100000), (8, 300000), (9, 100000), (10, 100000)):
+            J += bank_out(D(2026, m, 3), "1", a, "들쭉날쭉")
+        self.assertEqual(insights.recurring(J, D(2026, 11, 12)), [])
+
+
+class TestMissing(unittest.TestCase):
+    def R(self, asof):
+        return {"asof": asof}
+
+    def test_thin_last_month_and_not_yet_this_month(self):
+        facts = {"presence": {"카드 롯데_7344 사용": {"2026-07": [3000000, 30], "2026-08": [4000000, 31], "2026-09": [5000000, 30],
+                                                   "2026-10": [8177, 31]},
+                              "급여": {"2026-08": [1, 31], "2026-09": [1, 30], "2026-10": [1, 31]}},
+                 "recurring": [{"name": "하나캐피탈", "amount": 1534390, "day": 5, "months": {"2026-10": 1}}]}
+        got = dict(insights.missing_entries(self.R(D(2026, 11, 12)), facts))
+        self.assertNotIn("카드 롯데 사용 (카드사 합계)", got)   # 카드는 금액이 적다고 경고하지 않음 (2026-11-13)
+        facts["presence"]["카드 롯데_7344 사용"]["2026-10"] = [0, 0]
+        got = dict(insights.missing_entries(self.R(D(2026, 11, 12)), facts))
+        self.assertIn("하나도 없음", got["카드 롯데 사용 (카드사 합계)"])
+        self.assertNotIn("급여", got)             # 급여는 보통 31일쯤: 11/12엔 아직 빠졌다고 하지 않음
+        self.assertIn("하나캐피탈", got)          # 5일+5일 지남
+
+
+    def test_card_change_is_not_thin(self):
+        """사용자 2026-11-13: 카드를 바꾼 달(7344 → 7972)은 카드사 합계로 보면 다 들어간 것."""
+        facts = {"presence": {"카드 롯데_7344 사용": {"2026-07": [3000000, 30], "2026-08": [4000000, 31], "2026-09": [5000000, 30],
+                                                   "2026-10": [246477, 6]},
+                              "카드 롯데_7972 사용": {"2026-10": [10575547, 31]},
+                              "카드 신한_1278 사용": {"2026-07": [954861, 31], "2026-08": [1329750, 31], "2026-09": [4398100, 30],
+                                                   "2026-10": [616500, 31]},
+                              "카드 신한_5860 사용": {"2026-07": [5521104, 31], "2026-08": [7155965, 31], "2026-09": [7664842, 30],
+                                                   "2026-10": [6989076, 31]}}}
+        got = dict(insights.missing_entries(self.R(D(2026, 11, 13)), facts))
+        self.assertEqual(got, {})
+
+
+    def test_lumpy_limit_card_month_is_not_thin(self):
+        """사용자 2026-11-13 ("9월 카드도 전부 넣었어"): 10-31 보고에서 롯데 9월 1,378만이 앞 3달 평균 5,394만의 25%라 경고.
+        평균은 롯데_1842 한도결제대체·선결제 전표가 부풀린 것. 전표가 있으면 경고하지 않는다."""
+        facts = {"presence": {"카드 롯데_1842 사용": {"2026-06": [130000000, 30], "2026-07": [14751760, 3],
+                                                   "2026-08": [43817340, 26], "2026-09": [6835340, 22]},
+                              "카드 롯데_7344 사용": {"2026-06": [3000000, 30], "2026-07": [3115504, 31],
+                                                   "2026-08": [4644203, 31], "2026-09": [6895888, 29]}}}
+        self.assertEqual(insights.missing_entries(self.R(D(2026, 10, 31)), facts), [])
+
+
+class TestOnSample(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        d = load(SAMPLE)
+        cls.R = compute(d, "weekly", D(2026, 11, 6))
+        cls.d = d
+
+    def test_compute_and_render_all(self):
+        prev = insights.events_for_record(self.R)
+        prev = [e for e in prev if e["desc"] != "C사"]
+        I = insights.compute(self.R, None, self.d.invoices, prev)
+        self.assertTrue(any("C사" in t and v == 88000000 for t, v in I["reasons"]))
+        self.assertEqual(len(I["calendar"]), insights.CAL_DAYS)
+        self.assertTrue(I["delay"] and I["delay"][0]["desc"] == "C사" and I["delay"][0]["drop"] < 0)
+        html = insights_render.mgmt_section(I, self.R)
+        for t in ("경보", "이미 쌓인 세금", "날마다 잔액", "입금 습관", "고정비", "입력 누락", "받을 돈 나이", "계산서 짝", "이익 흐름", "팀별"):
+            self.assertIn(t, html)
+        # 대표 보고 경보는 여유 자금 부족만 (적자 프로젝트는 뺌, 사용자 2026-11-12)
+        I["alerts"] = [("높음", "[P1] 가 예상 적자 1원"), ("높음", "4주째 여유 자금이 1원 모자람")]
+        self.assertNotIn("적자", insights_render.ceo_alert(I))
+        self.assertIn("여유 자금", insights_render.ceo_alert(I))
+
+    def test_tax_after_period(self):
+        """기간 뒤 다음 달 말까지 꼭 나갈 돈 + 그 뒤 세금만 더 뺀다 (사용자 2026-11-12 결정). 기간 안 것은 다시 빼지 않음."""
+        T = insights.taxes_set_aside(self.R)
+        end = self.R["s2"]["periods"][-1]["end"]
+        self.assertEqual(T["upto"], D(2026, 12, 31))
+        self.assertEqual(T["after"], T["avail"] - T["must_total"] - T["later_total"])
+        self.assertTrue(T["must"])
+        self.assertTrue(all(end < e["date"] <= T["upto"] for e in T["must"]))
+        self.assertTrue(all(t["due"] > T["upto"] for t in T["later"]))
+        cats = set(e["cat"] for e in T["must"])
+        self.assertFalse(any("남은 예산" in c or "구독" in c or "임차" in c or "카드" in c for c in cats), cats)
+        self.assertIn("12/31까지 급여·세금·대출", insights_render.ceo_tax_line(insights.compute(self.R)))
+
+    def test_mgmt_report_has_auto_area(self):
+        from ceo_report.render import render
+        page = render(self.R, "mgmt")
+        self.assertIn("id='a-auto'", page)
+        self.assertNotIn("a-auto", render(self.R, "ceo"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+def _fake_R(asof, start, min_cash, events, unissued):
+    P = lambda i, n: {"id": i, "name": n}
+    return {"asof": asof, "kind": "weekly",
+            "s2": {"start": start, "min_cash": min_cash, "dated": events, "periods": []},
+            "s5": {"event_unissued": {"missing": False, "total": sum(u for _, u in unissued),
+                                      "rows": [{"P": P("P%d" % k, "프로젝트%d" % k), "event": asof - dt.timedelta(days=10 + k),
+                                                "days": 10 + k, "unissued": u} for k, (_, u) in enumerate(unissued)]}}}
+
+
+class TestIssueDeadline(unittest.TestCase):
+    """계산서 발행 기한 (사용자 2026-11-12): 작성일 뒤 60일 입금, 자금이 모자라는 날 − 60일까지 발행."""
+
+    def test_deadline_is_short_day_minus_60(self):
+        ev = [{"date": D(2027, 1, 11), "io": "out", "amount": 50, "firm": False}]
+        R = _fake_R(D(2026, 11, 2), 120, 100, ev, [("a", 1000000), ("b", 500)])
+        X = insights.issue_deadline(R)
+        self.assertEqual(X["short"][:2], (D(2027, 1, 11), 30))
+        self.assertEqual(X["deadline"], D(2026, 11, 12))
+        self.assertFalse(X["late"])
+        self.assertEqual([r["amount"] for r in X["rows"]], [1100000])   # 부가세 포함, 1만 원 밑 끝전은 뺌
+        self.assertEqual(X["small_n"], 1)
+        self.assertEqual(X["rows"][0]["pay_if_today"], D(2027, 1, 1))
+        html = insights_render.ceo_issue(X)
+        self.assertIn("11/12까지 발행", html)
+        self.assertIn("1,100,000", html)
+
+    def test_late_when_deadline_passed(self):
+        ev = [{"date": D(2026, 12, 1), "io": "out", "amount": 50, "firm": True}]
+        X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
+        self.assertTrue(X["late"])
+        self.assertEqual(X["firm_short"][0], D(2026, 12, 1))
+        self.assertIn("발행했어야", insights_render.ceo_issue(X))
+
+    def test_no_short_one_line(self):
+        ev = [{"date": D(2026, 12, 1), "io": "out", "amount": 5, "firm": True}]
+        X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
+        self.assertIsNone(X["deadline"])
+        html = insights_render.ceo_issue(X)
+        self.assertIn("자금은 모자라지 않습니다", html)
+        self.assertNotIn("<table", html)
+
+    def test_ceo_reports_carry_issue_and_month_line(self):
+        d = load(SAMPLE)
+        from ceo_report.render import render
+        from ceo_report.areas import strip_ui
+        R = compute(d, "weekly", D(2026, 11, 6))
+        h = render(R, "ceo")
+        self.assertIn("행사 끝나고 아직 발행 안 한 계산서", h)
+        self.assertIn("11월 예상 영업이익", h)
+        self.assertNotIn("늦으면</b>", h)   # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12)
+        self.assertNotIn("큰 입금이", render(compute(d, "monthly", D(2026, 10, 31)), "ceo"))
+        import re
+        self.assertNotIn("예산", re.sub(r"<[^>]+>", "", h[h.index("<body"):]))   # 대표용엔 '예산' 글자 없음
+        self.assertNotIn("<!--ins-->", strip_ui(h))
+
+
+class TestForecastTrack(unittest.TestCase):
+    """예측 입금 vs 실제 입금 (사용자 2026-11-12)."""
+
+    def test_weeks_and_months(self):
+        rec = [(D(2026, 9, 25), [{"date": "2026-10-05", "io": "in", "amount": 100, "firm": True},
+                                  {"date": "2026-10-20", "io": "in", "amount": 50, "firm": False},
+                                  {"date": "2026-10-06", "io": "out", "amount": 999, "firm": True}])]
+        tx = [{"date": D(2026, 10, 6), "io": "입금", "amount": 80, "cat": ""},
+              {"date": D(2026, 10, 7), "io": "입금", "amount": 500, "cat": "계좌간이체"},
+              {"date": D(2026, 10, 31), "io": "입금", "amount": 30, "cat": ""}]
+        tx.append({"date": D(2026, 10, 8), "io": "출금", "amount": 900, "cat": ""})
+        tx.append({"date": D(2026, 9, 20), "io": "입금", "amount": 7, "cat": ""})   # 통장 자료가 보고 전부터 있어야 견줌
+        self.assertEqual(insights.forecast_track(rec, tx[:3])["months"], [])     # 10/6부터만 있으면 10월·그 보고는 견주지 않음
+        K = insights.forecast_track(rec, tx)
+        m = K["months"][0]
+        self.assertEqual((m["ym"], m["in"]["firm"], m["in"]["all"], m["in"]["actual"]), ("2026-10", 100, 150, 110))
+        self.assertEqual((m["out"]["firm"], m["out"]["actual"]), (999, 900))
+        w = K["weeks"][0]
+        self.assertEqual((w["to"], w["in"]["firm"], w["in"]["all"], w["in"]["actual"], w["part"]), (D(2026, 10, 23), 100, 150, 80, False))
+
+    def test_profit_forecast_vs_book(self):
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        ym = "2026-10"
+        actual = insights.booked_profit(R, ym)
+        K = insights.forecast_track([], [], R, [(D(2026, 10, 9), ym, 1000), (D(2026, 10, 23), ym, 2000), (D(2026, 11, 6), "2026-11", 5)])
+        self.assertEqual([(p["ym"], p["made"], p["forecast"], p["actual"]) for p in K["profit"]], [(ym, D(2026, 10, 23), 2000, actual)])
+
+    def test_profit_record_written(self):
+        import tempfile
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        with tempfile.TemporaryDirectory() as t:
+            insights.write_record(t, R)
+            got = insights.load_profit_forecasts(t)
+        self.assertEqual(got, [(D(2026, 11, 6), "2026-11", insights.month_forecast(R)["forecast"])])
+
+    def test_no_records(self):
+        self.assertEqual(insights.forecast_track([], [])["weeks"], [])
+
+    def test_records_roundtrip(self):
+        import tempfile
+        d = load(SAMPLE)
+        R = compute(d, "weekly", D(2026, 11, 6))
+        with tempfile.TemporaryDirectory() as t:
+            insights.write_record(t, R)
+            got = insights.load_records(t)
+        self.assertEqual(got[0][0], D(2026, 11, 6))
+        self.assertTrue(got[0][1])
+
+
+class TestIssueCompact(unittest.TestCase):
+    def test_compact_has_no_table(self):
+        """출금 목록이 길어 대표 주간이 넘치면 발행 기한을 표 없이 두어 줄로 (2026-11-13 실제 21건에서 4쪽)."""
+        import datetime as _dt
+        from ceo_report import insights_render as IR
+        D = {"rows": [{"id": "26116", "name": "Games on AWS 2026", "days": 17, "amount": 34332100, "pay_if_today": _dt.date(2027, 1, 12)},
+                      {"id": "26249", "name": "부스", "days": 17, "amount": 1000000, "pay_if_today": _dt.date(2027, 1, 12)}],
+             "total": 35332100, "short": (_dt.date(2026, 12, 4), 6933596, _dt.date(2026, 12, 18), 107495066),
+             "late": True, "deadline": _dt.date(2026, 10, 5), "days": 60, "horizon": _dt.date(2027, 4, 30)}
+        full, small = IR.ceo_issue(D), IR.ceo_issue(D, compact=True)
+        self.assertIn("<table", full)
+        self.assertNotIn("<table", small)
+        for t in ("2건", "35,332,100", "[26116] Games on AWS 2026", "12/4", "10/5까지 발행했어야"):
+            self.assertIn(t, small)

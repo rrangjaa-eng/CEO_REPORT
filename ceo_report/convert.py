@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt", "확인할것.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -816,19 +816,41 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         history = convert_projects.out_of_period(books, links["projects"], links["requests"])   # WR-05
         project_table = convert_projects.build_projects(links["projects"], links["revenue"], prev["프로젝트.csv"], history,
                                                         convert_projects.period_text(books))
+        if getattr(snap, "projects", None):   # 승인 칸 글자가 실제 화면과 맞는지 볼 수 있게 (대표이사 승인 = 종결, 사용자 2026-11-11)
+            project_table.notes.append("인트라넷 승인 칸 글자 — %s (끝남으로 읽는 글자: %s)"
+                                       % (linking.approval_words(snap.projects), "·".join(linking.APPROVAL_DONE)))
         execs = convert_projects.build_execs(books, links["costs"], links["requests"], match, prev["프로젝트집행.csv"], cfg,
                                              links["projects"])
         xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,
-                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir))
+                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir),
+                                       card_vat=(execs.extra or {}).get("card_vat"))
         tables.extend([project_table, execs, xchk])
     tables.append(build_fundplan(books, cfg, wehago_dir, asof))
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
     tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
-    tables.append(build_tax(books, cfg, asof, input_dir))
+    tables.append(convert_pl.build_dept_accounts(books, cfg, _read_prev_rows(input_dir, data.DEPT_ACCOUNT_FILE,
+                                                                             data.DEPT_ACCOUNT_KEYS)))
+    tables.append(build_tax(books, cfg, asof, input_dir, wehago_dir))
     tables.extend(build_bank(books, cfg))
     tables.append(build_debts(books, cfg))
     tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
     tables.append(build_evidence(books, sales, _read_prev_rows(input_dir, data.EVID_FILE, data.EVID_KEYS)))
+    from . import annual   # 연간 보고용 (사용자 2026-11-10): 거래처별 매출·매입, 통장 흐름 분류, 결산 법인세
+    tables.append(annual.build_table(books, cfg, sales, _read_prev_rows(input_dir, annual.FILE, annual.KEYS)))
+    from . import cashflow   # 현금흐름표 (사용자 2026-11-12): 경영관리 보고에만
+    tables.append(cashflow.build_table(books, cfg))
+    from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 계정별 연월 합 → 재무상태표·손익
+    tables.append(credit.build_table(books))
+    from . import wehago_raw   # 위하고 인사·연말정산·고정자산 화면 원본 (사용자 2026-11-13, 확장 자동 수집)
+    tables.extend(wehago_raw.build_tables(wehago_dir))
+    from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 경영관리 보고에만, 분개장이 오면 바로 반영
+    tables.append(surplus.build_table(books, cfg, asof, wehago_dir, input_dir))
+    from . import taxadj   # 세무조정 예상 (사용자 2026-11-12)
+    tables.append(taxadj.build_table(books, cfg, asof, input_dir, wehago_dir))
+    from . import filing   # 신고 일정 (사용자 2026-11-12: 제출기한도 장부를 보고 알려 줌)
+    tables.append(filing.build_table(books, cfg, asof, input_dir))
+    from . import filehelp   # 신고 도우미 (사용자 2026-11-12)
+    tables.append(filehelp.build_table(books, cfg, asof, input_dir))
     return tables, states
 
 
@@ -947,7 +969,7 @@ def build_bank(books, cfg):
                   notes=["보통예금 입출금 %d줄 (같은 전표에 차변·대변 모두 있으면 계좌간이체)" % len(txns)])]
 
 
-def build_tax(books, cfg, asof, input_dir=None):
+def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     """세금예상.csv 표 (사용자 2026-11-03): 분개장으로 부가세(분기)·원천세·4대보험(회사분 포함) 납부 예상. 계산할 줄이 없으면 빈 표를 쓴다."""
     from . import tax
     mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
@@ -958,7 +980,7 @@ def build_tax(books, cfg, asof, input_dir=None):
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
-    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {})
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir, wehago_dir)
     rows += ct_rows
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
@@ -968,7 +990,7 @@ def build_tax(books, cfg, asof, input_dir=None):
     notes.extend(card_notes)
     thin = [r for r in rows if r["세목"] == "카드대금" and r["근거"].startswith(tax.CARD_THIN_MARK)]
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
-        notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 최근 3달 평균으로 카드대금을 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
+        notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
                      % ", ".join(r["대상기간"].replace(" (전표 입력 전 추정)", "") for r in thin))
     notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
@@ -999,13 +1021,39 @@ def _read_dept_prev(input_dir):
     return [dict((k, r.get(k, "")) for k in data.DEPT_KEYS + data.DEPT_OPTIONAL) for r in rows]
 
 
+def fundplan_opening_checks(openings, books, cfg):
+    """현금대비잔액의 '전월이월'(전월말 보통예금)과 분개장 보통예금 잔액 대조 (2026-11-05: 실제 10/31 원 단위 일치 확인).
+    분개장이 처음부터 있지 않으면(작년 분개장 없음) 잔액을 셀 수 없어 대조하지 않는다."""
+    if not openings:
+        return []
+    if not getattr(books, "from_start", True):
+        return ["자금계획서 전월이월 대조 안 함: 작년 분개장이 없어 보통예금 잔액을 셀 수 없음"]
+    cash = set(wehago._squash(c) for c in cfg["cash_codes"])
+    out = []
+    for (y, m), amount, name in openings:
+        first = dt.date(y, m, 1)
+        if books.book_date is not None and books.book_date < first - dt.timedelta(days=1):
+            out.append("%s 전월이월 대조 안 함: 분개장이 %s까지라 전월말 잔액을 모름" % (name, books.book_date.isoformat()))
+            continue
+        bal = sum((ln.get("debit") or 0) - (ln.get("credit") or 0) for ln in books.journal
+                  if ln.get("date") is not None and ln["date"] < first and wehago._squash(ln.get("account_code")) in cash)
+        if bal == amount:
+            out.append("%s 전월이월 %s원 = 분개장 %s 보통예금 잔액 (일치)" % (name, "{:,}".format(amount),
+                                                                 (first - dt.timedelta(days=1)).isoformat()))
+        else:
+            out.append("[확인] %s 전월이월 %s원 ≠ 분개장 %s 보통예금 잔액 %s원 (차이 %s원) — 자금계획서와 분개장 받은 시점이 다르거나 "
+                       "장부가 바뀜" % (name, "{:,}".format(amount), (first - dt.timedelta(days=1)).isoformat(),
+                                    "{:,}".format(bal), "{:,}".format(amount - bal)))
+    return out
+
+
 def build_fundplan(books, cfg, wehago_dir, asof):
-    """자금계획서 지출입금현황(.xls) -> 자금계획.csv 표 (D-55). 쓸 파일이 없으면 만들지 않고 기존 파일을 그대로 둔다."""
+    """자금계획서 현금대비잔액·지출입금현황(.xls) -> 자금계획.csv 표 (D-55, 현금대비잔액 2026-11-05). 쓸 파일이 없으면 만들지 않고 기존 파일을 그대로 둔다."""
     from . import fundplan
     res = fundplan.load(wehago_dir)
     notes = list(res["notes"])
     if not res["rows"]:
-        reason = ("자금계획서 지출입금현황 파일 없음 (기존 파일 그대로)" if not notes
+        reason = ("자금계획서(현금대비잔액·지출입금현황) 파일 없음 (기존 파일 그대로)" if not notes
                   else "쓸 수 있는 자금계획서 없음 (기존 파일 그대로): " + " / ".join(notes))
         return Table("자금계획.csv", fundplan.COLUMNS, [], written=False, reason=reason)
     counts = fundplan.settle(res["rows"], books, asof, cfg["payable_codes"], cfg["receivable_codes"], cfg["cash_codes"])
@@ -1015,6 +1063,7 @@ def build_fundplan(books, cfg, wehago_dir, asof):
         ", ".join(d.isoformat() for d in stamps), books.book_date.isoformat(),
         " — 그 사이 %d일의 지급·입금은 분개장으로 확인 못함" % gap if gap > 0 else ""))
     notes.append("분개장 대조: " + " · ".join("%s %d" % (k, counts[k]) for k in fundplan.STATES))
+    notes.extend(fundplan_opening_checks(res.get("openings") or [], books, cfg))
     for r in res["rows"]:
         if r["상태"] != "예정":
             notes.append("  %s %s %s %s %s원 — %s" % (r["상태"], r["예정일"], r["입출금"], r["거래처"],
@@ -1085,6 +1134,8 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     if books.state == "ok":
         from . import review_checks
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
+        from . import insights   # 자동 분석용 장부 풀이: 고정비·매달 있어야 할 전표 (사용자 2026-11-12)
+        insights.write_facts(input_dir, insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"]))
         dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
         from . import checklist, hometax

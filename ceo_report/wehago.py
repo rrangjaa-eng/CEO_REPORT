@@ -368,6 +368,75 @@ def read_journal_xls(path):
     return out
 
 
+_LEAD_CODE = re.compile(r"^\s*\[[^\]]*\]\s*")
+
+
+def read_journal_json(path):
+    """크롬 확장 '대표보고 위하고 수집'이 저장한 분개장(.json, 2026-11-05) -> read_journal_xls 와 같은 모양.
+
+    위하고 분개장 화면 [조회] 응답에서 칸 몇 개만 남긴 것이다. 부서·사원·프로젝트 칸은 '[코드]이름' 이라 앞 [코드]를 떼어
+    인쇄 파일의 부서명·사원명·프로젝트명과 같게 한다 (프로젝트명은 '[26222] 행사명' 이 남는다)."""
+    import json
+    name = os.path.basename(path)
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as e:
+        raise WehagoError("%s 를 읽지 못함 (%s)" % (name, type(e).__name__))
+    if not isinstance(doc, dict) or doc.get("종류") != "분개장" or not isinstance(doc.get("줄"), list):
+        raise WehagoError("%s 는 분개장 자동수집 파일 모양이 아님" % name)
+    cols = doc.get("열") or []
+    need = ("da_date", "no_acct", "nm_yuh", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2", "nm_trade", "cd_trade",
+            "nm_remark", "nm_project", "nm_dept", "nm_emp")
+    missing = [c for c in need if c not in cols]
+    if missing:
+        raise HeaderMismatch(name, "분개장", missing, [])
+    ix = dict((c, cols.index(c)) for c in need)
+    gb = cols.index("nm_gubun_bungae") if "nm_gubun_bungae" in cols else None
+
+    def day(v):
+        s = str(v or "").strip()
+        if len(s) == 8 and s.isdigit():
+            try:
+                return dt.date(int(s[:4]), int(s[4:6]), int(s[6:])).isoformat()
+            except ValueError:
+                return s
+        return s
+
+    def num(v):
+        if v in ("", None):
+            return ""
+        return "%d" % v if isinstance(v, (int, float)) and v == int(v) else str(v)
+
+    def bare(v):
+        return _LEAD_CODE.sub("", str(v or ""), count=1).strip()
+
+    out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요",
+                 "프로젝트명", "부서명", "사원명"]])
+    out.known_extra = ("프로젝트명", "부서명", "사원명")
+    period = doc.get("기간") or {}
+    try:
+        s, e = str(period.get("start_date", "")), str(period.get("end_date", ""))
+        start = dt.date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+        end = dt.date(int(e[:4]), int(e[4:6]), int(e[6:8]))
+        out.period = (start, end) if end >= start else None
+    except (TypeError, ValueError):
+        out.period = None
+    for r in doc["줄"]:
+        if not isinstance(r, list) or len(r) < len(cols):
+            continue
+        g = lambda c: r[ix[c]]
+        side = str(r[gb]).strip() if gb is not None else ""
+        # 화면 자료는 반대쪽 금액을 0으로 준다. 인쇄 파일처럼 빈칸으로 둔다 (차변/대변 구분이 있을 때만)
+        debit = "" if side == "대변" else num(g("mn_bungae1"))
+        credit = "" if side == "차변" else num(g("mn_bungae2"))
+        out.append([day(g("da_date")), str(g("no_acct") or "").strip(), str(g("nm_yuh") or ""), str(g("cd_acctit") or ""),
+                    str(g("nm_acctit") or ""), debit, credit, str(g("nm_trade") or ""),
+                    str(g("cd_trade") or ""), str(g("nm_remark") or ""), bare(g("nm_project")), bare(g("nm_dept")),
+                    bare(g("nm_emp"))])
+    return out
+
+
 def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     """한 파일을 머리글 이름으로 읽어 (행 dict 목록, 요약)을 돌려준다. 머리글이 다르면 HeaderMismatch.
 
@@ -375,7 +444,10 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     기본값에서는 info["sales_rows"] 는 빈 목록이고 행 목록과 다른 요약 값은 이전과 같다.
     """
     name = os.path.basename(path)
-    rows = read_journal_xls(path) if kind == "분개장" and path.lower().endswith(".xls") else read_xlsx(path)
+    if kind == "분개장" and path.lower().endswith(".json"):
+        rows = read_journal_json(path)
+    else:
+        rows = read_journal_xls(path) if kind == "분개장" and path.lower().endswith(".xls") else read_xlsx(path)
     cols, extra = _check_header(rows, kind, name)
     known = tuple(getattr(rows, "known_extra", ())) + (("부서명", "사원명") if kind == "분개장" else ())
     extra = [h for h in extra if h not in known]
@@ -713,7 +785,7 @@ def load_books(folder, asof, stale_days):
         if kind is None:
             continue
         ext = os.path.splitext(n)[1].lower()
-        if ext == ".xlsx" or (ext == ".xls" and kind == "분개장"):   # 분개장은 인쇄 저장 .xls 도 읽는다 (D-56)
+        if ext == ".xlsx" or (ext in (".xls", ".json") and kind == "분개장"):   # 분개장은 인쇄 저장 .xls(D-56)·크롬 자동수집 .json 도 읽는다
             (candidates[kind] if readable else unused).append(n)
         elif readable and ext in (".xls", ".csv"):
             lookalikes[kind].append(n)

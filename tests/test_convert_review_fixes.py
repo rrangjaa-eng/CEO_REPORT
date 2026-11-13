@@ -637,9 +637,9 @@ class TestWR01Rollback(unittest.TestCase):
         write_convert_books(wehago_dir)
         write_fake_snapshot(collect)
         names = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "세금예상.csv", "계정별비용.csv",
-                 "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "변환결과.txt")
+                 "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "계정잔액.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "변환결과.txt")
         before = dict((n, read_text(os.path.join(input_dir, n))) for n in names if os.path.exists(os.path.join(input_dir, n)))
-        flaky = FlakyReplace(12)   # CSV 열한 개는 바뀌고 변환결과.txt 에서 실패
+        flaky = FlakyReplace(19)   # CSV 열일곱 개(…계정잔액·잉여금·세무조정·신고일정·신고도우미 포함)는 바뀌고 변환결과.txt 에서 실패
         with unittest.mock.patch.object(convert.os, "replace", flaky):
             res = convert.run(input_dir, collect, wehago_dir, dt.date(2026, 11, 2), dt.datetime(2026, 11, 2, 0, 0))
         self.assertEqual(res.code, 7, res.lines)

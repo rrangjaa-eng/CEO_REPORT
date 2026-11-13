@@ -4,6 +4,8 @@
 실제 입력/·수집/ 폴더와 실제 WEHAGO 파일은 열지 않는다. 다른 시험 파일에서는 함수와 상수만 가져온다.
 """
 import contextlib
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import html as htmllib
 import io
 import os
@@ -26,13 +28,14 @@ import datetime as dt  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
+from ceo_report.areas import strip_ui  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table, shared_inputs,  # noqa: E402
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-# 주간 보고와 calc.py 를 일부러 바꾼 마지막 커밋(D-54 남은 예산 지급 예정, 팀별 예산). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "4aa80ef"
+# 주간 보고와 calc.py 를 일부러 바꾼 마지막 커밋(인트라넷 승인 단계 = 종결·견적금액 기준, 2026-11-11). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+BASELINE = "793fbd2"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
@@ -210,7 +213,7 @@ class TestMonthlySection(unittest.TestCase):
         for mode, page in detail(self.pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
+                self.assertIn("<a href='#a-s8' data-k='s8'>B-8 WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
 
     def test_section_8_comes_after_section_7(self):
         for page in detail(self.pages).values():
@@ -655,7 +658,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
 
 # ───────────── Task 3: 파일 없음·읽을 수 없음, 오래된 장부 기준일, 콘솔 한 줄, 모든 탐침 입력 ─────────────
 NO_FILE_TEXT = "자료 없음 (위하고대조.csv — 대표보고 창의 '자료 변환'으로 만듦)"
-NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '8. WEHAGO 기준 대조'에 들어갑니다."
+NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다."
 
 
 def section8_text(page):
@@ -675,7 +678,7 @@ class TestMonthlyMissing(unittest.TestCase):
         for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn('<a href="#s8">8. WEHAGO 기준 대조</a>', page)
+                self.assertIn("<a href='#a-s8' data-k='s8'>B-8 WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
                 self.assertIn(NO_FILE_TEXT, section8_text(page))
                 self.assertNotIn("xchk-summary", page)
                 self.assertNotIn("xchk-detail", page)
@@ -809,6 +812,11 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         from ceo_report.convert_xchk import load_xchk
         R = compute(load(folder), "monthly", dt.date(2026, 10, 31))
         R["xchk"] = load_xchk(folder)
+        from ceo_report import credit   # 자료 안내의 신용평가 한 줄은 CLI 가 붙인다 (2026-11-13)
+        R["credit_brief"] = credit.brief(credit.compute(folder, dt.date(2026, 10, 31)))
+        from ceo_report import insights, gasu   # 가수금 갚을 시기도 CLI 가 붙인다 (2026-11-13)
+        R["auto_facts"] = insights.read_facts(folder)
+        R["gasu"] = gasu.for_report(folder, R)
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
@@ -863,7 +871,8 @@ class TestWeeklyUnchanged(unittest.TestCase):
         self.assertEqual(rc, 0)
         for mode in ("ceo", "mgmt"):
             with self.subTest(mode):
-                self.assertEqual(STAMP.sub("", new[mode]), STAMP.sub("", old[mode]))
+                # 경영관리용은 영역 보기 장치(2026-11-11)만 더해졌다: 그것을 빼면 예전과 같다
+                self.assertEqual(STAMP.sub("", strip_ui(new[mode])), STAMP.sub("", strip_ui(old[mode])))
 
     def test_weekly_never_imports_or_calls_load_xchk(self):
         folder = sample_folder(self, xchk_table(shared_inputs()))

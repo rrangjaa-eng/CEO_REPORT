@@ -128,5 +128,20 @@ class TestPriorRows(unittest.TestCase):
         self.assertEqual(bad, [])
 
 
+class TestOldIntranetLineCount(unittest.TestCase):
+    """예전 인트라넷 끝난 행사 프로젝트의 집행 줄도 '프로젝트집행 줄 수' 대조에 센다 (B-7 4,246 대 3,878, 2026-11-13)."""
+
+    def test_old_state_lines_counted(self):
+        refresh()
+        d = load(SAMPLE)
+        used = {e["project"] for e in d.execs if e["project"] in d.projects}
+        pid = next(p for p in d.project_order if p in used)
+        d.projects[pid]["state"] = calc.OLD_STATE
+        R = calc.compute(d, "weekly", ASOF)
+        row = [c for c in R["s7"]["checks"] if "프로젝트집행 줄 수" in c[0]][0]
+        self.assertTrue(row[3], row)
+        self.assertIn("예전 인트라넷", row[0])
+
+
 if __name__ == "__main__":
     unittest.main()

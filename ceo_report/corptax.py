@@ -39,17 +39,51 @@ def corp_tax(base, year):
     return int(tax)
 
 
+def national(base, year, input_dir=None):
+    """-> (낼 법인세: 감면·이월공제 뒤 + 농어촌특별세, 산출세액, credits dict 또는 None).
+    작년 상세 신고서(입력/법인세신고.csv 특별감면·공제이월)가 있으면 그 감면을 적용 (사용자 2026-11-13). 없으면 산출세액 그대로.
+    지방소득세는 감면 없이 산출세액 × 10% 그대로."""
+    corp = corp_tax(base, year)
+    if corp is None or not input_dir:
+        return corp, corp, None
+    from . import taxreturn
+    C = taxreturn.credits(input_dir, int(year), base, corp)
+    return (C["national"] if C else corp), corp, C
+
+
 def _int(text):
     t = str(text or "").replace(",", "").replace("원", "").strip()
     return int(t) if t.isdigit() else None
 
 
+LEDGER_FILE = "고정자산.csv"   # 위하고 고정자산관리대장 (wehago_raw 가 자료 변환 때 만듦)
+
+
+def read_ledger(input_dir, wehago_dir=None):
+    """위하고 고정자산관리대장의 당기 상각 예정액 -> {연도: 합계} (사용자 2026-11-13: 올해 감가상각비 예상은 대장 금액).
+    wehago_dir 가 있으면 원본을 바로 읽는다 (같은 변환 안에서 고정자산.csv 가 아직 안 써졌을 때)."""
+    rows = []
+    if wehago_dir:
+        from . import wehago_raw
+        rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
+    if not rows and input_dir and os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
+        try:
+            with open(os.path.join(input_dir, LEDGER_FILE), encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+        except (OSError, UnicodeDecodeError, csv.Error):
+            rows = []
+    out = {}
+    for r in rows:
+        y, v = (r.get("기준연도") or "").strip(), _int(r.get("당기상각"))
+        if y.isdigit() and v is not None:
+            out[y] = out.get(y, 0) + v
+    return out
+
+
 def read(input_dir):
-    """-> {연도: 연간 감가상각비}. 없거나 읽지 못하면 {}."""
+    """-> {연도: 연간 감가상각비 직접 입력, ("대장", 연도): 위하고 고정자산대장 당기 상각}. 없거나 읽지 못하면 {}."""
     path = os.path.join(input_dir, DEP_FILE)
     out = {}
-    if not os.path.exists(path):
-        return out
     try:
         with open(path, encoding="utf-8-sig", newline="") as f:
             for r in csv.DictReader(f):
@@ -57,7 +91,9 @@ def read(input_dir):
                 if y.isdigit() and v is not None:
                     out[y] = v
     except (OSError, UnicodeDecodeError, csv.Error):
-        return {}
+        out = {}
+    for y, v in read_ledger(input_dir).items():   # 위하고 고정자산대장 (사용자 2026-11-13): 직접 입력이 없는 해에 씀
+        out[("대장", y)] = v
     return out
 
 
@@ -68,7 +104,7 @@ def save(input_dir, year, amount):
         raise ValueError("연도는 4자리 (예: 2026)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
-    cur = read(input_dir)
+    cur = dict((k, v) for k, v in read(input_dir).items() if isinstance(k, str))   # 대장 값은 파일에 쓰지 않음
     if str(amount or "").strip():
         v = _int(amount)
         if v is None:
@@ -95,7 +131,7 @@ def _dep_rows(accounts, year):
 DEP_MODE = "full"
 
 
-def depreciation(accounts, manual, ym, mode=None):
+def depreciation(accounts, manual, ym, mode=None, ledger=None):
     """-> {"annual", "source", "booked", "extra"(누적), "cur"(이번 달), "months"}. annual None = 모름 (extra·cur 도 None).
 
     감가상각비는 연말 결산 때 한 번에 들어가므로 작년 금액을 올해 예상으로 보고 비용으로 먼저 뺀다 (사용자 2026-11-04).
@@ -107,6 +143,8 @@ def depreciation(accounts, manual, ym, mode=None):
     booked_cur = sum(r["amount"] or 0 for r in booked_rows if r["ym"] == ym)
     if manual.get(year) is not None:
         annual, source = manual[year], "직접 입력"
+    elif (ledger or {}).get(year) is not None or manual.get(("대장", year)) is not None:
+        annual, source = (ledger or {}).get(year, manual.get(("대장", year))), "고정자산대장"
     else:
         last = _dep_rows(accounts, int(year) - 1)
         annual = sum(r["amount"] or 0 for r in last) if last else None
@@ -138,6 +176,48 @@ def estimate(pretax, nonop_in, ym):
     return rows
 
 
+# ───────────── 대손충당금 (사용자 2026-11-12: 프로그램에 넣어) ─────────────
+RECEIVABLE_CODES = ("10800", "11000", "12000")   # 외상매출금(수입수수료미수금)·받을어음·미수금
+BAD_DEBT_RATE = 0.01   # 세법 한도: 채권 잔액의 1% (실제 대손실적률이 더 높으면 그 비율 — 세무사 확인)
+
+
+def bad_debt(journal, cfg, ym, input_dir=None):
+    """결산 때 넣을 대손충당금 예상 -> {"receivable", "allowance", "amount", "partial", "note"}.
+
+    채권 잔액(외상매출금·받을어음·미수금, ym 말까지 장부 누계) × 1% − 이미 쌓인 대손충당금 잔액 = 올해 더 쌓을 금액(0 밑으로 안 감).
+    결산조정 항목이라 장부에 넣어야 비용 인정 → 법인세 예상에서 감가상각비처럼 미리 뺀다.
+    분개장이 회사 첫해부터 없고 전기이월 줄도 없으면 작년 말 잔액을 몰라 올해 움직임만 본다(partial: 작게 잡힘)."""
+    from .convert_pl import _squash
+    from .surplus import FOUNDED
+    codes = set(_squash(c) for c in cfg.get("receivable_codes", RECEIVABLE_CODES))
+    rec = allow = 0
+    years, opening = set(), False
+    for ln in journal:
+        d = ln.get("date")
+        if d is None or d.strftime("%Y-%m") > ym:
+            continue
+        years.add(d.year)
+        code, name = _squash(ln.get("account_code")), _squash(ln.get("account"))
+        dr, cr = ln.get("debit") or 0, ln.get("credit") or 0
+        if code in codes:
+            rec += dr - cr
+        elif "대손충당금" in name:
+            allow += cr - dr
+        else:
+            continue
+        if "전기이월" in _squash(ln.get("sort")) + _squash(ln.get("memo")):
+            opening = True
+    partial = bool(years) and min(years) > FOUNDED and not opening
+    rec = max(rec, 0)
+    from . import taxlaw
+    rate = taxlaw.value(input_dir, int(ym[:4]), "대손충당금률")[0] or BAD_DEBT_RATE
+    amount = max(int(rec * rate) - allow, 0)
+    note = "받을 돈 %s × %g%% − 쌓인 충당금 %s" % ("{:,}".format(rec), rate * 100, "{:,}".format(allow))
+    if partial:
+        note += " (작년 말 잔액 없어 올해 늘어난 몫만 — 작게 잡힘)"
+    return {"receivable": rec, "allowance": allow, "amount": amount, "partial": partial, "note": note}
+
+
 # ───────────── 변환 쪽: 분개장으로 법인세 납부 예상 (사용자 2026-11-04: 지급 예상에 넣고, 중간예납 등 선납세금은 뺀다) ─────────────
 PREPAID_CODES = ("13600",)   # 선납세금: 8월 중간예납 + 이자 원천징수 법인세
 
@@ -152,7 +232,26 @@ def _last_full_month(asof):
     return prev.strftime("%Y-%m")
 
 
-def from_journal(journal, cfg, asof, manual=None):
+def adjust_for(journal, cfg, asof, input_dir=None, wehago_dir=None):
+    """세무조정 예상 (taxadj) — 법인세 예상과 같은 기간·같은 매출 기준."""
+    from .convert_pl import _classify, _net
+    from . import taxadj, dividend
+    ym = _last_full_month(asof)
+    rev = 0
+    for ln in journal:
+        d = ln.get("date")
+        if d is None or d.strftime("%Y-%m") > ym or d.year != int(ym[:4]):
+            continue
+        if _classify(ln, cfg) == "revenue":
+            rev += _net(ln, "revenue") or 0
+    try:
+        ans = dividend.read_settings(input_dir) if input_dir else {}
+    except OSError:
+        ans = {}
+    return taxadj.adjust(journal, cfg, ym, input_dir, rev, ans, wehago_dir)
+
+
+def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=None):
     """-> (세금예상 줄 목록, 메모). 올해 1월~마지막 달 장부로 세전 이익(감가상각비 예상 뺀) → 법인세 − 선납세금, 지방소득세.
 
     납부일 = 다음 해 3월 31일(법인세), 4월 30일(지방소득세), 토·일이면 월요일. 상태는 '예상'."""
@@ -194,21 +293,29 @@ def from_journal(journal, cfg, asof, manual=None):
             unknown += 1
         else:
             pretax += sign * v
-    dep = depreciation(dep_lines, manual or {}, ym)
-    base = pretax - (dep["extra"] or 0)
-    corp = corp_tax(base, year)
+    dep = depreciation(dep_lines, manual or {}, ym, ledger=read_ledger(input_dir, wehago_dir))
+    bd = bad_debt(journal, cfg, ym, input_dir)
+    adj = adjust_for(journal, cfg, asof, input_dir, wehago_dir)
+    base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
+    nat, corp, C = national(base, year, input_dir)
     local = int(corp * LOCAL_RATE)
-    pay = max(corp - prepaid, 0)
+    pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
-    basis = ("세전 이익 %s − 감가상각비 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
-             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(base), "{:,}".format(corp),
-                "{:,}".format(prepaid)))
+    basis = ("세전 이익 %s − 감가상각비 예상 %s − 대손충당금 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
+             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
+                "{:,}".format(corp), "{:,}".format(prepaid)))
+    if C:
+        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
+                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
+    if adj["total"]:
+        basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
+    basis += " · 대손충당금 = " + bd["note"]
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
-                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid)),
+                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"])),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
-                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="")]
-    return rows, "법인세 %s → %s원 (산출 %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "{:,}".format(corp),
+                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="")]
+    return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))

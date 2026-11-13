@@ -13,7 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from ceo_report.data import ACCOUNT_FILE, ACCOUNT_KEYS, DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
+from ceo_report.data import ACCOUNT_FILE, ACCOUNT_KEYS, DEPT_ACCOUNT_FILE, DEPT_ACCOUNT_KEYS, DEPT_FILE, DEPT_KEYS, DEPT_OPTIONAL, SCHEMA, TAX_FILE  # noqa: E402
 from ceo_report.tax import CARD_COLUMNS, CARD_FILE, COLUMNS as TAX_COLUMNS  # noqa: E402
 
 
@@ -155,6 +155,16 @@ for m in range(1, 12):
         DEPT.append(["2026-%02d" % m, dept, "{:,}".format(sal), "{:,}".format(sga), str(heads), "{:,}".format(nin),
                      "{:,}".format(nout)])
 S[DEPT_FILE] = DEPT
+# 부서별 판관비 계정과목별 (가상, 사용자 2026-11-09 팀장용). 부서·달마다 합계 = 부서비용.csv 판관비
+DEPT_ACC = []
+for m in range(1, 12):
+    for dept, parts in (("기획1팀", (("81100", "복리후생비", 800_000), ("81200", "여비교통비", 600_000), ("81300", "접대비", 400_000),
+                                     ("81400", "통신비", 200_000))),
+                        ("기획2팀", (("81100", "복리후생비", 600_000), ("81200", "여비교통비", 500_000), ("81300", "접대비", 300_000),
+                                     ("81400", "통신비", 100_000)))):
+        for code, name, amt in parts:
+            DEPT_ACC.append(["2026-%02d" % m, dept, code, name, "{:,}".format(amt)])
+S[DEPT_ACCOUNT_FILE] = DEPT_ACC
 # 세금·4대보험 납부 예상 (가상 금액, 변환.py 가 분개장으로 만드는 선택 파일, 사용자 2026-11-03). 4대보험 = 직원분 예수금 + 회사분
 S[TAX_FILE] = [
     ["4대보험", "2026년 10월분", "2026-11-10", "5,250,000", "예상", "예수금 중 공단 거래처 대변(직원분) 2,500,000원 + 회사분 = 직원분 × 1.10"],
@@ -181,7 +191,7 @@ S[ACCOUNT_FILE] = ACCOUNTS
 DETAIL_ROWS = [["전시제작사", "49500000", "C사 전시 부스 목공·도장 잔금", "수기"],
                ["소프트웨어", "1200000", "디자인 툴 월 구독", "수기"]]
 # 팀 연간 목표 (가상, 사용자 2026-11-03: 월간 누적 실적 목표 대비). 창 '⑧ 팀 목표'로 넣음
-TARGET_ROWS = [["2026", "기획1팀", "900000000", "33"], ["2026", "기획2팀", "700000000", "30"]]
+TARGET_ROWS = [["2026", "기획1팀", "900000000", "30"], ["2026", "기획2팀", "700000000", "30"]]
 # 카드사별 납부일·기산일 (사용자 2026-11-03). 창의 '⑤ 카드 납부일'로 고친다
 CARD_ROWS = [["롯데", "14", "1"], ["비씨", "25", "1"], ["신한", "15", "1"]]
 S["지급계획.csv"] = [
@@ -228,6 +238,8 @@ def write_sample(folder, data=None):
         write(folder, DEPT_FILE, data[DEPT_FILE], DEPT_KEYS + DEPT_OPTIONAL)
     if TAX_FILE in data:
         write(folder, TAX_FILE, data[TAX_FILE], TAX_COLUMNS)
+    if DEPT_ACCOUNT_FILE in data:
+        write(folder, DEPT_ACCOUNT_FILE, data[DEPT_ACCOUNT_FILE], DEPT_ACCOUNT_KEYS)
     if ACCOUNT_FILE in data:
         write(folder, ACCOUNT_FILE, data[ACCOUNT_FILE], ACCOUNT_KEYS)
     from ceo_report.paydetail import DETAIL_COLUMNS, DETAIL_FILE

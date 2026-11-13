@@ -3,6 +3,8 @@
 다른 시험 파일에서는 함수와 상수만 가져온다 (TestCase 클래스를 가져오면 시험이 두 번 돈다).
 """
 import csv
+import os as _os
+_os.environ["CEO_REPORT_TEST_GATE_OFF"] = "1"   # 이 시험의 예시 자료엔 자금계획서가 없음 (자금계획서 확인은 test_gate)
 import datetime as dt
 import os
 import re
@@ -495,8 +497,8 @@ class TestPdfFailureMessage(unittest.TestCase):
                 mock.patch.object(cli, "to_pdf", return_value="PDF 실패 (브라우저가 파일을 만들지 않음)"):
             rc, out = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", SAMPLE])
         self.assertEqual(rc, 0)
-        self.assertIn("2026-11-02_주간_대표보고.pdf", out)
-        self.assertIn("2026-11-02_주간_경영관리보고.pdf", out)
+        self.assertRegex(out, r"2026-11-02_주간_대표보고 \(\d\d-\d\d \d\d시\d\d분 만듦\)\.pdf")   # 만든 시각 (2026-11-12)
+        self.assertRegex(out, r"2026-11-02_주간_경영관리보고 \(\d\d-\d\d \d\d시\d\d분 만듦\)\.pdf")
         self.assertIn("'PDF로 저장'", out)
 
     def test_timeout_is_korean(self):

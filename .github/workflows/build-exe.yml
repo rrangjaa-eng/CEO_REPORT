@@ -25,7 +25,7 @@ jobs:
         shell: pwsh
         run: >
           python -m PyInstaller --noconfirm --onefile --windowed --name 대표보고
-          --paths . --hidden-import 변환 --hidden-import 보고서 --hidden-import 승인검토
+          --paths . --hidden-import 변환 --hidden-import 보고서 --hidden-import 승인검토 --hidden-import 예산
           --add-data "입력양식;입력양식" 대표보고.pyw
       - name: exe 점검 (창 없이 샘플로 주간 보고 만들기)
         shell: pwsh
