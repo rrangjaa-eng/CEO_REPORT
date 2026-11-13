@@ -49,8 +49,30 @@ class TestReport(unittest.TestCase):
         page = render(self.oct, "mgmt")
         self.assertEqual(area_ids(page)[0], "one")
         self.assertFalse([k for k in area_ids(page) if k.startswith("c")])
-        for word in ("이익잉여금처분계산서", "기업신용평가 미리보기", "신고 일정 (장부 기준)", "세무조정 예상 ("):
-            self.assertNotIn(word, page)
+        for hid in ("c1", "c2", "c3", "c4", "c5"):
+            self.assertNotIn("<h2 id='%s'>" % hid, page)
+        # 대신 자료 안내에 줄이 있고 언제 들어가는지 적힘 (사용자 2026-11-13)
+        docs = page[page.index("id='a-docs'"):page.index("id='a-sum'")]
+        for word in ("이익잉여금처분계산서", "기업신용평가", "신고 일정", "세무조정 예상", "내년 예산", "연간 보고", "팀장용", "예측 오차", "현금흐름표"):
+            self.assertIn(word, docs)
+        self.assertIn("반기(6·12월)분 보고에 들어감", docs)
+
+    def test_every_area_has_easy_explanation_and_suggestion(self):
+        for R in (self.oct, self.sep, self.jun):
+            page = render(R, "mgmt")
+            secs = re.findall(r"<section class='area' id='a-([^']+)'.*?</section>", page, flags=re.S)
+            for k, body in zip(secs, re.findall(r"<section class='area' id='a-[^']+'.*?</section>", page, flags=re.S)):
+                with self.subTest(k):
+                    self.assertIn("<b class='gk'>쉬운 설명</b>", body)
+                    self.assertIn("<b class='gk'>제안</b>", body)
+
+    def test_track_suggestions(self):
+        K = {"months": [{"ym": "2026-10", "made": dt.date(2026, 9, 25),
+                         "in": {"firm": 88000000, "all": 110000000, "actual": 70000000},
+                         "out": {"firm": 97300000, "all": 210263610, "actual": 90614701}}]}
+        s = digest.track_suggest(K)
+        self.assertTrue(any("예상 포함 출금이 실제보다 57% 많았습니다" in x for x in s), s)
+        self.assertTrue(any("확정이라던 입금이 20% 덜" in x for x in s), s)
 
     def test_quarter_half_and_closing_prep(self):
         self.assertEqual([k for k in area_ids(render(self.jun, "mgmt")) if k.startswith("c")], ["c1", "c2", "c3", "c4"])

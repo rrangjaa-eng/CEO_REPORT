@@ -786,6 +786,9 @@ def render(A, mode):
         from . import areas
         parts = [("sum", "요약 (대표 보고 화면)", "보고 요약", "".join(h[sum_i:]) + "</div>")] + _detail(A)
         parts[-1] = parts[-1][:3] + (parts[-1][3] + "<div class='evid'><span class='doc-end'>끝.</span></div>",)
+        from . import digest   # 쉬운 설명 · 제안 상자 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
+        rk = _risks(A)
+        parts = [(k, lab, g, digest.annual_box(k, A, rk) + body) for k, lab, g, body in parts]
         h = h[:sum_i]
         for i, (k, lab, g, body) in enumerate(parts):
             if i == 1:

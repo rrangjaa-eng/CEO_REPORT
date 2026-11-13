@@ -485,6 +485,11 @@ def render(R, mode):
             ("auto", "A-4 자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None)]
     rest += [("s%d" % i, "B-%d %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
     rest += [(k, lab, G3, b, None) for k, lab, b in _periodic(R, digest.periodic(R))]
+    # 쉬운 설명 · 제안 상자를 모든 장 맨 위에 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
+    R["docs_files"] = R.get("docs_files") or {}
+    one.append(("docs", "자료 안내 (요청 자료 전부)", G0, digest.docs_section(R, I, Lt), None))
+    top = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in top]
+    rest = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in rest]
     allk = one + top + rest
 
     def sec(i):

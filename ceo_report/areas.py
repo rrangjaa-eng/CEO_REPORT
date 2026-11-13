@@ -205,7 +205,8 @@ def strip_ui(page):
     # 자동 분석 영역(2026-11-12 추가)은 새 내용이라 예전과 비교할 때 뺀다
     page = re.sub(r"<section class='area' id='a-auto'.*?</section>", "", page, flags=re.S)
     # 1쪽 요약·본문과 부록 C 정기 절(2026-11-12 추가)도 새 내용이라 뺀다
-    page = re.sub(r"<section class='area' id='a-(?:one|c\d)'.*?</section>", "", page, flags=re.S)
+    page = re.sub(r"<section class='area' id='a-(?:one|docs|c\d)'.*?</section>", "", page, flags=re.S)
+    page = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", page, flags=re.S)   # 쉬운 설명·제안 상자 (2026-11-13)
     page = re.sub(r"<!--ins-->.*?<!--/ins-->|/\*ins\*/.*?/\*/ins\*/", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'><style>.*?</nav></div>", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'>상세자료: .*?</div>", "", page, flags=re.S)
