@@ -171,8 +171,15 @@ async function runScreen(msg) {
     location.hash = want + q;
     await sleep(3500);
   }
+  // 해가 다른 화면이면 받지 않는다 (인사 화면은 탭을 처음 열 때의 해를 씀): 제목 '연말정산현황(2025)' 의 해와 맞춰 본다
+  const ty = (document.title.match(/\((\d{4})\)/) || [])[1];
+  if (msg.year && msg.mod === "humanresource" && ty && +ty !== +msg.year) { autoCap = null; return {ok: false, error: `화면 해가 ${ty}년이라 ${msg.year}년 자료를 못 받음`, got: [], v: BRIDGE_VERSION}; }
   let clicked = false;
-  if (!msg.onOpen) {
+  if (msg.tab) {   // 조회 조건을 스스로 채우는 탭을 누른다 (연말정산현황 '계속근무자')
+    const t = await waitFor(() => [...document.querySelectorAll("button, a")].find((e) =>   // 탭 줄(li)이 아니라 단추를 눌러야 조회됨
+      e.getBoundingClientRect().width > 0 && (e.innerText || "").trim() === msg.tab), 8000);
+    if (t) { t.click(); clicked = true; }
+  } else if (!msg.onOpen) {
     const b = await waitFor(findQueryButton, 8000);
     if (b) { b.click(); clicked = true; }
   }
