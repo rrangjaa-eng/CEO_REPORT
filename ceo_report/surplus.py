@@ -346,8 +346,8 @@ def _tag(state):
     return ""
 
 
-def render(S):
-    """경영관리 보고 한 영역 (HTML 조각)."""
+def render(S, brief=False):
+    """경영관리 보고 한 영역 (HTML 조각). brief=True 면 감면 후보·세법 기준표를 뺀다 (따로 내는 설명 양식용)."""
     if not S:
         return ("<div class='note'>이익잉여금 자료 없음 — 위하고 분개장을 받아 '자료 변환'을 다시 하면 잉여금.csv 가 생깁니다.</div>")
     y, cur = S["year"], S["cur"]
@@ -366,6 +366,8 @@ def render(S):
     h.append("<table class='re'><tr><th>항목</th><th class='l'>쉬운 뜻</th><th>금액</th><th class='l'>근거</th></tr>")
     for k, name, easy, bold in FORM:
         v, st, why = get(k)
+        if k == "차기이월" and v is None and first[0] is not None and not get("처분액")[0]:
+            v, st, why = first[0], first[1], "처분 전이라 전액 이월로 봄 (주총에서 처분을 정하면 바뀜)"
         h.append("<tr%s><td class='l'>%s</td><td class='l'>%s</td><td>%s%s</td><td class='l'><span class='ex'>%s</span></td></tr>"
                  % (" class='g'" if bold else "", esc(name.strip()), esc(easy), W(v), _tag(st if v is None or st == "예상" else ""),
                     esc(why)))
@@ -384,9 +386,10 @@ def render(S):
     from . import dividend
     from . import taxbreak
     h.append(dividend.advice_html(S.get("advice"), esc))
-    h.append(taxbreak.render(S.get("tb"), esc))
-    from . import taxlaw
-    h.append(taxlaw.render(S.get("law"), esc))
+    if not brief:
+        h.append(taxbreak.render(S.get("tb"), esc))
+        from . import taxlaw
+        h.append(taxlaw.render(S.get("law"), esc))
     h.append(dividend.render(S.get("div"), esc))
     # 처리 순서
     h.append("<div class='q'>결산 때 처리 순서</div><ol class='steps'>")
@@ -414,3 +417,59 @@ def live_line(S):
     ni, first = cur.get("당기순이익", (None, "모름", "")), cur.get("미처분", (None, "모름", ""))
     return ("<div class='note'>이익잉여금: %d년 당기순이익 %s원%s · 이번 주총에서 처리할 미처분이익잉여금 %s원%s</div>"
             % (S["year"], W(ni[0]), _tag(ni[1]), W(first[0]), _tag(first[1])))
+
+
+PAGE_CSS = """<style>
+:root{--ink:#1d2433;--sub:#5b6577;--line:#dfe3ea;--soft:#f5f7fa}
+@page{size:A4;margin:14mm 13mm}
+body{background:#fff;color:var(--ink);font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-serif;font-size:13px;line-height:1.55;margin:0 auto;max-width:860px;padding:18px 16px}
+h1{font-size:20px;margin:0 0 2px}.meta{color:var(--sub);font-size:12px;margin-bottom:12px}
+.big{display:flex;gap:10px;margin:10px 0 6px;flex-wrap:wrap}.big div{flex:1 1 180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.big b{display:block;font-size:18px;font-variant-numeric:tabular-nums}.big span{font-size:11.5px;color:var(--sub)}
+.verdict{border-left:4px solid #2656c5;background:var(--soft);padding:8px 12px;margin:10px 0}
+.q{font-weight:700;font-size:14px;margin:16px 0 6px;break-after:avoid}.z{font-weight:400;color:var(--sub);font-size:11.5px}
+.note{color:var(--sub);font-size:12px}
+@media print{body{padding:0}.q{break-after:avoid}}
+</style>"""
+
+
+def page(S, asof, company=""):
+    """이익잉여금 쉬운 설명·처분계산서·결산 처리 제안 한 장짜리 양식 (사용자 2026-11-13: 문서를 양식으로).
+    -> 완성된 HTML 글 또는 None (잉여금 자료 없음)."""
+    if not S:
+        return None
+    y, cur = S["year"], S["cur"]
+    get = lambda k: cur.get(k, (None, "모름", ""))
+    ni, opening, first = get("당기순이익"), get("전기이월"), get("미처분")
+    A = S.get("advice")
+    if A:
+        head = ("배당 %s원 권장" % W(A["amount"]) if A["verdict"] == "배당" else
+                ("이번엔 이월(다음 해로 넘김) 권장" if A["verdict"] == "이월" else "판단 보류 — 아래 '확인할 것'을 채우면 판단합니다"))
+        why = " · ".join(esc(r) for r in (A.get("reasons") or [])[:3])
+    else:
+        head, why = "판단 전 — 월간 보고를 만들면 그때 자금 사정으로 제안합니다", ""
+    h = ["<!doctype html><html lang='ko'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>",
+         "<title>%d년 이익잉여금 설명·처분안</title>" % y, PAGE_CSS, "</head><body>",
+         "<h1>%d년 미처분이익잉여금 쉬운 설명과 결산 처리 제안</h1>" % y,
+         "<div class='meta'>%s기준일 %s · 분개장으로 자동 계산 · 세무사 확인 필요</div>" % (esc(company) + " · " if company else "", asof.isoformat()),
+         "<div class='big'><div><span>작년까지 남긴 돈 (전기이월)</span><b>%s원</b></div>"
+         "<div><span>%d년 번 돈 (당기순이익)%s</span><b>%s원</b></div>"
+         "<div><span>이번 주총에서 처리할 돈</span><b>%s원</b></div></div>"
+         % (W(opening[0]), y, " · 예상" if ni[1] == "예상" else "", W(ni[0]), W(first[0])),
+         "<div class='verdict'><b>제안:</b> %s%s</div>" % (esc(head), ("<br><span class='note'>%s</span>" % why) if why else ""),
+         render(S, brief=True), "</body></html>"]
+    return "".join(h)
+
+
+def write_page(S, out_dir, asof, company=""):
+    """출력/결산/<연도>_이익잉여금_설명.html 저장 -> 경로 또는 None."""
+    html = page(S, asof, company)
+    if not html:
+        return None
+    import os
+    folder = os.path.join(out_dir, "결산")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "%d_이익잉여금_설명.html" % S["year"])
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
