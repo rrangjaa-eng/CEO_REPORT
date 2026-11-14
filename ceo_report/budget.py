@@ -249,9 +249,14 @@ def compute(d, values, year, asof, settings=None):
     rows = [p for p in d.pl if p["source"] == src and p["unit"] == "팀" and p["ym"][:4] == str(base)
             and p["target"] and p["target"] != "팀 미지정"]
     last_m = max([int(p["ym"][5:7]) for p in rows] + [0])
+    done_ym = "%d-12" % base   # 1년 환산(급여·판관비·영업외)에 쓰는 마지막 '끝난 달'
     if asof.year == base:   # 끝난 달만 실적 (기준일이 그 달 말일이면 그 달까지), 남은 달은 예상
         done = asof.month if (asof + dt.timedelta(days=1)).month != asof.month else asof.month - 1
         last_m = min(last_m, done)
+        done_ym = "%d-%02d" % (base, done)
+        if done < 12:   # 연중에 만든 예산 (사용자 2026-11-14: 그 일자 기준으로 맞아야 함)
+            notes.append("%s 기준으로 만든 예산 — %d년 실적은 끝난 달(1~%d월)까지, 남은 달은 이미 받은 일(사전견적)만 넣음. "
+                         "급여·판관비·영업외는 끝난 달 평균으로 1년 환산" % (asof.isoformat(), base, done))
     all_rows = rows
     rows = [p for p in rows if int(p["ym"][5:7]) <= last_m]
     left_unknown = []
@@ -325,7 +330,7 @@ def compute(d, values, year, asof, settings=None):
     base_gp = sum(T[t]["base_gp"] for t in teams)
 
     # 급여·인원 (부서비용.csv)
-    dept = [x for x in (getattr(d, "dept", None) or []) if x["ym"][:4] == str(base)]
+    dept = [x for x in (getattr(d, "dept", None) or []) if x["ym"][:4] == str(base) and x["ym"] <= done_ym]
     last_ym, sal_note = _salary_month(dept)
     if sal_note:
         notes.append(sal_note)
@@ -361,7 +366,8 @@ def compute(d, values, year, asof, settings=None):
     havg = sum(heads) / 12.0
 
     # 그 밖의 판관비 (계정별비용.csv, 판매비와관리비 중 급여·감가상각비 뺀 것)
-    acc = [a for a in (getattr(d, "accounts", None) or []) if a["ym"][:4] == str(base) and a["amount"] is not None]
+    # 진행 중인 달은 비용이 덜 들어와 1년 환산을 낮추므로 끝난 달까지만 (연중에 만든 예산)
+    acc = [a for a in (getattr(d, "accounts", None) or []) if a["ym"][:4] == str(base) and a["ym"] <= done_ym and a["amount"] is not None]
     acc_months = sorted(set(a["ym"] for a in acc))
     n_acc = len(acc_months) or 1
     sal_codes = set(str(S.get("변환_급여계정", "80200")).replace(" ", "").split(",")) | {"80200"}

@@ -281,7 +281,7 @@ def _annual(a):
     stop = gate.check_dir(a.입력, today)   # 연간 대표 보고도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
     if stop:
         _say("연간 대표 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
-    A = annual.compute(a.입력, year, D.settings, D)
+    A = annual.compute(a.입력, year, D.settings, D, today)   # 연중이면 기준일까지 (끝난 달·작년 같은 기간)
     if A["Y"] is None:
         _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
         return 2

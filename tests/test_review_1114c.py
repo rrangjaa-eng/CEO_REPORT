@@ -6,6 +6,7 @@ import csv
 import datetime as dt
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ from ceo_report.data import load  # noqa: E402
 
 SAMPLE = os.path.join(ROOT, "입력양식", "샘플")
 ASOF = dt.date(2026, 11, 6)
+MEND = dt.date(2026, 11, 30)
 
 
 def rows_of(path):
@@ -61,27 +63,28 @@ class Base(unittest.TestCase):
 
 # ───────────── 예산 ─────────────
 class G1SalaryBaseMonth(Base):
+    # 11월 말일 기준 = 11월이 '끝난 달'. 11월 6일 기준이면 11월은 진행 중이라 처음부터 1년 환산에서 빠진다 (MidYearBudget)
     def test_month_without_salary_is_skipped(self):
         """11월 급여 전표가 아직 없으면(급여 0) 10월 급여로 잡는다 — 예전엔 내년 급여 0원."""
-        base = self.B()
+        base = self.B(MEND)
 
         def no_nov_salary(rows):
             for r in rows:
                 if r["연월"] == "2026-11":
                     r["급여"] = "0"
         self.edit("부서비용.csv", no_nov_salary)
-        B = self.B()
+        B = self.B(MEND)
         self.assertEqual(B["last_ym"], "2026-10")
         self.assertEqual(B["sal_last"], base["sal_last"])
         self.assertEqual(B["Y"]["sal"], base["Y"]["sal"])
         self.assertEqual(sum(B["heads0"].values()), 8)
-        self.assertTrue(any("2026-11" in n and "급여" in n for n in B["notes"]), B["notes"])
+        self.assertTrue(any("급여 기준 달" in n and "2026-11" in n for n in B["notes"]), B["notes"])
 
     def test_month_with_one_department_only_is_skipped(self):
         """11월에 경영관리 한 부서 줄만 있으면 그 달은 기준으로 쓰지 않는다 (예전: 급여 300만·인원 1명)."""
-        base = self.B()
+        base = self.B(MEND)
         self.edit("부서비용.csv", lambda rows: [r for r in rows if r["연월"] != "2026-11" or r["부서"] == "경영관리"])
-        B = self.B()
+        B = self.B(MEND)
         self.assertEqual(B["last_ym"], "2026-10")
         self.assertEqual(B["sal_last"], base["sal_last"])
         self.assertEqual(sum(B["heads0"].values()), 8)
@@ -349,3 +352,127 @@ class K7Blank(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ───────────── 연중 기준일 (사용자 2026-11-14: 연간·예산을 연말이 아닌 중도에 받아도 그 일자 기준으로 맞아야 함) ─────────────
+def _annual_input():
+    import annual_sample
+    tmp = tempfile.mkdtemp()
+    inp = os.path.join(tmp, "입력")
+    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_sample.py"), inp], check=True, stdout=subprocess.DEVNULL)
+    annual_sample.extend(inp)
+    return tmp, inp
+
+
+def _csum(inp, year, upto, key):
+    """손익.csv 회사 줄(WEHAGO)을 직접 더한 값 — 프로그램 계산과 따로 맞춰 보는 용도."""
+    n = lambda v: int(str(v).replace(",", "") or 0)
+    _, rows = rows_of(os.path.join(inp, "손익.csv"))
+    return sum(n(r[key]) for r in rows if r["출처"] == "WEHAGO" and r["단위"] == "회사" and r["연월"][:4] == str(year) and int(r["연월"][5:7]) <= upto)
+
+
+class MidYearAnnual(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp, cls.inp = _annual_input()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_period_rule(self):
+        self.assertEqual(annual.period(2026, None), (12, dt.date(2026, 12, 31)))
+        self.assertEqual(annual.period(2026, dt.date(2027, 2, 1)), (12, dt.date(2026, 12, 31)))
+        self.assertEqual(annual.period(2026, dt.date(2026, 11, 14)), (10, dt.date(2026, 11, 14)))
+        self.assertEqual(annual.period(2026, dt.date(2026, 6, 30)), (6, dt.date(2026, 6, 30)))   # 말일이면 그 달까지
+
+    def test_nov14_uses_completed_months_and_same_period_last_year(self):
+        A = annual.compute(self.inp, 2026, {}, None, dt.date(2026, 11, 14))
+        Y, L = A["Y"], A["L"]
+        self.assertEqual(max(Y["months"]), 10)
+        self.assertEqual(max(L["months"]), 10)
+        self.assertEqual(Y["rev"], _csum(self.inp, 2026, 10, "매출"))
+        self.assertEqual(L["rev"], _csum(self.inp, 2025, 10, "매출"))   # 작년도 1~10월 (예전: 작년 한 해와 비교)
+        # 통장: 기준일(11/14)까지의 마지막 잔액 = 10/28, 11월 뒤 칸은 비움
+        self.assertEqual(A["bal_end"], A["bal_m"][9])
+        self.assertTrue(all(v is None for v in A["bal_m"][10:]))
+        # 결산 확정치(한 해 것)는 쓰지 않고 예상, 감가상각비는 월간처럼 한 해 예상을 먼저 뺌 — 작년 같은 기간도 같은 방식
+        self.assertFalse(A["tax_fixed"])
+        self.assertEqual(Y["dep_pending"], A["dep_est"])
+        self.assertEqual(L["dep_pending"], A["Lfull"]["dep"])
+        self.assertEqual(A["tax"], A["tax_est"])   # 1~10월 세전 이익 기준 예상
+
+    def test_nov14_render_labels(self):
+        A = annual.compute(self.inp, 2026, {}, None, dt.date(2026, 11, 14))
+        for mode in ("ceo", "mgmt"):
+            h = annual.render(A, mode)
+            self.assertIn("2026-11-14", h)
+            self.assertIn("2026-10-31", h)            # 손익 집계 기간 끝
+            self.assertIn("2026년 1~10월 매출", h)
+            self.assertNotIn("연말 통장 잔액", h)
+            self.assertIn("기간 비례", h)
+            self.assertNotIn("<td>2026-12-31</td>", h)
+        mg = annual.render(A, "mgmt")
+        self.assertIn("1~10월 이익 기준 예상", mg)
+        self.assertNotIn("12월 결산 전표가 아직 없음", mg)   # 연중엔 '높음' 위험이 아님
+
+    def test_june_blanks_months_not_ended(self):
+        A = annual.compute(self.inp, 2026, {}, None, dt.date(2026, 6, 15))
+        self.assertEqual(A["cut"], 5)
+        self.assertEqual(A["Y"]["rev"], _csum(self.inp, 2026, 5, "매출"))
+        self.assertEqual(A["L"]["rev"], _csum(self.inp, 2025, 5, "매출"))
+        self.assertTrue(all(v is None for v in A["bal_m"][5:]))
+        for T in A["teams"]:
+            self.assertEqual(T["q"][2], (None, None))   # 3분기는 아직 시작 전 (0원으로 보이지 않게)
+            self.assertEqual(T["q"][3], (None, None))
+        self.assertTrue(all(v is None for v in A["Y"]["buy_m"][5:]))
+        h = annual.render(A, "mgmt")
+        self.assertIn("6월부터는 아직 끝나지 않은 달", h)
+
+    def test_after_year_end_is_unchanged(self):
+        a, b = annual.compute(self.inp, 2026, {}), annual.compute(self.inp, 2026, {}, None, dt.date(2027, 2, 1))
+        for k in ("rev", "op", "pre"):
+            self.assertEqual(a["Y"][k], b["Y"][k])
+            self.assertEqual(a["L"][k], b["L"][k])
+        self.assertEqual((a["tax"], a["bal_end"], a["cut"]), (b["tax"], b["bal_end"], 12))
+        self.assertIn("연말 통장 잔액", annual.render(b, "ceo"))
+
+    def test_projects_after_cut_not_counted(self):
+        projs = {"P1": {"프로젝트명": "가", "팀": "기획1팀", "행사일": "2026-05-01"},
+                 "P2": {"프로젝트명": "나", "팀": "기획1팀", "행사일": "2026-11-05"}}
+        pl = [{"출처": "WEHAGO", "연월": "2026-05", "단위": "프로젝트", "대상": "P1 x", "매출": "100", "직접비": "60"},
+              {"출처": "WEHAGO", "연월": "2026-11", "단위": "프로젝트", "대상": "P2 x", "매출": "100", "직접비": "60"}]
+        self.assertEqual(len(annual._projects(pl, projs, "2026", "2025", {})["list"]), 2)
+        self.assertEqual([x["id"] for x in annual._projects(pl, projs, "2026", "2025", {}, 10)["list"]], ["P1"])
+
+    def test_cli_passes_today(self):
+        out = os.path.join(self.tmp, "출력")
+        env = dict(os.environ)
+        env["CEO_REPORT_TEST_GATE_OFF"] = "1"
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "보고서.py"), "연간", "--기준일", "2026-11-14", "--입력", self.inp, "--출력", out,
+                            "--pdf", "안함"], capture_output=True, text=True, env=env, cwd=ROOT)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(os.path.join(out, "2026_연간_경영관리보고.html"), encoding="utf-8") as f:
+            self.assertIn("2026-01-01 ~ 2026-10-31", f.read())
+
+
+class MidYearBudget(Base):
+    def test_partial_month_costs_not_annualized(self):
+        """11월 6일에 만든 예산: 진행 중인 11월(비용 일부만 들어옴)은 판관비 1년 환산에서 뺀다."""
+        base = self.B()
+
+        def add_partial_nov(rows):
+            extra = [dict(r, 연월="2026-11", 금액="1000") for r in rows if r["연월"] == "2026-10"]
+            return rows + extra
+        self.edit("계정별비용.csv", add_partial_nov)
+        B = self.B()
+        self.assertEqual(B["sga"], base["sga"])
+        self.assertEqual(B["Y"]["nout"], base["Y"]["nout"])
+        self.assertTrue(any("끝난 달(1~10월)" in n for n in B["notes"]), B["notes"])
+        # 11월 말일에 만들면 11월이 끝난 달이라 들어간다 (그만큼 1년 환산이 바뀜)
+        self.assertNotEqual(self.B(MEND)["sga"], base["sga"])
+
+    def test_partial_month_salary_not_used(self):
+        """11월 6일 기준: 11월 급여 줄이 있어도 진행 중인 달이라 급여 기준 달은 10월."""
+        B = self.B()
+        self.assertEqual(B["last_ym"], "2026-10")
