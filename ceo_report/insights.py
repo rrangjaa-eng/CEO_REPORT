@@ -25,7 +25,7 @@ import os
 import re
 import statistics
 
-from .calc import counts_in, unissued_due, with_vat
+from .calc import counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -191,13 +191,9 @@ def _last(R):
     return per[-1] if per else None
 
 
-MUST_WORDS = ("급여", "인건비", "회사부담금", "4대보험", "세금", "부가세", "원천세", "법인세", "지방소득세", "차입금", "대출", "이자")
-
-
 def _is_must(e):
-    """꼭 나갈 돈: 급여(4대보험 포함)·세금·대출 원금·이자 (사용자 2026-11-12)."""
-    cat = str(e.get("cat") or "")
-    return e.get("io") == "out" and any(w in cat for w in MUST_WORDS)
+    """꼭 나갈 돈: 급여(4대보험 포함)·세금·대출 원금·이자 (사용자 2026-11-12). 판정은 calc.must_pay 한 곳 (2026-11-14 K1)."""
+    return must_pay(e, card=False, loans=True)
 
 
 def _next_month_end(d):

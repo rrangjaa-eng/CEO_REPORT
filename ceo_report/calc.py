@@ -917,26 +917,31 @@ def period_ends(kind, asof, payday=None):
 MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금")
 MUST_CAT_EXTRA = ("세금", "회사부담금")
 MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
+LOAN_WORDS = ("차입금", "대출", "이자")
 
 
-def must_pay(ev):
+def must_pay(ev, card=True, loans=False):
     """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급.
     날짜·금액이 거의 정해진 돈이라 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
 
     · 프로그램이 장부로 계산한 줄(세금예상): 세목으로.
     · 손으로 넣은 일정: 분류에 세목 낱말(세금 맞추기와 같은 낱말)이 있거나 거래처가 세무서·구청·공단·카드사.
-    정기예금 가입·프로젝트 원가·남은 예산·입금은 아니다."""
+    정기예금 가입·프로젝트 원가·남은 예산·입금은 아니다.
+
+    '꼭 나갈 돈' 판정은 여기 한 곳 (2026-11-14 K1). 기간 뒤 떼어 보는 줄(사용자 2026-11-12: 급여·4대보험·세금·대출 원금·이자)은
+    card=False, loans=True 로 같은 낱말을 쓴다."""
     from .tax import KEYWORDS, NOT_TAX
     if ev.get("io") != "out":
         return False
+    kinds = [k for k in MUST_KINDS if card or k != "카드대금"]
     if ev.get("source") == "세금예상":
-        return (ev.get("kind") or str(ev.get("cat") or "").split(" (")[0]) in MUST_KINDS
+        return (ev.get("kind") or str(ev.get("cat") or "").split(" (")[0]) in kinds
     if ev.get("source") in NOT_TAX:
         return False
     cat = "".join(str(ev.get("cat") or "").split())
     vendor = "".join(str(ev.get("desc") or "").split())
-    words = [w for k in MUST_KINDS for w in KEYWORDS.get(k, ())] + list(MUST_CAT_EXTRA)
-    return any(w in cat for w in words) or any(w in vendor for w in MUST_VENDOR) or vendor.endswith("카드")
+    words = [w for k in kinds for w in KEYWORDS.get(k, ())] + list(MUST_CAT_EXTRA) + (list(LOAN_WORDS) if loans else [])
+    return any(w in cat for w in words) or any(w in vendor for w in MUST_VENDOR) or (card and vendor.endswith("카드"))
 
 
 def mark_must(events, tax_info=None):
@@ -1249,10 +1254,11 @@ def risks(R):
                 "%s %s: 입금예정일 %s에서 %d일 경과, 미수 %s원." % (v["project"], v["client"], d2s(v["due"]),
                                                        v["overdue_days"], won(v["outstanding"])),
                 "거래처 담당자에게 지급 일정 확인, 필요 시 공문 발송.")
-    for x in R["s5"]["unissued_aged"]:
-        if x["unissued_days"] >= ui_days:
-            add("중간", "수금", "%s %s: 완료 후 %d일, 미발행 %s원." % (x["P"]["id"], x["P"]["name"], x["unissued_days"],
-                                                          won(x["unissued"])),
+    # 미발행은 대표 보고 칸·계산서 발행 기한과 같은 기준 (행사 후 · 사전견적/확정 견적 − 발행, 2026-11-14 K1)
+    for y in R["s5"]["event_unissued"]["rows"]:
+        if y["days"] >= ui_days:
+            add("중간", "수금", "%s %s: 행사 후 %d일, 미발행 %s원 (받을 돈 %s원, 부가세 포함)." % (
+                y["P"]["id"], y["P"]["name"], y["days"], won(y["unissued"]), won(with_vat(y["unissued"]))),
                 "발행 조건(검수·정산) 확인 후 계산서 발행.")
     s7 = R["s7"]
     if s7["unlinked_txn_total"] or R["s3"]["unlinked_total"]:

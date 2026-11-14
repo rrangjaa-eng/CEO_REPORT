@@ -411,5 +411,34 @@ class TestCeoWording(unittest.TestCase):
             self.assertEqual(numbers_of(ceo), numbers_of(mgmt), kind)
 
 
+# ───────────── K1: 같은 개념은 한 곳에서 (꼭 나갈 돈 판정 · 미발행) ─────────────
+class TestK1OnePlace(unittest.TestCase):
+    def test_must_pay_words_are_shared(self):
+        """'꼭 나갈 돈' 판정이 큰 숫자(calc.must_pay)와 기간 뒤 떼어 보는 줄(insights._is_must)에서 낱말이 달라
+        '부가가치세'·'국민건강보험공단'을 한쪽만 알아보던 것 → 한 함수. 다른 점은 둘뿐: 카드는 큰 숫자에만(D1), 대출은 떼어 보는 줄에만(사용자 2026-11-12)."""
+        from ceo_report import insights
+        def ev(cat, desc=""):
+            return dict(_ev(D(2026, 12, 10), "out", 100, cat=cat), desc=desc)
+        for e in (ev("부가가치세"), ev("기타", "국민건강보험공단"), ev("인건비"), ev("급여"), ev("세금")):
+            with self.subTest(cat=e["cat"], desc=e["desc"]):
+                self.assertTrue(_calc.must_pay(e))
+                self.assertTrue(insights._is_must(e))
+        card, loan = ev("카드대금", "신한카드"), ev("차입금 상환")
+        self.assertTrue(_calc.must_pay(card))
+        self.assertFalse(insights._is_must(card))
+        self.assertFalse(_calc.must_pay(loan))
+        self.assertTrue(insights._is_must(loan))
+        for e in (ev("프로젝트 남은 예산"), dict(ev("임차료"), io="in")):
+            self.assertFalse(_calc.must_pay(e))
+            self.assertFalse(insights._is_must(e))
+
+    def test_unissued_risk_uses_the_same_basis_as_the_ceo_card(self):
+        """미발행이 위험 분석에선 계약금액 기준 6,000만, 대표 칸·발행 기한에선 사전견적 기준 4,500만(받을 돈 4,950만)으로 달랐던 것
+        → 위험 분석도 행사 후 미발행(사전견적·확정 견적 기준) 하나로."""
+        R = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))
+        facts = [r["fact"] for r in R["risks"] if r["area"] == "수금" and "미발행" in r["fact"]]
+        self.assertEqual(facts, ["P26205 E사 파트너 포럼: 행사 후 48일, 미발행 45,000,000원 (받을 돈 49,500,000원, 부가세 포함)."])
+
+
 if __name__ == "__main__":
     unittest.main()
