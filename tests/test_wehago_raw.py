@@ -72,6 +72,11 @@ class Raw(unittest.TestCase):
         with unittest.mock.patch.object(wehago_raw, "_pick", lambda F_, kind: [(2026, {"응답": [inc, dict(inc), other]})]):
             _, out = wehago_raw._withholding(F)
         self.assertEqual(sorted(out), [(2026, "00001", "2026-01", 300000, 30000), (2026, "00003", "2026-01", 300000, 30000)])
+        wrapped = {"path": "/smarta/swym0107/emp/income", "cd_emp": "00001", "rowid": None,
+                   "data": {"data": {"group1": inc["data"]["group1"]}}}   # 감싼 모양만 다른 중복 (행 번호 없는 첫 응답)
+        with unittest.mock.patch.object(wehago_raw, "_pick", lambda F_, kind: [(2026, {"응답": [wrapped, inc]})]):
+            _, out = wehago_raw._withholding(F)
+        self.assertEqual(out, [(2026, "00001", "2026-01", 300000, 30000)])
 
     def test_employees(self):
         e = w.employees(self.F)
