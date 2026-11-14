@@ -67,6 +67,10 @@ def convert_items(tables, cross, notes):
             out.append({"id": "카드|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
                         "title": "카드 전표를 아직 넣지 않은 달이 있음 (빠진 카드는 최근 3달 평균으로 예상)",
                         "detail": n.replace("[확인] ", ""), "choices": ["명세서 오면 확정 금액 넣음", "확인함"]})
+        if n.startswith("[확인] 통장 줄만 있는 전표"):   # 2026-11-14: 적요 대신 계정으로 판단하려면 상대 계정 줄이 필요
+            out.append({"id": "통장만|%s" % _h(n), "kind": "전표 입력", "date": "", "amount": None, "vendor": "",
+                        "title": "통장 줄만 있는 전표가 있음 (상대 계정 줄을 넣어 주세요)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
     return out
 
 
