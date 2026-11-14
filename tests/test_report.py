@@ -21,6 +21,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num, pct  # noqa: E402
@@ -38,7 +39,7 @@ def numbers_of(html):
     # 경영관리 1쪽 요약·본문(2026-11-12)은 같은 숫자를 다시 모아 보이는 곳이라 뺀다 (대표용에는 없음)
     html = re.sub(r"<section class='area' id='a-(?:one|docs)'.*?</section>", "", html, flags=re.S)
     html = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", html, flags=re.S)   # 쉬운 설명·제안 상자는 경영관리용에만
-    html = html.split("<div class='toc'>")[0]
+    html = old_view(html).split("<div class='toc'>")[0]
     html = re.sub(r" data-label='[^']*'|<div class='apager'>.*?</div>", "", html, flags=re.S)   # 영역 이름(부록 A-1 등)은 화면 장치
     html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
     html = re.sub(r"<div id='xchk-detail'>.*?<!-- /xchk-detail -->", "", html, flags=re.S)
@@ -70,7 +71,7 @@ def probe_folder(test, filename, mutate):
 
 
 def first_screen(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 def section(html, n):
@@ -526,6 +527,7 @@ class TestUnknownAmountsAndPastDue(Base):
 
 def _risk_part(html):
     """경영관리용 위험 분석 묶음 (제목부터 1번 상세자료 앞까지)."""
+    html = old_view(html)   # 주제별 묶기(2026-11-14): 위험 분석 전체 표는 부록 '전체 표 모음'
     return html[html.index("<h2 id='risk'>"):html.index("<h2 id='s1'>")]
 
 

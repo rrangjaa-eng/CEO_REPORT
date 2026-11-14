@@ -20,6 +20,7 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
@@ -178,7 +179,7 @@ class TestOutflowFileUnusable(unittest.TestCase):
 
 
 def fs_of(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 def tr_avail_rows(html):
