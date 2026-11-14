@@ -493,7 +493,7 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         # ⑥ 누적 실적(앞으로 들어올 매출 포함)은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
         self.assertIn(".fs.mon .sec.pgb{break-before:page}", mon)
         self.assertEqual(mon.count("<div class='sec pgb'><div class='q'>6."), 1)
-        self.assertIn("10월말 통장 잔액", mon)   # 1쪽 맨 위 한눈에 칸
+        self.assertIn("10월말 쓸 수 있는 돈", mon)   # 1쪽 맨 위 한눈에 칸 (2026-11-14 P5: 통장 잔액 → 쓸 수 있는 돈)
         # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
         self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)
 

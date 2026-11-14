@@ -9,7 +9,7 @@ import re
 from collections import OrderedDict
 
 from .util import won, man, pct, d2s, esc, ssum, date as parse_date
-from .calc import _event_date, counts_in, unissued_due
+from .calc import _event_date, _month_end, counts_in, unissued_due
 from . import areas
 
 CSS = """
@@ -683,10 +683,10 @@ def _ev_tags(R, sec_no):
     return [n for n, _, _ in evidence_index(R) if n.split("-")[0] == str(sec_no)]
 
 
-def _flow_card(s1, per):
-    """월간: 기간 시작 잔액 + 입금 − 지급 = 기간 말 잔액 (계좌 간 이체 제외)."""
+def _flow_card(s1, per, end="월말"):
+    """월간: 기간 시작 잔액 + 입금 − 지급 = 기간 말 잔액 (계좌 간 이체 제외). end = 끝 날 이름 (월 중간이면 '11/14', P6)."""
     cells = [("월초 잔액", W(s1["start_calc"]), ""), ("+", None, ""), ("입금", W(s1["in"]), " vin"), ("−", None, ""),
-             ("지급", W(s1["out"]), " vout"), ("=", None, ""), ("월말 잔액", W(s1["end"]), "")]
+             ("지급", W(s1["out"]), " vout"), ("=", None, ""), ("%s 잔액" % end, W(s1["end"]), "")]
     h = ["<div class='card flow'>"]
     for lab, v, cls in cells:
         h.append("<div class='op'>%s</div>" % lab if v is None else
@@ -1561,19 +1561,28 @@ def _vkey(name):
 
 
 def _vs_last_week(R, P, mode="ceo"):
-    """지난주 대비 한 줄 (사용자 2026-11-05): 지난주 출금일(이번 출금일 − 7일)에 통장에서 실제로 나간 돈 vs 이번 출금 목록.
-    거래처로 짝지어 빠진 것·추가된 것·변동된 것의 건수와 금액만. 건별 표는 경영관리용에만."""
+    """지난주 대비 한 줄 (사용자 2026-11-05, 2026-11-14 '같은 범위로 바꾸기'): 지난주 출금일로 끝나는 7일 동안 지난주 출금 목록
+    거래처에 통장에서 실제로 나간 돈 vs 이번 출금 목록. 카드·세금 자동 출금(calc.auto_debit)은 두 쪽 모두 뺀다.
+    거래처로 짝지어 빠진 것·추가된 것·변동된 것의 건수와 금액만. 건별 표와 비교 범위 풀이는 경영관리용에만."""
+    from .calc import auto_debit
+    norm_vendor = _vkey   # 변환의 거래처 정규화와 같은 규칙
     L = R.get("last_pay")
     if L is None:
         day = (R.get("payday") or R["asof"]) - dt.timedelta(days=7)
-        return "<div class='wchg'>%s</div>" % esc("지난주 대비: 지난주(%s) 출금 자료 없음 — 장부가 그날까지 들어오면 비교함" % _md(day))
+        return "<div class='wchg'>%s</div>" % esc("지난주 대비: 지난주(%s~%s) 출금 자료 없음 — 장부가 그날까지 들어오면 비교함"
+                                                 % (_md(day - dt.timedelta(days=6)), _md(day)))
+    week = "%s~%s" % (_md(L["start"]), _md(L["date"])) if L.get("start") else _md(L["date"])
+    auto = [e for e in P["rows"] if auto_debit(e)]
     prev, cur = OrderedDict(), OrderedDict()
     for r in L["rows"]:
-        prev.setdefault(_vkey(r["vendor"]), [r["vendor"], 0, 0])
-        prev[_vkey(r["vendor"])][1] += r["amount"]
-        prev[_vkey(r["vendor"])][2] += 1
+        prev.setdefault(norm_vendor(r["vendor"]), [r["vendor"], 0, 0])
+        prev[norm_vendor(r["vendor"])][1] += r["amount"]
+        prev[norm_vendor(r["vendor"])][2] += 1
+    skip = set(id(e) for e in auto)
     for e in P["rows"]:
-        k = _vkey(e.get("desc"))
+        if id(e) in skip:
+            continue
+        k = norm_vendor(e.get("desc"))
         cur.setdefault(k, [e.get("desc") or "", 0, 0])
         cur[k][1] += e["amount"] or 0
         cur[k][2] += 1
@@ -1594,17 +1603,23 @@ def _vs_last_week(R, P, mode="ceo"):
         rs = [r for r in rows if r[0] == kind]
         if rs:
             parts.append("%s %d건 %s" % (kind, sum(r[4] for r in rs), sgn(sum((r[3] or 0) - (r[2] or 0) for r in rs))))
+    parts.append("카드·세금 자동 출금은 빼고 비교")
     cur_total = sum(v[1] for v in cur.values())
-    top = "지난주(%s) 출금 %s → 이번 출금 %s (%s)" % (_md(L["date"]), won(L["total"]), won(cur_total),
+    top = "지난주(%s) 출금 %s → 이번 출금 %s (%s)" % (week, won(L["total"]), won(cur_total),
                                                  sgn(cur_total - L["total"]) if cur_total != L["total"] else "변동 없음")
-    h = "<div class='wchg'>지난주 대비: %s%s</div>" % (esc(top), esc(" · " + " · ".join(parts)) if parts else "")
-    if rows:
-        body = "".join("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
-            esc(k), esc(nm), "" if a is None else esc(won(a)), "" if b is None else esc(won(b)), esc(sgn((b or 0) - (a or 0))))
-            for k, nm, a, b, n in rows)
-        h += _mg(mode, "<div class='wsub'>지난주(%s 통장 출금) 대비 건별</div>"
-                 "<table class='pt xr'><thead><tr><th>구분</th><th>거래처</th><th>지난주</th><th>이번</th><th>차이</th></tr></thead>"
-                 "<tbody>%s</tbody></table>" % (esc(_md(L["date"])), body))
+    h = "<div class='wchg'>지난주 대비: %s%s</div>" % (esc(top), esc(" · " + " · ".join(parts)))
+    basis = ("지난주 = %s 통장 출금 중 %s 보고 출금 목록에 있던 거래처 것" % (week, _md(L["prev_asof"])) if L.get("listed")
+             else "지난주 보고 기록이 없어 그 주 통장 출금 전체와 비교")
+    basis += " · 계좌 간 이체·카드대금·세금·4대보험 자동 출금은 뺌"
+    if auto:
+        basis += " · 이번 목록의 카드대금·세금·4대보험 %d건 %s은 비교에서 뺌" % (len(auto), won(sum(e["amount"] or 0 for e in auto)))
+    body = "".join("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+        esc(k), esc(nm), "" if a is None else esc(won(a)), "" if b is None else esc(won(b)), esc(sgn((b or 0) - (a or 0))))
+        for k, nm, a, b, n in rows)
+    h += _mg(mode, "<div class='note'>%s</div>" % esc(basis) + (
+        "<div class='wsub'>지난주(%s 통장 출금) 대비 건별</div>"
+        "<table class='pt xr'><thead><tr><th>구분</th><th>거래처</th><th>지난주</th><th>이번</th><th>차이</th></tr></thead>"
+        "<tbody>%s</tbody></table>" % (esc(week), body) if rows else ""))
     return h
 
 
@@ -2491,7 +2506,8 @@ def _first_screen(R, mode, per):
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:
         # 1쪽 자금(흐름·앞으로) · 2쪽 ③ 지난 미처리 · ④ 세금 · ⑤ 이번 달 실적(월별 흐름 그림 포함) · 3쪽 누적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
-        blocks = ([("이번 달 자금 흐름", _flow_card(s1, per))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
+        p1 = R["period"][1]
+        blocks = ([("이번 달 자금 흐름", _flow_card(s1, per, "월말" if p1 == _month_end(p1) else _md(p1)))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
                      ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
@@ -2596,8 +2612,13 @@ def _mon_strip(R, mode="ceo", tax=""):
     s1, s5 = R["s1"], R["s5"]
     ym = _ym_text(R["s4"]["ym"])
     ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
-    # 통장 잔액·영업이익 칸 아래 풀이는 ①·⑤와 겹쳐 뺌 (사용자 2026-11-05)
-    cells = [("%s말 통장 잔액" % ym, W(s1["end"]), "")]
+    # 영업이익 칸 아래 풀이는 ⑤와 겹쳐 뺌 (사용자 2026-11-05)
+    # 첫 칸은 쓸 수 있는 돈 (2026-11-14 P5: 통장 잔액엔 행사 전용 등 쓸 수 없는 돈이 들어 있어 여유 자금 출발점과 달랐음).
+    # 쓸 수 없는 돈이 있으면 ①의 통장 잔액과 왜 다른지 밑에 한 줄
+    foot = ""
+    if s1["available"] is not None and s1["restricted"]:
+        foot = "통장 잔액 %s − %s %s" % (won(s1["total"]), RESTRICT_CEO if mode == "ceo" else "사용제한", won(s1["restricted"]))
+    cells = [("%s 쓸 수 있는 돈" % _month_end_label(R, "현재"), W(s1["available"]), foot)]
     if ps:
         a = ps[-1]["firm"]["avail"]
         ea = ps[-1]["spend"]["avail"]
@@ -2605,9 +2626,19 @@ def _mon_strip(R, mode="ceo", tax=""):
                       "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a))), "",
                       _avail_foot(mode, "" if ea is None or ea == a else "%s %s" % (EST_SPEND, won(ea)), tax)))
     rev, np_ = _month_rev_np(R)
-    cells.append(("%s 영업이익" % ym, W(np_, "확인 필요"), ""))
+    p1 = R["period"][1]
+    upto = "" if p1 == _month_end(p1) else " (%s까지)" % _md(p1)   # 월 중간에 만든 월간 (2026-11-14 P6)
+    cells.append(("%s 영업이익%s" % (ym, upto), W(np_, "확인 필요"), ""))
     cells.append(_overdue_cell(s5))
     return _strip(cells)
+
+
+def _month_end_label(R, now=""):
+    """월간의 '월말' 이름 (2026-11-14 P6): 기간 끝이 그 달 말일이면 '10월말', 월 중간에 만들었으면 '11/14' (+ now)."""
+    p1 = R["period"][1]
+    if p1 == _month_end(p1):
+        return "%s말" % _ym_text(R["s4"]["ym"])
+    return ("%s %s" % (_md(p1), now)).strip()
 
 
 def _month_rev_np(R):

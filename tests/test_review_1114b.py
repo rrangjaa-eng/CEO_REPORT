@@ -591,5 +591,147 @@ class TestP3CorpTaxLine(unittest.TestCase):
         self.assertIn("세무조정 미반영", m)
 
 
+
+class TestP5P6MonthStrip(unittest.TestCase):
+    """P5: 월간 첫 칸 '통장 잔액'에 쓸 수 없는 돈(샘플 행사 전용 3,000만)이 들어 있어 여유 자금 계산과 출발점이 달랐던 것.
+    P6: 월 중간(11/14)에 만든 월간 보고가 '11월말 통장 잔액'·'월말 잔액'으로 적히던 것 (실제는 11/14 잔액)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from ceo_report.render import render
+        S = load(SAMPLE_DIR)
+        cls.end = dict((m, render(compute(S, "monthly", D(2026, 10, 31)), m)) for m in ("ceo", "mgmt"))
+        cls.mid = dict((m, render(compute(S, "monthly", D(2026, 11, 14)), m)) for m in ("ceo", "mgmt"))
+
+    @staticmethod
+    def first_cell(h):
+        top = h[h.index("<div class='four top'>"):]
+        return top[:top.index("</div></div>") + 12]
+
+    def test_p5_first_cell_is_usable_money(self):
+        for m, h in self.end.items():
+            c = self.first_cell(h)
+            self.assertIn("<div class='lab'>10월말 쓸 수 있는 돈</div>", c, m)
+            self.assertIn("544,600,000", c, m)   # 통장 574,600,000 − 행사 전용 30,000,000
+            self.assertIn("통장 잔액 574,600,000 − %s 30,000,000" % ("쓸 수 없는 돈 (담보·전용)" if m == "ceo" else "사용제한"), c, m)
+            self.assertNotIn("10월말 통장 잔액", h, m)
+
+    def test_p6_mid_month_says_the_date(self):
+        for m, h in self.mid.items():
+            self.assertIn("<div class='lab'>11/14 현재 쓸 수 있는 돈</div>", self.first_cell(h), m)
+            self.assertNotIn("11월말", h, m)
+            self.assertNotIn("월말 잔액", h, m)
+            self.assertIn("11/14 잔액", h, m)
+            self.assertIn("11월 영업이익 (11/14까지)", h, m)
+        for m, h in self.end.items():   # 말일에 만든 월간은 그대로
+            self.assertIn("월말 잔액", h, m)
+            self.assertNotIn("(10/31까지)", h, m)
+
+
+def _bt(day, amount, vendor="가", memo="", io="출금", cat=""):
+    return {"date": day, "io": io, "amount": amount, "cat": cat, "vendor": vendor, "memo": memo}
+
+
+class TestLastWeekSameScope(unittest.TestCase):
+    """지난주 대비 (사용자 2026-11-14 '같은 범위로 바꾸기'): 지난주 출금 목록에 있던 거래처가 그 주 통장에서 실제로 나간 금액과
+    이번 목록을 견준다. 카드·세금 자동 출금은 비교에서 뺀다. 전에는 지난 금요일 하루의 통장 출금 전체(카드대금 포함)와 견줘
+    카드대금이 '빠진 것'으로 나오고, 목요일에 낸 주는 '지난주 0원'처럼 보였다."""
+
+    def test_auto_debits(self):
+        from ceo_report.calc import auto_debit
+        out = lambda vendor="", memo="": {"io": "out", "desc": vendor, "cat": memo}
+        for ev in (out("신한_5860"), out("롯데 1842"), out("신한카드", "10월 카드대금"), out("", "부가세 납부"),
+                   out("강남세무서"), out("국민건강보험공단"), out("", "4대보험"), out("", "회사부담금"),
+                   {"io": "out", "source": "세금예상", "kind": "카드대금", "cat": "카드대금 (신한)", "desc": ""},
+                   {"io": "out", "source": "세금예상", "kind": "원천세", "cat": "원천세", "desc": ""}):
+            self.assertTrue(auto_debit(ev), ev)
+        for ev in (out("(주)가상음향", "행사 음향 용역"), out("홍길동", "10월 급여"), out("건물관리", "10월 임차료"),
+                   {"io": "out", "source": "세금예상", "kind": "급여", "cat": "급여", "desc": ""},
+                   {"io": "in", "desc": "신한_5860", "cat": ""}):
+            self.assertFalse(auto_debit(ev), ev)   # 급여는 출금 목록에도 오르는 지급이라 비교에 남긴다
+
+    def test_whole_week_without_transfers_and_auto_debits(self):
+        from ceo_report.calc import last_payday_out
+        txns = [_bt(D(2026, 11, 6), 100, "가상음향"),   # 지난주 목요일 (금요일 대신 낸 주)
+                _bt(D(2026, 11, 7), 50, "나무조명"),
+                _bt(D(2026, 10, 31), 9, "지지난주"),
+                _bt(D(2026, 11, 7), 30, "", "", cat="계좌간이체"),
+                _bt(D(2026, 11, 7), 70, "신한_5860", "카드대금"),
+                _bt(D(2026, 11, 3), 20, "강남세무서", "원천세"),
+                _bt(D(2026, 11, 5), 8, "가상음향", io="입금"),
+                _bt(D(2026, 11, 13), 1, "이번주")]
+        L = last_payday_out(txns, D(2026, 11, 14))
+        self.assertEqual((L["start"], L["date"], L["listed"]), (D(2026, 11, 1), D(2026, 11, 7), False))
+        self.assertEqual(sorted(r["vendor"] for r in L["rows"]), ["가상음향", "나무조명"])
+        self.assertEqual(L["total"], 150)
+        self.assertIsNone(last_payday_out(txns[2:3], D(2026, 11, 14)))   # 통장 자료가 지난 출금일까지 오지 않음
+
+    def _prev(self, asof):
+        row = lambda day, desc, amount, firm=True: {"date": day, "io": "out", "desc": desc, "amount": amount, "firm": firm,
+                                                    "project": "", "cat": "미지급금"}
+        return {"asof": asof, "rows": [row(D(2026, 11, 7), "㈜ 가상음향", 100),
+                                       row(D(2026, 11, 7), "예상업체", 5, firm=False),     # 예상은 출금 목록에 없었음
+                                       row(D(2026, 11, 7), "미확인업체", None),           # 금액 미확인도 목록에 없었음
+                                       row(D(2026, 11, 12), "다음주업체", 5)]}           # 지난 출금일 뒤 = 그 주 목록 아님
+
+    def test_only_vendors_that_were_on_last_weeks_list(self):
+        from ceo_report.calc import last_payday_out
+        txns = [_bt(D(2026, 11, 6), 100, "(주)가상음향"), _bt(D(2026, 11, 4), 40, "급한지급"),
+                _bt(D(2026, 11, 7), 5, "예상업체"), _bt(D(2026, 11, 7), 3, "미확인업체"), _bt(D(2026, 11, 7), 5, "다음주업체")]
+        L = last_payday_out(txns, D(2026, 11, 14), self._prev(D(2026, 11, 6)))
+        self.assertEqual((L["listed"], L["prev_asof"]), (True, D(2026, 11, 6)))
+        self.assertEqual([r["vendor"] for r in L["rows"]], ["(주)가상음향"])
+        self.assertEqual(L["total"], 100)
+        # 금요일(10/31)에 만든 보고는 다음 금요일(11/7) 목록이라 지난주 목록이다
+        self.assertTrue(last_payday_out(txns, D(2026, 11, 14), self._prev(D(2026, 10, 31)))["listed"])
+        # 지지난주(10/30, 출금일 10/31)에 만든 기록이면 지난주 목록이 아니다 → 그 주 통장 출금 전체 (자동 출금만 뺌)
+        L = last_payday_out(txns, D(2026, 11, 14), self._prev(D(2026, 10, 30)))
+        self.assertFalse(L["listed"])
+        self.assertEqual(L["total"], 153)
+
+    def test_line_names_the_week_and_leaves_out_auto_debits(self):
+        import re
+        from ceo_report.render import _vs_last_week
+        R = {"asof": D(2026, 11, 13), "payday": D(2026, 11, 14),
+             "last_pay": {"start": D(2026, 11, 1), "date": D(2026, 11, 7), "listed": True, "prev_asof": D(2026, 11, 6),
+                          "rows": [{"vendor": "가상음향", "amount": 100, "memo": ""}], "total": 100}}
+        P = {"rows": [{"desc": "가상음향", "amount": 120, "cat": "미지급금", "io": "out", "source": "자금계획서"},
+                      {"desc": "강남세무서", "amount": 70, "cat": "원천세", "io": "out", "source": "자금계획서"},
+                      {"desc": "", "amount": 30, "cat": "카드대금 (신한)", "io": "out", "source": "세금예상", "kind": "카드대금"}]}
+        text = lambda h: re.sub(r"<[^>]+>", " ", h)
+        ceo = text(_vs_last_week(R, P, "ceo"))
+        self.assertIn("지난주 대비: 지난주(11/01~11/07) 출금 100 → 이번 출금 120 (+20) · 변동된 것 1건 +20 · 카드·세금 자동 출금은 빼고 비교", ceo)
+        self.assertNotIn("추가된 것", ceo)
+        mg = text(_vs_last_week(R, P, "mgmt"))
+        self.assertIn("지난주 = 11/01~11/07 통장 출금 중 11/06 보고 출금 목록에 있던 거래처 것", mg)
+        self.assertIn("이번 목록의 카드대금·세금·4대보험 2건 100은 비교에서 뺌", mg)
+        R["last_pay"] = dict(R["last_pay"], listed=False, prev_asof=None)
+        mg = text(_vs_last_week(R, P, "mgmt"))
+        self.assertIn("지난주 보고 기록이 없어 그 주 통장 출금 전체와 비교", mg)
+        R["last_pay"] = None
+        self.assertIn("지난주(11/01~11/07) 출금 자료 없음", text(_vs_last_week(R, P, "ceo")))
+
+    def test_report_uses_last_weeks_record(self):
+        """보고서를 만들 때 지난주 보고가 남긴 지급 예정 기록(출력\\지급예정기록)으로 지난주 목록 거래처를 고른다."""
+        import shutil
+        import tempfile
+        import 보고서
+        from ceo_report import weekdiff
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        inp, out = os.path.join(tmp, "입력"), os.path.join(tmp, "출력")
+        shutil.copytree(SAMPLE_DIR, inp)
+        R0 = {"asof": D(2026, 10, 23), "events": [
+            {"date": D(2026, 10, 27), "io": "out", "desc": "무대제작사", "project": "", "cat": "프로젝트지급", "amount": 11_000_000,
+             "firm": True}]}
+        weekdiff.write_record(out, R0)
+        rc = 보고서.main(["주간", "--기준일", "2026-10-31", "--입력", inp, "--출력", out, "--pdf", "안함"])
+        self.assertEqual(rc, 0)
+        with open(os.path.join(out, "2026-10-31_주간_경영관리보고.html"), encoding="utf-8") as f:
+            h = f.read()
+        self.assertIn("지난주(10/24~10/30) 출금 11,000,000", h)
+        self.assertIn("10/23 보고 출금 목록에 있던 거래처 것", h)
+
+
 if __name__ == "__main__":
     unittest.main()

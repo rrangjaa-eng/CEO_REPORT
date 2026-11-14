@@ -835,17 +835,35 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     return R
 
 
-def last_payday_out(txns, payday):
-    """지난주 출금일(이번 출금일 − 7일)에 통장에서 실제로 나간 돈 (사용자 2026-11-05: 지난주 대비는 진짜 지난주 금요일과 비교).
+def last_payday_out(txns, payday, prev=None):
+    """지난주 대비의 '지난주' (사용자 2026-11-14 '같은 범위로 바꾸기', 11/5 '진짜 지난주와 비교'는 그대로).
 
-    장부입출금(분개장 보통예금) 또는 입출금내역의 그날 출금, 계좌 간 이체는 뺀다. 입출금 자료가 그날까지 오지 않았으면 None."""
+    지난주 출금일(이번 출금일 − 7일)로 끝나는 7일 동안 통장에서 실제로 나간 돈. 계좌 간 이체와 카드·세금 자동 출금
+    (auto_debit)은 뺀다. prev = 지난주 보고가 남긴 지급 예정 기록(weekdiff)이고 그 기록을 지난 출금일 전 7일 안에 만들었으면
+    그때 출금 목록(확정·금액 있는 지급, 지난 출금일까지)에 있던 거래처 것만 (목록 밖 급한 지급은 비교하지 않음, listed=True).
+    입출금 자료가 지난 출금일까지 오지 않았으면 None."""
+    from .wehago import norm_vendor
     day = payday - 7 * DAY
+    start = day - 6 * DAY
     if not txns or max(t["date"] for t in txns) < day:
         return None
-    rows = [{"vendor": (t.get("vendor") or "").strip() or (t.get("memo") or "").strip() or "(거래처 없음)",
-             "amount": t["amount"], "memo": t.get("memo") or ""}
-            for t in txns if t["date"] == day and t["io"] == "출금" and t["cat"] != TRANSFER]
-    return {"date": day, "rows": rows, "total": sum(r["amount"] for r in rows)}
+    keys = None
+    if prev and day - 7 * DAY <= prev["asof"] < day:   # 금요일에 만든 보고는 다음 금요일 목록 (기준일 = 지난 출금일 − 7일까지)
+        keys = set(norm_vendor(r.get("desc") or "") for r in prev["rows"]
+                   if r.get("firm") and r.get("amount") is not None and prev["asof"] < r["date"] <= day)
+    rows = []
+    for t in txns:
+        if not (start <= t["date"] <= day) or t["io"] != "출금" or t["cat"] == TRANSFER:
+            continue
+        vendor = (t.get("vendor") or "").strip()
+        if auto_debit({"io": "out", "desc": vendor, "cat": "%s %s" % (t.get("cat") or "", t.get("memo") or "")}):
+            continue
+        if keys is not None and norm_vendor(vendor) not in keys:
+            continue
+        rows.append({"vendor": vendor or (t.get("memo") or "").strip() or "(거래처 없음)", "amount": t["amount"],
+                     "memo": t.get("memo") or "", "date": t["date"]})
+    return {"start": start, "date": day, "rows": rows, "total": sum(r["amount"] for r in rows),
+            "listed": keys is not None, "prev_asof": prev["asof"] if keys is not None else None}
 
 
 ACCOUNT_GROUP_ORDER = ("원가", "판매비와관리비", "영업외비용")
@@ -920,7 +938,7 @@ MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
 LOAN_WORDS = ("차입금", "대출", "이자")
 
 
-def must_pay(ev, card=True, loans=False):
+def must_pay(ev, card=True, loans=False, pay=True):
     """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급.
     날짜·금액이 거의 정해진 돈이라 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
 
@@ -929,11 +947,11 @@ def must_pay(ev, card=True, loans=False):
     정기예금 가입·프로젝트 원가·남은 예산·입금은 아니다.
 
     '꼭 나갈 돈' 판정은 여기 한 곳 (2026-11-14 K1). 기간 뒤 떼어 보는 줄(사용자 2026-11-12: 급여·4대보험·세금·대출 원금·이자)은
-    card=False, loans=True 로 같은 낱말을 쓴다."""
+    card=False, loans=True 로 같은 낱말을 쓴다. pay=False 는 급여를 뺀 것 (auto_debit)."""
     from .tax import KEYWORDS, NOT_TAX
     if ev.get("io") != "out":
         return False
-    kinds = [k for k in MUST_KINDS if card or k != "카드대금"]
+    kinds = [k for k in MUST_KINDS if (card or k != "카드대금") and (pay or k != "급여")]
     if ev.get("source") == "세금예상":
         return (ev.get("kind") or str(ev.get("cat") or "").split(" (")[0]) in kinds
     if ev.get("source") in NOT_TAX:
@@ -942,6 +960,17 @@ def must_pay(ev, card=True, loans=False):
     vendor = "".join(str(ev.get("desc") or "").split())
     words = [w for k in kinds for w in KEYWORDS.get(k, ())] + list(MUST_CAT_EXTRA) + (list(LOAN_WORDS) if loans else [])
     return any(w in cat for w in words) or any(w in vendor for w in MUST_VENDOR) or (card and vendor.endswith("카드"))
+
+
+def auto_debit(ev):
+    """카드대금·세금·4대보험처럼 통장에서 저절로 나가는 돈 (사용자 2026-11-14 '지난주 대비는 같은 범위끼리': 비교에서 뺌).
+
+    '꼭 나갈 돈'(must_pay)과 같은 낱말에서 급여만 뺀 것 (급여는 출금 목록에도 오르는 지급). 통장 줄은 분류 자리에
+    분류·적요를 넣어 부른다. 거래처가 '카드사_끝번호'(장부 카드 거래처)면 카드대금."""
+    from .tax import CARD_PREFIX
+    if ev.get("io") != "out":
+        return False
+    return must_pay(ev, pay=False) or bool(CARD_PREFIX.match(str(ev.get("desc") or "").strip()))
 
 
 def mark_must(events, tax_info=None):

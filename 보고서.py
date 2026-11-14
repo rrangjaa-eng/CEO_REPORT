@@ -432,9 +432,12 @@ def main(argv=None):
     from ceo_report import gasu   # 가수금 갚을 시기 (사용자 2026-11-13: 전부 갚아도 자금에 영향 없는지) — 경영관리 B-2-1
     R["gasu"] = gasu.for_report(a.입력, R)
     if kind == "weekly":
-        # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
+        # 지난주 대비 (사용자 2026-11-14 '같은 범위로'): 지난 출금일 전에 만든 지난주 보고의 지급 예정 기록으로 그때 출금 목록
+        # 거래처를 골라 그 주 통장 출금과 견준다. 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
-        R["week_prev"] = load_previous(a.출력, asof)
+        from ceo_report.calc import last_payday_out
+        R["week_prev"] = load_previous(a.출력, R["payday"] - dt.timedelta(days=7))
+        R["last_pay"] = last_payday_out(data.txns, R["payday"], R["week_prev"])
     label = "주간" if kind == "weekly" else "월간"
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
