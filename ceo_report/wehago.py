@@ -252,6 +252,8 @@ class Books:
         self.notes = []   # 변환결과.txt 에 쓰는 장부 알림 (매입매출장 대조 등)
         # 분개장이 회사 처음(자본금 납입) 또는 전기이월 줄부터 있는지 (2026-11-04 정합성 점검). False 면 통장·채무 잔액을 만들 수 없다
         self.from_start = True
+        self.journal_gaps = []   # 분개장 파일들 사이 어느 파일에도 없는 기간 [(시작, 끝)] (2026-11-14 K3)
+        self.start_gap = ""   # 빈 기간 때문에 from_start 를 끈 까닭 (통장 잔액을 분개장으로 만들지 않음)
 
 
 _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
@@ -723,45 +725,89 @@ def _same_year_layers(folder, names, rows, period, asof):
 
 
 def journal_layers(folder, ranked):
-    """app.old_files 용: 가장 새 분개장(ranked 마지막)이 부분 기간일 때 함께 쓰는 이전 같은 기수 파일 이름 목록."""
+    """app.old_files 용: 가장 새 분개장(ranked 마지막)과 함께 쓰는 이전 파일 이름 목록 — 부분 기간일 때의 같은 기수 이전 파일과
+    지난 기수 파일 (해마다 여러 파일을 기간으로 합쳐 쓴다, 2026-11-14 K3). 옛 전체 파일이 옮겨져 그 해가 비지 않게 한다."""
     if not ranked:
         return []
     try:
         rows, info = read_book(os.path.join(folder, ranked[-1]), "분개장", _file_date(ranked[-1]), None)
     except Exception:
         return []
-    if info.get("period") is None:
-        return []
-    return _same_year_layers(folder, ranked[-2::-1], rows, info["period"], None)[1]
+    left, layers = ranked[-2::-1], []
+    if info.get("period") is not None:
+        _, layers, left, _, _ = _same_year_layers(folder, left, rows, info["period"], None)
+    return layers + _prior_years(folder, "분개장", left, rows, None)[1]
+
+
+def _month_end(d):
+    nxt = dt.date(d.year + (d.month == 12), d.month % 12 + 1, 1)
+    return nxt - dt.timedelta(days=1)
+
+
+def _span_of(rows, info):
+    """파일이 맡은 기간: 인쇄·자동수집의 '기 간'. 모르면 첫 전표 달 1일 ~ 마지막 전표 달 말일 (빈 기간 판정이 날 단위로 어긋나지 않게)."""
+    if info.get("period"):
+        return info["period"]
+    days = [r["date"] for r in rows if r.get("date") is not None]
+    if not days:
+        return None
+    a, b = min(days), max(days)
+    return dt.date(a.year, a.month, 1), _month_end(b)
+
+
+def _read_fail(name, err):
+    why = str(err) if isinstance(err, WehagoError) else "내용을 읽을 수 없음"
+    return "%s — %s" % (name, why)
 
 
 def _prior_years(folder, kind, names, rows, asof):
     """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
 
-    names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일만 앞에 붙인다. 같은 해가 섞인
-    파일(같은 기수의 이전 내려받기)이나 읽을 수 없는 파일은 쓰지 않는다
-    -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름, 붙인 파일의 전표별 프로젝트 코드).
+    names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일이 지난 기수 파일이다.
+    2026-11-14 K3: 해마다 가장 새 파일 하나만 쓰면 작년 장부를 일부 기간(예: 12월)만 다시 받았을 때 그 파일이 1년치를 밀어낸다.
+    그래서 같은 날짜는 더 새 파일 것만 쓰고(같은 전표는 한 번), 더 새 파일이 맡지 않은 날짜는 이전 파일에서 가져와 기간을 합친다.
+    파일이 맡은 기간은 '기 간'(모르면 전표가 있는 달 전체). 같은 해가 섞인 파일(같은 기수의 이전 내려받기)은 쓰지 않는다.
+    -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름, 붙인 파일의 전표별 프로젝트 코드, 붙인 기간 목록, 읽지 못한 파일 알림).
     분개장은 지난 기수 전표의 프로젝트명 코드도 함께 돌려준다 (2026-11-04: 버리면 작년 원가·매출이 모두 미연결).
     """
     years = _years(rows)
     floor = min(years) if years else None
-    added, used, skipped, slips = [], [], [], {}
+    picks, skipped, failed = [], [], []
     for n in names:
         try:
             more, more_info = read_book(os.path.join(folder, n), kind, _file_date(n), asof)
-        except Exception:  # 지난 파일이 깨졌으면 쓰지 않을 뿐 장부 전체를 멈추지 않는다
+        except Exception as e:  # 지난 파일이 깨졌으면 쓰지 않되 무엇을 못 읽었는지 알린다 (K2)
             skipped.append(n)
+            failed.append(_read_fail(n, e))
             continue
         ys = _years(more)
         if floor is None or not ys or max(ys) >= floor:
             skipped.append(n)
             continue
-        added = more + added
+        picks.append((n, more, more_info))
+    added, used, spans, slips = [], [], [], {}
+    for i, (n, more, more_info) in enumerate(picks):   # 새 것부터: 이미 더 새 파일이 맡은 날짜는 건너뛴다
+        span = _span_of(more, more_info)
+        keep = [r for r in more if (r.get("date") is None and i == 0) or (
+            r.get("date") is not None and not _in(r["date"], spans) and (span is None or span[0] <= r["date"] <= span[1]))]
+        if span is not None:
+            spans.append(span)
+        if not keep:
+            skipped.append(n)
+            continue
+        added.extend(keep)
         used.append(n)
-        floor = min(ys)
+        days = set(r["date"].isoformat() for r in keep if r.get("date") is not None)
         for k, v in (more_info.get("slip_projects") or {}).items():
-            slips.setdefault(k, v)
-    return added, sorted(used), skipped, slips
+            if k[0] in days:
+                slips.setdefault(k, v)
+    added.sort(key=lambda r: (r.get("date") is not None, r.get("date") or dt.date.min))
+    return added, sorted(used), skipped, slips, spans, failed
+
+
+def journal_gaps(spans):
+    """분개장 파일들이 맡은 기간 [(시작, 끝)] 사이에 어느 파일에도 없는 기간 [(시작, 끝)] (2026-11-14 K3)."""
+    return _gaps([s for s in spans if s is not None])
 
 
 def load_books(folder, asof, stale_days):
@@ -826,6 +872,7 @@ def load_books(folder, asof, stale_days):
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
             names_left, layer_slips = others.get(kind, []), {}
+            spans = [_span_of(rows, info)]
             if kind == "분개장" and info.get("period") and names_left:
                 layer_rows, entry["layers"], names_left, layer_slips, spans = _same_year_layers(
                     folder, names_left, rows, info["period"], asof)
@@ -834,10 +881,16 @@ def load_books(folder, asof, stale_days):
                     rows = sorted(layer_rows + rows, key=lambda r: (r["date"] is None, r["date"] or dt.date.min))
                     books.notes.append("분개장 %s~%s 는 %s, 그 밖의 날짜는 이전 파일(%s)" % (
                         a.isoformat(), b.isoformat(), name, ", ".join(entry["layers"])))
-                    for g0, g1 in _gaps(spans):
-                        books.notes.insert(0, "[확인] 분개장 %s~%s 전표가 어느 파일에도 없음 — 그 기간 분개장을 받아 넣으세요"
-                                           % (g0.isoformat(), g1.isoformat()))
-            prior_rows, entry["prior"], skipped, prior_slips = _prior_years(folder, kind, names_left, rows, asof)
+            prior_rows, entry["prior"], skipped, prior_slips, prior_spans, prior_failed = _prior_years(
+                folder, kind, names_left, rows, asof)
+            for f in prior_failed:   # K2: 읽지 못한 파일은 조용히 건너뛰지 않는다 (변환결과·경영관리 '입력 자료 확인 필요')
+                books.notes.insert(0, "[확인] %s 파일을 읽지 못해 쓰지 않음: %s — 지난해 장부라면 그 해 전표가 빠진 채 계산됩니다. "
+                                      "위하고에서 다시 받아 넣으세요" % (kind, f))
+            if kind == "분개장":
+                books.journal_gaps = journal_gaps(spans + prior_spans) if entry["layers"] or entry["prior"] else []
+                for g0, g1 in books.journal_gaps:
+                    books.notes.insert(0, "[확인] 분개장 %s~%s 전표가 어느 파일에도 없음 — 그 기간 분개장을 받아 넣으세요"
+                                       % (g0.isoformat(), g1.isoformat()))
             prior_slips = dict(prior_slips)
             prior_slips.update(layer_slips)
             unused.extend(skipped)
@@ -899,7 +952,12 @@ def load_books(folder, asof, stale_days):
                 books.state = "ok"
     if "분개장" in staged:
         books.from_start = journal_from_start(staged["분개장"])
-        if not books.from_start:
+        if books.from_start and books.journal_gaps:
+            # K3: 빈 기간이 있으면 처음부터 누적한 통장 잔액에 그 기간 입출금이 빠진다 → 분개장으로 잔액을 만들지 않는다
+            books.from_start = False
+            books.start_gap = "분개장에 빈 기간 있음 (%s)" % ", ".join(
+                "%s~%s" % (a.isoformat(), b.isoformat()) for a, b in books.journal_gaps)
+        elif not books.from_start:
             first = min((ln["date"] for ln in staged["분개장"] if ln["date"] is not None), default=None)
             books.notes.insert(0, "[확인] 분개장이 %s부터라 작년 분개장이 빠졌음 (전기이월·설립 자본금 줄 없음) — 수집\\위하고 에 "
                                "작년 분개장(예: 분개장_%d.xls)을 함께 넣으세요. 그 전까지 통장 잔액은 분개장으로 만들지 않고, "

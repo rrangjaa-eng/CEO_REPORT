@@ -48,6 +48,9 @@ DEPT_ACCOUNT_KEYS = ["연월", "부서", "계정코드", "계정과목", "금액
 BOOK_BAL_FILE = "장부잔액.csv"
 BOOK_BAL_KEYS = ["기준일", "계좌명", "은행", "잔액"]
 BOOK_TXN_FILE = "장부입출금.csv"
+# 장부 읽기 알림 (변환.py, 2026-11-14 K2·K3): 지난 기수 파일을 못 읽음·분개장 빈 기간 등 [확인] 줄. 경영관리 '입력 자료 확인 필요'에 보인다
+BOOK_NOTE_FILE = "장부알림.csv"
+BOOK_NOTE_KEYS = ["알림"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
@@ -168,6 +171,13 @@ def load(folder):
             raw["계좌잔액.csv"] = brows + raw["계좌잔액.csv"]
             raw["입출금내역.csv"] = trows
             d.present["계좌잔액.csv"] = d.present["입출금내역.csv"] = True
+
+    npath = os.path.join(folder, BOOK_NOTE_FILE)   # 없으면 아무 말도 하지 않는다 (예전 변환·직접 넣은 입력)
+    if os.path.exists(npath):
+        for r in read_csv(npath, BOOK_NOTE_KEYS, iss, {})[0]:
+            text = (r.get("알림") or "").strip()
+            if text:
+                iss.add(BOOK_NOTE_FILE, "-", text.replace("[확인] ", "", 1))
 
     # 계좌잔액
     d.balances = []
