@@ -733,5 +733,45 @@ class TestLastWeekSameScope(unittest.TestCase):
         self.assertIn("10/23 보고 출금 목록에 있던 거래처 것", h)
 
 
+
+class TestProfitFlowKind(unittest.TestCase):
+    """경영관리 자동 분석 12번 '프로젝트 이익 흐름'에 끝남/진행 중 '구분' 칸 (팀장 보고 표와 같은 모양, C 요청 2026-11-14).
+    진행 중은 남은 추정 예산까지 나갈 돈으로 보므로 끝난 것과 뜻이 달라 나눠 보여야 한다."""
+
+    @classmethod
+    def setUpClass(cls):
+        from ceo_report import insights
+        cls.R = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))
+        cls.I = insights.compute(cls.R)
+
+    def _part(self, html, head):
+        i = html.index(head)
+        j = html.find("<h3>", i + 1)
+        return html[i:j if j > 0 else len(html)]
+
+    def test_mgmt_table_has_kind_column(self):
+        from ceo_report import insights_render
+        I = dict(self.I, flow=[
+            {"name": "[P9] 끝난 행사", "team": "기획1팀", "contract": 100, "quote": 30, "now": 20, "diff": -10, "closed": True},
+            {"name": "[P8] 진행 행사", "team": "기획2팀", "contract": 200, "quote": 60, "now": 50, "diff": -10, "closed": False}])
+        part = self._part(insights_render.mgmt_section(I, self.R), "프로젝트 이익 흐름")
+        self.assertIn("<th>구분</th>", part)
+        self.assertRegex(part, r"끝난 행사</td><td>기획1팀</td><td>끝남</td>")
+        self.assertRegex(part, r"진행 행사</td><td>기획2팀</td><td>진행 중</td>")
+        self.assertIn("끝남 = 계약 − (쓴 돈 + 요청 + 계획)", part)
+        self.assertIn("진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산)", part)
+
+    def test_team_note_counts_requests_for_closed(self):
+        """끝난 프로젝트도 calc 는 요청·계획까지 뺀다 (calc profit_now) — 팀장 보고 설명도 같게."""
+        from ceo_report import insights_render
+        p = next(p for p in self.R["s3"]["projects"] if p.get("team"))
+        I = dict(self.I, alerts=[], flow=[
+            {"name": "[%s] %s" % (p["id"], p["name"]), "team": p["team"], "contract": 100, "quote": 30, "now": 20, "diff": -10,
+             "closed": True}])
+        html = insights_render.team_section(I, self.R, p["team"])
+        self.assertIn("끝남 = 계약 − (쓴 돈 + 요청 + 계획)", html)
+        self.assertNotIn("끝남 = 계약 − 쓴 돈,", html)
+
+
 if __name__ == "__main__":
     unittest.main()

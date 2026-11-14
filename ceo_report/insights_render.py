@@ -151,6 +151,11 @@ def ceo_issue(D, top=3, compact=False):
 
 
 # ───────────── 팀장 보고 조각 ─────────────
+# 이익 흐름 표 설명 (calc profit_now 와 같은 식): 끝난 프로젝트도 요청·계획까지 뺀다 (2026-11-14 통합 때 팀장 보고 글을 바로잡음)
+FLOW_NOTE = ("※ 견적 때 이익 = 계약 − 추정 예산. 지금 예상 이익: 끝남 = 계약 − (쓴 돈 + 요청 + 계획), "
+             "진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산).")
+
+
 def _team_projects(R, team):
     return dict((p.get("id"), p) for p in (R.get("s3") or {}).get("projects") or [] if (p.get("team") or "") == team)
 
@@ -174,8 +179,7 @@ def team_section(I, R, team, start_no=7):
                        for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
         sec("프로젝트 이익 흐름 (견적 때 → 지금)",
             "<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
-            "<tbody>%s</tbody></table><p class='note'>※ 견적 때 이익 = 계약 − 추정 예산. 지금 예상 이익: 끝남 = 계약 − 쓴 돈, "
-            "진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산). 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % rows)
+            "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         no += 1
     # 4 경보 (그 팀 프로젝트)
     al = [(lv, t) for lv, t in I["alerts"] if any(t.startswith(n) for n in names)]
@@ -344,10 +348,12 @@ def mgmt_section(I, R):
     sub(11, "계산서 짝 확인 (행사 끝난 프로젝트)",
         _tbl(["프로젝트", "내용"], [[esc(n), esc(t)] for n, t in I["pairs"]]) if I["pairs"] else _none("짝이 안 맞는 프로젝트 없음"))
     # 8 이익 흐름
+    # 끝남/진행 중 '구분' 칸 (2026-11-14 통합, 팀장 보고 표와 같은 모양): 진행 중은 남은 추정 예산까지 나갈 돈으로 봐 뜻이 다르다
     fl = I["flow"]
     sub(12, "프로젝트 이익 흐름 (견적 때 → 지금, 줄어든 순)",
-        _tbl(["프로젝트", "팀", "계약", "견적 때 이익", "지금 예상 이익", "차이"],
-             [[esc(f["name"]), esc(f["team"]), W(f["contract"]), W(f["quote"]), W(f["now"]), S(f["diff"])] for f in fl], nums=(2, 3, 4, 5))
+        _tbl(["프로젝트", "팀", "구분", "계약", "견적 때 이익", "지금 예상 이익", "차이"],
+             [[esc(f["name"]), esc(f["team"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
+               S(f["diff"])] for f in fl], nums=(3, 4, 5, 6)) + _none(FLOW_NOTE + " 그래서 진행 중의 차이는 추정 예산을 넘은 만큼만 나옵니다.")
         if fl else _none("계약·추정 예산이 있는 프로젝트 없음"))
     # 11 팀 순위
     tm = I["teams"]
