@@ -61,7 +61,7 @@ def classify_duplicates(journal):
     """중복 의심 묶음을 장부로 더 따져 본다 (사용자 2026-11-05: 확인할 것이 최소한으로).
 
     정상으로 보는 것 (확인할 것에 올리지 않음):
-      · 적요나 프로젝트가 전표마다 다름 → 다른 물건·다른 행사
+      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표가 있으면 적요로)
       · 같은 거래처 같은 금액의 취소(−) 전표가 앞뒤 31일 안에 있음 → 취소 후 다시 발행
       · 전표 수만큼 같은 금액이 정산됨(미지급금 지급·외상매출금 입금) → 각각 실제로 오간 돈
     -> [(날짜, [전표번호], 금액, 판단 글, 정상 여부)] 금액 큰 순."""
@@ -77,8 +77,13 @@ def classify_duplicates(journal):
         memos = set(tuple(sorted(set(_sq(ln.get("memo")) for ln in slips[(day, n)]))) for n in nos)
         projs = set(tuple(sorted(set(_sq(ln.get("project_name")) for ln in slips[(day, n)]))) for n in nos)
         why, ok = "", False
-        if len(memos) > 1 or len(projs) > 1:
-            why, ok = "적요·프로젝트가 전표마다 다름 → 다른 거래로 봄", True
+        # 관리항목 프로젝트로 먼저 가림, 프로젝트 빈 전표가 있을 때만 적요로 (2026-11-14 사용자 "적요 대신 계정과목으로")
+        # 장부 줄에 증빙(계산서) 번호 칸은 없어 쓰지 않음
+        has_proj = bool(projs) and all(any(p) for p in projs)
+        if len(projs) > 1 and has_proj:
+            why, ok = "관리항목 프로젝트가 전표마다 다름 → 다른 거래로 봄", True
+        elif not has_proj and len(memos) > 1:
+            why, ok = "프로젝트 없음 · 적요가 전표마다 다름 → 다른 거래로 봄 (적요로 판단)", True
         elif sort:
             code, side = CONTROL[sort]
             other = "credit" if side == "debit" else "debit"
@@ -94,10 +99,10 @@ def classify_duplicates(journal):
             elif len(settled) >= len(nos):
                 why, ok = "같은 금액 %s %d번 → 각각 실제로 오간 돈으로 봄" % ("지급" if sort == "매입전표" else "입금", len(settled)), True
             else:
-                why = "적요·프로젝트 같음 · 같은 금액 %s %d번 (전표 %d건) → 이중 입력 가능성 높음" % (
-                    "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
+                why = "%s 같음 · 같은 금액 %s %d번 (전표 %d건) → 이중 입력 가능성 높음" % (
+                    "프로젝트" if has_proj else "적요", "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
         else:
-            why = "적요·프로젝트 같음 → 이중 입력 가능성"
+            why = ("프로젝트 같음" if has_proj else "적요 같음") + " → 이중 입력 가능성"
         out.append((day, nos, total, why, ok))
     return out
 

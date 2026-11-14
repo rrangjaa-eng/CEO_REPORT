@@ -639,6 +639,7 @@ def _open_bills(asof, pay, start):
     return [k for k in sorted({prev, cur}) if k >= asof]
 
 
+OTHER_SAVINGS = ("공제", "부금", "적금")   # 정기예금 계정에 함께 넣던 정기 불입 (계정을 나누면 필요 없음)
 DEPOSIT_IN = "정기예금 만기"
 DEPOSIT_OUT = "정기예금 가입"
 
@@ -656,11 +657,24 @@ def deposits(journal, asof, codes=("10500",), words=("정기예금",)):
     기간은 지난 예금의 가입→만기해지 간격(같은 금액 짝)에서 가장 흔한 달 수, 없으면 1개월.
     기준일 뒤 가입 전표는 그날 지급, 만기는 원금 입금으로 본다 (이자는 모르니 넣지 않음)."""
     codes = set(map(_sq, codes))
+    slips = {}
+    for x in journal:
+        if x["date"] is not None:
+            slips.setdefault((x["date"], x.get("no")), []).append(x)
 
     def mine(x):
-        return _sq(x["account_code"]) in codes and any(w in str(x.get("memo") or "") + str(x.get("vendor") or "") for w in words)
+        # 2026-11-14 사용자 "적요 대신 계정과목으로": 정기예금 계정(10500) 줄은 모두 정기예금. 다만 같은 계정에 정기 불입 공제부금·적금을
+        # 넣던 지난 전표가 있어(계정을 나누기 전까지) 적요·거래처에 '공제'·'부금'·'적금'이 있는 줄만 뺀다
+        if _sq(x["account_code"]) not in codes:
+            return False
+        text = _sq(x.get("memo")) + _sq(x.get("vendor"))
+        return not any(w in text for w in OTHER_SAVINGS)
+
+    def matured(x):   # 해지 = 정기예금 대변 + 같은 전표 통장 입금 (적요 '만기'는 예비)
+        lines = slips.get((x["date"], x.get("no"))) or []
+        return any(_sq(y["account_code"]).startswith(BANK_PREFIX) and (y.get("debit") or 0) for y in lines) or "만기" in str(x.get("memo") or "")
     put = sorted((x["date"], x["debit"]) for x in journal if x["date"] is not None and mine(x) and (x.get("debit") or 0) > 0)
-    took = sorted((x["date"], x["credit"], "만기" in str(x.get("memo") or "")) for x in journal
+    took = sorted((x["date"], x["credit"], matured(x)) for x in journal
                   if x["date"] is not None and mine(x) and (x.get("credit") or 0) > 0)
     open_, terms = [], []
     used = set()
