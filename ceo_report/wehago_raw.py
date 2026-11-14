@@ -194,7 +194,7 @@ def _withholding(F):
     """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)])."""
     emps, out = {}, []
     for year, d in _pick(F, "인사_소득자별근로소득원천징수부"):
-        seen = set()
+        seen, coded = set(), set()
         for r in d.get("응답") or []:
             path = str(r.get("path") or "").rstrip("/")
             data = r.get("data")
@@ -211,6 +211,11 @@ def _withholding(F):
                         emps.setdefault(str(e["cd_emp"]), e)   # 최근 해 것이 먼저 온다: 작년 값으로 덮지 않음 (코덱스 검토)
             elif path.endswith("/emp/income"):
                 code = r.get("cd_emp") or _find(data, "cd_emp")
+                if code and str(code) in coded:
+                    # 같은 해 같은 사원의 소득 응답은 한 번만 (예전 수집 파일: 첫 사원 응답이 감싼 모양만 다르게 두 번 → 매달 두 배)
+                    continue
+                if code:
+                    coded.add(str(code))
                 rows = _find(data, "group1") or []
                 for g in rows if isinstance(rows, list) else []:
                     ym = re.sub(r"\D", "", str(g.get("ym_rvrs") or g.get("ym_pay") or ""))
