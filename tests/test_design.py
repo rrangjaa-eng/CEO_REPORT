@@ -109,14 +109,16 @@ class TestAvailableFundsTable(unittest.TestCase):
         self.assertRegex(html, r"<b class='neg'>[^<0-9]?5,000,000</b>")
 
     def test_estimate_shown_apart_not_in_big_number(self):
-        """예상 지급(확정 전)은 큰 숫자에서 빼지 않고 칸 아래 '예상 지급까지 빼면'·'예상 − … 별도'로 따로 적는다 (사용자 2026-11-05)."""
+        """예상 지급(확정 전)은 큰 숫자에서 빼지 않고 칸 아래 '프로젝트 지급 예상 등까지 빼면'·'예상 − … 별도'로 따로 적는다 (사용자 2026-11-05).
+        2026-11-14 D1·F7: 급여·세금·카드 같은 정기 지출 예상은 큰 숫자에 넣고, 작은 줄엔 예상 입금을 넣지 않는다."""
         R = self.R["weekly"]
         html = first_screen(render(R, "ceo"))
         for p in R["s2"]["periods"]:
-            f, a = p["firm"]["avail"], p["all"]["avail"]
+            f, a = p["firm"]["avail"], p["spend"]["avail"]
             self.assertIn("<b class='%s'>%s</b>" % ("neg" if f < 0 else "", "{:,}".format(f)), html)
             if a != f:
-                self.assertIn("예상 지급까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0 else "예상 지급까지 빼면 {:,}".format(a), html)
+                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
+                              else "프로젝트 지급 예상 등까지 빼면 {:,}".format(a), html)
 
     def test_unknown_balance_says_so(self):
         import shutil
@@ -331,7 +333,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("지정일", rows[-1][0])
         self.assertIn(pick.isoformat(), rows[-1][0])
-        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][3])
+        self.assertIn("{:,}".format(last["spend"]["avail"]), rows[-1][3])   # 예상 입금은 넣지 않은 작은 줄 (2026-11-14 F7)
         self.assertEqual(len(same), 3)
 
     def test_no_pick_date_no_row(self):

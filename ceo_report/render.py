@@ -9,7 +9,7 @@ import re
 from collections import OrderedDict
 
 from .util import won, man, pct, d2s, esc, ssum, date as parse_date
-from .calc import _event_date
+from .calc import _event_date, counts_in
 from . import areas
 
 CSS = """
@@ -392,16 +392,16 @@ def chart(s2, H=260, simple=False):
         legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>들어올 돈</span>'
                   '<span><i style="background:#b5523b"></i>나갈 돈</span>'
                   '<span><i style="background:#e2aa9b"></i>예상 지급 (확정 전)</span>'
-                  + ('<span><i style="background:#1f4e8c"></i>예상 잔액 (확정분)</span>'
-                     '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>예상 지급까지 뺀 잔액</span>'
+                  + ('<span><i style="background:#1f4e8c"></i>예상 잔액 (확정분·정기 지출 예상)</span>'
+                     '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>예상 입금·지급까지 넣은 잔액</span>'
                      if has_bal else "")
                   + ('<span><i style="background:#c0392b"></i>최소 보유현금 밑 (빨간 점)</span>' if mc else "") + "</div>")
         return "".join(out) + legend
     legend = ('<div class="legend"><span><i style="background:#2f7d5b"></i>입금 확정분</span>'
-              '<span><i style="background:#9cc9b3"></i>입금 예상분</span><span><i style="background:#b5523b"></i>지급 확정분</span>'
+              '<span><i style="background:#9cc9b3"></i>입금 예상분</span><span><i style="background:#b5523b"></i>지급 확정분·정기 지출 예상</span>'
               '<span><i style="background:#e2aa9b"></i>지급 예상분</span>')
     if has_bal:
-        legend += ('<span><i style="background:#1f4e8c"></i>예상 잔액(확정분만)</span>'
+        legend += ('<span><i style="background:#1f4e8c"></i>예상 잔액(확정분·정기 지출 예상)</span>'
                    '<span><i style="background:repeating-linear-gradient(90deg,#1f4e8c 0 3px,#fff 3px 5px)"></i>예상 잔액(예상분 포함)</span>')
     if mc:
         legend += '<span><i style="background:#c0392b"></i>최소 보유현금 밑 (빨간 점)</span>'
@@ -697,18 +697,29 @@ def _flow_card(s1, per):
 
 
 def _avail_cell(p):
-    """여유 자금 칸: 확정분만을 크게, 그 아래 예상분 포함을 작게 (사용자 2026-11-05: 예상 자금을 먼저 빼지 않고 따로 보게)."""
+    """여유 자금 칸 (경영관리용 근거 표): 큰 숫자 아래 예상분을 작게 (사용자 2026-11-05: 예상 자금을 먼저 빼지 않고 따로 보게)."""
     f = p["firm"]["avail"]
     big = _na("확인 필요") if f is None else "<b class='%s'>%s</b>" % ("neg" if f < 0 else "", esc(won(f)))
-    return "<td class='av'>%s%s</td>" % (big, _est_note(p))
+    return "<td class='av'>%s%s</td>" % (big, _est_note(p, mgmt=True))
 
 
-def _est_note(p):
-    """'예상 포함 시 …' 작은 줄. 확정분과 같으면 적지 않는다."""
-    a, f = p["all"]["avail"], p["firm"]["avail"]
-    if a is None or a == f:
-        return ""
-    return "<small class='firm%s'>예상 지급까지 빼면 %s</small>" % (" neg" if a < 0 else "", esc(won(a)))
+# 큰 숫자(확정 + 정기 지출 예상)에서 확정 안 된 지급(대부분 요청 전 프로젝트 지급)만 더 뺀 것. 예상 입금은 넣지 않는다.
+# 대표용에도 나오므로 '예산'이라는 말은 쓰지 않는다 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
+EST_SPEND = "프로젝트 지급 예상 등까지 빼면"
+EST_ALL = "예상 입금까지 넣으면"
+
+
+def _est_note(p, mgmt=False):
+    """큰 숫자 아래 작은 줄 (2026-11-14 F7): 프로젝트 지급 예상 등 확정 안 된 지급까지 빼면 (예상 입금은 넣지 않음).
+    입출금 예상을 모두 넣은 전망은 경영관리용에만 한 줄 더. 큰 숫자와 같으면 적지 않는다."""
+    f = p["firm"]["avail"]
+    out = []
+    for key, lab in (("spend", EST_SPEND),) + ((("all", EST_ALL),) if mgmt else ()):
+        v = (p.get(key) or {}).get("avail")
+        if v is None or v == f:
+            continue
+        out.append("<small class='firm%s'>%s %s</small>" % (" neg" if v < 0 else "", lab, esc(won(v))))
+    return "".join(out)
 
 
 def _est_extra(p, key):
@@ -862,14 +873,16 @@ def _avail_table(R, mode="mgmt"):
     h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows_ceo(periods, s2)))
     head_mg = ("<thead><tr><th>기간</th><th>그 기간 들어올 돈</th><th>그 기간 나갈 돈</th><th>기간 끝 예상 잔액</th><th>오늘부터 가장 적을 때 잔액</th>"
                "<th class='av'>여유 자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % mc_txt)
-    h.append(_mg(mode, "<div class='tw'><div class='lab'>근거: 기간 끝 잔액 · 확정분만 (예상분은 작게)</div><table class='pt' id='avail-mg'>%s<tbody>%s</tbody></table></div>"
+    h.append(_mg(mode, "<div class='tw'><div class='lab'>근거: 기간 끝 잔액 · 확정분과 정기 지출 예상 (나머지 예상분은 작게)</div><table class='pt' id='avail-mg'>%s<tbody>%s</tbody></table></div>"
                  % (head_mg, _avail_rows(periods, s2))))
     notes = ["들어올 돈·나갈 돈은 그 기간에 들어오고 나가는 금액" + (" (한 주 = 출금일 다음 날부터 다음 출금일까지: 출금 목록·다음 주 지급 예정과 같은 기간)"
                                                     if R["kind"] == "weekly" else " (달별: 아래 월별 자금 흐름과 같은 기간)"),
              "여유 자금 = 오늘부터 그 기간 끝까지 잔액이 가장 적을 때 − 최소 보유현금. 기간 끝 잔액이 넉넉해도 그 사이 가장 적을 때를 넘겨 쓰면 자금이 모자람.",
-             "여유 자금은 확정된 돈만으로 계산. 확정 안 된 예상 금액은 '별도'·'예상 지급까지 빼면'으로 따로 적음"]
+             "여유 자금은 확정된 돈과 꼭 나갈 정기 지출(급여·4대보험·원천세·부가세·법인세·카드) 예상으로 계산. "
+             "프로젝트 남은 예산 등 확정 안 된 지급과 예상 입금은 '별도'·'%s'·'%s'로 따로 적음" % (EST_SPEND, EST_ALL)]
     if R["kind"] == "monthly":   # 월간은 정의 한 줄만 (두 판 같은 숫자) (사용자 2026-11-04: 글자 키우고 3쪽)
-        notes = ["여유 자금 = 그 기간 잔액이 가장 적을 때 − 최소 보유현금 · 확정된 돈만 (예상 금액은 따로 적음)"]
+        notes = ["여유 자금 = 그 기간 잔액이 가장 적을 때 − 최소 보유현금 · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
+                 "(프로젝트 지급 예상·예상 입금은 따로 적음)"]
     notes.append(_plan_basis(R))
     if s2.get("pick_beyond"):
         notes.append("지정일이 일정 자료 범위(%s)보다 뒤라 그 뒤 일정은 반영 안 됨" % d2s(s2["horizon"]))
@@ -884,7 +897,8 @@ def _avail_table(R, mode="mgmt"):
         notes.append(thin)
     # 두 판 모두 안내 한 줄만 (사용자 2026-11-05: 최소만 남기고 전부 삭제). 나머지 설명은 경영관리용에만
     h.append("<ul class='nl one'><li>%s</li></ul>" % esc(
-        "여유 자금 = 기간 중 잔액이 가장 적을 때 − 최소 보유현금 %s · 확정된 돈만 (예상은 '별도'로 따로 적음)" % mc_txt_plain))
+        "여유 자금 = 기간 중 잔액이 가장 적을 때 − 최소 보유현금 %s · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
+        "(프로젝트 지급 예상·예상 입금은 '별도'로 따로 적음)" % mc_txt_plain))
     warn = [t for t in notes if t.startswith(WARN_NOTES)]   # 자료 없음·미반영 경고는 두 판 모두 (0으로 보이지 않게)
     if warn:
         h.append("<ul class='nl'>%s</ul>" % "".join("<li>%s</li>" % esc(t) for t in warn))
@@ -2213,7 +2227,7 @@ def month_flow(R):
     for ev in s2["dated"]:
         b = idx.get((ev["date"].year, ev["date"].month))
         if b is not None:
-            b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
+            b[("in_" if ev["io"] == "in" else "out_") + ("firm" if counts_in(ev, "firm") else "est")] += ev["amount"]
     # 월초 가용액 = 지금 가용액 − 이번 달 입금 + 출금. 잔액을 모르는(가용액에 안 든) 계좌의 이번 달 입출금은 되돌리지 않는다 (2026-11-03 검토)
     known = set(a["account"] for a in s1["accounts"] if a["balance"] is not None)
     ext = [t for t in s1.get("txns", []) if t["account"] in known and t["cat"] != "계좌간이체"]
@@ -2436,13 +2450,9 @@ def _first_screen(R, mode, per):
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
     h.append("" if I is None else _ins(IR.ceo_alert(I)))   # 여유 자금 부족 경보만 (적자 프로젝트는 대표 보고에 넣지 않음)
-    strip = _mon_strip(R) if monthly else _top_strip(R)
-    tax = "" if I is None else re.sub(r"<[^>]+>", "", IR.ceo_tax_line(I))
-    if tax:   # 마지막 기간 여유 자금 칸 밑에: 그 뒤 낼 세금까지 떼면
-        strip = re.sub(r"(까지 여유 자금</div><div class='big'>.*?</div><div class='foot'>)(.*?)(</div>)",
-                       lambda m: m.group(1) + m.group(2) + _ins((" · " if m.group(2) else "") + esc(tax)) + m.group(3),
-                       strip, count=1)
-    h.append(strip)
+    # 대표용 여유 자금은 숫자 하나 (2026-11-14 F6: 출발점이 달라 더 뺐는데 숫자가 커 보이던 '떼면' 줄은 경영관리용에만)
+    tax = "" if I is None or mode != "mgmt" else re.sub(r"<[^>]+>", "", IR.ceo_tax_line(I))
+    h.append(_mon_strip(R, mode, tax) if monthly else _top_strip(R, mode, tax))
     for i, (title, body) in enumerate(blocks):
         # 주간 ① 출금 목록은 길면 쪽을 넘어 이어진다 (사용자 2026-11-04: 통째로 다음 쪽에 밀려 1쪽이 비던 것)
         cls = "sec brk" if (not monthly and i == 0) else "sec"
@@ -2474,9 +2484,17 @@ def _first_screen(R, mode, per):
     return "".join(h)
 
 
-def _top_strip(R):
+def _avail_foot(mode, extra, tax):
+    """첫 줄 마지막 기간 여유 자금 칸 밑 (경영관리용에만): 프로젝트 지급 예상 등까지 빼면 / 그 뒤 낼 세금까지 떼면 (사용자 2026-11-12).
+    둘은 출발점이 같은 여유 자금이고 빼는 것이 다르므로 한 문장으로 잇지 않고 줄을 나눈다 (2026-11-14 F6)."""
+    lines = [extra, "여유 자금에서 " + tax if tax else ""]
+    body = "".join(_ins("<div>%s</div>" % esc(t)) for t in lines if t)
+    return _mg(mode, body) if body else ""
+
+
+def _top_strip(R, mode="ceo", tax=""):
     """주간 첫 줄 (사용자 2026-11-04 결정): 금요일 출금 · 이번 주 가용자금 · 4주 가용자금 · 입금일 지난 미수금.
-    값은 아래 표와 같은 숫자를 그대로 옮긴다 (따로 계산하지 않음)."""
+    값은 아래 표와 같은 숫자를 그대로 옮긴다 (따로 계산하지 않음). 여유 자금은 대표용엔 숫자 하나만 (2026-11-14 F6·F7)."""
     wo, s5 = week_outflows(R), R["s5"]
     ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
     if not ps:
@@ -2494,16 +2512,17 @@ def _top_strip(R):
     cells = [("%s 출금" % _day(wo["fri"]), W(pay["total"]), "%d건" % len(pay["rows"])),
              # '가장 적을 때' 날짜는 빼고 칸만 (사용자 2026-11-05: 여유 자금은 최소한의 안내만)
              ("이번 주 여유 자금", av(ps[0]), ""),
-             ("%s까지 여유 자금" % ps[-1]["label"], av(ps[-1]), "")]
+             ("%s까지 여유 자금" % ps[-1]["label"], av(ps[-1]), "", _avail_foot(mode, "", tax))]
     od = _overdue_cell(s5)
     cells.append((od[0], od[1], "%d건" % len(s5["overdue"]) if not s5["in_missing"] and s5["overdue"] else ""))
     return _strip(cells)
 
 
 def _strip(cells):
+    """cells = [(이름, 큰 값 HTML, 밑 글[, 밑에 덧붙일 HTML])]."""
     return "<div class='four top'>%s</div>" % "".join(
-        "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
-        % (esc(a), b, esc(c)) for a, b, c in cells)
+        "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s%s</div></div>"
+        % (esc(c[0]), c[1], esc(c[2]), c[3] if len(c) > 3 else "") for c in cells)
 
 
 def _overdue_cell(s5):
@@ -2517,9 +2536,9 @@ def _overdue_cell(s5):
                                              top["overdue_days"]))
 
 
-def _mon_strip(R):
+def _mon_strip(R, mode="ceo", tax=""):
     """월간 첫 줄 '한눈에' (사용자 2026-11-04: 월간 쪽 디자인 다시): 월말 잔액 · 앞으로 가용자금 · 이번 달 영업이익 · 입금일 지난 미수금.
-    값은 아래 절과 같은 숫자를 옮긴다 (따로 계산하지 않음)."""
+    값은 아래 절과 같은 숫자를 옮긴다 (따로 계산하지 않음). 여유 자금은 대표용엔 숫자 하나만 (2026-11-14 F6·F7)."""
     s1, s5 = R["s1"], R["s5"]
     ym = _ym_text(R["s4"]["ym"])
     ps = [p for p in R["s2"]["periods"] if not p.get("pick")]
@@ -2527,11 +2546,10 @@ def _mon_strip(R):
     cells = [("%s말 통장 잔액" % ym, W(s1["end"]), "")]
     if ps:
         a = ps[-1]["firm"]["avail"]
-        d0 = ps[-1]["firm"]["low_date"]
-        ea = ps[-1]["all"]["avail"]
+        ea = ps[-1]["spend"]["avail"]
         cells.append(("%s까지 여유 자금" % ps[-1]["label"], _na("확인 필요") if a is None else
-                      "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a))),
-                      "" if ea is None or ea == a else "예상 지급까지 빼면 %s" % won(ea)))
+                      "<span class='%s'>%s</span>" % ("neg" if a < 0 else "", esc(won(a))), "",
+                      _avail_foot(mode, "" if ea is None or ea == a else "%s %s" % (EST_SPEND, won(ea)), tax)))
     rev, np_ = _month_rev_np(R)
     cells.append(("%s 영업이익" % ym, W(np_, "확인 필요"), ""))
     cells.append(_overdue_cell(s5))
@@ -2826,8 +2844,10 @@ def _s2(R):
     for b in s2["buckets"]:
         rows.append([esc(b["label"]), esc("%s ~ %s" % (d2s(b["from"]), d2s(b["to"]))), W(b["in_firm"]), W(b["in_est"]),
                      W(b["out_firm"]), W(b["out_est"]), W(b["bal_firm"]), W(b["bal_all"])])
-    h.append(table(["구간", "기간", "입금 확정", "입금 추정", "지급 확정", "지급 추정", "계산 잔액 (확정)", "계산 잔액 (확정+추정)"],
+    h.append(table(["구간", "기간", "입금 확정", "입금 추정", "지급 확정·정기", "지급 추정", "계산 잔액 (확정·정기)", "계산 잔액 (확정+추정)"],
                    rows, num_cols=(2, 3, 4, 5, 6, 7)))
+    h.append("<div class='note'>%s</div>" % esc("정기 = 꼭 나갈 정기 지출(급여·4대보험·원천세·부가세·법인세·카드) 예상. 확정 전이어도 "
+                                                 "확정분과 함께 셈 (대표 보고 여유 자금과 같은 기준). 추정 = 프로젝트 남은 예산 등 나머지 예상."))
     m3 = [b for b in s2["buckets"] if b["type"] == "week" or b.get("within3")]
     if s2["out_missing"]:
         h.append("<div class='note'>%s</div>" % esc("지급 자료 없음(%s) — 지급예정이 빠져 구간별 계산 잔액, 3·6개월 시점 잔액, "
@@ -2835,12 +2855,12 @@ def _s2(R):
     elif s2["start"] is None:
         h.append("<div class='note'>%s</div>" % esc("시작 잔액 미확인 — 구간별 계산 잔액, 3·6개월 시점 잔액, 최저 계산 잔액은 계산하지 않음."))
     else:
-        h.append("<div class='note'>3개월 시점(%s) 계산 잔액: 확정 %s원 / 확정+추정 %s원 · 6개월 시점(%s): 확정 %s원 / 확정+추정 %s원</div>"
+        h.append("<div class='note'>3개월 시점(%s) 계산 잔액: 확정·정기 %s원 / 확정+추정 %s원 · 6개월 시점(%s): 확정·정기 %s원 / 확정+추정 %s원</div>"
                  % (d2s(m3[-1]["to"]), won(m3[-1]["bal_firm"]), won(m3[-1]["bal_all"]), d2s(s2["buckets"][-1]["to"]),
                     won(s2["buckets"][-1]["bal_firm"]), won(s2["buckets"][-1]["bal_all"])))
     lf, lfd = s2["min"]["firm"]
     la, lad = s2["min"]["all"]
-    h.append(kv([("기간 중 최저 계산 잔액 · 확정 일정만", _min_cell_won(lf, lfd, s2["vat_unknown_firm_n"], s2["out_unknown_firm_n"], _no_low(s2))),
+    h.append(kv([("기간 중 최저 계산 잔액 · 확정·정기 지출", _min_cell_won(lf, lfd, s2["vat_unknown_firm_n"], s2["out_unknown_firm_n"], _no_low(s2))),
                  ("기간 중 최저 계산 잔액 · 확정+추정", _min_cell_won(la, lad, s2["vat_unknown_n"], s2["out_unknown_n"], _no_low(s2)))]))
     ev_rows = lambda evs: [[esc(d2s(e["date"])), esc("입금" if e["io"] == "in" else "지급"),
                             W(e["amount"]) + (_na(" 부가세 미확인") if e.get("vat_unknown") and e["amount"] is not None else ""),

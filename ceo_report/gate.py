@@ -61,7 +61,7 @@ def blank_funds(R):
     if isinstance(s2.get("min"), dict):
         s2["min"] = dict((m, (None, None)) for m in s2["min"])
     for p in s2.get("periods") or []:
-        for mode in ("firm", "all"):
+        for mode in ("firm", "spend", "all"):   # spend = '프로젝트 지급 예상 등까지 빼면' (2026-11-14 F7)
             r = p.get(mode) or {}
             for k in ("bal", "low", "low_date", "avail"):
                 if k in r:

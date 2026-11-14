@@ -77,7 +77,7 @@ def path(R, firm_only, end, pay=None):
     s2 = R["s2"]
     days = collections.defaultdict(int)
     for e in s2.get("dated") or []:
-        if firm_only and not e.get("firm"):
+        if firm_only and not (e.get("firm") or e.get("must")):   # 큰 숫자와 같은 기준: 확정 + 꼭 나갈 정기 지출 예상 (2026-11-14 D1)
             continue
         a = e.get("amount")
         if a is None:
