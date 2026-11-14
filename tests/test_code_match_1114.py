@@ -225,9 +225,30 @@ class TestPlanOrigin(unittest.TestCase):
         rows = [dict(row)]
         fundplan.settle(rows, books(j), D(2026, 11, 12))
         self.assertEqual(rows[0]["상태"], "이미 지급")          # 원전표 일자를 모르면 예전처럼
-        rows = [dict(row, 원전표일="2026-11-03")]
+        rows = [dict(row, 원전표="2026-11-03")]
         fundplan.settle(rows, books(j), D(2026, 11, 12))
         self.assertEqual(rows[0]["상태"], "예정")
+
+    def test_row_linked_to_origin_slip_and_its_project(self):
+        """제안 2: 원전표 날짜 + 거래처코드 + 금액으로 미지급금 대변 전표를 찾고 그 줄의 관리항목 프로젝트를 쓴다."""
+        j = [ln(D(2026, 11, 3), "7", "82600", debit=2_000_000, vendor="가상음향", vcode="00123"),
+             dict(ln(D(2026, 11, 3), "7", "25300", credit=2_200_000, vendor="가상음향", vcode="00123"), line_project="26222")]
+        row = dict(plan_row("2026-11-20", "지급", "가상음향", 2_200_000, "000123"), 원전표="2026-11-03", 프로젝트="")
+        rows = [row]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["원전표"], "2026-11-03 전표 7")
+        self.assertEqual(rows[0]["프로젝트"], "26222")
+        self.assertEqual(rows[0]["상태"], "예정")
+        rows = [dict(row, 원전표="2026-11-04")]   # 장부에 없는 원전표: 근거에 적음 (상태는 그대로)
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertIn("원전표(2026-11-04·거래처코드·금액)를 장부에서 못 찾음", rows[0]["근거"])
+        self.assertEqual(rows[0]["상태"], "예정")
+
+    def test_plan_project_goes_to_the_event(self):
+        p = plan_ev("2026-11-20", 2_200_000, vendor="가상음향", io="지급", code="000123")
+        p["project"] = "26222"
+        events, _ = fundplan.apply([], [p], D(2026, 11, 14), 7)
+        self.assertEqual([e["project"] for e in events if e["source"] == "자금계획서"], ["26222"])
 
 
 def plan_ev(due, amount, vendor="가상고객", state="예정", io="입금", code=""):

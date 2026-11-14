@@ -178,8 +178,10 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
     return _stamp(rows, journal)
 
 
-def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청", "시청", "군청"), mode="자동"):
-    """원천세(소득세·지방소득세) 납부 예상 -> 행 목록. mode: 자동 | 반기 | 매월."""
+def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청", "시청", "군청"), mode="자동", screen=None):
+    """원천세(소득세·지방소득세) 납부 예상 -> 행 목록. mode: 자동 | 반기 | 매월.
+    screen: 위하고 화면(근로 원천징수부+사업·기타소득)의 달별 합 {(연, 월): 원}. 급여 전표 전 달은 이 값이 있으면 쓰고,
+    없으면 최근 달 장부 금액으로 본다 (제안 3, 2026-11-14)."""
     codes = set(map(_sq, codes))
     mine = [ln for ln in journal if ln["date"] is not None and _sq(ln["account_code"]) in codes
             and any(v in _sq(ln.get("vendor")) for v in vendors)]
@@ -233,10 +235,17 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
         ahead = [(yy, mm) for (yy, mm) in _months(start, end) if filled and (yy, mm) > filled[-1]]
         if not got and not unknown and not ahead:
             continue   # 이 기간에 뗀 금액도, 앞으로 뗄 달도 없음 (앞 기간분 납부 줄만 있음)
-        if ahead and recent:
-            got += recent * len(ahead)
+        from_screen = [k for k in ahead if (screen or {}).get(k)]
+        guess = [k for k in ahead if k not in from_screen]
+        if from_screen:
+            got += sum(screen[k] for k in from_screen)
+            basis += ("%s 급여 전표 전 %s은 위하고 급여·사업·기타소득 화면 값 %s원" % (
+                ", " if vals else " — ", "·".join("%d월" % k[1] for k in from_screen),
+                "{:,}".format(sum(screen[k] for k in from_screen))))
+        if guess and recent:
+            got += recent * len(guess)
             basis += ("%s 급여 전표 전 %d달은 %d-%02d 금액 %s원으로 봄"
-                      % (", " if vals else " — ", len(ahead), filled[-1][0], filled[-1][1], "{:,}".format(recent)))
+                      % (", " if vals or from_screen else " — ", len(guess), filled[-1][0], filled[-1][1], "{:,}".format(recent)))
         elif last < end:
             basis += ", %s까지 쌓인 금액" % last.isoformat()
         rows.append(_row("원천세", label, due, None if unknown else got, "예상", basis, vcodes))

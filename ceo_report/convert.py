@@ -979,8 +979,11 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     from . import tax
     mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
     card_days, card_notes = tax.read_card_days(input_dir) if input_dir else ({}, [])
+    from . import screen_tax, wehago_raw   # 위하고 급여·원천징수 화면과 대조 (제안 3, 2026-11-14)
+    scr_notes, scr = screen_tax.compare(books.journal, wehago_raw.files(wehago_dir), asof, cfg["withholding_codes"],
+                                        cfg["withholding_vendors"], cfg["insurance_vendors"]) if wehago_dir else ([], {})
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
-        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode) + \
+        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
@@ -993,6 +996,7 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
     notes.extend(card_notes)
+    notes.extend(scr_notes)
     thin = [r for r in rows if r["세목"] == "카드대금" and r["근거"].startswith(tax.CARD_THIN_MARK)]
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
         notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"

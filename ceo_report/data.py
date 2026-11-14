@@ -230,7 +230,8 @@ def load(folder):
                      "vendor": r.get("거래처", ""), "vendor_code": (r.get("거래처코드") or "").strip(),
                      "amount": num(r.get("금액"), iss, r, "금액"), "ym": r.get("대상월", ""),
                      "stamp": date(r.get("자료일"), iss, r, "자료일"), "state": r.get("상태", "") or "예정",
-                     "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r}
+                     "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r,
+                     "project": (r.get("프로젝트") or "").strip(), "origin": (r.get("원전표") or "").strip()}
                 if f["date"] is None or f["amount"] is None or f["stamp"] is None or f["io"] not in ("지급", "입금"):
                     iss.add(r["_file"], r["_line"], "예정일·입출금·금액·자료일 중 확인 불가 → 자금계획 전체를 쓰지 않음")
                     bad += 1
