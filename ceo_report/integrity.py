@@ -295,11 +295,15 @@ def run(app_dir, out_path, asof=None):
         if books.state == "ok":
             if not _journal_checks(books, out):
                 rc = 3
+        else:
+            rc = 3   # 장부를 못 읽으면 점검 실패로 남긴다 (2026-11-14 코덱스 검토: 성공으로 기록됐음)
         temp_input = os.path.join(tmp, "입력")
         if os.path.isdir(input_dir):
             shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns("이전"))
         os.makedirs(os.path.join(tmp, "출력"), exist_ok=True)
         res = convert.run(temp_input, collect, wehago_dir, asof, now)
+        if getattr(res, "code", 0):
+            rc = rc or 3
         _convert_checks(res, temp_input, out)
         _cross_checks(temp_input, out)
         if os.path.isdir(os.path.join(tmp, "수집")) is False:

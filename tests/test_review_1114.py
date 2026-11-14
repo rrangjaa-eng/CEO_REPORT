@@ -129,3 +129,25 @@ class TestFunds(unittest.TestCase):
         from ceo_report import insights
         R = {"asof": D(2026, 11, 14), "s2": {"start": 90000000, "min_cash": 100000000, "dated": []}}
         self.assertEqual(insights._first_short(R, "firm")[0], D(2026, 11, 14))
+
+
+class TestConvert(unittest.TestCase):
+    def test_closing_keeps_real_accrual_expense(self):
+        from ceo_report.convert import closing_pl_line
+        sorts = ("결산전표",)
+        keep = closing_pl_line({"sort": "결산전표", "account_code": "80800", "account": "퇴직급여", "debit": 5000000, "credit": None}, sorts)
+        self.assertEqual(keep["debit"], 5000000)
+        self.assertIsNone(closing_pl_line({"sort": "결산전표", "account_code": "45100", "account": "원가(도)", "debit": None,
+                                           "credit": 9000000}, sorts))
+
+    def test_wehago_raw_file_without_year_is_not_used(self):
+        import json
+        from ceo_report import wehago_raw
+        with tempfile.TemporaryDirectory() as t:
+            for n, year in (("a 결산_고정자산관리대장 자동수집.json", None), ("b 결산_고정자산관리대장 자동수집.json", 2026)):
+                d = {"종류": "결산원본", "화면": "고정자산관리대장", "수집시각": "2026-11-13", "응답": []}
+                if year:
+                    d["연도"] = year
+                with open(os.path.join(t, n), "w", encoding="utf-8") as f:
+                    json.dump(d, f, ensure_ascii=False)
+            self.assertEqual([k[1] for k in wehago_raw.files(t)], [2026])

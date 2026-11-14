@@ -773,9 +773,14 @@ def closing_pl_line(ln, closing_sorts):
     sq = wehago._squash
     if sq(ln.get("sort")) not in set(sq(s) for s in closing_sorts) or not re.match(r"^[4-9]", sq(ln.get("account_code"))):
         return ln
-    if "감가상각비" in sq(ln.get("account")) and ln.get("debit"):
+    if any(w in sq(ln.get("account")) for w in CLOSING_KEEP) and ln.get("debit"):
         return dict(ln, credit=None)
     return None
+
+
+# 결산 때만 넣는 실제 비용(차변): 손익 대체가 아니라 남긴다. 감가상각비만 남기던 것을 넓힘 (2026-11-14 코덱스 검토:
+# 퇴직급여·대손상각비 같은 결산 비용이 빠져 연말 이익·법인세가 커 보일 수 있었음)
+CLOSING_KEEP = ("상각비", "퇴직급여", "대손상각", "충당금전입")
 
 
 def drop_closing_pl(books, cfg):
