@@ -469,5 +469,127 @@ class TestReconWarnSlot(unittest.TestCase):
         self.assertNotIn("자료 대조 경고", render(R, "ceo"))
 
 
+# ───────────── F5·P3: 법인세 (작년분 4/30까지 유지, 8/31 중간예납, 한 계산, '지금까지 이익 기준', 3/31·4/30 나눔) ─────────────
+def _tax_journal(extra=()):
+    """2026년: 매출 3억 − 원가 1억 = 세전 2억 → 법인세 2,000만(10%), 8/25 중간예납 400만(선납세금, 통장)."""
+    from test_dept import line
+    j = [line(D(2026, 3, 5), "41200", "용역매출", credit=300_000_000),
+         line(D(2026, 3, 5), "61000", "외주비(도)", 100_000_000),
+         line(D(2026, 8, 25), "13600", "선납세금", 4_000_000),
+         line(D(2026, 8, 25), "10300", "보통예금", credit=4_000_000)]
+    return j + list(extra)
+
+
+def _carry(asof, journal=None, input_dir=None):
+    from ceo_report import convert, corptax
+    rows = corptax.carry_rows(journal if journal is not None else _tax_journal(), dict(convert.DEFAULT_CONFIG), asof, {}, input_dir)
+    return dict(((r["세목"], r["대상기간"]), r) for r in rows)
+
+
+class TestF5CorpTaxCarry(unittest.TestCase):
+    """F5: 1/31부터 작년 법인세(3/31)·지방소득세(4/30) 줄이 사라지고, 8/31 중간예납이 자금 일정에 없던 것."""
+
+    def test_last_year_rows_stay_until_paid_dates(self):
+        R = _carry(D(2027, 2, 15))
+        self.assertEqual(R["법인세", "2026년 (1월~12월 장부 기준)"]["금액"], "16000000")        # 2,000만 − 중간예납 400만
+        self.assertEqual(R["법인세", "2026년 (1월~12월 장부 기준)"]["납부예정일"], "2027-03-31")
+        self.assertEqual(R["법인지방소득세", "2026년 (1월~12월 장부 기준)"]["금액"], "2000000")
+        self.assertEqual(R["법인지방소득세", "2026년 (1월~12월 장부 기준)"]["납부예정일"], "2027-04-30")
+        self.assertEqual(set(k[0] for k in _carry(D(2027, 4, 10))), {"법인지방소득세", "법인세"})   # 법인세는 중간예납 줄만
+        self.assertNotIn(("법인세", "2026년 (1월~12월 장부 기준)"), _carry(D(2027, 4, 10)))
+        self.assertFalse([k for k in _carry(D(2027, 5, 3)) if "2026년" in k[1]])
+        # 1월 30일까지는 원래 계산(from_journal)이 작년분을 낸다: 겹치지 않게 여기서는 안 냄
+        self.assertFalse([k for k in _carry(D(2027, 1, 20)) if "2026년" in k[1]])
+
+    def test_paid_early_is_dropped(self):
+        from test_dept import line
+        paid = [dict(line(D(2027, 3, 20), "26100", "미지급법인세", 16_000_000), no="7"),
+                dict(line(D(2027, 3, 20), "10300", "보통예금", credit=16_000_000), no="7")]
+        R = _carry(D(2027, 3, 25), _tax_journal(paid))
+        self.assertNotIn(("법인세", "2026년 (1월~12월 장부 기준)"), R)
+        self.assertIn(("법인지방소득세", "2026년 (1월~12월 장부 기준)"), R)
+
+    def test_interim_prepayment_row(self):
+        R = _carry(D(2027, 5, 10))
+        mid = R["법인세", "2027년 중간예납"]
+        self.assertEqual((mid["납부예정일"], mid["금액"], mid["상태"]), ("2027-08-31", "10000000", "예상"))   # 2,000만 × 6/12
+        self.assertNotIn(("법인세", "2027년 중간예납"), _carry(D(2027, 9, 1)))
+        from test_dept import line
+        paid = [dict(line(D(2027, 8, 25), "13600", "선납세금", 10_000_000), no="8"),
+                dict(line(D(2027, 8, 25), "10300", "보통예금", credit=10_000_000), no="8")]
+        self.assertNotIn(("법인세", "2027년 중간예납"), _carry(D(2027, 8, 27), _tax_journal(paid)))
+
+    def test_small_interim_is_not_due(self):
+        """중소기업은 중간예납세액 50만 원 미만이면 내지 않는다."""
+        from test_dept import line
+        j = [line(D(2026, 3, 5), "41200", "용역매출", credit=8_000_000)]
+        self.assertNotIn(("법인세", "2027년 중간예납"), _carry(D(2027, 5, 10), j))   # 80만 × 6/12 = 40만
+
+    def test_filed_return_amounts_win(self):
+        import csv
+        import tempfile
+        from ceo_report import taxreturn
+        with tempfile.TemporaryDirectory() as d:
+            def write(rows):
+                with open(os.path.join(d, taxreturn.FILE), "w", encoding="utf-8-sig", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=taxreturn.COLUMNS)
+                    w.writeheader()
+                    for r in rows:
+                        w.writerow(r)
+            final = {"연도": "2026", "구분": "확정", "총부담세액": "18000000", "기납부세액": "4000000", "차감납부세액": "14000000",
+                     "지방소득세": "1900000", "농특세": "50000"}
+            write([final, {"연도": "2026", "구분": "중간예납", "차감납부세액": "4000000"}])
+            R = _carry(D(2027, 3, 25), input_dir=d)
+            ct = [r for k, r in R.items() if k[0] == "법인세" and "2026년" in k[1]][0]
+            self.assertEqual(ct["금액"], "14050000")   # 차감납부세액 + 농어촌특별세
+            self.assertEqual([r for k, r in R.items() if k[0] == "법인지방소득세"][0]["금액"], "1900000")
+            self.assertEqual(R["법인세", "2027년 중간예납"]["금액"], "9000000")   # (총부담 1,800만 − 원천징수 0) × 6/12
+            write([dict(final, 실제납부="14050000")])
+            self.assertFalse([k for k in _carry(D(2027, 3, 25), input_dir=d) if k[0] == "법인세" and "2026년" in k[1]])
+
+    def test_conversion_writes_them(self):
+        """자료 변환(세금예상.csv)에 들어가야 자금 일정·큰 숫자에 반영된다."""
+        from ceo_report import convert
+        from test_dept import Books
+        t = convert.build_tax(Books(_tax_journal()), dict(convert.DEFAULT_CONFIG), D(2027, 2, 15))
+        kinds = [(r["세목"], r["납부예정일"]) for r in t.rows if r["세목"].startswith("법인")]
+        self.assertIn(("법인세", "2027-03-31"), kinds)
+        self.assertIn(("법인지방소득세", "2027-04-30"), kinds)
+        self.assertIn(("법인세", "2027-08-31"), kinds)
+
+
+class TestP3CorpTaxLine(unittest.TestCase):
+    """P3: 대표 월간 법인세가 자금 일정과 다른 계산(세무조정 빠짐)이고, 지금까지 이익 기준인데 지방세까지 3/31 납부처럼 보이던 것."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.M = compute(load(SAMPLE_DIR), "monthly", D(2026, 10, 31))
+
+    def test_line_says_so_far_and_splits_dates(self):
+        from ceo_report.render import render
+        for mode in ("ceo", "mgmt"):
+            h = render(self.M, mode)
+            self.assertIn("1월~10월 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · 법인세 13,500,000 − 중간예납 등 기납부 4,000,000"
+                          " = 9,500,000 (2027-03-31) · 지방소득세 1,350,000 (2027-04-30)", h, mode)
+            self.assertNotIn("= 납부 10,850,000 (2027-03-31 예상)", h, mode)
+            self.assertIn("지금까지 이익 기준 법인세·지방소득세 −14,850,000", h, mode)
+
+    def test_same_base_as_the_fund_schedule(self):
+        """세무조정으로 과세표준이 세전 이익과 다르면 자금 일정(변환 때 계산)과 같은 과세표준으로."""
+        import copy
+        from ceo_report.render import render
+        R = copy.deepcopy(self.M)
+        row = [t for t in R["tax"] if t["kind"] == "법인세"][0]
+        row["base"] = 150_000_000   # 세무조정 +1,500만
+        h = render(R, "ceo")
+        self.assertIn("법인세 15,000,000 − 중간예납 등 기납부 4,000,000 = 11,000,000 (2027-03-31) · 지방소득세 1,500,000", h)
+        self.assertIn("118,500,000", h)   # 당기순이익 예상 = 세전 1.35억 − 1,650만
+        row["period"] = "2026년 (1월~9월 장부 기준)"   # 기간이 다르면 이 표의 세전 이익으로 (세무조정 미반영이라고 적음)
+        R.pop("_ins", None)
+        m = render(R, "mgmt")
+        self.assertIn("법인세 13,500,000 − 중간예납 등 기납부 4,000,000", m)
+        self.assertIn("세무조정 미반영", m)
+
+
 if __name__ == "__main__":
     unittest.main()

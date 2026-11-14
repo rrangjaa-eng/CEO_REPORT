@@ -985,8 +985,10 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
         tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
-    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir, wehago_dir)
+    manual = corptax.read(input_dir) if input_dir else {}
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
     rows += ct_rows
+    rows += corptax.carry_rows(books.journal, cfg, asof, manual, input_dir, wehago_dir)   # 작년분 4/30까지·8/31 중간예납 (2026-11-14 F5)
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
                                        "입금" if r["세목"] == tax.DEPOSIT_IN else "납부", "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]

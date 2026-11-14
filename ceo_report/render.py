@@ -1686,7 +1686,7 @@ def _nonop_rows(N, before, after):
         rows.append(("− 대손충당금 (예상%s)" % N.get("bad_note", ""), N["bad"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
     if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
-        rows.append(("− 법인세 예상 (지방소득세 포함)", N["tax"], "mut"))
+        rows.append(("− 법인세·지방소득세 (지금까지 이익 기준 예상)", N["tax"], "mut"))
         rows.append(("당기순이익 (예상)", N["net_income"], "tot"))
     return "".join("<tr class='%s nonop'><td colspan='%d'>%s</td><td>%s</td>%s</tr>"
                    % (c, before + 1, esc(label), W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
@@ -1745,8 +1745,8 @@ def _team_table(R, part="month", mode="mgmt"):
     Y = build(src["table"], dept, ym, True)
     if Y is not None:
         _dep_into(R, Y, True)
-        _bad_into(R, Y)
-        _tax_into(Y, ym, R.get("taxret_dir"))
+        _bad_into(R, Y, ym)
+        _tax_into(R, Y, ym)
         out = [_expected_strip(R, mode, Y), _ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
     else:
         out = [_expected_strip(R, mode), "<div class='card brk'>"]
@@ -1782,22 +1782,48 @@ def _team_table(R, part="month", mode="mgmt"):
     return "".join(out)
 
 
-def _tax_into(Y, ym, taxret_dir=None):
-    """누적 결산 줄 끝: 세전 이익 − 법인세 예상(지방소득세 포함) = 당기순이익 예상 (사용자 2026-11-04).
-    법인세 예상 표와 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음). 작년 신고서가 있으면 감면·이월공제 뒤 금액."""
+def _corp_row(R, ym, kind="법인세"):
+    """자금 일정의 그해 법인세(또는 지방소득세) 줄: 변환 때 분개장 1월~ym 으로 계산한 것 (작년분·중간예납 줄은 아님). 없으면 None."""
+    want = "%s년 (1월~%d월" % (ym[:4], int(ym[5:]))
+    return next((t for t in (R.get("tax") or []) if t.get("kind") == kind and (t.get("period") or "").startswith(want)), None)
+
+
+def _corp_est(R, Y, ym):
+    """법인세 예상 한 계산 (2026-11-14 P3·K1): 자금 일정의 법인세 줄과 같은 과세표준(감가상각·대손·세무조정 반영).
+    그 줄이 이 보고 기간과 다르거나 없으면 이 표의 세전 이익으로 (세무조정 미반영). -> dict 또는 None (세전 이익 모름)."""
     from .corptax import LOCAL_RATE, national
-    N = Y["nonop"]
-    nat, corp, _ = national(N["pretax"], ym[:4], taxret_dir)
+    from .tax import _workday
+    row, lrow = _corp_row(R, ym), _corp_row(R, ym, "법인지방소득세")
+    base = row["base"] if row and row.get("base") is not None else Y["nonop"]["pretax"]
+    nat, corp, C = national(base, ym[:4], R.get("taxret_dir"))
     if corp is None:
+        return None
+    # 기납부(선납세금)는 그해 계산 줄에서 (이 기간 줄이 없으면 같은 해 다른 달까지 계산한 줄)
+    yr = row or next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"
+                      and (t.get("period") or "").startswith("%s년 (1월~" % ym[:4])), None)
+    prepaid = yr.get("prepaid") if yr else None
+    nxt = int(ym[:4]) + 1
+    return {"base": base, "same": bool(row and row.get("base") is not None), "nat": nat, "corp": corp, "C": C,
+            "local": int(corp * LOCAL_RATE), "prepaid": prepaid, "pay": None if prepaid is None else max(nat - prepaid, 0),
+            "due": row["due"] if row and row.get("due") else _workday(dt.date(nxt, 3, 31)),
+            "local_due": lrow["due"] if lrow and lrow.get("due") else _workday(dt.date(nxt, 4, 30))}
+
+
+def _tax_into(R, Y, ym):
+    """누적 결산 줄 끝: 세전 이익 − 법인세 예상(지방소득세 포함) = 당기순이익 예상 (사용자 2026-11-04).
+    법인세 예상 표·자금 일정과 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음). 작년 신고서가 있으면 감면·이월공제 뒤 금액."""
+    N = Y["nonop"]
+    E = _corp_est(R, Y, ym) if N.get("pretax") is not None else None
+    if E is None:
         return
-    N["tax"] = nat + int(corp * LOCAL_RATE)
+    N["tax"] = E["nat"] + E["local"]
     N["net_income"] = N["pretax"] - N["tax"]
 
 
-def _bad_into(R, T):
+def _bad_into(R, T, ym):
     """대손충당금 예상 (사용자 2026-11-12): 누적 결산 줄에 넣고 세전 이익에서 뺀다. 변환이 세금예상.csv 법인세 줄에 적은 금액."""
     import re
-    row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
+    row = _corp_row(R, ym)
     m = re.search(r"대손충당금 예상 ([\d,]+)", (row or {}).get("basis") or "")   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
     amount = int(m.group(1).replace(",", "")) if m else None
     if not amount or T["nonop"].get("pretax") is None:
@@ -1829,33 +1855,33 @@ def _dep_into(R, T, ytd):
 
 def _corptax_table(R, Y, ym, mode="mgmt"):
     """법인세 예상 (사용자 2026-11-04): 최종 세전 이익(감가상각비 예상 뺀 값) 하나로만. 중간예납 등 선납세금을 빼고 납부할 금액,
-    지방소득세. 선납세금은 변환이 분개장으로 만든 세금예상.csv 법인세 줄에서 읽고, 그 줄이 자금 일정에 들어간다."""
-    from .corptax import LOCAL_RATE, brackets, national
+    지방소득세. 선납세금은 변환이 분개장으로 만든 세금예상.csv 법인세 줄에서 읽고, 그 줄이 자금 일정에 들어간다.
+    2026-11-14 P3: 자금 일정과 같은 과세표준(세무조정 포함), '지금까지 이익 기준', 법인세 3/31·지방소득세 4/30 나눔."""
+    from .corptax import brackets
     N = Y["nonop"]
-    base = N["pretax"]
-    nat, corp, C = national(base, ym[:4], R.get("taxret_dir"))
-    local = None if corp is None else int(corp * LOCAL_RATE)
-    row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
-    prepaid = row.get("prepaid") if row else None
-    pay = None if nat is None or prepaid is None else max(nat - prepaid, 0)
+    E = _corp_est(R, Y, ym) if N.get("pretax") is not None else None
+    if E is None:
+        return ""
+    base, nat, corp, C, local, prepaid, pay = E["base"], E["nat"], E["corp"], E["C"], E["local"], E["prepaid"], E["pay"]
     total = None if pay is None else pay + local
+    row = _corp_row(R, ym)
     due = row["due"] if row and row.get("due") else None
-    h = ["<div class='wsub'>법인세 예상 (1월~%s 누적 세전 이익 기준)</div>" % esc(_ym_text(ym)),
-         "<table class='pt tx'><thead><tr><th>세전 이익</th><th>%s</th><th>− 중간예납 등 기납부</th><th>납부할 법인세</th>"
-         "<th>지방소득세</th><th>납부 합계</th></tr></thead><tbody>" % ("법인세 (감면 뒤·농특세 포함)" if C else "법인세"),
-         "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
-         % (W(base), W(nat), W(prepaid, "미확인"), W(pay), W(local), W(total))]
+    h = ["<div class='wsub'>법인세 예상 (1월~%s 이익 기준 · 연말 이익에 따라 바뀜)</div>" % esc(_ym_text(ym)),
+         "<table class='pt tx'><thead><tr><th>세전 이익</th><th>과세표준</th><th>%s</th><th>− 중간예납 등 기납부</th><th>법인세 납부 (%s)</th>"
+         "<th>지방소득세 (%s)</th><th>합계</th></tr></thead><tbody>" % ("법인세 (감면 뒤·농특세 포함)" if C else "법인세",
+                                                                   esc(d2s(E["due"])), esc(d2s(E["local_due"]))),
+         "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
+         % (W(N["pretax"]), W(base), W(nat), W(prepaid, "미확인"), W(pay), W(local), W(total))]
     d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ⑨에 연간 금액 입력)"
     if N.get("bad"):
         d_txt += ", 대손충당금 예상 뺌"
+    d_txt += (" + 세무조정 예상 (자금 일정과 같은 계산)" if base != N["pretax"] else " (자금 일정과 같은 계산)") if E["same"] \
+        else " · 세무조정 미반영 (자금 일정의 법인세 줄이 이 기간 것이 아님 — 자료 변환 필요)"
     rate = "·".join("%g%%" % (r * 100) for _, r in brackets(ym[:4])[:2])
     pay_txt = "자금 일정에 %s 납부 예상으로 넣음" % d2s(due) if due else "자금 일정에 넣지 못함 (자료 변환 필요)"
     h.append("<div class='note'>%s</div>" % esc(
         "과세표준 = %s · 세율 %s, 지방세 10%% · 기납부 = 장부 선납세금 · %s · %s"
-        % (d_txt, rate, "산출세액 %s에서 작년 신고서의 감면·넘어온 공제를 빼고 최저한세까지 (아래 표)" % won(corp) if C else "세무조정·공제 미반영", pay_txt)))
-    if row and row.get("base") is not None and base is not None and row["base"] != base:
-        h.append(_mg(mode, "<div class='note'>%s</div>" % esc("자금 일정의 법인세는 변환 때 장부로 계산한 과세표준 %s 기준 (이 표 %s와 다름 — 기간·자료 확인)"
-                                                                % (won(row["base"]), won(base)))))
+        % (d_txt, rate, "산출세액 %s에서 작년 신고서의 감면·넘어온 공제를 빼고 최저한세까지 (아래 표)" % won(corp) if C else "공제 미반영", pay_txt)))
     # 세무조정 예상은 분기 보고 부록 C-1 로 옮김 (사용자 2026-11-12: 결산·세무·신용평가는 분기·반기·연간 보고로)
     if R.get("taxret_dir"):   # 실제 법인세 신고서 (사용자 2026-11-13, 경영관리에만). 보고서.py 가 파일 있을 때만 폴더를 넣음
         from . import taxreturn
@@ -1864,22 +1890,18 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
 
 
 def _corptax_line(R, Y, ym):
-    """대표용 법인세 예상 한 줄 (사용자 2026-11-04: 월간 3쪽). 계산은 경영관리용 표와 같다."""
-    from .corptax import LOCAL_RATE, national
-    nat, corp, C = national(Y["nonop"]["pretax"], ym[:4], R.get("taxret_dir"))
-    if corp is None:
+    """대표용 법인세 예상 한 줄 (사용자 2026-11-04: 월간 3쪽). 계산은 경영관리용 표·자금 일정과 같다.
+    2026-11-14 P3: 지금까지 이익 기준이라 밝히고, 법인세(3/31)·지방소득세(4/30) 납부일을 나눔."""
+    E = _corp_est(R, Y, ym) if Y["nonop"].get("pretax") is not None else None
+    if E is None:
         return ""
-    local = int(corp * LOCAL_RATE)
-    row = next((t for t in (R.get("tax") or []) if t.get("kind") == "법인세"), None)
-    prepaid = row.get("prepaid") if row else None
-    due = row["due"] if row and row.get("due") else None
-    lab = "법인세 예상(감면 뒤)" if C else "법인세 예상"
-    if prepaid is None:
-        txt = "%s %s + 지방소득세 %s (기납부 미확인)" % (lab, won(nat), won(local))
+    lab = "법인세(감면 뒤)" if E["C"] else "법인세"
+    head = "1월~%s 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · " % _ym_text(ym)
+    if E["prepaid"] is None:
+        nat = "%s %s (기납부 미확인, %s)" % (lab, won(E["nat"]), d2s(E["due"]))
     else:
-        txt = "%s %s + 지방소득세 %s − 중간예납 등 기납부 %s = 납부 %s%s" % (
-            lab, won(nat), won(local), won(prepaid), won(max(nat - prepaid, 0) + local), " (%s 예상)" % d2s(due) if due else "")
-    return "<div class='note'>%s</div>" % esc(txt)
+        nat = "%s %s − 중간예납 등 기납부 %s = %s (%s)" % (lab, won(E["nat"]), won(E["prepaid"]), won(E["pay"]), d2s(E["due"]))
+    return "<div class='note'>%s</div>" % esc(head + nat + " · 지방소득세 %s (%s)" % (won(E["local"]), d2s(E["local_due"])))
 
 
 def _person_table(R, src, dept, ym, basis):
@@ -2018,7 +2040,7 @@ def _ytd_strip(Y, ym):
              ("%s 영업이익" % per, W(c["net"], "확인 필요"), "영업이익률 %s" % esc(pct(c["net"], c["revenue"]))),
              ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]
     if "net_income" in N:   # 당기순이익 예상도 큰 숫자로 (사용자 2026-11-04)
-        cards.append(("%s 당기순이익 (예상)" % per, W(N["net_income"]), esc("법인세 예상 −%s" % won(N["tax"]))))
+        cards.append(("%s 당기순이익 (예상)" % per, W(N["net_income"]), esc("지금까지 이익 기준 법인세·지방소득세 −%s" % won(N["tax"]))))
     return "<div class='four%s'>%s</div>" % ("" if len(cards) == 4 else " c3", "".join(
         "<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
         % (esc(a), b, f) for a, b, f in cards))
