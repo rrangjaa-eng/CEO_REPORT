@@ -57,7 +57,9 @@ async function writeOut(fname, text) {
   return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
 }
 
-// 내용(hashSource)이 지난번과 같고 이미 저장 폴더에 들어가 있으면 저장하지 않는다.
+// 내용(hashSource)이 지난번과 같고, 오늘 이미 지금 저장 폴더에 저장했으면 다시 저장하지 않는다.
+// 날이 바뀌면 같은 내용이라도 하루 한 번은 새로 저장한다 (2026-11-14 코덱스 검토: 자금계획 내용이 7일 동안 안 바뀌면
+// 프로그램은 파일의 받은 날짜만 보고 '오래된 자료'로 보고를 막았다). 저장 폴더를 바꿨으면 같은 내용도 새 폴더에 저장한다.
 async function saveFile(kind, file, hashSource, summary) {
   const s = stamp();
   const hash = await sha(hashSource);
@@ -65,8 +67,10 @@ async function saveFile(kind, file, hashSource, summary) {
   const prev = (await chrome.storage.local.get(key))[key];
   // 같은 내용이라도 지금 저장 폴더에 아직 안 들어갔으면(예전 다운로드 폴더 저장·허용 기다림) 다시 저장한다
   const dir = await getFolder();
-  const placed = prev && (dir ? prev.where === "위하고 폴더" : !!prev.where && prev.where !== "허용 기다림");
-  if (prev && prev.hash === hash && placed) {
+  const dirName = dir ? (dir.name || "") : "";
+  const placed = prev && (dir ? prev.where === "위하고 폴더" && (prev.dirName || "") === dirName : !!prev.where && prev.where !== "허용 기다림");
+  const sameDay = prev && String(prev.saved || "").slice(0, 10) === s.iso.slice(0, 10);
+  if (prev && prev.hash === hash && placed && sameDay) {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
     await setStatus({[kind]: info, error: ""});
@@ -75,7 +79,7 @@ async function saveFile(kind, file, hashSource, summary) {
   file["수집시각"] = s.iso;
   const fname = `${s.ymd6} ${kind} 자동수집.json`;
   const where = await writeOut(fname, JSON.stringify(file));
-  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, changed: !!prev}, summary);
+  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, dirName, changed: !!prev && prev.hash !== hash}, summary);
   await chrome.storage.local.set({[key]: info});
   await setStatus({[kind]: info, error: ""});
   return {saved: true, file: fname, where};

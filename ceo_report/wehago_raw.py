@@ -57,6 +57,9 @@ def birth_from_social(no):
         return ""
 
 
+YEARLESS = ("인사_사원등록",)
+
+
 def files(wehago_dir):
     """-> {(종류_화면, 연도): (수집시각, 경로, dict)} 화면·연도마다 가장 늦게 받은 것."""
     out = {}
@@ -76,7 +79,16 @@ def files(wehago_dir):
         if not isinstance(d, dict) or "응답" not in d:
             continue
         kind = (d.get("종류") or "").replace("원본", "")
-        key = ("%s_%s" % (kind, d.get("화면") or ""), int(d.get("연도") or 0))
+        screen = "%s_%s" % (kind, d.get("화면") or "")
+        try:
+            year = int(str(d.get("연도") or 0).strip()[:4] or 0)
+        except ValueError:
+            year = 0
+        # 연도가 없는 파일('지금 열린 화면' 수동 저장)은 어느 해 자료인지 몰라 쓰지 않는다 (2026-11-14 코덱스 검토: 급여가 '0-01'
+        # 같은 달로, 고정자산이 0년으로 들어갔음). 사원등록은 해가 상관없어 그대로 쓴다. '모두 받기(자동)'는 연도를 적는다
+        if year < 2000 and screen not in YEARLESS:
+            continue
+        key = (screen, year)
         stamp = str(d.get("수집시각") or "") + n
         if key not in out or out[key][0] < stamp:
             out[key] = (stamp, path, d)
@@ -188,7 +200,7 @@ def _withholding(F):
             if path.endswith("/emp"):
                 for e in data if isinstance(data, list) else (_find(data, "data") or []):
                     if isinstance(e, dict) and e.get("cd_emp"):
-                        emps[str(e["cd_emp"])] = e
+                        emps.setdefault(str(e["cd_emp"]), e)   # 최근 해 것이 먼저 온다: 작년 값으로 덮지 않음 (코덱스 검토)
             elif path.endswith("/emp/income"):
                 code = r.get("cd_emp") or _find(data, "cd_emp")
                 rows = _find(data, "group1") or []

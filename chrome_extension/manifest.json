@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "대표보고 위하고 수집",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "로그인된 위하고 SmartA 화면에서 분개장·자금계획·결산 자료를 읽어 대표보고 프로그램용 파일로 저장합니다. 위하고에서는 아무것도 바꾸지 않습니다.",
   "permissions": [
     "downloads",

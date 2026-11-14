@@ -290,6 +290,8 @@ def pick(events, start, end):
             ln["projects"].append(e["project"])
         ln["dates"].append(e["date"])
         ln["firm"] = ln["firm"] and bool(e.get("firm"))
+        if e.get("gap"):
+            ln["gap"] = True
     return sorted(lines.items(), key=lambda kv: (min(kv[1]["dates"]), kv[1]["vendor"])), skipped
 
 
@@ -336,6 +338,13 @@ def build(events, accounts, start, end, splits=None, multi=None):
     for k, ln in picked:
         if ln["unknown"] or ln["amount"] <= 0:
             blocked.append((ln["vendor"], None if ln["unknown"] else ln["amount"], "금액 미확인"))
+            continue
+        # 확정된 지급만 넣는다: 주간 출금 목록과 같은 기준 (2026-11-14 코덱스 검토: 예상 지급도 이체 파일에 들어갔음)
+        if not ln["firm"]:
+            blocked.append((ln["vendor"], ln["amount"], "아직 확정되지 않은 예상 지급이라 뺌 (출금 목록에도 없음)"))
+            continue
+        if ln.get("gap"):
+            blocked.append((ln["vendor"], ln["amount"], "예정일이 지났는데 이미 나갔는지 장부로 확인되지 않아 뺌 — 통장을 확인하세요"))
             continue
         many = multi_accounts(accounts, ln)
         if many:
