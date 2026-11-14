@@ -1,15 +1,18 @@
 // 화면에서 받은 응답을 필요한 칸만 남겨 확장 배경으로 넘기고, 배경의 요청(분개장 [조회], 자금계획 날짜별 조회)을 처리한다.
 // 위하고에서는 날짜 고르기·[조회]·왼쪽 자금항목 줄 고르기만 한다. 저장·삭제·입력은 하지 않는다 (읽기 전용).
 const KEEP = ["da_date", "no_acct", "nm_yuh", "nm_gubun_bungae", "cd_acctit", "nm_acctit", "mn_bungae1", "mn_bungae2",
-  "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2"];
+  "nm_trade", "cd_trade", "nm_remark", "nm_project", "nm_dept", "nm_emp", "dt_insert", "sq_acttax2",
+  // 0.9 (2026-11-14 제안 8): 카드 거래처(매입 비용 줄)·금융거래처(미지급금이 나갈 카드·계좌)·전표 출처 코드
+  "nm_ctrade", "nm_finance", "no_exter2"];
 const PLAN_KEEP = ["cd_trade", "nm_trade", "mn_fplan", "rmk_fplan", "str_refer", "da_fplan"];
-const BRIDGE_VERSION = 6;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
+const BRIDGE_VERSION = 7;   // 배경과 맞춰 본다: 확장을 고친 뒤 새로고침하지 않았으면 배경이 알려 준다
 const planCap = [];
 let closingArmed = false;   // {kind, date, cd_fitem, rows}
 let autoCap = null;   // 결산·인사급여 자동 받기: 이 화면 코드의 응답만 모은다 [{path, data}]
 
 // 개인정보·비밀값 빼기 (사용자 2026-11-12): 비밀번호·전화·메일·주소·계좌는 버리고, 주민번호는 생년월일-성별 자리(YYMMDD-G)만 남긴다.
-const DROP_KEY = /(^pw_|passw|^cel_|^tel_|^em_|email|^zip|^add_|addr|bank|deposit|card_no|no_card|account_no|account_holder|profile_url|^ip_|token|secret)/i;
+// 0.9: 계좌·카드번호(no_acnum·no_bnkacct·js_number·no_ftnumber)와 거래처 담당자·대표자 이름(nm_damname·nm_ceo 등)도 버린다 (차입금·예적금·카드·거래처원장 화면)
+const DROP_KEY = /(^pw_|passw|^cel_|^tel_|^em_|email|^zip|^add_|addr|bank|deposit|card_no|no_card|account_no|account_holder|profile_url|^ip_|token|secret|^no_acnum|^no_bnkacct|^js_number|^no_ftnumber|^nm_damname|ceo)/i;
 const ID_KEY = /(social|no_res|jumin)/i;
 function scrub(v, key = "") {
   if (Array.isArray(v)) return v.map((x) => scrub(x));
@@ -234,9 +237,13 @@ async function walkEmployeeRows(subPath) {
     g.cd_emp = panelEmpCode();
     g.row = i;
   }
-  // 첫 줄(조회 때 받은 것)에도 사원코드를 붙인다
+  // 첫 줄(조회 때 받은 것): 첫 사원을 눌러 다시 받았으면 버리고(2026-11-14: 첫 사원 응답이 두 번 들어가 원천세가 달마다 부풀었음),
+  // 못 받았으면 첫 사원 코드를 붙인다
   const first = autoCap.got.find((x) => x.path.includes(subPath) && x.cd_emp === undefined);
-  if (first) first.cd_emp = list.data[0].cd_emp;
+  if (first) {
+    if (autoCap.got.some((x) => x !== first && x.path.includes(subPath) && x.row === 0)) autoCap.got.splice(autoCap.got.indexOf(first), 1);
+    else first.cd_emp = list.data[0].cd_emp;
+  }
 }
 
 // 화면 하나 받기: 같은 탭 안에서 화면 주소(#/smarta/모듈/코드)만 바꾸고, [조회]를 눌러 그 화면 코드의 응답을 모은다.

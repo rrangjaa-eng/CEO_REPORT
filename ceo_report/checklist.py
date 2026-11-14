@@ -28,7 +28,7 @@ STORE_COLS = ["항목ID", "결정", "메모", "결정일", "내용"]
 BANK_FILE = "통장잔액.csv"
 BANK_COLS = ["날짜", "통장잔액", "메모"]
 FIX_WORDS = ("고칠 것", "넣을 것", "지울 것", "발급할 것", "확인 필요")
-ORDER = ("중복 의심 전표", "미지급금 예정 > 장부", "두 출처 출금", "통장 잔액 대조", "홈택스 대조", "계좌 없는 이체 거래처",
+ORDER = ("중복 의심 전표", "미지급금 예정 > 장부", "두 출처 출금", "통장 잔액 대조", "자료 대조", "홈택스 대조", "계좌 없는 이체 거래처",
          "변환 대조", "카드 전표", "정합성 점검", "입력 자료")
 
 
@@ -347,6 +347,8 @@ def gather(app_dir, input_dir, asof):
     """-> {'items': [항목 + decision], 'convert_at': 변환 시각, 'counts': {...}}."""
     conv, when = _load_convert_items(input_dir)
     items = conv + _report_items(input_dir, asof) + bank_items(input_dir) + _integrity_items(app_dir)
+    from . import reconcile   # 자료 대조 '다름' 줄 (사용자 2026-11-14)
+    items += reconcile.check_items(input_dir)
     seen, uniq = set(), []
     for it in items:
         if it["id"] in seen:

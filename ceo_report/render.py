@@ -491,6 +491,11 @@ def render(R, mode):
         from . import gasu
         i2 = [x[0] for x in rest].index("s2") + 1
         rest.insert(i2, ("gasu", "B-2-1 가수금 갚을 시기", G2, gasu.render(R["gasu"]), None))
+    if "recon_rows" in R:   # B-7-1 자료 대조 (사용자 2026-11-14: 대조 결과를 한곳에) — 7장 '변동·자료 범위' 바로 뒤
+        from . import reconcile
+        i7 = [x[0] for x in rest].index("s7") + 1
+        nd = sum(1 for r in R["recon_rows"] if r.get("판정") == "다름")
+        rest.insert(i7, ("recon", "B-7-1 자료 대조", G2, reconcile.render(R["recon_rows"], esc), nd or None))
     rest += [(k, lab, G3, b, None) for k, lab, b in _periodic(R, digest.periodic(R))]
     # 쉬운 설명 · 제안 상자를 모든 장 맨 위에 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
     R["docs_files"] = R.get("docs_files") or {}

@@ -34,7 +34,7 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(밤사이 통합: B 자금 일정 코드로 맞추기 #25 합침, 2026-11-14). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(밤사이 통합: H 자료 대조·확장 0.9 #26 합침, 2026-11-14). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
 BASELINE = "6b876ce"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
@@ -817,6 +817,8 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         from ceo_report import insights, gasu   # 가수금 갚을 시기도 CLI 가 붙인다 (2026-11-13)
         R["auto_facts"] = insights.read_facts(folder)
         R["gasu"] = gasu.for_report(folder, R)
+        from ceo_report import reconcile   # 자료 대조도 CLI 가 붙인다 (2026-11-14)
+        R["recon"], R["recon_rows"] = reconcile.for_report(folder)
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
