@@ -274,14 +274,19 @@ def alerts(R):
                 p["label"], "{:,}".format(-p["firm"]["avail"]), p["firm"]["low_date"])))
             break
     for p in (R.get("s3") or {}).get("projects") or []:
-        b, paid = p.get("budget"), p.get("paid_total")
+        # 경보는 '쓴 돈 + 요청(장부 전 지급요청 포함) + 계획' 기준 (2026-11-14 오후 점검 T1: 예전엔 지급 끝난 돈만 봐서
+        # 요청이 쌓여 예산을 넘어도 경보가 안 떴음). calc 가 committed 를 안 만든 예전 결과면 쓴 돈으로.
+        b = p.get("budget")
+        used = p.get("committed") if "committed" in p else p.get("paid_total")
         name = "[%s] %s" % (p.get("id"), p.get("name"))
-        if b and paid is not None and paid >= b:
-            out.append(("높음", "%s 집행 %s원이 추정 예산 %s원을 넘음 (%.0f%%)" % (name, "{:,}".format(paid), "{:,}".format(b), 100.0 * paid / b)))
-        elif b and paid is not None and paid >= 0.8 * b:
-            out.append(("주의", "%s 집행이 추정 예산의 %.0f%%" % (name, 100.0 * paid / b)))
-        if p.get("profit_end") is not None and p["profit_end"] < 0:
-            out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-p["profit_end"]))))
+        if b and used is not None and used > b:
+            out.append(("높음", "%s 쓴 돈·요청·계획 %s원이 추정 예산 %s원을 넘음 (%.0f%%, %s원 초과)" % (
+                name, "{:,}".format(used), "{:,}".format(b), 100.0 * used / b, "{:,}".format(used - b))))
+        elif b and used is not None and used >= 0.8 * b:
+            out.append(("주의", "%s 쓴 돈·요청·계획이 추정 예산의 %.0f%%" % (name, 100.0 * used / b)))
+        now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
+        if now is not None and now < 0:
+            out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-now))))
     return out
 
 
@@ -360,15 +365,20 @@ def invoice_pairs(R):
 
 
 def profit_flow(R):
-    """8: 프로젝트 견적 이익 → 지금 예상 이익 -> [{name, team, quote, now, diff}] (줄어든 순)."""
+    """8: 프로젝트 견적 이익 → 지금 예상 이익 -> [{name, team, quote, now, diff, closed}] (줄어든 순).
+
+    지금 예상 이익 = calc profit_now: 끝난 프로젝트는 계약 − 등록 지출(쓴 돈 + 요청 + 계획), 진행 중은 계약 − (추정 예산과
+    등록 지출 중 큰 쪽). 그래서 진행 중 프로젝트의 차이는 '추정 예산을 넘은 만큼'만 나온다 (2026-11-14 오후 점검 T1:
+    예전엔 남은 예산이 그대로 '이익 개선'으로 보였음). closed = 끝난 프로젝트 (보고에서 진행 중과 나눠 보인다)."""
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
-        c, b, now = p.get("contract"), p.get("budget"), p.get("profit_end")
+        c, b = p.get("contract"), p.get("budget")
+        now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if not c or b is None or now is None:
             continue
         q = c - b
         out.append({"name": "[%s] %s" % (p.get("id"), p.get("name")), "team": p.get("team") or "", "quote": q, "now": now,
-                    "diff": now - q, "contract": c})
+                    "diff": now - q, "contract": c, "closed": bool(p.get("closed"))})
     return sorted(out, key=lambda r: r["diff"])
 
 

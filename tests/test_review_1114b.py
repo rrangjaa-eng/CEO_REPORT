@@ -111,7 +111,7 @@ class TestT4UnknownCostKeepsProject(TeamReportCase):
         _, _, T, page = self.make()
         self.assertIsNone(T["up_tot"]["paid"])
         self.assertIsNone(T["up_tot"]["left"])
-        self.assertIn("집행 금액 미확인 1건", text(page))
+        self.assertIn("집행·요청 금액 미확인 1건", text(page))
         self.assertIn("사전견적 또는 추정 예산이 없는 1건", text(page))
 
 

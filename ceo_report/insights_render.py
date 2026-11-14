@@ -166,13 +166,16 @@ def team_section(I, R, team, start_no=7):
 
     # 11 목표 달성률은 팀장 보고 1절 '실적 요약'에 이미 있어 다시 싣지 않는다
     # 8 이익 흐름
-    fl = [f for f in I["flow"] if f["name"] in names]
+    # 끝난 프로젝트는 모두, 진행 중은 추정 예산을 넘은 것만 (2026-11-14 오후 점검 T1·7절: 진행 중 '차이'는 넘은 만큼만 뜻이 있음)
+    fl = [f for f in I["flow"] if f["name"] in names and (f.get("closed") or f["diff"] < 0)]
     if fl:
-        rows = "".join("<tr><td class='l'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
-                       % (esc(f["name"]), W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"])) for f in fl)
+        rows = "".join("<tr><td class='l'>%s</td><td class='c'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
+                       % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"]))
+                       for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
         sec("프로젝트 이익 흐름 (견적 때 → 지금)",
-            "<table class='g'><thead><tr><th>프로젝트</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
-            "<tbody>%s</tbody></table><p class='note'>※ 견적 때 이익 = 계약 − 추정 예산, 지금 예상 이익 = 계약 − (쓴 돈 + 더 나갈 돈)</p>" % rows)
+            "<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
+            "<tbody>%s</tbody></table><p class='note'>※ 견적 때 이익 = 계약 − 추정 예산. 지금 예상 이익: 끝남 = 계약 − 쓴 돈, "
+            "진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산). 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % rows)
         no += 1
     # 4 경보 (그 팀 프로젝트)
     al = [(lv, t) for lv, t in I["alerts"] if any(t.startswith(n) for n in names)]

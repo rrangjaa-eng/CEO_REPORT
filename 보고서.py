@@ -281,7 +281,7 @@ def _annual(a):
     stop = gate.check_dir(a.입력, today)   # 연간 대표 보고도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
     if stop:
         _say("연간 대표 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
-    A = annual.compute(a.입력, year, D.settings, D)
+    A = annual.compute(a.입력, year, D.settings, D, today)   # 연중이면 기준일까지 (끝난 달·작년 같은 기간)
     if A["Y"] is None:
         _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
         return 2
@@ -297,9 +297,9 @@ def _annual(a):
                 _say(_write_help(a.출력, e))
                 return 7
             continue
-        page = annual.render(A, mode)
-        if stop:
-            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고", blanked=False), 1)
+        page = annual.render(annual.blank_cash(A) if stop else A, mode)
+        if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)

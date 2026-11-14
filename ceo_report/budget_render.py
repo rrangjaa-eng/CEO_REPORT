@@ -147,20 +147,27 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     h.append("<div class='four top'>")
     h.append(_card("%d년 매출 예산" % y, won(Y["rev"]), "%d년 %s 대비 %s" % (base, won(L["rev"]), _chg(Y["rev"], L["rev"]))))
     h.append(_card("영업이익 예산", won(Y["op"]), "영업이익률 %s · %d년 %s" % (_pct(Y["op"], Y["rev"]), base, won(L["op"]))))
-    h.append(_card("세전 이익 예산", won(Y["pre"]), "법인세 예상 %s (%d-03 납부)" % (won(Y["tax"]), y + 1)))
+    # 법인세는 다음 해 3월, 지방세는 4월에 낸다. 8월 중간예납은 이미 낸 몫이라 빼고 보인다 (2026-11-14 오후 점검 G3)
+    mid = sum(f["amount"] for f in B["fix"] if f["day"] == "8/31" and "중간예납" in f["name"])
+    tax_foot = "법인세·지방세 예상 %s" % won(Y["tax"])
+    if Y["tax"] is not None:
+        tax_foot += " → %d년 3월·4월에 %s 납부%s" % (y + 1, won(max(Y["tax"] - mid, 0)), " (8월 중간예납 %s 뺌)" % won(mid) if mid else "")
+    h.append(_card("세전 이익 예산", won(Y["pre"]), tax_foot))
     if c["lo"] is not None:
         lo, mc = c["lo"], c["min_cash"]
         diff = c["bal"][lo] - mc
         h.append(_card("가장 적은 월말 통장", won(c["bal"][lo]), "%d월 · 최소 보유현금보다 %s" % (lo + 1, ("%s 많음" % won(diff)) if diff >= 0 else "<b style='color:#c00000'>%s 모자람</b>" % won(-diff))))
     else:
-        h.append(_card("가장 적은 월말 통장", "미확인", "통장 잔액·급여 자료 필요"))
+        h.append(_card("가장 적은 월말 통장", "미확인", "최신 자금계획서·분개장이 없어 비움" if B.get("blocked") else "통장 잔액·급여 자료 필요"))
     h.append("</div>")
     gt = sum(T[t]["got_sum"] for t in teams)
     cash_line = ""
     if c["lo"] is not None:
         below = [i + 1 for i in range(12) if c["bal"][i] < c["min_cash"]]
-        cash_line = ("1년 내내 통장이 최소 보유현금 위에 있습니다." if not below else
-                     "<b style='color:#c00000'>%s 통장이 최소 보유현금 아래로 내려갑니다.</b>" % ", ".join("%d월" % m for m in below))
+        # 월말 잔액 12개만 보므로 '매달 말 잔액 기준'으로 한정한다 (2026-11-14 오후 점검 G6: 월 중간에 급여·세금이 먼저 나가면
+        # 그사이엔 모자랄 수 있고, 새로 받아야 할 매출도 들어온다고 본 숫자)
+        cash_line = ("계획한 매출이 들어오면 매달 말 잔액 기준으로 통장이 최소 보유현금 위에 있습니다." if not below else
+                     "<b style='color:#c00000'>매달 말 잔액 기준 %s 통장이 최소 보유현금 아래로 내려갑니다.</b>" % ", ".join("%d월" % m for m in below))
     h.append("<div class='yl'>매출 예산 중 <b>%s (%s)</b>는 이미 받은 일입니다. 나머지 <b>%s</b>를 새로 받아야 합니다. %s</div>"
              % (won(gt), _pct(gt, Y["rev"]), won(Y["rev"] - gt), cash_line))
     if B["missing"]:
@@ -241,9 +248,9 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     # 4. 급여·판관비 (경영관리용)
     n = 4
     if mg:
-        h.append("<div class='sec pgb'><div class='q'>%d. 급여·판관비 예산%s</div>" % (n, S("ok", "부서비용·계정별비용")))
-        h.append("<div class='card'><div class='wsub' style='margin-top:0'>인원 계획 (%s 급여 전표 부서명 기준)</div><table class='pt r'><thead><tr><th>부서</th><th>%d년 말</th><th>%d년 늘림</th><th>입사 월</th><th>%d년 말</th><th>1년 평균</th></tr></thead><tbody>"
-                 % (B["last_ym"] or "자료 없음", base, y, y))
+        h.append("<div class='sec pgb'><div class='q'>%d. 급여·판관비 예산%s</div>" % (n, S("ok", "%s·계정별비용" % ("위하고 급여 화면" if B.get("sal_src", "").startswith("위하고") else "부서비용"))))
+        h.append("<div class='card'><div class='wsub' style='margin-top:0'>인원 계획 (%s 급여, %s)</div><table class='pt r'><thead><tr><th>부서</th><th>%d년 말</th><th>%d년 늘림</th><th>입사 월</th><th>%d년 말</th><th>1년 평균</th></tr></thead><tbody>"
+                 % (B["last_ym"] or "자료 없음", "위하고 사원등록 부서 기준" if B.get("sal_src", "").startswith("위하고") else "급여 전표 부서명 기준", base, y, y))
         for dname, n0 in B["heads0"].items():
             add, mo = B["hires"].get(dname, (0, None))
             avg = n0 + (add * (13 - mo) / 12.0 if add else 0)
@@ -271,13 +278,13 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         h.append("<div class='note'>%d년 실적이 1년이 안 되면 달 수로 나눠 12달로 늘렸습니다. 인원 비례 = 복리후생비·여비교통비·통신비 등.</div></div></div>" % base)
         n += 1
     # 정해진 지급 일정
-    h.append("<div class='sec'><div class='q'>%d. 정해진 지급 일정%s</div>" % (n, S("ok", "세금예상 + 예산 숫자")))
+    h.append("<div class='sec'><div class='q'>%d. 정해진 지급 일정%s</div>" % (n, S("ok", "세금예상 + 자금일정·자금계획서%s + 예산 숫자" % (" + 차입금현황" if any(f.get("src") == "차입금현황 + 장부" for f in B["fix"]) else ""))))
     h.append("<div class='card'><table class='pt r'><thead><tr><th class='l'>날짜</th><th class='l'>항목</th><th>금액</th>%s</tr></thead><tbody>"
              % ("<th class='l'>계산</th><th class='l'>자료</th>" if mg else ""))
     for f in B["fix"]:
         h.append("<tr><td class='l'>%s</td><td class='l'>%s</td><td>%s</td>%s</tr>" % (f["day"], esc(f["name"]), won(f["amount"]),
                  ("<td class='how'>%s</td><td class='how'>%s</td>" % (esc(f["how"]), esc(f["src"]))) if mg else ""))
-    if B["Y"]["dep"] is not None:
+    if B["Y"]["dep"] is not None and mg:   # 돈이 안 나가는 비용이라 대표용 지급 목록에선 뺌 (7절), 경영관리는 그대로
         h.append("<tr><td class='l'>매달</td><td class='l'>감가상각비 (비용만, 돈은 안 나감)</td><td>%s</td>%s</tr>"
                  % (won(B["dep"][0]), "<td class='how'>연 %s ÷ 12</td><td class='how'>%s</td>" % (won(B["Y"]["dep"]), esc(B["dep_src"])) if mg else ""))
     h.append("</tbody></table></div></div>")
@@ -285,27 +292,39 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     # 월별 자금
     h.append("<div class='sec pgb'><div class='q'>%d. 월별 자금 계획 (최소 보유현금 확인)%s</div>" % (n, S("new", "회수·지급 시점 가정")))
     if c["lo"] is None:
-        h.append("<div class='card'><div class='note'>통장 잔액 또는 급여 자료가 없어 만들지 못했습니다.</div></div></div>")
+        h.append("<div class='card'><div class='note'>%s</div></div></div>" % (
+            "최신 자금계획서·분개장이 없어 월별 통장 잔액 숫자를 비웠습니다 (틀린 숫자를 보이지 않으려는 것)." if B.get("blocked")
+            else "통장 잔액 또는 급여 자료가 없어 만들지 못했습니다."))
     else:
         h.append("<div class='card'><div class='wsub' style='margin-top:0'>월말 통장 잔액 예상 (사용할 수 있는 돈)</div>%s" % _cash_svg(B))
         if mg:
-            ct = ["<table class='pt r small' style='margin-top:6px'><thead><tr><th>월</th><th>월초</th><th>매출 입금</th><th>매입 지급</th><th>급여</th><th>판관비</th><th>세금</th><th>영업외</th><th>월말</th><th>최소 보유현금 위</th></tr></thead><tbody>"]
+            ct = ["<table class='pt r small' style='margin-top:6px'><thead><tr><th>월</th><th>월초</th><th>매출 입금</th><th>매입 지급</th><th>급여</th><th>판관비</th><th>세금</th><th>대출 원금 등</th><th>영업외</th><th>월말</th><th>최소 보유현금 위</th></tr></thead><tbody>"]
             bb = c["start"]
             for i in range(12):
-                ct.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td class='%s'>%s</td></tr>"
+                ct.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td class='%s'>%s</td></tr>"
                           % (MON[i], won(bb), won(c["cin"][i]), won(c["cpay"][i]), won(B["sal"][i]), won(c["sga_pay"][i]),
-                             ("−" + won(c["tax"][i])) if c["tax"][i] else "—", _sgn(c["nio"][i]) if c["nio"][i] else "—", won(c["bal"][i]),
+                             ("−" + won(c["tax"][i])) if c["tax"][i] else "—", ("−" + won(c["fixed"][i])) if c["fixed"][i] else "—",
+                             _sgn(c["nio"][i]) if c["nio"][i] else "—", won(c["bal"][i]),
                              "lowc" if (i == c["lo"] or c["bal"][i] < c["min_cash"]) else "", _sgn(c["bal"][i] - c["min_cash"])))
                 bb = c["bal"][i]
-            ct.append("<tr class='tot'><td>1년</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
-                      % (won(c["start"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])),
+            ct.append("<tr class='tot'><td>1년</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
+                      % (won(c["start"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])), won(sum(c["fixed"])),
                          _sgn(sum(c["nio"])) if sum(c["nio"]) else "—", won(c["bal"][-1])))
-            dtext = ("%d년 계산서 %d건 평균 %.0f일" % (base, c["n_days"], c["days"])) if c["days"] is not None else "계산서 입금 자료 없음 — 45일로 가정"
-            ct.append("<div class='note'>1월 월초 = %s 장부 통장 잔액 %s − 사용 제한 %s%s (1월에 실제 잔액으로 바꿈). 매출 입금 = 매출 × 1.1을 회수 기간(%s)만큼 늦춰 받음. "
-                      "매입 지급 = 매출원가 × 1.1을 행사 달 40%%·다음 달 60%% (가정). 1~2월 입금에는 %d년 말 매출, 1월 지급에는 %d년 12월 매입이 들어 있습니다. 판관비 지급 = 판관비 × 1.05.</div>"
-                      % (c["bal_date"].isoformat(), won(c["bal0"]), won(c["restricted"]),
+            if c["days_used"] == c["days"]:
+                dtext = "%d년 계산서 %d건 평균 %.0f일" % (base, c["n_days"], c["days"])
+            else:
+                dtext = "회사 기준 작성일 뒤 %d일%s" % (c["days_used"], (" (입금된 계산서 %d건 평균 %.0f일은 건수가 적어 쓰지 않음)" % (c["n_days"], c["days"]))
+                                                   if c["days"] is not None else " (입금된 계산서 자료 없음)")
+            if c.get("avail0") is not None:
+                start_text = "%s 쓸 수 있는 돈 %s (은행 잔액 날짜 뒤 통장 입출금 반영, 사용 제한 뺌, 주간 보고와 같은 값)" % (B["asof"].isoformat(), won(c["avail0"]))
+            else:
+                start_text = "%s 장부 통장 잔액 %s − 사용 제한 %s" % (c["bal_date"].isoformat() if c["bal_date"] else "-", won(c["bal0"]), won(c["restricted"]))
+            ct.append("<div class='note'>1월 월초 = %s%s (1월에 실제 잔액으로 바꿈). 매출 입금 = 매출 × 1.1을 회수 기간(%s)만큼 늦춰 받음. "
+                      "매입 지급 = 매출원가 × 1.1을 행사 달 40%%·다음 달 60%% (가정). 1~2월 입금에는 %d년 말 매출, 1월 지급에는 %d년 12월 매입이 들어 있습니다. 판관비 지급 = 판관비 × 1.05. "
+                      "대출 원금 등 = 자금일정·자금계획서의 %d년 대출 원금·보증금·설비 지급.</div>"
+                      % (start_text,
                          (" %s 연말까지 들어오고 나갈 돈 예상 %d건 %s" % ("+" if c.get("roll", 0) >= 0 else "−", c.get("roll_n", 0), won(abs(c.get("roll", 0)))))
-                         if c.get("roll_n") else "", dtext, base, base))
+                         if c.get("roll_n") else "", dtext, base, base, y))
             h.append("".join(ct))
         else:
             lo = c["lo"]
@@ -323,7 +342,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
                 ("이미 받은 %d년 일" % y, "인트라넷 프로젝트 (행사일이 %d년)" % y, "%d건" % len(B["got"])),
                 ("목표 수익률", "팀목표.csv %d년" % y, "입력 전 팀 있음" if any(not T[t]["rate_set"] for t in teams) else "입력됨"),
                 ("성장률·인원·인상률", "예산값.csv %d년" % y, "입력 전: " + ", ".join(B["missing"]) if B["missing"] else "입력됨"),
-                ("급여·인원", "부서비용.csv (%s)" % (B["last_ym"] or "없음"), ""),
+                ("급여·인원", "%s (%s)" % (B.get("sal_src") or "부서비용.csv", B["last_ym"] or "없음"), ""),
                 ("판관비 계정별", "계정별비용.csv", "%d개 계정" % len(B["SGA"])),
                 ("감가상각비", B["dep_src"] or "모름", ""),
                 ("세금 일정", "세금예상.csv + 예산 숫자", ""),

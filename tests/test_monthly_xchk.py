@@ -34,7 +34,7 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(밤사이 통합: E 변환 안정화 #22 합침, 2026-11-14). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(밤사이 통합: C 팀장·연간·예산 #23 합침, 2026-11-14). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
 BASELINE = "bc6f854"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"

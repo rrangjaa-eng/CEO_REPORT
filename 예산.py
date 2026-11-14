@@ -57,7 +57,7 @@ def main(argv=None):
         _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s)" % (out, e.strerror or type(e).__name__))
         return 7
     d = load(a.입력)
-    B = budget.compute(d, budget.read_values(a.입력), year, asof, d.settings)
+    B = budget.compute(d, budget.read_values(a.입력), year, asof, d.settings, a.입력)
     if not B["teams"]:
         _say("%d년 팀 매출 자료(손익.csv 팀 줄)가 없어 예산을 만들 수 없습니다. 먼저 '자료 변환'을 하세요." % B["base"])
         return 2
@@ -91,9 +91,9 @@ def main(argv=None):
                 _say("파일을 쓰지 못했습니다: %s (%s)" % (base + ".html", e.strerror or type(e).__name__))
                 return 7
             continue
-        page = render_budget(B, mode, company, confirmed)
-        if stop:
-            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=False), 1)
+        page = render_budget(budget.blank_cash(B) if stop else B, mode, company, confirmed)
+        if stop:   # 항목은 남기고 자금 전망 숫자만 비운다 (2026-11-14 오후 점검 K7)
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=True), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)
