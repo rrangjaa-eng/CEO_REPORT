@@ -565,6 +565,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax
     events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
+    mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
     from .payreq import attach as attach_reqs   # 지급 요청서 세부사항 첫 줄: 프로젝트 번호 + 금액 (사용자 2026-11-05)
@@ -606,7 +607,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             continue
         for b in buckets:
             if b["from"] <= ev["date"] <= b["to"]:
-                b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
+                b[("in_" if ev["io"] == "in" else "out_") + ("firm" if counts_in(ev, "firm") else "est")] += ev["amount"]
                 break
     start_cash = R["s1"]["available"]
     out_missing = list(getattr(d, "out_missing", []))
@@ -631,7 +632,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         bal, low, low_d = start_cash, start_cash, asof
         daily = defaultdict(int)
         for ev in dated:
-            if mode == "firm" and not ev["firm"]:
+            if not counts_in(ev, mode):
                 continue
             daily[ev["date"]] += ev["amount"] if ev["io"] == "in" else -ev["amount"]
         for day in sorted(daily):
@@ -913,8 +914,52 @@ def period_ends(kind, asof, payday=None):
     return [("%d월" % _month_end(_add_months(asof, i)).month, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 
 
+MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금")
+MUST_CAT_EXTRA = ("세금", "회사부담금")
+MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
+
+
+def must_pay(ev):
+    """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급.
+    날짜·금액이 거의 정해진 돈이라 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
+
+    · 프로그램이 장부로 계산한 줄(세금예상): 세목으로.
+    · 손으로 넣은 일정: 분류에 세목 낱말(세금 맞추기와 같은 낱말)이 있거나 거래처가 세무서·구청·공단·카드사.
+    정기예금 가입·프로젝트 원가·남은 예산·입금은 아니다."""
+    from .tax import KEYWORDS, NOT_TAX
+    if ev.get("io") != "out":
+        return False
+    if ev.get("source") == "세금예상":
+        return (ev.get("kind") or str(ev.get("cat") or "").split(" (")[0]) in MUST_KINDS
+    if ev.get("source") in NOT_TAX:
+        return False
+    cat = "".join(str(ev.get("cat") or "").split())
+    vendor = "".join(str(ev.get("desc") or "").split())
+    words = [w for k in MUST_KINDS for w in KEYWORDS.get(k, ())] + list(MUST_CAT_EXTRA)
+    return any(w in cat for w in words) or any(w in vendor for w in MUST_VENDOR) or vendor.endswith("카드")
+
+
+def mark_must(events, tax_info=None):
+    """일정마다 ev['must'] 를 단다. 장부 계산 세금·급여·카드 줄과 맞춰 그 줄 대신 쓰인 일정(자금일정 '예상' 등)도 꼭 나갈 돈."""
+    for ev in events:
+        ev["must"] = must_pay(ev)
+    for t in tax_info or []:
+        m = t.get("matched")
+        if isinstance(m, dict) and m.get("io") == "out" and t.get("kind") in MUST_KINDS:
+            m["must"] = True
+
+
+def counts_in(ev, mode):
+    """mode 에 넣는 일정인가. firm = 확정 + 꼭 나갈 정기 지출 예상 (큰 숫자) · spend = 그 위에 예상 지급(프로젝트 남은 예산 등)
+    · all = 예상 입금까지 모두 (2026-11-14 F7: '예상 지급까지 빼면'에 예상 입금이 섞이지 않게)."""
+    if mode == "all" or ev["firm"] or ev.get("must"):
+        return True
+    return mode == "spend" and ev["io"] == "out"
+
+
 def available_periods(start, dated, ends, min_cash, asof):
-    """기간마다 확정분만(firm)·예상분 포함(all)으로 입금·지급 예정, 예상 잔액, 기간 중 최저 잔액(날짜), 가용자금.
+    """기간마다 firm(확정 + 꼭 나갈 정기 지출 예상: 큰 숫자)·spend(예상 지급까지)·all(예상 입금까지 모두)으로
+    입금·지급 예정, 예상 잔액, 기간 중 최저 잔액(날짜), 가용자금.
 
     같은 날 입출금은 합쳐서 본다. 시작 가용액을 모르면 잔액·가용자금은 None, 최소 보유현금을 모르면 가용자금만 None."""
     out = []
@@ -924,11 +969,11 @@ def available_periods(start, dated, ends, min_cash, asof):
         if label != "지정일":
             prev = end
         row = {"label": label, "end": end, "from": frm + DAY}
-        for mode in ("firm", "all"):
+        for mode in ("firm", "spend", "all"):
             daily = defaultdict(int)
             tin = tout = 0
             for e in dated:
-                if not (asof < e["date"] <= end) or (mode == "firm" and not e["firm"]):
+                if not (asof < e["date"] <= end) or not counts_in(e, mode):
                     continue
                 if e["io"] == "in":
                     tin += e["amount"]
@@ -936,8 +981,8 @@ def available_periods(start, dated, ends, min_cash, asof):
                 else:
                     tout += e["amount"]
                     daily[e["date"]] -= e["amount"]
-            pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and (mode == "all" or e["firm"]))
-            pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and (mode == "all" or e["firm"]))
+            pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and counts_in(e, mode))
+            pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and counts_in(e, mode))
             r = {"in": tin, "out": tout, "pin": pin, "pout": pout, "bal": None, "low": None, "low_date": None, "avail": None}
             if start is not None:
                 bal, low, low_d = start, start, asof
@@ -1140,7 +1185,7 @@ def risks(R):
     data_days = sn["위험_자료경과일"]
     over_pct = sn["위험_예산초과율"]
     s2 = R["s2"]
-    for mode, label in (("firm", "확정 일정만"), ("all", "확정+추정")):
+    for mode, label in (("firm", "확정·정기 지출"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]
         if low is None:
             continue  # 시작 잔액을 모르면 자금 위험을 만들지 않는다 (아래 자료 항목에서 알림)

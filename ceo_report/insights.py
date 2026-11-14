@@ -15,7 +15,7 @@
  12 입금 지연 위험  큰 입금이 30일 늦으면 여유 자금이 얼마가 되나
  13 입력 누락     매달 있던 전표(급여·4대보험·원천세·카드·고정비)가 이번 달에 없음
 
-정한 계산 기준(여유 자금 = 확정분 최저 잔액 − 최소 보유현금)은 바꾸지 않는다. 9·10·12 는 '반영하면 X'로 따로만 보인다.
+정한 계산 기준(여유 자금 = 확정분·정기 지출 예상 최저 잔액 − 최소 보유현금)은 바꾸지 않는다. 9·10·12 는 '반영하면 X'로 따로만 보인다.
 장부(분개장)가 있어야 하는 10·13 은 자료 변환 때 book_facts() 로 계산해 입력\\자동분석.json 에 둔다.
 """
 import collections
@@ -24,6 +24,8 @@ import json
 import os
 import re
 import statistics
+
+from .calc import counts_in
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -189,7 +191,7 @@ def _last(R):
     return per[-1] if per else None
 
 
-MUST_WORDS = ("급여", "회사부담금", "4대보험", "세금", "부가세", "원천세", "법인세", "지방소득세", "차입금", "대출", "이자")
+MUST_WORDS = ("급여", "인건비", "회사부담금", "4대보험", "세금", "부가세", "원천세", "법인세", "지방소득세", "차입금", "대출", "이자")
 
 
 def _is_must(e):
@@ -272,7 +274,7 @@ def alerts(R):
     out = []
     for p in R["s2"].get("periods") or []:
         if p["firm"]["avail"] is not None and p["firm"]["avail"] < 0:
-            out.append(("높음", "%s 여유 자금이 %s원 모자람 (확정분 기준, %s 가장 낮음)" % (
+            out.append(("높음", "%s 여유 자금이 %s원 모자람 (확정된 돈과 급여·세금·카드 예상 기준, %s 가장 낮음)" % (
                 p["label"], "{:,}".format(-p["firm"]["avail"]), p["firm"]["low_date"])))
             break
     for p in (R.get("s3") or {}).get("projects") or []:
@@ -299,7 +301,7 @@ def calendar(R, days=CAL_DAYS):
             continue
         v = e["amount"] if e["io"] == "in" else -e["amount"]
         flow["all"][e["date"]] += v
-        if e["firm"]:
+        if counts_in(e, "firm"):   # 큰 숫자와 같은 기준: 확정 + 꼭 나갈 정기 지출 예상 (2026-11-14 D1)
             flow["firm"][e["date"]] += v
     out, bf, ba = [], s2["start"], s2["start"]
     for i in range(1, days + 1):
@@ -477,7 +479,7 @@ def _first_short(R, mode):
         return None
     daily = collections.defaultdict(int)
     for e in s2.get("dated") or []:
-        if e["date"] <= R["asof"] or e.get("amount") is None or (mode == "firm" and not e["firm"]):
+        if e["date"] <= R["asof"] or e.get("amount") is None or not counts_in(e, mode):
             continue
         daily[e["date"]] += e["amount"] if e["io"] == "in" else -e["amount"]
     bal, first, worst = start, None, None

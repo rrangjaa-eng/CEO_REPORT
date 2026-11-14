@@ -115,5 +115,183 @@ class TestT4UnknownCostKeepsProject(TeamReportCase):
         self.assertIn("사전견적 또는 추정 예산이 없는 1건", text(page))
 
 
+# ───────────── F2·F6·F7: 대표 큰 숫자 (사용자 2026-11-14 결정 D1 '정기 지출 예상도 빼기') ─────────────
+from ceo_report import calc as _calc  # noqa: E402
+from ceo_report.calc import compute  # noqa: E402
+from ceo_report.data import load  # noqa: E402
+
+SAMPLE_DIR = os.path.join(ROOT, "입력양식", "샘플")
+
+
+def _ev(day, io, amount, firm=False, source="자금일정", cat=""):
+    return {"date": day, "io": io, "amount": amount, "firm": firm, "source": source, "cat": cat, "desc": "", "basis": "",
+            "project": ""}
+
+
+class TestF2MustPay(unittest.TestCase):
+    """프로그램이 장부로 계산한 급여·4대보험·원천세·부가세·법인세·카드대금 지급은 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
+    프로젝트 남은 예산·불확실한 입금만 '예상'으로 아래에 따로 (D1)."""
+
+    def test_which_rows_are_must_pay(self):
+        day = D(2026, 11, 25)
+        for kind in ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금"):
+            self.assertTrue(_calc.must_pay(_ev(day, "out", 1, source="세금예상", cat="%s (장부 계산)" % kind)), kind)
+        self.assertTrue(_calc.must_pay(_ev(day, "out", 1, source="세금예상", cat="부가세 (장부 계산 차액)")))
+        self.assertFalse(_calc.must_pay(_ev(day, "out", 1, source="남은 예산", cat="프로젝트 남은 예산")))
+        self.assertFalse(_calc.must_pay(_ev(day, "out", 1, source="세금예상", cat="정기예금 가입 (장부 계산)")))
+        self.assertFalse(_calc.must_pay(_ev(day, "in", 1, source="세금예상", cat="정기예금 만기 (장부 계산)")))
+
+    def test_hand_entered_estimates_of_regular_payments(self):
+        """손으로 넣은 자금일정 '추정' 줄도 분류·거래처가 급여·4대보험·세금·카드면 꼭 나갈 돈 (분류 글자 하나에만 기대지 않음)."""
+        day = D(2026, 12, 14)
+        must = [("카드대금", "신한카드"), ("급여", "직원"), ("인건비", ""), ("회사부담금", "4대보험"), ("세금", "세무서"),
+                ("기타", "OO세무서"), ("공과금", "국민건강보험공단"), ("비품", "롯데카드")]
+        for cat, vendor in must:
+            self.assertTrue(_calc.must_pay(dict(_ev(day, "out", 1, cat=cat), desc=vendor)), (cat, vendor))
+        never = [("자금일정", "설비·이전", "인테리어업체"), ("자금일정", "미정산비용", "출장비"), ("자금일정", "카드대금", "신한카드", "in"),
+                 ("프로젝트집행", "프로젝트 집행계획", "법인카드"), ("남은 예산", "프로젝트 남은 예산", "")]
+        for src, cat, vendor, *io in never:
+            self.assertFalse(_calc.must_pay(dict(_ev(day, io[0] if io else "out", 1, source=src, cat=cat), desc=vendor)),
+                             (src, cat, vendor))
+
+    def test_schedule_row_matched_to_a_computed_tax_is_must(self):
+        """장부 계산 세금 줄 대신 쓰인 일정(금액이 같아 맞춘 '기타' 줄 등)도 꼭 나갈 돈. 정기예금 가입과 맞춘 줄은 아님."""
+        a = dict(_ev(D(2026, 12, 10), "out", 700, cat="기타"), desc="")
+        b = dict(_ev(D(2026, 12, 10), "out", 900, cat="기타"), desc="")
+        _calc.mark_must([a, b], [{"kind": "원천세", "matched": a}, {"kind": "정기예금 가입", "matched": b},
+                                 {"kind": "카드대금", "matched": {"merged_card": True, "amount": None}}])
+        self.assertTrue(a["must"])
+        self.assertFalse(b["must"])
+
+    def test_big_number_then_expected_payments_then_everything(self):
+        dated = [_ev(D(2026, 11, 18), "in", 40, source="계산서", cat="수금(발행 계산서)"),   # 불확실한 입금
+                 _ev(D(2026, 11, 20), "out", 100, firm=True),
+                 dict(_ev(D(2026, 11, 25), "out", 50, source="세금예상", cat="부가세 (장부 계산)"), must=True),
+                 _ev(D(2026, 11, 26), "out", 30, source="남은 예산", cat="프로젝트 남은 예산")]
+        p = _calc.available_periods(1000, dated, [("11월", D(2026, 11, 30))], 0, D(2026, 11, 14))[0]
+        self.assertEqual(p["firm"]["avail"], 850)    # 확정 100 + 꼭 나갈 정기 지출 예상 50
+        self.assertEqual(p["spend"]["avail"], 820)   # + 프로젝트 남은 예산 30 (예상 입금 40은 넣지 않음, F7)
+        self.assertEqual(p["all"]["avail"], 860)     # 예상 입금까지 모두
+
+
+class TestF2OnSample(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.W = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))
+        cls.M = compute(load(SAMPLE_DIR), "monthly", D(2026, 10, 31))
+
+    def test_must_pay_estimates_are_in_the_big_number(self):
+        for R in (self.W, self.M):
+            p = R["s2"]["periods"][-1]
+            win = [e for e in R["s2"]["dated"] if R["asof"] < e["date"] <= p["end"]]
+            want = sum(e["amount"] for e in win if e["io"] == "out" and (e["firm"] or e.get("must")))
+            self.assertEqual(p["firm"]["out"], want, R["kind"])
+        # 월간 샘플(1월까지)엔 정기 지출 예상이 있어야 뜻이 있음: 부가세 3,500만(자금일정 '세금' 추정)·카드 1,500만·원천세 차액 290만
+        p = self.M["s2"]["periods"][-1]
+        est = sorted((e["cat"], e["amount"]) for e in self.M["s2"]["dated"]
+                     if self.M["asof"] < e["date"] <= p["end"] and e.get("must") and not e["firm"])
+        self.assertEqual(est, sorted([("세금", 35_000_000), ("카드대금", 15_000_000), ("원천세 (장부 계산 차액)", 2_900_000)]))
+
+    def test_sample_monthly_big_number_drops_by_the_must_estimates(self):
+        """점검 문서 F2 크기: 샘플 월간 1월까지 여유 자금 3.05억 → 2.53억 (−5,290만)."""
+        R = self.M
+        ends = [(q["label"], q["end"]) for q in R["s2"]["periods"]]
+        old = [dict(e, must=False) for e in R["s2"]["dated"]]
+        before = _calc.available_periods(R["s2"]["start"], old, ends, R["s2"]["min_cash"], R["asof"])[-1]["firm"]["avail"]
+        self.assertEqual(before - R["s2"]["periods"][-1]["firm"]["avail"], 52_900_000)
+
+    def test_ceo_shows_one_big_number_and_mgmt_keeps_the_extra_lines(self):
+        from ceo_report.render import render
+        for R in (self.W, self.M):
+            ceo = render(R, "ceo")
+            self.assertNotIn("떼면", ceo, R["kind"])
+            self.assertNotIn("예상 지급까지 빼면", ceo, R["kind"])
+        self.assertIn("떼면", render(self.W, "mgmt"))
+
+    def test_expected_payments_line_leaves_out_expected_income(self):
+        from ceo_report.render import render
+        html = render(self.W, "ceo")
+        shown = 0
+        for p in self.W["s2"]["periods"]:
+            f, s = p["firm"]["avail"], p["spend"]["avail"]
+            if s != f:
+                shown += 1
+                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(s), html)
+        self.assertTrue(shown)
+
+    def test_monthly_first_line_is_one_number_for_ceo(self):
+        from ceo_report import render as RD
+        self.assertNotIn("빼면", RD._mon_strip(self.M, "ceo"))
+        self.assertIn("빼면", RD._mon_strip(self.M, "mgmt"))
+
+
+class TestF2SameBaseEverywhere(unittest.TestCase):
+    """큰 숫자와 같은 기준으로: 날마다 잔액 그림(실선)·자금이 모자라는 날·경보 글·현황 화면·가수금 갚을 때도 정기 지출 예상을 넣는다."""
+
+    @staticmethod
+    def fake():
+        ev = [dict(_ev(D(2026, 11, 20), "out", 300, source="세금예상", cat="부가세 (장부 계산)"), must=True),
+              _ev(D(2026, 11, 21), "out", 100, source="남은 예산", cat="프로젝트 남은 예산")]
+        return {"asof": D(2026, 11, 14), "kind": "weekly",
+                "s2": {"start": 1000, "min_cash": 800, "dated": ev, "periods": [], "out_missing": []}}
+
+    def test_daily_balance_line(self):
+        from ceo_report import insights
+        day = {c["date"]: c for c in insights.calendar(self.fake(), days=10)}
+        self.assertEqual(day[D(2026, 11, 20)]["firm"], 700)
+        self.assertEqual(day[D(2026, 11, 21)]["firm"], 700)
+        self.assertEqual(day[D(2026, 11, 21)]["all"], 600)
+
+    def test_first_short_day(self):
+        from ceo_report import insights
+        self.assertEqual(insights._first_short(self.fake(), "firm")[:2], (D(2026, 11, 20), 100))
+
+    def test_alert_says_which_money(self):
+        from ceo_report import insights
+        R = self.fake()
+        R["s2"]["periods"] = _calc.available_periods(1000, R["s2"]["dated"], [("이번 주", D(2026, 11, 20))], 800, R["asof"])
+        text = " ".join(t for _, t in insights.alerts(R))
+        self.assertIn("100원 모자람", text)
+        self.assertNotIn("확정분 기준", text)
+        self.assertIn("급여·세금·카드 예상", text)
+
+    def test_gasu_firm_path(self):
+        from ceo_report import gasu
+        days = dict(gasu.path(self.fake(), True, D(2026, 11, 22)))
+        self.assertEqual(days[D(2026, 11, 22)], 700)
+
+    def test_live_page(self):
+        import tempfile
+        from unittest import mock
+        from ceo_report import gate, live
+        with mock.patch.dict(os.environ, {gate.TEST_OFF: "1"}), tempfile.TemporaryDirectory() as out:
+            path, _ = live.build(SAMPLE_DIR, out, D(2026, 10, 31))
+            with open(path, encoding="utf-8") as f:
+                page = f.read()
+        R = compute(load(SAMPLE_DIR), "weekly", D(2026, 10, 31))
+        self.assertNotIn("예상 지급까지 빼면", page)
+        self.assertNotIn("확정된 돈만", page)
+        last = R["s2"]["periods"][-1]
+        self.assertIn("{:,}".format(last["spend"]["avail"]), page)
+        self.assertIn("프로젝트 지급 예상 등까지 빼면", page)
+
+
+    def test_blocked_report_blanks_the_new_number_too(self):
+        """자금계획서·최신 분개장이 없어 막히면 새로 생긴 '프로젝트 지급 예상 등까지 빼면' 숫자도 비운다 (사용자 절대 규칙 2026-11-12)."""
+        from unittest import mock
+        from ceo_report import gate
+        from ceo_report.render import render
+        with mock.patch.dict(os.environ, {gate.TEST_OFF: ""}):
+            R = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))   # 예시 자료엔 자금계획서가 없다
+            shown = R["s2"]["periods"][-1]["spend"]["avail"]
+            self.assertIsNotNone(shown)
+            self.assertTrue(gate.blank_funds(R))
+            for p in R["s2"]["periods"]:
+                for mode in ("firm", "spend", "all"):
+                    self.assertIsNone(p[mode]["avail"], mode)
+                    self.assertIsNone(p[mode]["low"], mode)
+            self.assertNotIn("{:,}".format(shown), render(R, "mgmt"))
+
+
 if __name__ == "__main__":
     unittest.main()

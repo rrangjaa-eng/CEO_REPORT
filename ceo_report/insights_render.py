@@ -238,7 +238,7 @@ def _cal_svg(cal, min_cash):
         if c["date"].weekday() == 0:
             s.append("<text x='%.1f' y='%d' font-size='11' text-anchor='middle' fill='#5b6475'>%s</text>" % (x(i), H - 8, c["date"].strftime("%m/%d")))
     s.append("</svg>")
-    return "".join(s) + "<p class='note'>실선 = 확정된 돈만, 점선 = 예상 포함, 빨간 점선 = 최소 보유현금. 가장 낮은 날 %s 확정 잔액 %s원</p>" % (
+    return "".join(s) + "<p class='note'>실선 = 확정된 돈과 급여·세금·카드 예상 (여유 자금과 같은 기준), 점선 = 예상 모두 포함, 빨간 점선 = 최소 보유현금. 가장 낮은 날 %s 실선 잔액 %s원</p>" % (
         cal[low]["date"].isoformat(), W(cal[low]["firm"]))
 
 
