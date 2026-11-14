@@ -238,5 +238,22 @@ class TestHeadless(unittest.TestCase):
         self.assertIn("app.headless(app.Paths(),", text)
 
 
+
+class TestSelfCheck(unittest.TestCase):
+    def test_sample_check_makes_a_real_ceo_report(self):
+        """exe 빌드 점검(--점검): 샘플로 대표 보고가 '만들지 않음' 안내 없이 끝까지 나와야 한다.
+        2026-11-15 빌드가 rc=10 으로 멈춤 — 샘플에 자금계획서가 없어 자료 확인(게이트)에서 대표 보고가 막혔음."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        log = os.path.join(tmp, "점검결과.txt")
+        rc = app.self_check(log, base=ROOT)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(rc, 0, text)
+        self.assertIn("_주간_대표보고.html", text)
+        self.assertNotIn("만들지 않음", text)
+        self.assertNotIn("만들지 않습니다", text)
+
+
 if __name__ == "__main__":
     unittest.main()

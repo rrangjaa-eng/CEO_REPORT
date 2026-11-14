@@ -1804,33 +1804,8 @@ def sharp_text():
 
 
 def self_check(log_path):
-    """exe 점검: 창 없이 샘플로 주간 보고를 만들어 본다 (빌드 확인용). 0 이면 정상."""
-    import shutil
-    import tempfile
-    base = getattr(sys, "_MEIPASS", app.program_dir())
-    sample = os.path.join(base, "입력양식", "샘플")
-    tmp = tempfile.mkdtemp()
-    lines = []
-    try:
-        shutil.copytree(sample, os.path.join(tmp, "입력"))
-        os.makedirs(os.path.join(tmp, "수집", "위하고"))
-        P = app.Paths(tmp)
-        rc, files = app.run_task("주간", P, lines.append, asof="2026-10-31")
-        lines.append("파일: %s" % ", ".join(os.path.basename(f) for f in files))
-        if rc == 0 and not any(f.endswith("_주간_대표보고.html") for f in files):
-            rc = 9
-        from . import winstate   # '만들지 않음' 안내만 나왔으면 실패 (코덱스 검토 2026-11-14)
-        if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
-            lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
-            rc = 10
-    except Exception as e:
-        lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
-        rc = 8
-    finally:
-        shutil.rmtree(tmp, True)
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
-    return rc
+    """exe 점검 (빌드 확인용): app.self_check 로 (창 없이 시험할 수 있게 옮김, 2026-11-15)."""
+    return app.self_check(log_path)
 
 
 def main(argv=None):
