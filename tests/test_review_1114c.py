@@ -561,7 +561,8 @@ class LoanPlanBudget(Base):
         rows = [("차입금", "29300", "장기차입금", "301", "기업은행", "100,000,000"),
                 ("차입금", "29300", "장기차입금", "302", "캐피탈갑", "12,000,000"),
                 ("차입금", "26000", "단기차입금", "303", "은행을", "200,000,000"),
-                ("차입금", "29300", "장기차입금", "304", "은행병", "50,000,000")]
+                ("차입금", "29300", "장기차입금", "304", "은행병", "50,000,000"),
+                ("차입금", "26000", "단기차입금", "305", "은행정", "30,000,000")]
         with open(os.path.join(self.inp, debts.FILE), "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
             w.writerow(debts.KEYS)
@@ -569,12 +570,14 @@ class LoanPlanBudget(Base):
                 w.writerow(list(r) + ["2026-11-05", "", "", ""])
         with open(os.path.join(self.inp, budget.LOAN_FILE), "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도"])
+            w.writerow(["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도", "만기근거"])
             w.writerow(["기업은행", "000301", "29300", "2025-03-31", "2027-03-31", "일시", "100,000,000", "", "운전자금"])
             # 위하고 원금·잔액은 쓰지 않는다 (상환 미갱신) — 장부 잔액 12,000,000 기준
             w.writerow(["캐피탈갑", "302", "29300", "2025-12-15", "2027-12-15", "분할", "20,000,000", "1,000,000", "차량"])
             w.writerow(["은행을", "303", "26000", "2025-04-17", "2026-04-17", "일시", "200,000,000", "", "운전자금"])   # 만기 지남(연장)
             w.writerow(["은행병", "304", "29300", "2026-01-10", "2029-01-10", "일시", "50,000,000", "", "시설"])
+            # 연장한 대출: 사용자가 새 만기일을 직접 입력 (H 변환이 만기일에 넣고 만기근거='직접 입력')
+            w.writerow(["은행정", "305", "26000", "2025-06-30", "2027-06-30", "일시", "30,000,000", "", "운전자금", "직접 입력"])
 
     def WB(self):
         d = load(self.inp)
@@ -586,11 +589,12 @@ class LoanPlanBudget(Base):
         B = self.WB()
         fx = B["cash"]["fixed"]
         self.assertEqual(fx[2], 100000000 + 1000000)        # 3월: 기업은행 만기 일시 (자금일정 차입금원금 1억과 겹치지 않음) + 분할 1백만
-        self.assertEqual(fx[:11], [1000000, 1000000, 101000000] + [1000000] * 8)
+        self.assertEqual(fx[:11], [1000000, 1000000, 101000000, 1000000, 1000000, 31000000] + [1000000] * 5)   # 6월: 직접 입력 만기 3천만
         self.assertEqual(fx[11], 0)                         # 장부 잔액 12백만 = 2026-12 1번 + 2027-01~11 11번
-        self.assertEqual(sum(fx), 100000000 + 11000000)
+        self.assertEqual(sum(fx), 100000000 + 30000000 + 11000000)
+        self.assertTrue(any("은행정" in f["name"] and "직접 입력" in f["how"] for f in B["fix"]))
         self.assertFalse(any("은행을" in f["name"] for f in B["fix"]))
-        self.assertTrue(any("은행을" in n and "연장 확인 필요" in n for n in B["notes"]), B["notes"])
+        self.assertTrue(any("은행을" in n and "새 만기일을 직접 입력" in n for n in B["notes"]), B["notes"])
         self.assertFalse(any("은행병" in f["name"] for f in B["fix"]))   # 만기 2029 → 예산 연도엔 없음
         # 2026-12 분할 1백만은 연초 잔액에서 뺀다
         self.assertEqual(B["cash"]["start"], before["cash"]["start"] - 1000000)

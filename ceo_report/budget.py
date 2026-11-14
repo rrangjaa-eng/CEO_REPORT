@@ -315,6 +315,7 @@ def _loan_plan(input_dir, debts, asof, until):
             bal = led_name.get(norm_vendor(name))
         due = parse_date(r.get("만기일"))
         how = (r.get("상환방식") or "").strip()
+        src = (r.get("만기근거") or "").strip() or "차입금현황"   # H 변환: 사용자가 직접 넣은 새 만기일이면 '직접 입력' (11/14 신한 연장)
         if bal is None:
             notes.append("대출 %s: 장부 차입금 잔액을 찾지 못해 원금 상환을 넣지 못함 (거래처코드 확인)" % name)
             continue
@@ -324,7 +325,7 @@ def _loan_plan(input_dir, debts, asof, until):
             notes.append("대출 %s: 만기일이 없어 원금 상환을 넣지 못함" % name)
             continue
         if due < asof:
-            notes.append("대출 %s: 위하고 만기일 %s이 지남 → 연장 확인 필요 (장부 잔액 %s원, 갚을 돈으로 잡지 않음)"
+            notes.append("대출 %s: 만기일 %s이 지남 → 연장했으면 새 만기일을 직접 입력 (지금은 갚을 돈으로 안 잡음, 장부 잔액 %s원)"
                          % (name, due.isoformat(), format(bal, ",")))
             continue
         if how == "분할":
@@ -342,11 +343,11 @@ def _loan_plan(input_dir, debts, asof, until):
                 amt = min(mon, left)
                 if amt <= 0 or day > until:
                     break
-                pays.append({"date": day, "amount": amt, "name": "대출 원금 · %s (분할)" % name, "how": "차입금현황 만기 %s · 장부 잔액" % due.isoformat()})
+                pays.append({"date": day, "amount": amt, "name": "대출 원금 · %s (분할)" % name, "how": "%s 만기 %s · 장부 잔액" % (src, due.isoformat())})
                 left -= amt
         else:   # 일시 (상환방식이 비어 있어도 일시로 본다)
             if due <= until:
-                pays.append({"date": due, "amount": bal, "name": "대출 원금 · %s (만기 일시)" % name, "how": "차입금현황 만기 %s · 장부 잔액" % due.isoformat()})
+                pays.append({"date": due, "amount": bal, "name": "대출 원금 · %s (만기 일시)" % name, "how": "%s 만기 %s · 장부 잔액" % (src, due.isoformat())})
             if not how:
                 notes.append("대출 %s: 상환 방식이 비어 만기 일시상환으로 봄" % name)
     return pays, notes
