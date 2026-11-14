@@ -982,11 +982,12 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     from . import screen_tax, wehago_raw   # 위하고 급여·원천징수 화면과 대조 (제안 3, 2026-11-14)
     scr_notes, scr = screen_tax.compare(books.journal, wehago_raw.files(wehago_dir), asof, cfg["withholding_codes"],
                                         cfg["withholding_vendors"], cfg["insurance_vendors"]) if wehago_dir else ([], {})
+    card_real, card_upto = screen_tax.card_usage(wehago_dir) if wehago_dir else ({}, None)
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
         tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
-        tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
+        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
     manual = corptax.read(input_dir) if input_dir else {}
     ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)

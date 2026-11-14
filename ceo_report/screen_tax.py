@@ -119,3 +119,61 @@ def compare(journal, F, asof, wh_codes=("25400",), wh_vendors=("세무서", "구
         notes.append("[확인] 4대보험 직원분 장부·위하고 급여 화면(공제합계−소득세·지방소득세)이 10만 원 넘게 다른 달: %s"
                      " — 화면 쪽에 다른 공제(가불 등)가 있으면 그만큼 큼" % " / ".join(igaps))
     return notes, totals
+
+
+# ───────────── 카드 실제 사용 (위하고 자동전표처리 '신용카드' SAAC0105, 확장 0.9 '결산' 단추로 받음) ─────────────
+CARD_SCREEN = "SAAC0105"
+_CARD_PATH = re.compile(r"/saac0105/\d+/?$", re.I)
+
+
+def card_usage(wehago_dir):
+    """-> (카드 사용 {카드 열쇠: [(날짜, 합계)]}, 자료 끝 날짜) — 열쇠는 거래처코드('code:…')와 이름(앞 '[…]' 뗀 것) 둘 다.
+    가장 늦게 받은 파일 하나만 쓴다. 칸: da_sbook(사용일)·nm_ctrade·cd_ctrade·mn_total(부가세 포함 합계). 없으면 ({}, None)."""
+    import datetime as dt
+    import json
+    import os
+    best = None
+    try:
+        names = os.listdir(wehago_dir)
+    except (OSError, TypeError):
+        return {}, None
+    for n in names:
+        if not n.endswith(".json") or "분개장" in n or "자금계획" in n:
+            continue
+        try:
+            with open(os.path.join(wehago_dir, n), encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict) or str(d.get("화면코드") or "").upper() != CARD_SCREEN:
+            continue
+        stamp = re.sub(r"\D", "", str(d.get("수집시각") or ""))
+        if best is None or stamp > best[0]:
+            best = (stamp, d)
+    if best is None:
+        return {}, None
+    out = {}
+    last = None
+    for r in best[1].get("응답") or []:
+        data = r.get("data")
+        if not _CARD_PATH.search(str(r.get("path") or "")) or not isinstance(data, dict):
+            continue
+        for it in data.get("data") or []:
+            t = re.sub(r"\D", "", str(it.get("da_sbook") or ""))[:8]
+            try:
+                day = dt.date(int(t[:4]), int(t[4:6]), int(t[6:8]))
+            except ValueError:
+                continue
+            amt = WR._num(it.get("mn_total"))
+            name = re.sub(r"^\[[^\]]*\]", "", str(it.get("nm_ctrade") or "")).strip()
+            code = str(it.get("cd_ctrade") or "").strip().lstrip("0")
+            for k in (("code:" + code) if code else None, name or None):
+                if k:
+                    out.setdefault(k, []).append((day, amt))
+            last = day if last is None or day > last else last
+    s = best[0]
+    try:
+        upto = dt.date(int(s[:4]), int(s[4:6]), int(s[6:8]))   # 받은 날까지 사용은 화면에 다 있다고 본다
+    except ValueError:
+        upto = last
+    return out, upto

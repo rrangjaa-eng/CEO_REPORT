@@ -502,7 +502,7 @@ def card_due(day, pay, start):
     return _after(due)
 
 
-def cards(journal, asof, card_days, accrued_codes=("26200",)):
+def cards(journal, asof, card_days, accrued_codes=("26200",), actual=None, actual_upto=None):
     """카드대금 납부 예상 (사용자 2026-11-03: 카드별 납부일과 기산일을 넣어 계산).
 
     미지급비용 중 거래처가 '카드사_끝번호'인 줄: 대변 = 사용, 차변 = 결제. 사용을 결제일별로 모으고 결제를 오래된 것부터 지운 뒤,
@@ -511,12 +511,17 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
 
     사용자 2026-11-12 결정: 전표로 들어간 사용 − 결제는 갚을 금액이 정해진 것이므로 '확정(전표)' (여유 자금에서 뺌).
     전표 입력 전 판단은 카드 번호별로 한다: 그 카드의 아직 안 나간 결제분 사용이 그 카드 최근 3달 평균의 절반 미만이면
-    평균과의 차이를 따로 '예상' 줄로 둔다 (일부 카드만 전표가 들어간 달도 빠진 카드만 채움)."""
+    평균과의 차이를 따로 '예상' 줄로 둔다 (일부 카드만 전표가 들어간 달도 빠진 카드만 채움).
+
+    actual (2026-11-14 정합성 제안, 확장 0.9): 위하고 자동전표처리 '신용카드' 화면의 카드별 실제 사용 {카드 열쇠: [(날짜, 합계)]}
+    (열쇠 = 'code:거래처코드' 또는 장부와 같은 '카드사_끝번호'), actual_upto = 그 화면을 받은 날. 이용기간이 받은 날 전에 끝난
+    결제분은 평균 대신 그 기간 실제 사용 합계로 채운다 (지금 이용기간은 받은 날까지 사용 + 남은 날은 평균 비율)."""
     accrued_codes = set(map(_sq, accrued_codes))
     bank_slips = {(ln["date"], ln.get("no")) for ln in journal
                   if ln["date"] is not None and _sq(ln.get("account_code")).startswith(BANK_PREFIX)}
     use, pay, use_card, pay_card = {}, {}, {}, {}
     co_lines = {}   # 카드사 -> 그 카드사 미지급비용 줄 (거래처코드로 자금계획서 카드 줄과 맞춘다)
+    use_lines = {}  # 카드(거래처) -> 줄 (위하고 카드 사용 화면과 거래처코드로 맞춘다)
     for ln in journal:
         if ln["date"] is None or _sq(ln["account_code"]) not in accrued_codes:
             continue
@@ -526,6 +531,7 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
             continue
         co = _card_name(m.group(1))
         co_lines.setdefault(co, []).append(ln)
+        use_lines.setdefault(vendor, []).append(ln)
         if ln.get("credit"):
             use.setdefault(co, []).append((ln["date"], ln["credit"]))
             use_card.setdefault(co, {}).setdefault(vendor, []).append((ln["date"], ln["credit"]))
@@ -583,16 +589,21 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
                     paid = sum(a for d, a in pay_card.get(co, {}).get(card, []) if d <= end)
                     dues.append(max(0, used - paid))
                 avg = sum(dues) // CARD_AVG_MONTHS
-                if avg < CARD_MIN_AVG:   # 거의 안 쓰는 카드는 채우지 않는다 (사용자 2026-11-13: 다 넣었는데 경고)
-                    continue
                 for k in opens:
                     got = max(0, cb.get(k, 0))
                     # 이용기간이 끝난 결제분: 그 카드 사용 전표가 한 줄이라도 들어갔으면 그달 묶음은 넣은 것 (카드 전표는 전월분을
                     # 한꺼번에 넣음). 적게 쓴 달·카드를 바꾼 달을 '덜 들어감'으로 보지 않는다 (사용자 2026-11-13)
                     if _period_end(k, s) < asof and any(card_due(d, p, s) == k and a > 0 for d, a in use_card[co][card]):
                         continue
+                    real = _actual_for(actual, actual_upto, card, use_lines.get(card, []), k, p, s)
+                    if real is not None:
+                        if real > got:
+                            fill.setdefault(k, []).append((card, got, real, True))
+                        continue
+                    if avg < CARD_MIN_AVG:   # 거의 안 쓰는 카드는 평균으로 채우지 않는다 (사용자 2026-11-13: 다 넣었는데 경고)
+                        continue
                     if got < avg * CARD_THIN_RATE:
-                        fill.setdefault(k, []).append((card, got, avg))
+                        fill.setdefault(k, []).append((card, got, avg, False))
         left = pay.get(co, 0)
         by_due = {}
         for k in sorted(by_bill):
@@ -609,8 +620,14 @@ def cards(journal, asof, card_days, accrued_codes=("26200",)):
                 rows.append(_row("카드대금", "%s카드 %d월 %d일 결제" % (co, due.month, due.day), due, by_due[due], "확정(전표)",
                                  "미지급비용 %s카드 사용 − 결제 (납부일 %d일, 기산일 %d일)" % (co, p, s), vcodes))
             if fill.get(due):
-                extra = sum(a - g for _, g, a in fill[due])
-                cards_txt = ", ".join("%s(입력 %s / 평균 %s)" % (c, "{:,}".format(g), "{:,}".format(a)) for c, g, a in fill[due])
+                extra = sum(a - g for _, g, a, _ in fill[due])
+                cards_txt = ", ".join("%s(입력 %s / %s %s)" % (c, "{:,}".format(g), "위하고 사용" if r else "평균", "{:,}".format(a))
+                                      for c, g, a, r in fill[due])
+                if all(r for _, _, _, r in fill[due]):
+                    rows.append(_row("카드대금", "%s카드 %d월 %d일 결제 (위하고 카드 사용 기준)" % (co, due.month, due.day), due, extra, "예상",
+                                     "%s %s카드 %s — 장부 전표 전이라 위하고 카드 사용 화면(%s까지)의 실제 사용으로 잡음 (전표를 넣으면 장부 금액으로 바뀜)"
+                                     % (CARD_REAL_MARK, co, cards_txt, actual_upto.isoformat() if actual_upto else "-"), vcodes))
+                    continue
                 if _period_end(due, s) >= asof:
                     # 지금 쓰고 있는 이용기간: 전표는 다음 달 초에 넣는 것이 정상 → 경고가 아니라 미리 잡는 예상 (사용자 2026-11-13)
                     rows.append(_row("카드대금", "%s카드 %d월 %d일 결제 (이번 달 사용 추정)" % (co, due.month, due.day), due, extra, "예상",
@@ -627,6 +644,27 @@ CARD_AVG_MONTHS = 3      # 입력 전 달을 채울 때 보는 지난 결제 수
 CARD_THIN_RATE = 0.5     # 입력된 사용이 평균의 이 비율보다 적으면 '아직 입력 전'으로 봄
 CARD_THIN_MARK = "카드 전표 입력 전:"
 CARD_OPEN_MARK = "카드 이번 달 사용 추정:"   # 이용기간이 안 끝난 결제분 (경고 아님)
+CARD_REAL_MARK = "위하고 카드 사용:"   # 전표 전이지만 위하고 카드 사용 화면 실제 금액 (경고 아님, 2026-11-14)
+
+
+def _actual_for(actual, upto, card, lines, bill, pay, start):
+    """결제일 bill 이용기간의 위하고 실제 사용 합 (그 기간이 받은 날 전에 끝났을 때만). 카드를 못 찾거나 모르면 None."""
+    if not actual or upto is None:
+        return None
+    codes = set(str(ln.get("vendor_code") or "").strip().lstrip("0") for ln in lines) - {""}
+    items = None
+    for c in sorted(codes):
+        items = actual.get("code:" + c)
+        if items:
+            break
+    if items is None:
+        items = actual.get(card)
+    if items is None:
+        return None
+    end = _period_end(bill, start)
+    if end > upto:
+        return None   # 이용기간이 아직 안 끝남: 받은 날 뒤 사용을 몰라 평균 규칙 그대로
+    return sum(a for d, a in items if card_due(d, pay, start) == bill)
 CARD_MIN_AVG = 100000    # 최근 3달 평균이 이보다 적은 카드는 평균으로 채우지 않음
 
 

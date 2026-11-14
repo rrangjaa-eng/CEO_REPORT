@@ -86,3 +86,37 @@ class TestScreenTax(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCardActual(unittest.TestCase):
+    """카드 전표 입력 전 달: 위하고 자동전표처리 '신용카드' 화면(SAAC0105)의 실제 사용으로 채움 (평균 대신). 합성 값."""
+
+    def journal(self):
+        K, j = 10000, []
+        for m in (7, 8, 9):
+            c = dict(ln(D(2026, m, 10), "26200", credit=300 * K, vendor="신한_5860"), vendor_code="00501", no="u%d" % m)
+            p = dict(ln(D(2026, m + 1, 14), "26200", debit=300 * K, vendor="신한_5860"), vendor_code="00501", no="p%d" % m)
+            b = dict(ln(D(2026, m + 1, 14), "10300", credit=300 * K), no="p%d" % m)
+            j += [c, p, b]
+        return j
+
+    def test_real_usage_replaces_average(self):
+        folder = tempfile.mkdtemp()
+        try:
+            doc = {"종류": "결산", "화면코드": "SAAC0105", "수집시각": "2026-11-13 09:00", "응답": [
+                {"path": "/smarta/saac0105/6/", "data": {"data": [
+                    {"da_sbook": "20261005", "nm_ctrade": "[00501]신한_5860", "cd_ctrade": "00501", "mn_mnam": 2272727,
+                     "mn_vat": 227273, "mn_total": 2500000, "ty_jungstat": "0"}]}}]}
+            with open(os.path.join(folder, "261113 결산_신용카드 자동수집.json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False)
+            real, upto = screen_tax.card_usage(folder)
+        finally:
+            shutil.rmtree(folder)
+        self.assertEqual(upto, D(2026, 11, 13))
+        self.assertEqual(real["code:501"], [(D(2026, 10, 5), 2500000)])
+        rows = tax.cards(self.journal(), D(2026, 11, 10), {"신한": (14, 1)}, actual=real, actual_upto=upto)
+        nov = [r for r in rows if "11월" in r["대상기간"]]
+        self.assertEqual([r["금액"] for r in nov], ["2500000"], [r["근거"] for r in rows])
+        self.assertIn("위하고 카드 사용 기준", nov[0]["대상기간"])
+        rows = tax.cards(self.journal(), D(2026, 11, 10), {"신한": (14, 1)})   # 화면 자료가 없으면 예전처럼 평균
+        self.assertEqual([r["금액"] for r in rows if "11월" in r["대상기간"]], ["3000000"])
