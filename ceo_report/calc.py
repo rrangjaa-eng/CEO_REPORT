@@ -473,6 +473,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     if not ar_rows and ar_unknown_n:
         ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
     overdue_tot = sum(v["outstanding"] for v in overdue)
+    # F9 (2026-11-14): 금액(부가세 등)을 몰라 미수액이 미확인인 연체 계산서도 '없음'으로 가리지 않고 건수로
+    overdue_unknown = [v for v in invs if v["outstanding"] is None and v["kind"] != "환불" and v["due"] and v["due"] < asof]
     if in_missing:
         issued_tot = unissued_tot = ar_tot = overdue_tot = None  # 계산서 자료 없음 (0 아님)
     R["s5"] = {
@@ -487,6 +489,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "unissued": unissued_tot,
         "ar": ar_tot,
         "overdue_total": overdue_tot,
+        "overdue_unknown_n": 0 if in_missing else len(overdue_unknown),
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
         "event_unissued": event_unissued(inv_proj, asof, in_missing),
         "expected": expected_revenue(inv_proj, asof, in_missing),
