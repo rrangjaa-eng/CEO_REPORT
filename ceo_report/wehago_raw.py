@@ -194,9 +194,17 @@ def _withholding(F):
     """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)])."""
     emps, out = {}, []
     for year, d in _pick(F, "인사_소득자별근로소득원천징수부"):
+        seen = set()
         for r in d.get("응답") or []:
             path = str(r.get("path") or "").rstrip("/")
             data = r.get("data")
+            # 같은 내용의 응답이 두 번 저장되기도 한다 (실제 2026-11-14: 첫 사원 소득 응답이 두 번 → 원천세가 매달 부풀려짐)
+            # 사번은 응답 안 값을 먼저 본다 (밖의 사번이 잘못 붙은 중복도 같은 것으로), 없으면 밖의 사번 (다른 사원이 금액만 같은 경우는 남김)
+            key = (path, str(_find(data, "cd_emp") or r.get("cd_emp") or ""),
+                   json.dumps(data, sort_keys=True, ensure_ascii=False, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
             if path.endswith("/emp"):
                 for e in data if isinstance(data, list) else (_find(data, "data") or []):
                     if isinstance(e, dict) and e.get("cd_emp"):

@@ -68,7 +68,9 @@ def _kind_of(inv):
         return "취소"
     if "수정" in kind or (inv["supply"] is not None and inv["supply"] < 0):
         return "수정"
-    if any(w in inv["item"] for w in ("선금", "선수", "계약금")):
+    if inv.get("advance") is not None:   # 분개장 매출전표: 대변 선수금 계정 줄로 판단 (사용자 2026-11-14, 품명 낱말은 보지 않음)
+        return "선수금" if inv["advance"] else "발행"
+    if any(w in inv["item"] for w in ("선금", "선수", "계약금")):   # 계정을 모르는 원천(매출 계산서 엑셀)만 품명 낱말로
         return "선수금"
     return "발행"
 
@@ -144,7 +146,8 @@ def _invoices(rows):
                     "total": None if supply is None or vat is None else supply + vat,
                     "code": r.get("code"), "type": r.get("type") or "", "no": r.get("no") or "",
                     "applied": 0, "paid_date": None, "project": "", "basis": "미연결", "why": "",
-                    "deducted": r.get("deducted") or 0})   # 매출 때 바로 차감된 금액 (카드 수수료): 입금액에 넣는다
+                    "deducted": r.get("deducted") or 0,   # 매출 때 바로 차감된 금액 (카드 수수료): 입금액에 넣는다
+                    "advance": r.get("advance")})   # 분개장 매출전표에 선수금 계정 줄이 있는가 (모르면 None)
     return out
 
 
