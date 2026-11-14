@@ -501,7 +501,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for v in ar_rows:
         events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
                        "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
-                       "project": v["project"], "source": "계산서"})
+                       "project": v["project"], "source": "계산서",
+                       # 같은 계산서 (여러 프로젝트로 나눈 줄도 같은 값): 자금계획서 입금 한 줄과 합쳐서 맞춘다 (F10, 2026-11-14)
+                       "inv_key": (v["client"], v["date"]) if v["date"] else None})
     for v in invs:
         if v["kind"] == "환불" and v["outstanding"] is not None and v["outstanding"] < 0 and not v["paid_date"]:
             events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
