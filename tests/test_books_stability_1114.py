@@ -277,3 +277,35 @@ class TestAdvanceInvoiceByAccount(unittest.TestCase):
         inv = CI._invoices([{"date": dt.date(2026, 9, 15), "vendor": "가", "item": "봄 축제 선금", "supply": 1000, "vat": 100,
                              "total": 1100, "type": ""}])[0]
         self.assertEqual(CI._kind_of(inv), "선수금")
+
+
+class TestLineIdLayers(unittest.TestCase):
+    """같은 해 자동수집 분개장 겹치기: 줄 번호(sq_acttax2)가 같은 줄은 날짜를 고쳤어도 한 번만 (전수조사 제안 5)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+
+    def doc(self, rows, start, end):
+        from test_journal_json import COLS
+        return {"종류": "분개장", "형식": 1, "기간": {"start_date": start, "end_date": end, "gisu": "2"},
+                "열": COLS, "줄": rows}
+
+    def row(self, day, no, code, acct, dr, cr, sq, memo="메모"):
+        return [day, no, "매입전표", "차변" if dr else "대변", code, acct, dr, cr, "가상", "00001", memo, "", "", "",
+                "2026-11-13T10:00:00.000", sq]
+
+    def test_redated_line_counted_once(self):
+        from test_journal_json import write_json
+        old = [self.row("20261031", "00007", "81300", "접대비(판)", 500, 0, 77, "고치기 전"),
+               self.row("20261031", "00007", "25300", "미지급금", 0, 500, 78, "고치기 전"),
+               self.row("20261010", "00001", "81300", "접대비(판)", 100, 0, 11),
+               self.row("20261010", "00001", "25300", "미지급금", 0, 100, 12)]
+        new = [self.row("20261102", "00003", "81300", "접대비(판)", 500, 0, 77, "날짜 고침"),
+               self.row("20261102", "00003", "25300", "미지급금", 0, 500, 78, "날짜 고침")]
+        write_json(self.dir, "261110 분개장 자동수집.json", self.doc(old, "20260101", "20261110"))
+        write_json(self.dir, "261113 분개장 자동수집.json", self.doc(new, "20261101", "20261113"))
+        b = wehago.load_books(self.dir, ASOF, None)
+        lines = sorted((r["date"].isoformat(), r["memo"]) for r in b.journal if r["account_code"] == "81300")
+        self.assertEqual(lines, [("2026-10-10", "메모"), ("2026-11-02", "날짜 고침")])
+        self.assertEqual(b.files["분개장"]["layers"], ["261110 분개장 자동수집.json"])

@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 from ceo_report import wehago_raw as w
 
@@ -59,6 +60,18 @@ class Raw(unittest.TestCase):
         self.assertEqual(w.birth_from_social("800101-1"), "1980-01-01")
         self.assertEqual(w.birth_from_social("010203-4"), "2001-02-03")
         self.assertEqual(w.birth_from_social(""), "")
+
+    def test_duplicate_withholding_response_counted_once(self):
+        """실제 원천징수부 수집(2026-11-14): 첫 사원 소득 응답이 같은 내용으로 두 번 들어 있다 → 한 번만."""
+        from ceo_report import wehago_raw
+        inc = {"path": "/smarta/swym0107/emp/income/", "cd_emp": "00001",
+               "data": {"group1": [{"ym_pay": "202601", "am_income1": 300000, "am_inhabit1": 30000}]}}
+        other = {"path": "/smarta/swym0107/emp/income/", "cd_emp": "00003",
+                 "data": {"group1": [{"ym_pay": "202601", "am_income1": 300000, "am_inhabit1": 30000}]}}
+        F = {"인사_소득자별근로소득원천징수부": None}
+        with unittest.mock.patch.object(wehago_raw, "_pick", lambda F_, kind: [(2026, {"응답": [inc, dict(inc), other]})]):
+            _, out = wehago_raw._withholding(F)
+        self.assertEqual(sorted(out), [(2026, "00001", "2026-01", 300000, 30000), (2026, "00003", "2026-01", 300000, 30000)])
 
     def test_employees(self):
         e = w.employees(self.F)

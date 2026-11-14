@@ -395,6 +395,7 @@ def read_journal_json(path):
         raise HeaderMismatch(name, "분개장", missing, [])
     ix = dict((c, cols.index(c)) for c in need)
     gb = cols.index("nm_gubun_bungae") if "nm_gubun_bungae" in cols else None
+    sq = cols.index("sq_acttax2") if "sq_acttax2" in cols else None   # 줄 고유 번호: 수집끼리 같은 줄은 같은 번호 (2026-11-14 전수조사)
 
     def day(v):
         s = str(v or "").strip()
@@ -414,8 +415,8 @@ def read_journal_json(path):
         return _LEAD_CODE.sub("", str(v or ""), count=1).strip()
 
     out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요",
-                 "프로젝트명", "부서명", "사원명"]])
-    out.known_extra = ("프로젝트명", "부서명", "사원명")
+                 "프로젝트명", "부서명", "사원명"] + (["줄번호"] if sq is not None else [])])
+    out.known_extra = ("프로젝트명", "부서명", "사원명", "줄번호")
     period = doc.get("기간") or {}
     try:
         s, e = str(period.get("start_date", "")), str(period.get("end_date", ""))
@@ -435,7 +436,7 @@ def read_journal_json(path):
         out.append([day(g("da_date")), str(g("no_acct") or "").strip(), str(g("nm_yuh") or ""), str(g("cd_acctit") or ""),
                     str(g("nm_acctit") or ""), debit, credit, str(g("nm_trade") or ""),
                     str(g("cd_trade") or ""), str(g("nm_remark") or ""), bare(g("nm_project")), bare(g("nm_dept")),
-                    bare(g("nm_emp"))])
+                    bare(g("nm_emp"))] + ([str(r[sq] if r[sq] is not None else "").strip()] if sq is not None else []))
     return out
 
 
@@ -488,6 +489,8 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
                     "credit": _amount(row[cols["대변"][0]]), "vendor": txt(row, "거래처"), "memo": txt(row, "적요"),
                     "sort": txt(row, "구분"), "vendor_code": txt(row, "Code", 1).strip()}
             item["code"] = project_code(item["memo"])
+            if "줄번호" in cols:   # 자동수집 분개장의 줄 고유 번호 (같은 해 파일 겹치기에서 같은 줄을 한 번만)
+                item["line_id"] = txt(row, "줄번호").strip()
             if "부서명" in cols:   # 관리항목 (사용자 2026-11-03). 칸이 없는 파일은 키도 없다 (부서별 비용을 만들지 않음)
                 item["dept"] = txt(row, "부서명").strip()
             if "사원명" in cols:
@@ -711,6 +714,9 @@ def _same_year_layers(folder, names, rows, period, asof):
     -> (붙일 행, 쓴 파일, 남은 파일, 붙인 파일의 전표별 프로젝트 코드, 겹친 기간 목록)."""
     spans, added, used, rest, slips = [period], [], [], [], {}
     year0 = dt.date(period[0].year, 1, 1)
+    # 줄 번호(자동수집 sq_acttax2)가 있으면 더 새 파일에 이미 있는 줄은 날짜가 달라도 뺀다
+    # (예: 10/31 전표를 11/02 로 고친 뒤 11월만 다시 받으면 날짜만 보고는 두 번 셈, 2026-11-14 전수조사 제안 5)
+    seen = set(r["line_id"] for r in rows if r.get("line_id"))
     for n in names:
         try:
             more, info = read_book(os.path.join(folder, n), "분개장", _file_date(n), asof)
@@ -721,8 +727,10 @@ def _same_year_layers(folder, names, rows, period, asof):
         if p is None or p[1] < year0:
             rest.append(n)
             continue
-        keep = [r for r in more if r.get("date") is not None and p[0] <= r["date"] <= p[1] and not _in(r["date"], spans)]
+        keep = [r for r in more if r.get("date") is not None and p[0] <= r["date"] <= p[1] and not _in(r["date"], spans)
+                and not (r.get("line_id") and r["line_id"] in seen)]
         spans.append(p)
+        seen.update(r["line_id"] for r in more if r.get("line_id") and p[0] <= (r.get("date") or p[0]) <= p[1])
         if keep:
             added.extend(keep)
             used.append(n)
