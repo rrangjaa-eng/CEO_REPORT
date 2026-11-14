@@ -164,3 +164,39 @@ class TestTaxClose(unittest.TestCase):
             f.write(",가,2026-09-01,발행,1000,100,,,2026-10-05,600\n")
         c = C.collection(d, dt.date(2026, 10, 1), dt.date(2026, 10, 31))
         self.assertEqual(c["open_total"], 500)   # 1,100 중 600만 받음 → 500 남음
+
+
+class TestOutputFixes(unittest.TestCase):
+    def test_archive_failure_leaves_schedule_unchanged(self):
+        import csv, shutil
+        from ceo_report import review_checks as RC
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        p = os.path.join(d, RC.SCHEDULE)
+        with open(p, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["예정일", "입출금", "금액", "확정여부", "분류", "프로젝트번호", "거래처", "근거", "비고"])
+            w.writerow(["2026-11-06", "출금", "500000", "확정", "급한 지급", "", "가상", "금요일 급한 출금", ""])
+        with open(p, encoding="utf-8-sig") as f:
+            before = f.read()
+        os.mkdir(os.path.join(d, RC.ARCHIVE))   # 보관 파일을 쓸 수 없는 상태
+        J = [{"date": dt.date(2026, 11, 7), "no": "1", "account_code": "10300", "debit": None, "credit": 500000,
+              "vendor": "가상", "vendor_norm": "가상", "type": "일반"}]
+        out = RC.archive_paid_schedule(d, J, dt.date(2026, 11, 10))
+        self.assertIn("그대로 둠", out[0])
+        with open(p, encoding="utf-8-sig") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_one_cancel_does_not_clear_three_copies(self):
+        from ceo_report import review_checks as RC
+        D = dt.date
+        def L(day, no, code, dr, cr):
+            return {"date": day, "no": no, "account_code": code, "debit": dr, "credit": cr, "vendor": "가",
+                    "vendor_norm": "가", "type": "매출전표", "memo": "같음"}
+        J = []
+        for n in ("1", "2", "3"):
+            J += [L(D(2026, 10, 22), n, "10800", 1100000, None), L(D(2026, 10, 22), n, "41200", None, 1100000)]
+        J += [L(D(2026, 10, 22), "9", "10800", -1100000, None), L(D(2026, 10, 22), "9", "41200", None, -1100000)]
+        cls = RC.classify_duplicates(J)
+        self.assertTrue(cls)
+        self.assertFalse(cls[0][4])   # 3건 중 취소 1건 → 아직 의심

@@ -310,7 +310,7 @@ def _track_table(K, last_only):
     from .insights_render import _tbl, S
     from .render import W
     rows = []
-    items = (K.get("months") or [])[-1:] if last_only else (K.get("months") or [])
+    items = (K.get("months") or [])[:1] if last_only else (K.get("months") or [])   # 최근 달이 맨 앞 (코덱스 검토 2026-11-14)
 
     def gap(p, a):
         return "%s <small>(%s)</small>" % (S(a - p), "-" if not p else "%+.0f%%" % ((a - p) * 100.0 / p))
@@ -458,7 +458,7 @@ def track_suggest(K):
     out = []
     ms = (K or {}).get("months") or []
     if ms:
-        r = ms[-1]
+        r = ms[0]   # 최근 달이 맨 앞
         i, o = r["in"], r["out"]
         if o["all"] and o["all"] - o["actual"] > o["all"] * 0.3:
             out.append("예상 포함 출금이 실제보다 %.0f%% 많았습니다 → 끝난 프로젝트의 남은 예산·겹친 예상 지급을 정리하면 ‘예상 포함 여유 자금’이 실제에 가까워집니다."
@@ -469,7 +469,7 @@ def track_suggest(K):
         if o["firm"] and o["actual"] - o["firm"] > o["firm"] * 0.1:
             out.append("확정 일정에 없던 지급이 %.0f%% 더 나갔습니다 → 지급 요청이 생기면 자금계획서에 바로 넣어 두세요."
                        % ((o["actual"] - o["firm"]) * 100.0 / o["firm"]))
-    for p in ((K or {}).get("profit") or [])[-1:]:
+    for p in ((K or {}).get("profit") or [])[:1]:   # 최근 달이 맨 앞
         if p.get("actual") is not None and p["forecast"] and abs(p["actual"] - p["forecast"]) > abs(p["forecast"]) * 0.3:
             out.append("%s 예상 영업이익과 지금 장부가 %s원 다릅니다 → 늦게 들어온 전표(카드·매입)가 있는지 확인하세요."
                        % (p["ym"], format(p["actual"] - p["forecast"], ",")))

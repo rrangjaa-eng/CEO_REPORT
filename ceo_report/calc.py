@@ -153,6 +153,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R = {"kind": kind, "asof": asof}
     # 주간 출금 목록의 출금일 (사용자 2026-11-04: 날짜를 따로 넣으면 그 날 기준). 비우면 기준일 뒤 첫 금요일
     R["payday"] = payday if payday is not None and payday > asof else pay_friday(asof)
+    if payday is not None and payday <= asof:   # 조용히 바꾸지 않고 알린다 (코덱스 검토 2026-11-14)
+        issues.add("출금일", "-", "넣은 출금일 %s이 기준일 %s과 같거나 앞이라 다음 금요일 %s로 잡음"
+                   % (payday.isoformat(), asof.isoformat(), R["payday"].isoformat()))
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
     R["settings"] = dict(d.settings)

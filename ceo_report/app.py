@@ -397,6 +397,10 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
         cols = [c.strip() for c in first] or header
         if not set(["예정일", "입출금", "금액"]) <= set(cols):
             raise ValueError("자금일정.csv 머리글이 양식과 다릅니다 — 파일을 확인하세요")
+        lack = [c for c in ("확정여부", "거래처") if c not in cols]
+        if lack:   # 옛 파일에 넣으면 '확정'이 사라져 예상으로 읽힌다 (코덱스 검토 2026-11-14)
+            raise ValueError("자금일정.csv 머리글에 %s 칸이 없어 넣지 않았습니다 — 첫 줄을 양식(%s)대로 맞추세요"
+                             % ("·".join("'%s'" % c for c in lack), ",".join(header)))
         nl = "\r\n" if "\r\n" in text_now else "\n"
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])

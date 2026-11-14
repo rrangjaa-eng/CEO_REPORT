@@ -95,7 +95,7 @@ def build(d, R, team):
             return _sum(r[key] for r in rows)
         return 0 if m in company_months else None   # 회사 줄이 있는 달에 팀 줄이 없으면 그 달 팀 전표 없음
 
-    dept = [r for r in (d.dept or []) if r["dept"] == team]
+    dept = [r for r in (d.dept or []) if "".join(str(r["dept"] or "").split()) == "".join(team.split())]   # 띄어쓰기 달라도 같은 부서
     dept_months = set(r["ym"] for r in (d.dept or []))
 
     def dept_cell(m, key):
@@ -185,7 +185,7 @@ def build(d, R, team):
         e = _event_date(P_.get("event_date"))
         if e is None or str(e.year) != year:
             continue
-        paid = P_.get("paid_total")
+        paid = None if P_.get("unknown_cost") else P_.get("paid_total")   # 금액 모르는 집행이 있으면 집행액·잔여는 '미확인' (코덱스 검토 2026-11-14)
         up.append({"id": P_["id"], "name": P_.get("name", ""), "client": P_.get("client", ""), "event": P_.get("event_date", ""),
                    "date": e, "estimate": P_.get("estimate"), "budget": P_.get("budget"), "paid": paid,
                    "left": _sub(P_.get("budget"), paid)})
@@ -200,7 +200,7 @@ def build(d, R, team):
 
     acc = None
     if getattr(d, "dept_accounts", None) is not None:
-        rows = [r for r in d.dept_accounts if r["dept"] == team and r["ym"] in months]
+        rows = [r for r in d.dept_accounts if "".join(str(r["dept"] or "").split()) == "".join(team.split()) and r["ym"] in months]
         names, order = {}, []
         for r in rows:
             if r["code"] not in names:

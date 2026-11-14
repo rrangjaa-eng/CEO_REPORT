@@ -116,7 +116,7 @@ def build_table(books):
         kind = "분할" if "분할" in (ln.get("memo") or "") or "할부" in (ln.get("memo") or "") else ("일시" if "일시" in (ln.get("memo") or "") else "")
         out.append(dict(zip(KEYS, [LOAN_ROW + ln["date"].isoformat(), code, "|".join([_sq(ln.get("vendor")), mat, kind]),
                                    str(int(ln.get("debit") or 0)), str(int(ln.get("credit") or 0))])))
-    # 대출 연장 (2026-11-13 실제: 4/3 '대출연장보증료_기술보증기금대출_311244508383'): 적요의 대출 계좌번호로 대출을 찾아 연장 줄
+    # 대출 연장 (2026-11-13 실제: 4/3 '대출연장보증료_기술보증기금대출_123456789012'): 적요의 대출 계좌번호로 대출을 찾아 연장 줄
     loan_vendors = set(_sq(ln.get("vendor")) for ln in books.journal if _sq(ln.get("account_code")).startswith(LOAN_DETAIL_PREFIX))
     acct = {}
     for ln in books.journal:
