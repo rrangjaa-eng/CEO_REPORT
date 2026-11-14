@@ -2403,6 +2403,19 @@ def _ins_failed(R, mode):
                 % (_mg(mode, esc("오류: " + err)) if err else ""))
 
 
+RECON_WARN = 10_000_000   # 자료 대조가 이만큼 넘게 어긋나면 대표 보고에 경고 한 줄 (사용자 2026-11-14 F 스레드 결정)
+
+
+def _recon_line(R):
+    """통장·미지급금·차입금 등 자료 대조(reconcile.py, H 스레드가 R['recon'] 에 넣음: [{'what': '통장', 'diff': 장부 − 비교 자료}])가
+    1천만 원 넘게 어긋나면 두 판 맨 위에 경고 한 줄. 숫자는 장부 기준 그대로, 보고를 막지 않는다. 상세는 경영관리 '자료 대조'."""
+    rows = [r for r in R.get("recon") or [] if r.get("diff") is not None and abs(r["diff"]) > RECON_WARN]
+    if not rows:
+        return ""
+    return ("<div class='ins-alert'>자료 대조 경고 · 장부와 비교 자료가 다름: %s (보고 숫자는 장부 기준 그대로 · 경영관리 '자료 대조'에서 확인)</div>"
+            % " · ".join("%s %s원" % (esc(r["what"]), W(abs(r["diff"]))) for r in rows))
+
+
 def _month_foot(R, I, html_, mode):
     """주간 ③ 이번 달 매출 칸 밑에 이번 달 예상 영업이익 (사용자 2026-11-12) — 경영관리용에만
     (2026-11-14 P1: 월초엔 비용만 먼저 잡혀 큰 적자로 보여 대표용에서 뺌)."""
@@ -2467,6 +2480,7 @@ def _first_screen(R, mode, per):
                   + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True), mode) + _issue_card(R, I, mode) + over)])
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
+    h.append(_recon_line(R))
     h.append(_ins_failed(R, mode) if I is None else _ins(IR.ceo_alert(I)))   # 여유 자금 부족 경보만 (적자 프로젝트는 대표 보고에 넣지 않음)
     # 대표용 여유 자금은 숫자 하나 (2026-11-14 F6: 출발점이 달라 더 뺐는데 숫자가 커 보이던 '떼면' 줄은 경영관리용에만)
     tax = "" if I is None or mode != "mgmt" else re.sub(r"<[^>]+>", "", IR.ceo_tax_line(I))

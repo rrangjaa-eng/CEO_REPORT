@@ -440,5 +440,34 @@ class TestK1OnePlace(unittest.TestCase):
         self.assertEqual(facts, ["P26205 E사 파트너 포럼: 행사 후 48일, 미발행 45,000,000원 (받을 돈 49,500,000원, 부가세 포함)."])
 
 
+# ───────────── 자료 대조 경고 자리 (사용자 2026-11-14 F 스레드 결정: 1천만 원 넘게 어긋나면 대표 보고에 경고 한 줄, 숫자 그대로·막지 않음) ─────────────
+class TestReconWarnSlot(unittest.TestCase):
+    """대조 계산은 reconcile.py(H 스레드)가 R['recon'] 에 넣는다: [{'what': '통장', 'diff': 장부 − 비교 자료(원) 또는 None}]."""
+
+    def test_line_on_top_only_over_ten_million(self):
+        from ceo_report.render import render
+        from test_report import numbers_of
+        for kind, day in (("weekly", D(2026, 11, 6)), ("monthly", D(2026, 10, 31))):
+            R = compute(load(SAMPLE_DIR), kind, day)
+            R["recon"] = [{"what": "통장", "diff": 12_345_678}, {"what": "미지급금", "diff": -10_000_000},
+                          {"what": "차입금", "diff": None}, {"what": "카드", "diff": -23_456_789}]
+            ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+            for page in (ceo, mgmt):
+                self.assertIn("자료 대조 경고", page, kind)
+                self.assertIn("통장 12,345,678원", page, kind)
+                self.assertIn("카드 23,456,789원", page, kind)
+                self.assertNotIn("미지급금 10,000,000", page, kind)   # 1천만 원 '넘게'만
+            self.assertEqual(numbers_of(ceo), numbers_of(mgmt), kind)
+            top = ceo[ceo.index("<div class='page fs"):]
+            self.assertLess(top.index("자료 대조 경고"), top.index("<div class='sec"), kind)   # 첫 절보다 위
+
+    def test_no_line_when_within_or_not_computed(self):
+        from ceo_report.render import render
+        R = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))
+        self.assertNotIn("자료 대조 경고", render(R, "ceo"))
+        R["recon"] = [{"what": "통장", "diff": 10_000_000}, {"what": "차입금", "diff": None}]
+        self.assertNotIn("자료 대조 경고", render(R, "ceo"))
+
+
 if __name__ == "__main__":
     unittest.main()
