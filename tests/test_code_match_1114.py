@@ -164,3 +164,68 @@ class TestScheduleCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from ceo_report import fundplan  # noqa: E402
+from ceo_report import wehago  # noqa: E402
+
+
+def books(lines, book_date=D(2026, 11, 12)):
+    b = wehago.Books()
+    b.state, b.book_date = "ok", book_date
+    b.journal = lines
+    return b
+
+
+def plan_row(due, io, vendor, amount, code=""):
+    return {"예정일": due, "입출금": io, "분류": "", "거래처": vendor, "거래처코드": code, "금액": amount, "대상월": due[:7],
+            "자료일": "2026-11-03", "파일": "f.xls", "상태": "", "근거": ""}
+
+
+class TestSettleByAccounts(unittest.TestCase):
+    def test_reclass_between_payables_is_not_a_payment(self):
+        """F11: 미지급금 → 미지급비용 재분류 전표를 '이미 지급'으로 보던 것 (합성 1,100만)."""
+        rows = [plan_row("2026-11-10", "지급", "가상음향", 11_000_000, "00123")]
+        j = [ln(D(2026, 11, 5), "1", "25300", debit=11_000_000, vendor="가상음향", vcode="00123"),
+             ln(D(2026, 11, 5), "1", "26200", credit=11_000_000, vendor="가상음향", vcode="00123")]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "예정일 지남")
+        j += [ln(D(2026, 11, 10), "2", "26200", debit=11_000_000, vendor="가상음향", vcode="00123"),
+              ln(D(2026, 11, 10), "2", "10300", credit=11_000_000, vendor="신한은행", vcode="98001")]
+        rows = [plan_row("2026-11-10", "지급", "가상음향", 11_000_000, "00123")]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "이미 지급")
+
+    def test_advance_paid_straight_from_bank_matches_by_the_other_line(self):
+        """사용자 2026-11-14 ①: 선급금을 통장으로 바로 준 전표 — 통장 줄 거래처는 은행, 선급금 줄에 거래처코드."""
+        rows = [plan_row("2026-11-10", "지급", "가상음향", 5_000_000, "00123")]
+        j = [ln(D(2026, 11, 9), "1", "13100", debit=5_000_000, vendor="(주)가상음향", vcode="00123"),
+             ln(D(2026, 11, 9), "1", "10300", credit=5_000_000, vendor="신한은행", vcode="98001")]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "이미 지급")
+        rows = [plan_row("2026-11-10", "지급", "가상음향", 5_000_000, "00999")]   # 코드가 다르면 이름이 같아도 아님
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "예정일 지남")
+
+
+def plan_ev(due, amount, vendor="가상고객", state="예정", io="입금", code=""):
+    return {"date": D(*map(int, due.split("-"))), "io": io, "cat": "", "vendor": vendor, "vendor_code": code,
+            "amount": amount, "ym": due[:7], "stamp": D(2026, 11, 10), "state": state, "basis": "", "file": ""}
+
+
+class TestApplyMatching(unittest.TestCase):
+    ASOF = D(2026, 11, 12)
+
+    def test_invoice_split_by_project_matches_one_plan_line(self):
+        """F10: 1억1,000만 계산서를 프로젝트별 5,500만 두 줄로 나눈 것 + 자금계획서 입금 1억1,000만 → 입금 예정이 2억2,000만이던 것."""
+        inv = [dict(ev(D(2026, 12, 20), 55_000_000, "가상고객", source="계산서", io="in"), inv_key=("가상고객", D(2026, 10, 21)),
+                    project=p) for p in ("P1", "P2")]
+        new, info = fundplan.apply(inv, [plan_ev("2026-12-20", 110_000_000)], self.ASOF, 7)
+        self.assertEqual([(e["source"], e["amount"]) for e in new], [("자금계획서", 110_000_000)])
+        self.assertEqual(len(info["matched"][0]["split"]), 2)
+
+    def test_paid_line_does_not_erase_a_later_month(self):
+        """F18 ②: 이미 낸 11월 줄이 같은 거래처·같은 금액의 2월 일정을 지우던 것."""
+        later = ev(D(2027, 2, 5), 30_000_000, "가상직원", source="자금일정")
+        new, _ = fundplan.apply([later], [plan_ev("2026-11-05", 30_000_000, "가상직원", "이미 지급", "지급")], self.ASOF, 7)
+        self.assertEqual(new, [later])
