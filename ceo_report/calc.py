@@ -497,7 +497,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for s in d.schedule:
         events.append({"date": s["date"], "io": "in" if s["io"] == "입금" else "out", "amount": s["amount"],
                        "firm": s["firm"], "cat": s["cat"], "desc": s["vendor"] or s["memo"], "basis": s["basis"],
-                       "project": s["project"], "source": "자금일정"})
+                       "project": s["project"], "source": "자금일정", "vendor_code": s.get("vendor_code") or ""})
     for v in ar_rows:
         events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
                        "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
@@ -564,7 +564,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax
-    events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
+    # 2026-11-14 F3: 납부일 지난 세금·급여 줄은 장부 기준일·통장 잔액 기준일을 보고 다음 금요일로 (자금계획서 줄과 같은 규칙)
+    events, R["tax"] = merge_tax(events, getattr(d, "tax", None), asof, cash_date=min(known) if known else None)
     mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
@@ -978,9 +979,11 @@ def mark_must(events, tax_info=None):
     for ev in events:
         ev["must"] = must_pay(ev)
     for t in tax_info or []:
-        m = t.get("matched")
-        if isinstance(m, dict) and m.get("io") == "out" and t.get("kind") in MUST_KINDS:
-            m["must"] = True
+        if t.get("kind") not in MUST_KINDS:
+            continue
+        for m in [t.get("matched")] + list(t.get("matched_all") or []):   # 코드로 여러 줄을 함께 맞춘 경우 모두 (B, 2026-11-14)
+            if isinstance(m, dict) and m.get("io") == "out":
+                m["must"] = True
 
 
 def counts_in(ev, mode):
