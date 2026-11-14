@@ -76,3 +76,56 @@ class TestGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+class TestFunds(unittest.TestCase):
+    def _books(self, lines):
+        from ceo_report import wehago
+        b = wehago.Books()
+        b.state, b.book_date = "ok", D(2026, 11, 12)
+        for no, day, code, account, debit, credit, vendor in lines:
+            b.journal.append({"date": day, "no": no, "account_code": code, "account": account, "debit": debit,
+                              "credit": credit, "vendor": vendor, "memo": "", "sort": ""})
+        return b
+
+    def test_one_slip_not_used_for_two_plan_lines(self):
+        from ceo_report import fundplan
+        from test_fundplan import plan_row
+        rows = [plan_row("2026-11-13", "지급", "가상음향", 1000000), plan_row("2026-11-20", "지급", "가상음향", 1000000)]
+        books = self._books([("7", D(2026, 11, 10), "25300", "미지급금", 1000000, None, "가상음향"),
+                             ("7", D(2026, 11, 10), "10300", "보통예금", None, 1000000, "가상음향")])
+        fundplan.settle(rows, books, D(2026, 11, 12))
+        self.assertEqual(sorted(r["상태"] for r in rows), ["예정", "이미 지급"])
+
+    def test_nine_plan_lines_same_vendor_do_not_crash(self):
+        from ceo_report import fundplan
+        from test_fundplan import plan_row
+        rows = [plan_row("2026-11-%02d" % (13 + i % 5), "지급", "가상음향", (i + 1) * 1000000) for i in range(9)]
+        books = self._books([("1", D(2026, 11, 10), "25300", "미지급금", 15000000, None, "가상음향"),
+                             ("2", D(2026, 11, 11), "25300", "미지급금", 20000000, None, "가상음향")])
+        fundplan.settle(rows, books, D(2026, 11, 12))   # 예전엔 KeyError
+
+    def test_plan_line_does_not_replace_other_vendor_by_amount(self):
+        from ceo_report import fundplan
+        ev = {"date": D(2026, 11, 20), "io": "out", "amount": 30000000, "firm": True, "desc": "B상사", "vendor_code": "222",
+              "source": "자금일정", "cat": "기타지급"}
+        plan = [{"date": D(2026, 11, 20), "io": "지급", "cat": "미지급금 지급", "vendor": "A상사", "vendor_code": "000111",
+                 "amount": 30000000, "ym": "2026-11", "stamp": D(2026, 11, 13), "state": "예정", "basis": "", "file": ""}]
+        new, info = fundplan.apply([ev], plan, D(2026, 11, 14), 7, cash_date=D(2026, 11, 13), txns=[])
+        self.assertEqual(sum(e["amount"] for e in new if e["io"] == "out"), 60000000)
+
+    def test_shared_vendor_schedule_subtracted_once(self):
+        from ceo_report import debts
+        rows = [{"kind": debts.PAYABLE, "vcode": "5", "vendor": "가상", "balance": 10000000, "account": "미지급금", "date": "2026-11-13"},
+                {"kind": debts.PAYABLE, "vcode": "5", "vendor": "가상", "balance": 10000000, "account": "미지급비용", "date": "2026-11-13"}]
+        ev = [{"io": "out", "amount": 10000000, "date": D(2026, 11, 20), "vendor_code": "5", "desc": "가상", "cat": ""}]
+        C = debts.compare(rows, ev, D(2026, 11, 14))
+        self.assertEqual(C["unscheduled_total"], 10000000)
+
+    def test_short_from_today(self):
+        from ceo_report import insights
+        R = {"asof": D(2026, 11, 14), "s2": {"start": 90000000, "min_cash": 100000000, "dated": []}}
+        self.assertEqual(insights._first_short(R, "firm")[0], D(2026, 11, 14))

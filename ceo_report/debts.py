@@ -167,6 +167,7 @@ def compare(debts, events, asof):
     pays = [d for d in debts if d["kind"] == PAYABLE]   # 정기예금은 data.load 가 계좌(사용제한·만기일)로 넣는다
     loans = [d for d in debts if d["kind"] == LOAN]
     left_rows, unknown_n = [], 0
+    spent_left = {}   # 거래처 -> 아직 다른 계정에 쓰지 않은 지급 예정
     for d in pays:
         if d["balance"] is None:
             unknown_n += 1
@@ -175,9 +176,13 @@ def compare(debts, events, asof):
             continue
         vc = norm_code(d["vcode"])
         if vc and vc in by_code:
-            sched, name_match = by_code[vc], False
+            sched, name_match, key = by_code[vc], False, ("c", vc)
         else:
-            sched, name_match = by_name.get(norm_vendor(d["vendor"]), 0), True
+            nm = norm_vendor(d["vendor"])
+            sched, name_match, key = by_name.get(nm, 0), True, ("n", nm)
+        # 같은 거래처가 미지급금·미지급비용처럼 여러 계정에 있으면 지급 예정은 한 번만 뺀다 (2026-11-14 코덱스 검토)
+        sched = min(sched, spent_left.setdefault(key, sched))
+        spent_left[key] = max(spent_left[key] - min(sched, d["balance"]), 0)
         left = d["balance"] - sched
         if left > 0:
             left_rows.append({"vendor": d["vendor"] or "(거래처 없음)", "vcode": d["vcode"], "balance": d["balance"],

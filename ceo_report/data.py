@@ -359,7 +359,8 @@ def load(folder):
         d.balances.append({"date": bdate, "account": "정기예금 " + (x["vendor"] or x["account"]), "bank": x["vendor"],
                            "balance": x["balance"], "restricted": x["balance"],
                            "reason": "정기예금 (만기 %s%s)" % (due.isoformat() if due else "확인 필요",
-                                                           " 추정" if due and "추정" in x.get("due_basis", "") else ""), "row": row, "release": due})
+                                                           " 추정" if due and "추정" in x.get("due_basis", "") else ""), "row": row, "release": due,
+                           "release_guess": bool(due and "추정" in x.get("due_basis", ""))})
 
     # 프로젝트
     d.projects = {}

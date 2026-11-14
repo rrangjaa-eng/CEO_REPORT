@@ -178,8 +178,8 @@ def _avail_with(R, dated):
     from .calc import available_periods
     s2 = R["s2"]
     ends = _ends(R)
-    if not ends or s2.get("start") is None:
-        return None, None
+    if not ends or s2.get("start") is None or s2.get("out_missing"):
+        return None, None   # 지급 자료가 빠져 본 계산이 멈췄으면 여기서도 숫자를 내지 않는다 (2026-11-14 코덱스 검토)
     per = available_periods(s2["start"], dated, ends, s2.get("min_cash"), R["asof"])
     return per[-1]["firm"]["avail"], per[-1]["all"]["avail"]
 
@@ -214,7 +214,9 @@ def taxes_set_aside(R):
     total = sum(t["amount"] for t in rows)
     last = _last(R)
     end = last["end"] if last else R["asof"]
-    upto = max(_next_month_end(R["asof"]), end)
+    upto = _next_month_end(R["asof"])
+    if upto <= end:   # 월간은 기간이 길어 '다음 달 말'이 기간 안에 들어가 늘 비었음 → 기간 끝 다음 달 말까지 (2026-11-14 코덱스 검토)
+        upto = _next_month_end(end)
     must = sorted([e for e in R["s2"].get("dated") or [] if end < e["date"] <= upto and _is_must(e) and e.get("amount")],
                   key=lambda e: e["date"])
     later = [t for t in rows if t["due"] > upto]
@@ -237,7 +239,9 @@ def month_forecast(R):
     co = [r for r in src.get("table") or [] if r.get("unit") == "회사" and (r.get("cur") or {}).get("months") == [ym]]
     if co and co[0]["cur"].get("revenue") is not None:
         c = co[0]["cur"]
-        sales, cost, sga = c["revenue"], c.get("direct") or 0, c.get("common") or 0
+        if c.get("direct") is None or c.get("common") is None:
+            return None   # 원가·판관비를 모르면 이익도 모른다 (0으로 두면 이익이 커 보임, 2026-11-14 코덱스 검토)
+        sales, cost, sga = c["revenue"], c["direct"], c["common"]
     else:
         if not grp:
             return None
@@ -286,7 +290,7 @@ def alerts(R):
 def calendar(R, days=CAL_DAYS):
     """5: 날마다 잔액 -> [{date, firm, all}] (기준일 다음 날부터)."""
     s2 = R["s2"]
-    if s2.get("start") is None:
+    if s2.get("start") is None or s2.get("out_missing"):
         return []
     asof = R["asof"]
     flow = {"firm": collections.defaultdict(int), "all": collections.defaultdict(int)}
@@ -336,7 +340,8 @@ def invoice_pairs(R):
         issued[r.get("project")] += r.get("supply") or 0
     for r in (R.get("s5") or {}).get("by_project") or []:
         if isinstance(r, dict) and r.get("issued"):
-            issued[r.get("project") or r.get("id")] = max(issued[r.get("project") or r.get("id")], r["issued"])
+            pid = r.get("project") or r.get("id") or (r.get("P") or {}).get("id")   # calc 의 by_project 는 P 안에 번호
+            issued[pid] = max(issued[pid], r["issued"])
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
         ev = p.get("event_date") or ""
@@ -468,7 +473,7 @@ def _first_short(R, mode):
     """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None."""
     s2 = R["s2"]
     start, mc = s2.get("start"), s2.get("min_cash")
-    if start is None or mc is None:
+    if start is None or mc is None or s2.get("out_missing"):
         return None
     daily = collections.defaultdict(int)
     for e in s2.get("dated") or []:
@@ -476,6 +481,8 @@ def _first_short(R, mode):
             continue
         daily[e["date"]] += e["amount"] if e["io"] == "in" else -e["amount"]
     bal, first, worst = start, None, None
+    if bal < mc:   # 오늘 이미 최소 보유현금보다 적으면 오늘부터 부족 (2026-11-14 코덱스 검토)
+        first = worst = (R["asof"], mc - bal)
     for day in sorted(daily):
         bal += daily[day]
         if bal < mc:

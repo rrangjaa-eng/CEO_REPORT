@@ -419,7 +419,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         due, lo = window(r)
         by_slip = {}
         for i, line in enumerate(journal):
-            if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+            if i in used or (line["date"], str(line.get("no") or i)) in used_slips or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
                 continue
             amount, named = kind(line, r["입출금"])
             if not amount or not same_vendor(r, line):
@@ -430,6 +430,12 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         return sorted(by_slip.values(), key=lambda c: (journal[c[0]]["date"], c[0]))
 
     found = {}
+    used_slips = set()   # 한 전표의 채무 줄·예금 줄을 서로 다른 지급계획 둘에 쓰지 않게 전표 단위로도 막는다 (2026-11-14 코덱스 검토)
+
+    def take(idx):
+        for i in idx:
+            used.add(i)
+            used_slips.add((journal[i]["date"], str(journal[i].get("no") or i)))
     if journal is not None:
         # ① 같은 금액 한 줄 (예전 규칙)
         for n, r in enumerate(rows):
@@ -442,7 +448,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 if best is None or rank < best[0]:
                     best = (rank, i)
             if best is not None:
-                used.add(best[1])
+                take([best[1]])
                 found[n] = [best[1]]
         # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
         for n, r in enumerate(rows):
@@ -458,7 +464,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 if hit:
                     break
             if hit:
-                used.update(hit)
+                take(hit)
                 found[n] = hit
         # ③ 한 번에 여러 줄을 함께 낸(받은) 돈: 같은 거래처·같은 입출금의 남은 줄 2~4개 합이 분개장 한 줄과 같으면
         rest = collections.OrderedDict()
@@ -468,16 +474,21 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         for group in rest.values():
             if len(group) < 2:
                 continue
-            cache = dict((n, set(candidates(rows[n]))) for n in group[:8])
+            cache = {}   # 거래처 줄이 9건 이상이면 앞 8건 밖의 줄도 후보가 된다 (2026-11-14: KeyError 로 멈추던 것)
+
+            def cand(n):
+                if n not in cache:
+                    cache[n] = set(candidates(rows[n]))
+                return cache[n]
             for size in (4, 3, 2):
                 for combo in itertools.combinations([n for n in group if n not in found][:8], size):
                     if any(n in found for n in combo):
                         continue
                     total = sum(rows[n]["금액"] for n in combo)
-                    hit = sorted(c for c in cache[combo[0]] if c[1] == total and c[0] not in used
-                                 and all(c in cache[n] for n in combo[1:]))
+                    hit = sorted(c for c in cand(combo[0]) if c[1] == total and c[0] not in used
+                                 and all(c in cand(n) for n in combo[1:]))
                     if hit:
-                        used.add(hit[0][0])
+                        take([hit[0][0]])
                         for n in combo:
                             found[n] = [hit[0][0]]
     for n, r in enumerate(rows):
@@ -561,7 +572,7 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
         if problem:
             return events, {"used": False, "reason": "자금계획.csv " + problem + " → 기존 일정 사용"}
         return events, None
-    from .wehago import norm_vendor
+    from .wehago import norm_vendor, norm_code
     if not plan:
         return events, {"used": False, "reason": "자금계획.csv 에 줄이 없음 → 기존 일정 사용"}
     stamp = min(p["stamp"] for p in plan)
@@ -585,7 +596,10 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
         for i, ev in enumerate(events):
             if i in taken or ev["io"] != io or ev["amount"] != p["amount"] or ev.get("source") not in FLAG_SOURCES:
                 continue
-            same = bool(key) and norm_vendor(ev.get("desc") or "") == key
+            pc, ec = norm_code(p.get("vendor_code")), norm_code(ev.get("vendor_code"))
+            if pc and ec and pc != ec:
+                continue   # 거래처코드가 다르면 금액·날짜가 같아도 다른 지급이다 (사용자 2026-11-04 '거래처는 코드로', 2026-11-14 검토)
+            same = (pc == ec) if (pc and ec) else (bool(key) and norm_vendor(ev.get("desc") or "") == key)
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
             if not (same or (near and not done)):
                 continue
@@ -651,7 +665,7 @@ def fill_projects(events, execs):
       2) 아니면 그 거래처의 안 나간 줄이 모두 한 프로젝트면 그 프로젝트
       3) 여러 프로젝트에 걸치면 짐작하지 않고 비워 둔다 (근거에 '여러 프로젝트' 적음)
     급여·세금처럼 장부 원가 줄이 없는 거래처는 그대로 빈칸. 채운 건수를 돌려준다."""
-    from .wehago import norm_vendor
+    from .wehago import norm_vendor, norm_code
     by_vendor = {}
     for e in execs or []:
         if not str(e.get("basis") or "").startswith("WEHAGO ") or e.get("state") not in ("요청미지급", "카드사용미결제"):

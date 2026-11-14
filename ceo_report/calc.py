@@ -215,7 +215,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         rolled.append(accounts[i])
     total_bal, bal_unknown = ssum(a["balance"] for a in accounts)
     # 제한해제일이 기준일 이전이면 이미 풀린 돈: 빼지 않는다 (사용자 2026-11-03)
-    released = [a for a in accounts if a.get("release") and a["release"] <= asof and a["restricted"]]
+    # 다만 만기를 짐작한 정기예금은 장부에 해지 전표가 없으면 아직 묶인 돈이다 (2026-11-14 코덱스 검토)
+    released = [a for a in accounts if a.get("release") and a["release"] <= asof and a["restricted"] and not a.get("release_guess")]
     for a in released:
         issues.add(a["row"]["_file"], a["row"]["_line"], "제한해제일 %s 지남 (%s) → 사용제한 %s 빼지 않음. 계좌잔액.csv 정리 필요"
                    % (a["release"], a["account"], won(a["restricted"])))
@@ -523,7 +524,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                            "source": "프로젝트집행", "vat_unknown": e["vat"] is None})
     for a in R["s1"]["accounts"]:   # 사용제한 해제 (정기예금 만기 등): 그날 쓸 수 있는 돈이 된다 (사용자 2026-11-03)
         if a.get("release") and a["release"] > asof and a["restricted"]:
-            events.append({"date": a["release"], "io": "in", "amount": a["restricted"], "firm": True,
+            # 만기를 지난 예금 기간으로 짐작한 것은 확정 입금이 아니다: 예상으로만 (2026-11-14 코덱스 검토)
+            events.append({"date": a["release"], "io": "in", "amount": a["restricted"], "firm": not a.get("release_guess"),
                            "cat": "사용제한 해제", "desc": a["account"] + (" · " + a["reason"] if a["reason"] else ""),
                            "basis": "계좌잔액.csv 제한해제일", "project": "", "source": "계좌잔액"})
     for P in R["s3"]["projects"]:
@@ -554,7 +556,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                           "budget": (len(skipped_budget), sum(skipped_budget))}
     known = [a["date"] for a in R["s1"]["accounts"] if a["balance"] is not None]
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
-                                           int(R["settings_num"].get("위험_자료경과일") or 7), getattr(d, "fundplan_problem", ""),
+                                           min(int(R["settings_num"].get("위험_자료경과일") or 7), 7), getattr(d, "fundplan_problem", ""),
                                            cash_date=min(known) if known else None, txns=d.txns)
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
