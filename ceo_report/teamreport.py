@@ -5,7 +5,8 @@
 - 급여 반영 손익(매출총이익 − 판관비 − 급여)은 금액 없이 흑자/적자로만, 설정.csv '팀장용_급여반영손익' = 표시 일 때만 (기본 숨김).
 - 수익률 = 매출총이익 ÷ 매출 (판관비 빼기 전). 매출·매출원가는 손익.csv WEHAGO 팀 줄(분개장 부서명, 전표일자 기준).
 - 프로젝트별은 손익.csv WEHAGO 프로젝트 줄을 프로젝트 목록의 팀으로 묶는다. 팀 합계와 다르면 그 차이를 한 줄로 따로 보인다.
-- 진행·예정 프로젝트: 사전견적 · 추정 예산(팀 목표 수익률 기준, calc) · 집행액 · 잔여(추정 예산 − 집행액). 원가율 숫자는 쓰지 않는다.
+- 진행·예정 프로젝트: 사전견적 · 추정 예산(팀 목표 수익률 기준, calc) · 집행액 · 잔여(추정 예산 − 집행액) · 쓸 수 있는 남은 예산
+  (추정 예산 − 쓴 돈·요청·계획, 2026-11-14 T5). 원가율 숫자는 쓰지 않는다.
 - 문서 머리에 계산에 쓴 자료의 날짜 한 줄 ('사용한 자료: 분개장 날짜 · 자금계획서 날짜', 사용자 2026-11-14 결정. 11/5 '출처 문구 없음'을 바꿈).
 모르는 값은 0이 아니라 '미확인'.
 """
@@ -175,32 +176,61 @@ def build(d, R, team):
     cur_gap = gap(cur, last["revenue"], last["cost"])
     ytd_gap = gap(ytd, tot["revenue"], tot["cost"])
 
-    recognized = set(pid for pid in per if any(v[0] for v in per[pid].values()))
-    up = []
+    # 진행·예정 프로젝트와 올해 매출·이익 예상 (2026-11-14 오후 점검 T2·T3·T5, P2·K1)
+    # · 올해 매출 예상 = 누계 매출 + 프로젝트별 '아직 매출로 안 잡힌 금액'(사전견적 − 매출반영누계, calc.revenue_left —
+    #   대표 월간·예산과 같은 계산). 예전엔 매출이 조금이라도 잡힌 프로젝트의 남은 매출이 통째로 빠짐 (T3)
+    # · 이익 예상에 더하는 몫 = 남은 매출 − 남은 원가. 남은 원가 = 추정 예산 − 올해 이미 장부에 잡힌 원가 (0 밑은 0, T2: 예전엔
+    #   먼저 잡힌 계약금·대관료가 누계 원가와 추정 예산 양쪽에서 두 번 빠짐). 끝난 프로젝트(대표 승인)는 남은 원가 0
+    # · 진행·예정 표: 끝나지 않은 올해 행사. 잔여 = 추정 예산 − 집행액 (11/9 정의 그대로), 쓸 수 있는 남은 예산 = 추정 예산 −
+    #   (쓴 돈 + 요청 + 카드 미결제 + 계획) (T5, 사용자 승인)
+    from .calc import revenue_left
+    booked = {pid: _sum(c[1] for c in per[pid].values()) for pid in per}
+    up, add_rev, add_gp, miss_rev, miss_gp, closed_left = [], 0, 0, 0, 0, 0
     for P_ in R["s3"]["projects"]:
-        if (P_.get("team") or "").strip() != team or is_closed(P_):
-            continue
-        if P_["id"] in recognized or P_.get("recognized"):
+        if (P_.get("team") or "").strip() != team or (P_.get("state") or "").strip() == "완료(예전 인트라넷)":
             continue
         e = _event_date(P_.get("event_date"))
         if e is None or str(e.year) != year:
             continue
+        closed = is_closed(P_)
+        left_rev = revenue_left(P_)
+        cost_done = booked.get(P_["id"], 0)
+        if closed:
+            rem_cost = 0
+        elif P_.get("budget") is None or cost_done is None:
+            rem_cost = None
+        else:
+            rem_cost = max(P_["budget"] - cost_done, 0)
+        if left_rev is None:
+            miss_rev += 1
+        else:
+            add_rev += left_rev
+        if left_rev is None or rem_cost is None:
+            miss_gp += 1
+        else:
+            add_gp += left_rev - rem_cost
+        if closed:
+            closed_left += left_rev or 0
+            continue
         paid = None if P_.get("unknown_cost") else P_.get("paid_total")   # 금액 모르는 집행이 있으면 집행액·잔여는 '미확인' (코덱스 검토 2026-11-14)
+        committed = P_.get("committed") if "committed" in P_ else None
         up.append({"id": P_["id"], "name": P_.get("name", ""), "client": P_.get("client", ""), "event": P_.get("event_date", ""),
                    "date": e, "estimate": P_.get("estimate"), "budget": P_.get("budget"), "paid": paid,
-                   "left": _sub(P_.get("budget"), paid)})
+                   "left": _sub(P_.get("budget"), paid), "avail": _sub(P_.get("budget"), committed),
+                   "rev_left": left_rev, "cost_done": cost_done, "rem_cost": rem_cost})
     up.sort(key=lambda r: (r["date"], r["id"]))
-    # 사전견적·예산이 없는 건은 합계·예상에서 빼고 건수를 알린다 (그 건 칸은 '미확인').
-    # 매출·이익 예상은 사전견적·추정 예산만 있으면 된다. 집행액을 모르는 건은 집행액·잔여 합계만 '미확인' (2026-11-14 오후 점검 T4)
+    # 사전견적·예산이 없는 건은 표 합계에서 빼고 건수를 알린다 (그 건 칸은 '미확인'). 집행액·요청을 모르는 건은 그 합계만 '미확인'
     known = [r for r in up if r["estimate"] is not None and r["budget"] is not None]
     up_paid_unknown = sum(1 for r in known if r["paid"] is None)
+    up_avail_unknown = sum(1 for r in known if r["avail"] is None)
     up_tot = {k: sum(r[k] for r in known) for k in ("estimate", "budget")}
     for k in ("paid", "left"):
         up_tot[k] = None if up_paid_unknown else sum(r[k] for r in known)
+    up_tot["avail"] = None if up_avail_unknown else sum(r["avail"] for r in known)
     up_missing = len(up) - len(known)
-    up_gp = _sub(up_tot["estimate"], up_tot["budget"])
-    exp_rev = None if tot["revenue"] is None or up_tot["estimate"] is None else tot["revenue"] + up_tot["estimate"]
-    exp_gp = None if tot["gp"] is None or up_gp is None else tot["gp"] + up_gp
+    up_gp = add_gp
+    exp_rev = None if tot["revenue"] is None else tot["revenue"] + add_rev
+    exp_gp = None if tot["gp"] is None else tot["gp"] + add_gp
 
     acc = None
     if getattr(d, "dept_accounts", None) is not None:
@@ -225,7 +255,8 @@ def build(d, R, team):
     show_net = (d.settings or {}).get(NET_SETTING, "").strip() == "표시"
     return {"team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
             "company_rate": company_rate, "cur": cur, "ytd": ytd, "cur_gap": cur_gap, "ytd_gap": ytd_gap,
-            "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp,
+            "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_avail_unknown": up_avail_unknown,
+            "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp, "add_rev": add_rev, "miss_rev": miss_rev, "miss_gp": miss_gp, "closed_left": closed_left,
             "acc": acc, "show_net": show_net, "company": (d.settings or {}).get("회사명", "")}
 
 
@@ -427,33 +458,42 @@ def render(T, today=None):
             a("<p class='note'>※ 수익률 밑줄 = 팀 목표 수익률(%.1f%%)보다 %g%%p 이상 낮은 건</p>" % (T["t_rate"], LOW_GAP))
 
     # 5. 진행·예정
-    a("<div class='sec'><h2>5. 진행·예정 프로젝트 (매출 계상 전)</h2>")
+    a("<div class='sec'><h2>5. 진행·예정 프로젝트 (올해 행사, 끝나지 않은 것)</h2>")
     if not T["up"]:
-        a("<p class='note'>올해 행사 중 매출 계상 전 프로젝트 없음</p>")
+        a("<p class='note'>올해 행사 중 끝나지 않은 프로젝트 없음</p>")
     else:
         a("<table class='g'><thead><tr><th>프로젝트</th><th>거래처</th><th>행사일</th><th>사전견적</th><th>추정 예산</th>"
-          "<th>집행액</th><th>잔여<br><small>(추정 예산 − 집행액)</small></th></tr></thead><tbody>")
+          "<th>집행액</th><th>잔여<br><small>(추정 예산 − 집행액)</small></th>"
+          "<th>쓸 수 있는 남은 예산<br><small>(요청·계획까지 뺀 것)</small></th></tr></thead><tbody>")
         for r in T["up"]:
             a(_tr([_td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(r["event"]), "c"),
-                   _num(r["estimate"]), _num(r["budget"]), _num(r["paid"]), _num(r["left"], True)]))
+                   _num(r["estimate"]), _num(r["budget"]), _num(r["paid"]), _num(r["left"], True), _num(r["avail"], True)]))
         u = T["up_tot"]
         a(_tr(["<td class='c' colspan='3'>합계 (%d건)</td>" % (len(T["up"]) - T["up_missing"]), _num(u["estimate"]), _num(u["budget"]), _num(u["paid"]),
-               _num(u["left"], True)], "b tot"))
+               _num(u["left"], True), _num(u["avail"], True)], "b tot"))
         a("</tbody></table>")
+        over = [r for r in T["up"] if r["avail"] is not None and r["avail"] < 0]
+        if over:
+            a("<p class='note'>※ 쓸 수 있는 남은 예산이 △인 %d건은 이미 요청·계획한 돈이 추정 예산을 넘었습니다 (지급 전 조정 필요)</p>" % len(over))
         if T["up_missing"]:
-            a("<p class='note'>※ 사전견적 또는 추정 예산이 없는 %d건은 합계와 아래 예상에서 뺌</p>" % T["up_missing"])
-        if T.get("up_paid_unknown"):
-            a("<p class='note'>※ 집행 금액 미확인 %d건: 그 건의 집행액·잔여와 합계는 미확인 (아래 매출·이익 예상에는 넣음)</p>"
-              % T["up_paid_unknown"])
+            a("<p class='note'>※ 사전견적 또는 추정 예산이 없는 %d건은 표 합계에서 뺌</p>" % T["up_missing"])
+        if T.get("up_paid_unknown") or T.get("up_avail_unknown"):
+            a("<p class='note'>※ 집행·요청 금액 미확인 %d건: 그 건의 집행액·잔여·남은 예산과 합계는 미확인 (아래 매출·이익 예상에는 넣음)</p>"
+              % max(T.get("up_paid_unknown") or 0, T.get("up_avail_unknown") or 0))
     a("<table class='g kv'><tbody>")
     tr_, tg_ = T["t_rev"], T["t_gp"]
     a(_tr([_td("올해 매출 예상", "l th2"), _num(T["exp_rev"]),
-           _td(esc("= 누계 매출 %s + 예정 사전견적 %s" % (W(tot["revenue"]), W(T["up_tot"]["estimate"] or 0))), "l mut"),
+           _td(esc("= 누계 매출 %s + 아직 매출로 안 잡힌 금액 %s" % (W(tot["revenue"]), W(T["add_rev"]))), "l mut"),
            _td(esc("목표 대비 %s" % P(T["exp_rev"], tr_)) if tr_ else "-", "c")]))
     a(_tr([_td("올해 매출총이익 예상", "l th2"), _num(T["exp_gp"]),
-           _td(esc("= 누계 %s + 예정분 예상 이익 %s" % (W(tot["gp"]), W(T["up_gp"] or 0))), "l mut"),
+           _td(esc("= 누계 %s + 남은 매출에서 남은 원가를 뺀 %s" % (W(tot["gp"]), W(T["up_gp"]))), "l mut"),
            _td(esc("목표 대비 %s" % P(T["exp_gp"], tg_)) if tg_ else "-", "c")]))
-    a("</tbody></table></div>")
+    a("</tbody></table>")
+    a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
+      "남은 원가 = 추정 예산 − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
+      % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
+         " · 금액을 몰라 뺀 프로젝트 %d건" % max(T["miss_rev"], T["miss_gp"]) if (T.get("miss_rev") or T.get("miss_gp")) else ""))
+    a("</div>")
 
     # 6. 판관비
     a("<div class='sec'><h2>6. 팀 판관비 내역 (급여 제외)</h2>")
@@ -516,8 +556,9 @@ def write_all(d, R, out_dir, today=None):
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)
-            except Exception:   # 자동 분석 때문에 팀장 보고를 못 만들면 안 된다
-                pass
+            except Exception as e:   # 자동 분석 때문에 팀장 보고를 못 만들면 안 된다. 다만 빠진 것은 한 줄로 알린다 (K2)
+                page = page.replace("<div class='basis'>", "<p class='note'>※ 자동 분석 절(이익 흐름·주의할 프로젝트 등)을 붙이지 못했습니다 (%s). "
+                                    "경영관리에 알려 주세요.</p><div class='basis'>" % esc(type(e).__name__), 1)
         with open(path, "w", encoding="utf-8") as f:
             f.write(page)
         out.append(path)

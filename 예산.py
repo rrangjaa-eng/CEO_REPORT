@@ -91,9 +91,9 @@ def main(argv=None):
                 _say("파일을 쓰지 못했습니다: %s (%s)" % (base + ".html", e.strerror or type(e).__name__))
                 return 7
             continue
-        page = render_budget(B, mode, company, confirmed)
-        if stop:
-            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=False), 1)
+        page = render_budget(budget.blank_cash(B) if stop else B, mode, company, confirmed)
+        if stop:   # 항목은 남기고 자금 전망 숫자만 비운다 (2026-11-14 오후 점검 K7)
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=True), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)

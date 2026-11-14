@@ -2032,14 +2032,15 @@ def _ytd_revenue(R):
 
 
 def _expected_strip(R, mode="ceo", Y=None):
-    """앞으로 들어올 매출 한 줄 칸 (사용자 2026-11-04: ⑥ 맨 위, 표가 아니라 큰 숫자 칸).
+    """앞으로 잡힐 매출 한 줄 칸 (사용자 2026-11-04: ⑥ 맨 위, 표가 아니라 큰 숫자 칸).
 
-    앞으로 들어올 매출 = 누적 매출 외에 더 들어올 매출 = 사전견적 − 발행 계산서(공급가액, 프로젝트마다 0 밑은 0):
-    행사 끝남(⑤ '행사 후 세금계산서 미발행'과 같은 수) + 올해 남은 행사. 다음 해 이후 행사는 내년 보고로.
-    누적 매출 + 앞으로 들어올 매출 = 올해 매출 예상. 팀별 금액은 E['by_team'] (경영관리용 근거용)."""
+    앞으로 잡힐 매출(부가세 제외) = 사전견적 − 이미 장부에 잡힌 매출(매출반영누계, 프로젝트마다 0 밑은 0):
+    행사 끝남 + 올해 남은 행사. 다음 해 이후 행사는 내년 보고로. 누적 매출 + 앞으로 잡힐 매출 = 올해 매출 예상.
+    팀장용·예산도 같은 계산(calc.revenue_left). 이름은 통장 입금으로 읽히지 않게 '잡힐 매출'(2026-11-14 오후 점검 P2).
+    팀별 금액은 E['by_team'] (경영관리용 근거용)."""
     E = R["s5"].get("expected")
     y = R["asof"].year
-    head = ("<div class='exp-h'><b>앞으로 들어올 매출</b><span>인트라넷 예상 매출(사전견적) 기준 · %d년 이후 행사 제외</span></div>"
+    head = ("<div class='exp-h'><b>앞으로 잡힐 매출(부가세 제외)</b><span>인트라넷 예상 매출(사전견적) 기준 · %d년 이후 행사 제외</span></div>"
             % (y + 1))
     if not E or E["missing"]:
         return "<div class='card exprow'>%s<div class='exp-c'>%s</div></div>" % (head, esc("계산서 자료가 없어 판단 불가"))
@@ -2054,9 +2055,9 @@ def _expected_strip(R, mode="ceo", Y=None):
         return ("<div class='exp-c%s'><div class='lab'>%s</div><div class='big'>%s%s</div></div>"
                 % (cls, esc(lab), val, " <small>%s</small>" % esc(sub) if sub else ""))
     top = [cell("1월~%s 누적 매출" % ymt, W(rev, "확인 필요")),
-           cell("+ 앞으로 들어올 매출", W(add), "%d건" % (E["past_n"] + E["this_year_n"])),
+           cell("+ 앞으로 잡힐 매출", W(add), "%d건" % (E["past_n"] + E["this_year_n"])),
            cell("= %d년 매출 예상" % y, W(total, "확인 필요"), cls=" tot")]   # 결론 숫자에 밑줄 하나 (사용자 2026-11-05)
-    bot = "앞으로 들어올 매출 = 사전견적 − 이미 발행한 계산서 · 행사 끝남(미발행) %s (%d건) + %d년 남은 행사 %s (%d건)" % (
+    bot = "앞으로 잡힐 매출 = 사전견적 − 이미 장부에 잡힌 매출 · 행사 끝남 %s (%d건) + %d년 남은 행사 %s (%d건)" % (
         won(E["past"]), E["past_n"], y, won(E["this_year"]), E["this_year_n"])
     if E.get("quoted_n"):
         bot += " · 대표이사 승인 끝난 %d건은 사전견적 대신 확정 견적금액" % E["quoted_n"]
@@ -2066,14 +2067,14 @@ def _expected_strip(R, mode="ceo", Y=None):
     if E["no_date_n"]:
         left.append("행사일 없는 %d건" % E["no_date_n"])
     if E["unknown_n"]:
-        left.append("발행금액 미확인 %d건" % E["unknown_n"])
+        left.append("장부 매출(매출반영누계) 미확인 %d건" % E["unknown_n"])
     if E["later_n"]:
         left.append("%d년 이후 행사 %d건은 내년 보고에" % (y + 1, E["later_n"]))
     if left:
         h += _mg(mode, "<div class='exp-b'>%s</div>" % esc("금액에서 뺀 것: " + " · ".join(left)))
     h += "</div>"
     return h + _mg(mode, "<div class='note'>%s</div>" % esc(
-        "사전견적·발행 모두 공급가액, 프로젝트마다 0 밑은 0. 누적 매출은 회사 전체(프로젝트에 안 붙은 매출 포함)"))
+        "사전견적·장부 매출 모두 공급가액(부가세 제외), 프로젝트마다 0 밑은 0. 누적 매출은 회사 전체(프로젝트에 안 붙은 매출 포함)"))
 
 
 def _month_series(R):

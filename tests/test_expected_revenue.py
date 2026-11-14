@@ -1,15 +1,16 @@
-"""인트라넷 사전견적(예상 매출) 중 계산서 안 나간 금액을 행사일로 나눠 대표 월간 보고에 (사용자 2026-11-04)."""
+"""인트라넷 사전견적(예상 매출) 중 아직 장부 매출로 안 잡힌 금액을 행사일로 나눠 대표 월간 보고에 (사용자 2026-11-04).
+2026-11-14 오후 점검 P2: 발행 계산서가 아니라 매출반영누계(장부)를 뺀다 — 팀장용·예산과 같은 계산."""
 import datetime as dt
 import unittest
 
 from ceo_report import render as rd
-from ceo_report.calc import event_unissued, expected_revenue
+from ceo_report.calc import expected_revenue
 
 ASOF = dt.date(2026, 10, 31)
 
 
-def X(pid, event, est, issued):
-    return {"P": {"id": pid, "name": pid, "event_date": event, "estimate": est}, "issued": issued}
+def X(pid, event, est, recognized):
+    return {"P": {"id": pid, "name": pid, "event_date": event, "estimate": est, "recognized": recognized}, "issued": None}
 
 
 ROWS = [X("P1", "2026-09-01", 100, 40), X("P2", "2026-11-20", 300, 0), X("P3", "2027-01-20", 20, 0),
@@ -25,8 +26,11 @@ class TestExpectedRevenue(unittest.TestCase):
         self.assertEqual((E["no_date_n"], E["unknown_n"], E["est_n"]), (1, 1, 6))
         self.assertEqual((E["year_est"], E["year_n"]), (100 + 300 + 50 + 30, 4))
 
-    def test_past_equals_event_unissued_total(self):
-        self.assertEqual(expected_revenue(ROWS, ASOF, False)["past"], event_unissued(ROWS, ASOF, False)["total"])
+    def test_ledger_not_invoices(self):
+        # 선수금 계산서 6,000만을 냈어도 장부 매출이 0이면 1억 전부 남음 / 계산서 없이 장부 매출 1억이면 0 (P2)
+        E = expected_revenue([{"P": {"id": "A", "event_date": "2026-11-20", "estimate": 100, "recognized": 0}, "issued": 60},
+                              {"P": {"id": "B", "event_date": "2026-11-21", "estimate": 100, "recognized": 100}, "issued": 0}], ASOF, False)
+        self.assertEqual((E["this_year"], E["this_year_n"]), (100, 1))
 
     def test_strip_in_both_editions_definition_only_in_mgmt(self):
         rows = ROWS[:3] + [X("Q1", "2026-11-05", 40, 0)]
@@ -38,7 +42,7 @@ class TestExpectedRevenue(unittest.TestCase):
              "s4": {"ym": "2026-10", "sources": {"WEHAGO": {"table": [{"unit": "회사", "ytd": {"revenue": 250}}]}}}}
         ceo, mg = rd._expected_strip(R, "ceo"), rd._expected_strip(R, "mgmt")
         for h in (ceo, mg):
-            # 누적 250 + 앞으로 들어올 매출(행사 끝남 60 + 남은 행사 340) 400 = 650. 2027년 행사(P3)는 빠짐
+            # 누적 250 + 앞으로 잡힐 매출(행사 끝남 60 + 남은 행사 340) 400 = 650. 2027년 행사(P3)는 빠짐
             self.assertIn("<div class='big'>250</div>", h)
             self.assertIn("<div class='big'>400 <small>3건</small></div>", h)
             self.assertIn("<div class='big'>650</div>", h)

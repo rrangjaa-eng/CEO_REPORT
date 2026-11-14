@@ -294,7 +294,15 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     prior_exec = []
     for e in d.execs:
         if from_intranet(e) and not INTRANET_IN_FUNDS:
-            continue   # 쓴 돈(예상총집행)에 넣지 않는다 — 아래 일정에서도 빼고 intranet_only 로 센다
+            # 쓴 돈(예상총집행)·자금 일정에는 넣지 않는다 (11/4 규칙 그대로) — 아래 일정에서도 빼고 intranet_only 로 센다.
+            # 손익 판단(이익 흐름·예산 초과 경보)에는 장부 전 지급요청도 '나갈 돈'으로 본다 (2026-11-14 오후 점검 T1, 사용자 승인)
+            if e["project"] in proj and not is_prior(e):
+                Pq = proj[e["project"]]
+                if e["supply"] is None:
+                    Pq["intranet_req_unknown"] += 1
+                else:
+                    Pq["intranet_req"] += e["supply"]
+            continue
         if is_prior(e):
             prior_exec.append(e)   # 지난해 프로젝트: 참고로만 (미연결로 세지 않음)
             continue
@@ -339,6 +347,15 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]
         P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
         P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
+        # 손익 판단용 등록 지출 = 쓴 돈 + 요청(장부 전 인트라넷 지급요청 포함) + 카드 미결제 + 계획 (T1). 금액 모르는 줄이 있으면 None
+        P["committed"] = None if (P["unknown_cost"] or P["intranet_req_unknown"]) else P["expected"] + P["intranet_req"]
+        P["closed"] = is_closed(P)
+        # 지금 예상 이익: 끝난 프로젝트 = 계약 − 등록 지출. 진행 중 = 계약 − 추정 예산과 등록 지출 중 큰 쪽
+        # (아직 요청·계획으로 올리지 않은 남은 예산도 나갈 돈으로 본다 — 예전엔 남은 예산만큼 늘 '이익 개선'으로 보였음)
+        if P["contract"] is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
+            P["profit_now"] = None
+        else:
+            P["profit_now"] = P["contract"] - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
     plist = [P for P in proj.values() if (P.get("state") or "").strip() != OLD_STATE]   # 예전 인트라넷 끝난 행사 (사용자 2026-11-05)
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
@@ -1042,21 +1059,59 @@ def unissued_due(E):
     return sum(with_vat(y["unissued"]) for y in E.get("rows") or [])
 
 
-def expected_revenue(inv_proj, asof, in_missing):
-    """인트라넷 사전견적(예상 매출) 중 아직 계산서가 안 나간 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
+def left_basis(P):
+    """올해 매출 예상에 쓰는 프로젝트 매출 금액: revenue_basis, 사전견적이 없으면 계약금액 (예산이 예전부터 그렇게 셈)."""
+    v = revenue_basis(P)
+    return v if v is not None else P.get("contract")
 
-    남은 예상 매출 = 사전견적(공급가액) − 발행 공급가액, 0 밑은 0. 묶음: 행사 끝남(= 행사 끝난 뒤 미발행과 같은 수),
-    올해 남은 행사, 다음 해 이후. 사전견적이 있는 프로젝트만 센다. 행사일·발행금액을 모르면 금액에 넣지 않고 건수로만."""
+
+def revenue_left(P):
+    """아직 매출로 안 잡힌 금액 (공급가액) = 매출 기준 금액(사전견적, 대표이사 승인 끝나면 확정 견적) − 매출반영누계(장부 매출).
+
+    0 밑은 0. 기준 금액이나 매출반영누계를 모르면 None (0으로 치지 않음).
+    '올해 매출 예상'은 대표 월간·팀장용·예산 모두 이 금액을 장부 매출에 더한다 (2026-11-14 오후 점검 P2·K1: 예전엔
+    대표 월간은 발행 계산서, 팀장용은 매출이 조금이라도 잡히면 통째로 빼고, 예산은 이 계산 — 세 곳이 서로 달랐음)."""
+    base = left_basis(P)
+    rec = P.get("recognized")
+    if base is None or rec is None:
+        return None
+    return max(base - rec, 0)
+
+
+def year_revenue_left(projects, year, team=None):
+    """그 해 행사 프로젝트별 '아직 매출로 안 잡힌 금액' -> [{P, event, left}] (left None = 모름). 예전 인트라넷 끝난 행사는 뺀다."""
+    out = []
+    for P in projects:
+        if (P.get("state") or "").strip() == OLD_STATE:
+            continue
+        if team is not None and (P.get("team") or "").strip() != team:
+            continue
+        ev = _event_date(P.get("event_date"))
+        if ev is None or ev.year != int(year):
+            continue
+        if left_basis(P) is None:
+            continue
+        out.append({"P": P, "event": ev, "left": revenue_left(P)})
+    return out
+
+
+def expected_revenue(inv_proj, asof, in_missing):
+    """인트라넷 사전견적(예상 매출) 중 아직 장부 매출로 안 잡힌 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
+
+    남은 예상 매출 = revenue_left (사전견적 − 매출반영누계, 0 밑은 0, 2026-11-14 오후 점검 P2: 예전엔 발행 계산서를 빼서
+    선수금 계산서는 빠지고 계산서 없이 잡은 매출은 두 번 셈). 묶음: 행사 끝남, 올해 남은 행사, 다음 해 이후.
+    사전견적이 있는 프로젝트만 센다. 행사일·매출반영누계를 모르면 금액에 넣지 않고 건수로만. in_missing(계산서 자료 없음)은
+    이 계산에 쓰지 않는다 (장부 매출 기준)."""
     groups = {"past": [0, 0], "this_year": [0, 0], "later": [0, 0]}
     est_total = est_n = 0
-    no_date = unknown_issued = year_est = year_n = quoted_n = 0
+    no_date = unknown_left = year_est = year_n = quoted_n = 0
     by_team = {}
     for x in inv_proj:
         P = x["P"]
-        base = revenue_basis(P)
+        base = left_basis(P)
         if base is None:
             continue
-        if base != P.get("estimate"):
+        if base == P.get("quote") and base != P.get("estimate") and revenue_basis(P) is not None:
             quoted_n += 1
         est_total += base
         est_n += 1
@@ -1067,10 +1122,10 @@ def expected_revenue(inv_proj, asof, in_missing):
         if ev.year == asof.year:   # 올해 행사의 예상 매출 합계: 누적 매출과 견줘 보인다 (사용자 2026-11-04)
             year_est += base
             year_n += 1
-        if in_missing or x["issued"] is None:
-            unknown_issued += 1
+        left = revenue_left(P)
+        if left is None:
+            unknown_left += 1
             continue
-        left = base - x["issued"]
         if left <= 0:
             continue
         g = "past" if ev < asof else ("this_year" if ev.year == asof.year else "later")
@@ -1080,11 +1135,11 @@ def expected_revenue(inv_proj, asof, in_missing):
             t = by_team.setdefault((P.get("team") or "").strip(), {"past": 0, "this_year": 0, "n": 0})
             t[g] += left
             t["n"] += 1
-    return {"missing": bool(in_missing), "est_total": est_total, "est_n": est_n,
+    return {"missing": False, "est_total": est_total, "est_n": est_n,
             "past": groups["past"][0], "past_n": groups["past"][1],
             "this_year": groups["this_year"][0], "this_year_n": groups["this_year"][1],
             "later": groups["later"][0], "later_n": groups["later"][1],
-            "no_date_n": no_date, "unknown_n": unknown_issued, "year_est": year_est, "year_n": year_n, "by_team": by_team,
+            "no_date_n": no_date, "unknown_n": unknown_left, "year_est": year_est, "year_n": year_n, "by_team": by_team,
             "quoted_n": quoted_n}   # 사전견적 대신 확정 견적금액을 쓴 프로젝트 수 (대표이사 승인 끝남)
 
 
@@ -1154,7 +1209,7 @@ def _blank_proj(p, rate):
     rate, P["cost_rate_source"] = rate if isinstance(rate, tuple) else (rate, "기본")
     P["cost_rate"] = rate
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "paid_cash_reason": None, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
-              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
+              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0, "intranet_req": 0, "intranet_req_unknown": 0,
               # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다
               "line_n": dict.fromkeys(EXEC_STATES, 0), "line_unknown": dict.fromkeys(EXEC_STATES, 0)})
     est = P["estimate"]

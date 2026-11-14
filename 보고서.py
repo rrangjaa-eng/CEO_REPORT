@@ -297,9 +297,9 @@ def _annual(a):
                 _say(_write_help(a.출력, e))
                 return 7
             continue
-        page = annual.render(A, mode)
-        if stop:
-            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고", blanked=False), 1)
+        page = annual.render(annual.blank_cash(A) if stop else A, mode)
+        if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)

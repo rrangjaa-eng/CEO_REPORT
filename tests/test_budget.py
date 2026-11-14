@@ -88,10 +88,10 @@ class Compute(Base):
         self.assertIn("목표 수익률", B["missing"])
         # 자금: 월말 = 월초 + 입금 − 지급 + 영업외
         c = B["cash"]
-        b = c["bal0"] - c["restricted"] + c["roll"]   # 지금 잔액 + 연말까지 입출금 예상 = 1월 월초 (2026-11-14)
+        b = c["avail0"] + c["roll"]   # 오늘 쓸 수 있는 돈 + 연말까지 입출금 예상 = 1월 월초 (2026-11-14 오후 점검 G4)
         self.assertEqual(c["start"], b)
-        for i in range(12):
-            b = b + c["cin"][i] - (c["cpay"][i] + B["sal"][i] + c["sga_pay"][i] + c["tax"][i]) + c["nio"][i]
+        for i in range(12):   # 정해진 지급(대출 원금 등, G2)도 뺀다
+            b = b + c["cin"][i] - (c["cpay"][i] + B["sal"][i] + c["sga_pay"][i] + c["tax"][i] + c["fixed"][i]) + c["nio"][i]
             self.assertEqual(c["bal"][i], b)
 
     def test_target_rate_used(self):
@@ -105,9 +105,12 @@ class Compute(Base):
         B = self.B()
         names = [(f["day"], f["amount"]) for f in B["fix"]]
         self.assertIn(("1/25", 21_000_000), names)   # 세금예상 부가세 4분기
-        self.assertIn(("3/31", 9_500_000), names)    # 세금예상 법인세
-        self.assertIn(("4/30", 1_350_000), names)
-        self.assertIn(("8/31", 6_750_000), names)    # 중간예납 = 산출세액 13,500,000 ÷ 2
+        # 법인세·지방세는 손익표와 같은 연말 예상 세전 이익 기준, 기납부 400만(세금예상)만 빼다 (2026-11-14 오후 점검 G3)
+        from ceo_report.corptax import corp_tax
+        lc = corp_tax(B["L"]["pre"], 2026)
+        self.assertIn(("3/31", lc - 4_000_000), names)
+        self.assertIn(("4/30", int(lc * 0.1)), names)
+        self.assertIn(("8/31", budget._r4(lc / 2.0)), names)    # 중간예납 = 산출세액 ÷ 2
 
     def test_render_both(self):
         B = self.B()
