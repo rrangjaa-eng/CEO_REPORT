@@ -322,6 +322,31 @@ def run_auto(paths, say, asof="", pick="", payday="", group="", only=""):
     return worst, list(dict.fromkeys(files))
 
 
+def headless(paths, log_path, asof="", today=None):
+    """창 없이 '자동'(변환 → 지금 현황 → 주간·월간 보고)을 한 번 돌리고 글을 log_path 에 남긴다. -> 종료코드.
+
+    2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고 (대표보고.exe --자동 결과.txt [기준일]).
+    창에서 '자동'을 누른 것과 같게: 기준일은 비우면 오늘, 출금일·가용자금 날짜·출금 목록 합침은 창을 열 때 칸 값 그대로."""
+    from . import winstate
+    lines = []
+    day = parse_date(asof) if asof else (today or dt.date.today())
+    vals = winstate.start_values(paths.input, day) if day else {"payday": "", "pick": ""}
+    group, only = load_merge(paths)
+    try:
+        rc, files = run_auto(paths, lines.append, asof=asof or day.isoformat(), pick=vals["pick"], payday=vals["payday"],
+                             group=group, only=only)
+        if files:
+            lines.append("만든 파일: %s" % ", ".join(os.path.basename(f) for f in files))
+    except Exception as e:   # 트레이스백 대신 한 줄
+        lines.append("예상하지 못한 오류 (%s): %s" % (type(e).__name__, str(e)[:200]))
+        rc = 7
+    if day:   # 창도 날짜가 틀리면 돌리지 않아 기록을 남기지 않는다
+        winstate.remember_run(paths.input, "자동", rc == 0)
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+    return rc
+
+
 MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' 칸 값 (다음에 열 때 그대로, 사용자 2026-11-05)
 
 

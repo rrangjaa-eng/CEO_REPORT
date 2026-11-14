@@ -184,5 +184,59 @@ class TestOneWindow(unittest.TestCase):
         self.assertNotIn("self.pw.get()))", text.replace("(uid, pw)", ""))
 
 
+
+class TestHeadless(unittest.TestCase):
+    """창 없이 '자동' 한 번 (2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고).
+    대표보고.exe --자동 <결과 파일> [기준일] = 창에서 '자동'을 누른 것과 같게 (변환 → 지금 현황 → 주간·월간)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from sample_input import refresh
+        refresh()
+
+    def company(self):
+        from test_convert_e2e import full_company
+        tmp = full_company(self)[0]
+        return app.Paths(tmp)
+
+    def test_runs_auto_and_writes_the_lines(self):
+        from ceo_report import winstate
+        P = self.company()
+        log = os.path.join(P.root, "자동결과.txt")
+        rc = app.headless(P, log, asof="2026-10-31")
+        self.assertEqual(rc, 0)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("자동: 주간 보고", text)
+        self.assertIn("자동: 월간 보고", text)
+        self.assertIn("2026-10-31_주간_경영관리보고.html", text)
+        self.assertTrue(text.rstrip().endswith("rc=0"), text[-200:])
+        self.assertTrue(winstate.load(P.input)["runs"]["자동"]["ok"])
+
+    def test_uses_the_values_the_window_would_show(self):
+        """출금일은 창을 열 때처럼 지난번 값이 기준일보다 뒤면 그대로 (창상태.json)."""
+        from ceo_report import winstate
+        P = self.company()
+        winstate.save(P.input, payday="2026-11-13")
+        self.assertEqual(app.headless(P, os.path.join(P.root, "r.txt"), asof="2026-10-31"), 0)
+        with open(os.path.join(P.output, "2026-10-31_주간_경영관리보고.html"), encoding="utf-8") as f:
+            self.assertIn("11/13(금) 출금 목록", f.read())
+
+    def test_bad_date_is_written_not_raised(self):
+        P = self.company()
+        log = os.path.join(P.root, "r.txt")
+        self.assertEqual(app.headless(P, log, asof="2026-13-40"), 2)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("기준일 형식 오류", text)
+        self.assertTrue(text.rstrip().endswith("rc=2"))
+
+    def test_window_main_has_the_option(self):
+        with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('if argv[:1] == ["--자동"]:', text)
+        self.assertIn("app.headless(app.Paths(),", text)
+
+
 if __name__ == "__main__":
     unittest.main()

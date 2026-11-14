@@ -1841,6 +1841,9 @@ def main(argv=None):
         sys.stderr = open(os.devnull, "w")
     if argv[:1] == ["--점검"]:
         return self_check(argv[1] if len(argv) > 1 else "점검결과.txt")
+    if argv[:1] == ["--자동"]:   # 창 없이 '자동' 한 번 (2026-11-14 밤 통합): 결과 글은 파일로, 기준일은 비우면 오늘
+        out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "자동결과.txt")
+        return app.headless(app.Paths(), out, argv[2] if len(argv) > 2 else "")
     if argv[:1] == ["--정합성"]:   # 자료 정합성 점검 (사용자 2026-11-04): 입력 폴더는 바꾸지 않는다
         from . import integrity
         out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "정합성점검.txt")
