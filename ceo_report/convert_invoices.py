@@ -24,6 +24,7 @@ from .wehago import norm_vendor
 BASES = ("코드", "분개장 매출 줄", "자동", "미연결", "참고")   # 참고 = 지난해 계산서 (연결하지 않음, 사용자 2026-11-04)
 _NONE_REASON = "자료 없음 (매출 계산서 엑셀)"
 _FIRM = ("Y", "N", "확정", "")
+DUE_GUESS_DAYS = 60   # 입금예정일 빈칸 = 작성일 + 이 날수 (사용자 2026-11-12, F9)
 _FAR = dt.date.max
 BALANCE_LABEL = "매출채권 잔액: 분개장 (차변−대변) = 계산서.csv 미수 (합계−입금액) + 기초 미수 남음"
 _ASSET = re.compile(r"^10\d{3}$")
@@ -390,6 +391,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     rows, bases = [], []
     mismatch = []
     split_n = split_rows = 0
+    guessed = []   # 입금예정일을 작성일 + 60일로 채운 계산서 (F9)
     split_prev = {}   # 이전 계산서.csv 줄 (거래처, 발행일, 공급가액) -> 줄 (하나뿐일 때만)
     seen_prev = collections.Counter((norm_vendor(p.get("거래처", "")), parse_date(p.get("발행일")), num(p.get("공급가액"))) for p in prev_rows)
     for p in prev_rows:
@@ -409,6 +411,12 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
                 mismatch.append("이전 계산서.csv와 입금 기록 다름: %s %s 이전 %s · WEHAGO %s" % (
                     inv["vendor"], _day(inv["date"]), won(prev_paid), won(now_paid)))
         paid = inv["applied"] + inv["deducted"] != 0   # 지난해 수정 계산서(−)를 끝낸 것은 입금액이 − (사용자 2026-11-04)
+        if not due and inv["date"] is not None and inv["total"] is not None and inv["total"] > 0 \
+                and inv["applied"] + inv["deducted"] < inv["total"] and not _prior(inv):
+            # F9 (2026-11-14): 입금예정일을 손으로 넣지 않은 계산서도 입금 일정·'입금일 지난 미수금'에 나오게 작성일 + 60일
+            # (사용자 2026-11-12: 대부분 작성일 기준 60일 뒤 입금). 확정이 아니라 예상(N)이고 손으로 고치면 그 날짜가 이어진다
+            due, firm = cell_date(inv["date"] + dt.timedelta(days=DUE_GUESS_DAYS)), "N"
+            guessed.append(inv)
         parts = inv["parts"] if inv["vat"] is not None else None
         if not parts:
             rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
@@ -571,6 +579,9 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     if differ:
         notes.append("합계가 공급가액+부가세와 다른 계산서 %d건 (공급가액+부가세로 처리)" % differ)
     notes.extend(carry_notes)
+    if guessed:
+        notes.append("입금예정일 빈칸 계산서 %d건 %s → 작성일 + %d일로 채움 (예상, 확정 아님). 실제 날짜를 알면 계산서.csv 입금예정일을 고치세요"
+                     % (len(guessed), won(sum(v["total"] - v["applied"] - v["deducted"] for v in guessed)), DUE_GUESS_DAYS))
     notes.extend(mismatch)
     if not_carried:
         notes.append("이전 계산서.csv 줄 %d건 옮기지 않음 (매출 계산서 엑셀로 다시 만듦)" % not_carried)

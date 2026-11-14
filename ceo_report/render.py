@@ -1132,7 +1132,9 @@ def _check_items(R):
     if s5["in_missing"]:
         items.append("입금예정일 지난 미수금: 계산서 자료 없음 (%s)" % _inv_files(s5))
     else:
-        items.append("입금예정일 지난 미수금 %d건 %s (일정에 넣지 않음)" % (len(s5["overdue"]), won(s5["overdue_total"])))
+        items.append("입금예정일 지난 미수금 %d건 %s%s (일정에 넣지 않음)" % (
+            len(s5["overdue"]), won(s5["overdue_total"]),
+            " + 금액 미확인 %d건" % s5["overdue_unknown_n"] if s5.get("overdue_unknown_n") else ""))
     for t in R.get("tax") or []:   # 세금 납부 예상: 날짜 있는 것은 위 정기 지출 표에 (사용자 2026-11-03)
         if t["due"] is None:
             amt = "금액 미확인" if t["amount"] is None else won(t["amount"])

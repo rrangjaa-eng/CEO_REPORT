@@ -134,8 +134,9 @@ CREDIT_LABEL = "매출채권 대변 합계 = 입금 + 수정(계산서 감액)"
 BALANCE_LABEL = "매출채권 잔액: 분개장 (차변−대변) = 계산서.csv 미수 (합계−입금액) + 기초 미수 남음"   # CR-05 새 대조
 EXPECTED_ROWS = [
     ("26201", "가상고객A", "2026-09-15", "선수금", "100000000", "10000000", "", "", "2026-10-05", "110000000"),
-    ("26203", "가상고객D", "2026-10-27", "발행", "75000000", "7500000", "", "", "", ""),
-    ("", "가상고객X", "2026-10-28", "발행", "20000000", "2000000", "", "", "", ""),
+    # 입금예정일 빈칸은 작성일 + 60일 예상(N) (F9, 2026-11-14 — 사용자 2026-11-12: 대부분 작성일 기준 60일 뒤 입금)
+    ("26203", "가상고객D", "2026-10-27", "발행", "75000000", "7500000", "2026-12-26", "N", "", ""),
+    ("", "가상고객X", "2026-10-28", "발행", "20000000", "2000000", "2026-12-27", "N", "", ""),
     ("", "가상고객X", "2026-10-29", "수정", "-1000000", "-100000", "", "", "", ""),
 ]
 EXPECTED_CHECKS = [
@@ -660,13 +661,13 @@ class TestInvoiceCarry(unittest.TestCase):
 
     def test_two_previous_rows_with_the_same_key_are_not_carried(self):
         t = build_prev(self, [prev_row(), prev_row(due="2026-12-15", firm="N")])
-        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("", ""))
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-12-26", "N"))   # 옮기지 않고 작성일 + 60일 예상 (F9)
         self.assertTrue([n for n in t.notes if "여러 건" in n and "입금예정일 옮기지 않음" in n])
         self.assertIn("이전 계산서.csv 줄 2건 옮기지 않음 (매출 계산서 엑셀로 다시 만듦)", t.notes)
 
     def test_junk_due_date_and_firm_flag_are_blank_not_guessed(self):
         t = build_prev(self, [prev_row(due="다음 주", firm="아마도")])
-        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("", ""))
+        self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-12-26", "N"))   # 엉터리 글자는 버리고 작성일 + 60일 예상 (F9)
         t = build_prev(self, [prev_row(due="2026.12.05", firm="확정")])
         self.assertEqual(row_of(t, "2026-10-27")[6:8], ("2026-12-05", "확정"))
 
@@ -678,7 +679,8 @@ class TestInvoiceCarry(unittest.TestCase):
         self.assertEqual(sorted(by), ["가상고객D", "가상고객X"])
         self.assertEqual((by["가상고객D"]["amount"], by["가상고객D"]["date"], by["가상고객D"]["firm"]),
                          (82500000, dt.date(2026, 11, 30), True))
-        self.assertEqual((by["가상고객X"]["amount"], by["가상고객X"]["date"]), (20900000, None))
+        self.assertEqual((by["가상고객X"]["amount"], by["가상고객X"]["date"], by["가상고객X"]["firm"]),
+                         (20900000, dt.date(2026, 12, 27), False))   # 작성일 + 60일 예상 (F9)
         self.assertEqual(sum(e["amount"] for e in events), 103400000)
 
     def test_a_social_security_number_in_a_vendor_name_is_masked_everywhere(self):
