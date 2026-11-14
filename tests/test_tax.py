@@ -31,9 +31,12 @@ class TestVat(unittest.TestCase):
 
     def test_open_quarter_estimate_excludes_previous_quarter_payment(self):
         rows = tax.vat(self.journal(), D(2026, 11, 3))
+        # 3분기분은 미지급으로만 잡혀 있고 11/2까지의 장부에 통장 납부가 없음 → 납부일이 지나도 지우지 않는다 (F3, 2026-11-14)
         self.assertEqual([(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows],
-                         [("2026년 4분기 (10~12월)", "2027-01-25", "360", "예상")])
-        self.assertIn("2026-11-02까지", rows[0]["근거"])
+                         [("2026년 3분기 (7~9월)", "2026-10-26", "70", "확정(전표)"),
+                          ("2026년 4분기 (10~12월)", "2027-01-25", "360", "예상")])
+        self.assertIn("2026-11-02까지", rows[1]["근거"])
+        self.assertEqual(rows[0]["장부기준일"], "2026-11-02")
 
     def test_estimate_before_payment_equals_payment_slip(self):
         before = tax.vat([x for x in self.journal() if x["date"] <= D(2026, 9, 30)], D(2026, 10, 3))
@@ -52,13 +55,20 @@ class TestWithholding(unittest.TestCase):
              ln(D(2026, 9, 25), "4", "25400", credit=10, vendor="역삼세무서"),
              ln(D(2026, 9, 25), "4", "25400", credit=7, vendor="건강보험공단")]   # 4대보험은 넣지 않음
         rows = tax.withholding(j, D(2026, 11, 3))
-        self.assertEqual([(r["대상기간"], r["납부예정일"], r["금액"]) for r in rows], [("2026년 하반기 (7~12월)", "2027-01-11", "21")])
+        # 9월까지 뗀 21 + 아직 급여 전표 없는 10~12월은 9월 금액 10으로 (F4, 2026-11-14). 다음 상반기도 같은 금액으로 6달
+        self.assertEqual([(r["대상기간"], r["납부예정일"], r["금액"]) for r in rows],
+                         [("2026년 하반기 (7~12월)", "2027-01-11", "51"), ("2027년 상반기 (1~6월)", "2027-07-12", "60")])
+        self.assertIn("2026-09 금액", rows[0]["근거"])
 
     def test_monthly_payer_due_next_month_tenth(self):
         j = [ln(D(2026, 9, 10), "1", "25400", debit=5, vendor="역삼세무서"),
              ln(D(2026, 10, 25), "2", "25400", credit=8, vendor="역삼세무서")]
         rows = tax.withholding(j, D(2026, 11, 3))
-        self.assertEqual([(r["대상기간"], r["납부예정일"], r["금액"]) for r in rows], [("2026년 10월분", "2026-11-10", "8")])
+        got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got[0], ("2026년 10월분", "2026-11-10", "8", "예상"))
+        # 급여 전표 전 달도 최근 달 금액으로 기준일 달 + 7달 전까지 (F4: 12/10 원천세 줄이 없던 것)
+        self.assertEqual(got[1:3], [("2026년 11월분", "2026-12-10", "8", "예상"), ("2026년 12월분", "2027-01-11", "8", "예상")])
+        self.assertEqual(got[-1][0], "2027년 5월분")
 
 
 class TestMerge(unittest.TestCase):
@@ -91,7 +101,7 @@ class TestPaidBeforeDueIsNotCountedTwice(unittest.TestCase):
         j = [ln(D(2026, 1, 9), "1", "25400", debit=50, vendor="역삼세무서"),
              ln(D(2026, 8, 25), "3", "25400", credit=10, vendor="역삼세무서"),
              ln(D(2027, 1, 8), "9", "25400", debit=10, vendor="역삼세무서")]
-        self.assertEqual(tax.withholding(j, D(2027, 1, 9)), [])
+        self.assertNotIn("2026년 하반기 (7~12월)", [r["대상기간"] for r in tax.withholding(j, D(2027, 1, 9))])
 
 
 class TestSocialInsurance(unittest.TestCase):
@@ -114,13 +124,17 @@ class TestSocialInsurance(unittest.TestCase):
 
     def test_next_payment_is_withheld_plus_company_share(self):
         rows = tax.social(self.journal(), D(2026, 11, 3))
-        self.assertEqual([(r["세목"], r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows],
-                         [("4대보험", "2026년 10월분", "2026-11-10", "420", "예상")])   # 200 + 200 × 110/100
+        self.assertEqual([(r["세목"], r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows][:2],
+                         [("4대보험", "2026년 10월분", "2026-11-10", "420", "예상"),    # 200 + 200 × 110/100
+                          ("4대보험", "2026년 11월분", "2026-12-10", "420", "예상")])   # 급여 전표 전 달은 최근 달 금액 (F4)
         self.assertIn("1.10", rows[0]["근거"])
+        self.assertIn("급여 전표 전", rows[1]["근거"])
+        self.assertEqual(rows[-1]["대상기간"], "2027년 5월분")
+        self.assertEqual(rows[0]["거래처코드"], "")   # 합성 줄엔 코드 없음
 
     def test_paid_month_is_not_listed(self):
-        self.assertEqual([r["대상기간"] for r in tax.social(self.journal()[:1], D(2026, 10, 5))], ["2026년 9월분"])
-        self.assertEqual(tax.social(self.journal()[:5], D(2026, 10, 10)), [])
+        self.assertEqual([r["대상기간"] for r in tax.social(self.journal()[:1], D(2026, 10, 5))][:2], ["2026년 9월분", "2026년 10월분"])
+        self.assertNotIn("2026년 9월분", [r["대상기간"] for r in tax.social(self.journal()[:5], D(2026, 10, 10))])
 
     def test_month_end_accrual_of_company_share_is_used_as_confirmed(self):
         """사용자 2026-11-03: 월말에 회사분을 일반전표(비용 / 미지급비용, 공단)로 넣으면 추정 대신 그 금액을 확정으로 쓴다."""
@@ -133,7 +147,7 @@ class TestSocialInsurance(unittest.TestCase):
         paid = j + [ln(D(2026, 11, 10), "8", "25400", debit=200, vendor="국민연금공단"),
                     ln(D(2026, 11, 10), "8", "26200", debit=215, vendor="국민연금공단"),
                     ln(D(2026, 11, 10), "8", "10300", credit=415)]
-        self.assertEqual(tax.social(paid, D(2026, 11, 10)), [])
+        self.assertNotIn("2026년 10월분", [r["대상기간"] for r in tax.social(paid, D(2026, 11, 10))])
         # 그 다음 달 비율도 미지급비용 차변을 회사분으로 쳐서 계산
         nxt = paid + [ln(D(2026, 11, 25), "9", "25400", credit=100, vendor="국민연금공단")]
         self.assertEqual(tax.social(nxt, D(2026, 11, 26))[0]["금액"], "208")   # 100 + 100 × 215/200
@@ -185,7 +199,9 @@ class TestSalary(unittest.TestCase):
         got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
         self.assertEqual(got[0], ("2026년 9월분", "2026-10-02", "90", "확정(전표)"))   # 10/5 대체공휴일 → 10/2 금
         self.assertEqual(got[1:], [("2026년 10월분", "2026-11-05", "90", "예상"), ("2026년 11월분", "2026-12-04", "90", "예상"),
-                                   ("2026년 12월분", "2027-01-05", "90", "예상")])   # 12/5 토 → 12/4
+                                   ("2026년 12월분", "2027-01-05", "90", "예상"), ("2027년 1월분", "2027-02-05", "90", "예상"),
+                                   ("2027년 2월분", "2027-03-05", "90", "예상"), ("2027년 3월분", "2027-04-05", "90", "예상"),
+                                   ("2027년 4월분", "2027-05-04", "90", "예상"), ("2027년 5월분", "2027-06-04", "90", "예상")])   # 12/5 토 → 12/4, 5/5 어린이날 → 5/4 (기준일 달 + 7달 전까지, F4)
 
     def test_paid_salary_is_not_counted_again(self):
         j = self.accrual() + [ln(D(2026, 10, 2), "2", "26200", debit=90), ln(D(2026, 10, 2), "2", "10300", credit=90)]
@@ -219,7 +235,9 @@ class TestCards(unittest.TestCase):
         rows = tax.cards(j, D(2026, 11, 3), {"신한": (15, 1), "롯데": (14, 1)})
         got = [(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows]
         # 사용자 2026-11-12: 전표로 들어간 사용 − 결제는 확정 (여유 자금에서 뺌)
-        self.assertEqual(got, [("롯데카드 11월 16일 결제", "2026-11-16", "30", "확정(전표)"),   # 10/14 지났는데 남음 → 다음 납부일
+        # 10/14 결제일이 지났는데 장부에 결제가 없음: 다음 결제일로 미루지 않고 그 날짜로 둔다 (F3, 2026-11-14 — 보고서가 장부
+        # 기준일을 보고 다음 금요일로 옮기거나 통장 잔액에 반영된 것으로 봄)
+        self.assertEqual(got, [("롯데카드 10월 14일 결제", "2026-10-14", "30", "확정(전표)"),
                                ("삼성카드 미결제 잔액", "", "50", "납부일 확인 필요"),
                                ("신한카드 11월 16일 결제", "2026-11-16", "200", "확정(전표)")])
 

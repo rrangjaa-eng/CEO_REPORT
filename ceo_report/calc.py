@@ -490,6 +490,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     if not ar_rows and ar_unknown_n:
         ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
     overdue_tot = sum(v["outstanding"] for v in overdue)
+    # F9 (2026-11-14): 금액(부가세 등)을 몰라 미수액이 미확인인 연체 계산서도 '없음'으로 가리지 않고 건수로
+    overdue_unknown = [v for v in invs if v["outstanding"] is None and v["kind"] != "환불" and v["due"] and v["due"] < asof]
     if in_missing:
         issued_tot = unissued_tot = ar_tot = overdue_tot = None  # 계산서 자료 없음 (0 아님)
     R["s5"] = {
@@ -504,6 +506,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "unissued": unissued_tot,
         "ar": ar_tot,
         "overdue_total": overdue_tot,
+        "overdue_unknown_n": 0 if in_missing else len(overdue_unknown),
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
         "event_unissued": event_unissued(inv_proj, asof, in_missing),
         "expected": expected_revenue(inv_proj, asof, in_missing),
@@ -514,11 +517,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for s in d.schedule:
         events.append({"date": s["date"], "io": "in" if s["io"] == "입금" else "out", "amount": s["amount"],
                        "firm": s["firm"], "cat": s["cat"], "desc": s["vendor"] or s["memo"], "basis": s["basis"],
-                       "project": s["project"], "source": "자금일정"})
+                       "project": s["project"], "source": "자금일정", "vendor_code": s.get("vendor_code") or ""})
     for v in ar_rows:
         events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
                        "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
-                       "project": v["project"], "source": "계산서"})
+                       "project": v["project"], "source": "계산서",
+                       # 같은 계산서 (여러 프로젝트로 나눈 줄도 같은 값): 자금계획서 입금 한 줄과 합쳐서 맞춘다 (F10, 2026-11-14)
+                       "inv_key": (v["client"], v["date"]) if v["date"] else None})
     for v in invs:
         if v["kind"] == "환불" and v["outstanding"] is not None and v["outstanding"] < 0 and not v["paid_date"]:
             events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
@@ -581,7 +586,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax
-    events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
+    # 2026-11-14 F3: 납부일 지난 세금·급여 줄은 장부 기준일·통장 잔액 기준일을 보고 다음 금요일로 (자금계획서 줄과 같은 규칙)
+    events, R["tax"] = merge_tax(events, getattr(d, "tax", None), asof, cash_date=min(known) if known else None)
     mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
@@ -848,6 +854,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["last_pay"] = last_payday_out(d.txns, R["payday"])
+    from .gate import blank_plan_gaps   # F8 (2026-11-14): 자금계획서 빠진 달까지 걸친 기간 여유 자금은 비움 (경고·분석보다 먼저)
+    R["plan_gap_note"] = blank_plan_gaps(R)
     R["risks"] = risks(R)
     return R
 
@@ -995,9 +1003,11 @@ def mark_must(events, tax_info=None):
     for ev in events:
         ev["must"] = must_pay(ev)
     for t in tax_info or []:
-        m = t.get("matched")
-        if isinstance(m, dict) and m.get("io") == "out" and t.get("kind") in MUST_KINDS:
-            m["must"] = True
+        if t.get("kind") not in MUST_KINDS:
+            continue
+        for m in [t.get("matched")] + list(t.get("matched_all") or []):   # 코드로 여러 줄을 함께 맞춘 경우 모두 (B, 2026-11-14)
+            if isinstance(m, dict) and m.get("io") == "out":
+                m["must"] = True
 
 
 def counts_in(ev, mode):
