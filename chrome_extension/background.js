@@ -141,6 +141,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     collectClosing(prefix).then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
   }
+  if (msg.type === "collectRecon") {
+    collectRecon().then(reply, (e) => reply({error: String(e.message || e)}));
+    return true;
+  }
   if (msg.type === "collectBooks") {
     collectBooks().then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
@@ -291,10 +295,12 @@ async function collectPlan(months) {
   return r;
 }
 
-// 모두 받기: 분개장 → 자금계획 차례로 (하나가 실패해도 다음 것은 받는다)
+// 모두 받기: 분개장 → 대조 화면 → 자금계획 차례로 (하나가 실패해도 다음 것은 받는다).
+// 대조 화면(합계잔액시산표 등)은 분개장 바로 뒤에 받는다: 같은 때 받은 것끼리 맞춰 봐야 그 사이 들어간 전표 때문에 다르게 보이지 않는다
+// (2026-11-13 실제: 재무상태표를 받은 7분 뒤 지급 전표 11건이 들어가 통장·미지급금이 3,561만 달라 보였음)
 async function collectAll(months) {
   const out = {};
-  for (const [kind, fn] of [["분개장", () => collectJournal()], ["자금계획", () => collectPlan(months)]]) {
+  for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
@@ -360,8 +366,55 @@ const AUTO_SCREENS = [
 const SCREEN_MS = 15000;   // 응답을 기다리는 시간 (사원 줄 누르기는 따로 사원당 8초까지)
 let booksRun = false;
 
+// 대조 화면 (사용자 2026-11-14: 장부와 맞춰 볼 위하고 화면 더 받기). 열고 [조회]만 누르면 되는 화면 — 'YYMMDD 대조_<화면> 자동수집.json'.
+// 카드(자동전표처리 신용카드)·거래처원장·국세청 자료검증은 조회 조건(구분·계정)을 골라야 해서 화면을 직접 열고 '결산' 단추로 받는다.
+const RECON_SCREENS = [
+  {prefix: "대조", mod: "account", code: "SACL0104", name: "합계잔액시산표"},   // 계정별 잔액 (분개장과 같은 때)
+  {prefix: "대조", mod: "account", code: "SAFM0109", name: "차입금현황"},       // 대출 만기·상환 방식 (잔액은 장부를 씀)
+  {prefix: "대조", mod: "account", code: "SAFM0107", name: "예적금현황"},       // 정기예금 만기 (계좌번호는 지움)
+  {prefix: "대조", mod: "account", code: "SACL0106", name: "손익계산서"},       // 매출·판관비 합계
+  {prefix: "대조", mod: "account", code: "SAAC0103", name: "전자세금계산서"},   // 홈택스에서 받은 매출 계산서 (장부 매출전표와 맞춤)
+];
+let reconRun = false;
+
+async function collectRecon() {
+  if (pending || planRun || closingRun || booksRun || reconRun) return {error: "이미 받는 중입니다"};
+  const src = await sourceTab();
+  const year = +((new URL(src.url).hash.match(/[?&]yminsa=(\d{4})/) || [])[1]) || new Date().getFullYear();
+  const url = screenUrl(src.url, RECON_SCREENS[0].code, year, "account");
+  if (!url) return {error: "SmartA 화면 주소에서 기수를 찾지 못함"};
+  reconRun = true;
+  const done = [], fails = [];
+  const [prev] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  try {
+    const tab = await chrome.tabs.create({url, active: true, windowId: prev ? prev.windowId : undefined});
+    await waitLoaded(tab.id, 30000);
+    for (const sc of RECON_SCREENS) {
+      await setStatus({progress: `대조 화면: ${sc.name} 받는 중…`});
+      let r;
+      try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, year, ms: SCREEN_MS}); }
+      catch (e) { r = null; }
+      if (!r || (r.v || 0) < 7) { fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"); break; }
+      if (!r.ok) { fails.push(`${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : "")); continue; }
+      const kind = `${sc.prefix}_${sc.name}`;
+      const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
+                    "자동": true, "응답수": r.got.length, "응답": r.got};
+      const saved = await saveFile(kind, file, JSON.stringify(r.got), {rows: r.got.length, screen: sc.name});
+      done.push({kind, file: saved.file || "(바뀐 것 없음)", same: !!saved.same});
+    }
+    try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
+  } finally {
+    reconRun = false;
+    if (prev) { try { await chrome.tabs.update(prev.id, {active: true}); } catch (e) { /* 닫힘 */ } }
+    await setStatus({progress: ""});
+  }
+  const r = {done: done.length, same: done.filter((d) => d.same).length, files: done};
+  if (fails.length) r.error = fails.join(" / ");
+  return r;
+}
+
 async function collectBooks() {
-  if (pending || planRun || closingRun || booksRun) return {error: "이미 받는 중입니다"};
+  if (pending || planRun || closingRun || booksRun || reconRun) return {error: "이미 받는 중입니다"};
   const src = await sourceTab();
   const base = +((new URL(src.url).hash.match(/[?&]yminsa=(\d{4})/) || [])[1]) || new Date().getFullYear();
   booksRun = true;
@@ -383,7 +436,7 @@ async function collectBooks() {
         let r;
         try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, onOpen: !!sc.onOpen, tab: sc.tab || "", fill: sc.fill || "", year, ms: SCREEN_MS}); }
         catch (e) { r = null; }
-        if (!r || (r.v || 0) < 6) {
+        if (!r || (r.v || 0) < 7) {
           fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요");
           break;
         }

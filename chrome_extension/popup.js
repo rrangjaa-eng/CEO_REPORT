@@ -46,7 +46,7 @@ async function run(btn, msgId, label, message) {
   if (r && r.error) $(msgId).innerHTML += `<br><span class="err">${r.error}</span>`;
 }
 
-$("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
+$("all").onclick = () => run("all", "amsg", "분개장 → 대조 화면(시산표·차입금 등) → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
 $("books").onclick = () => run("books", "bmsg", "받는 중… 위하고 화면이 1~2분 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectBooks"});
 $("journal").onclick = () => run("journal", "jmsg", "받는 중… (1분 안쪽)", {type: "collectNow"});
 $("plan").onclick = () => run("plan", "pmsg", "받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectPlan", months: +$("months").value});

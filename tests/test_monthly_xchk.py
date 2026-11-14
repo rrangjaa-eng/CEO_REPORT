@@ -817,6 +817,8 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         from ceo_report import insights, gasu   # 가수금 갚을 시기도 CLI 가 붙인다 (2026-11-13)
         R["auto_facts"] = insights.read_facts(folder)
         R["gasu"] = gasu.for_report(folder, R)
+        from ceo_report import reconcile   # 자료 대조도 CLI 가 붙인다 (2026-11-14)
+        R["recon"], R["recon_rows"] = reconcile.for_report(folder)
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 
