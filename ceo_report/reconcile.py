@@ -45,7 +45,8 @@ WARN = 10_000_000          # 대표 경고 기준 (render.RECON_WARN 과 같음)
 SAME_TIME_MIN = 30         # 분개장과 비교 화면을 이 분 안에 받았으면 '같은 때'
 STALE_DAYS = 7             # 통장 마지막 전표가 이만큼 넘게 앞서면 알림
 CEO_WHAT = {"103": "통장", "253": "미지급금", "260": "차입금", "293": "차입금"}   # 대표 경고에 올리는 계정 (앞 세 자리)
-NAMES = {"101": "현금", "103": "보통예금", "105": "정기예금", "108": "외상매출금", "131": "선급금", "135": "부가세대급금",
+NAMES = {"101": "현금", "103": "보통예금", "105": "정기예금", "108": "외상매출금", "208": "차량운반구", "209": "감가상각누계액",
+         "212": "비품", "962": "임차보증금", "257": "가수금", "133": "선급비용", "136": "선납세금", "131": "선급금", "135": "부가세대급금",
          "253": "미지급금", "254": "예수금", "255": "부가세예수금", "260": "단기차입금", "262": "미지급비용", "293": "장기차입금"}
 
 
@@ -178,8 +179,17 @@ def book_balances(journal, upto=None):
 
 
 def _sign(g):
-    """자산은 차변 잔액, 부채·자본은 대변 잔액으로 보인다."""
-    return 1 if g[:1] == "1" else -1
+    """자산은 차변 잔액, 부채·자본은 대변 잔액으로 보인다. 더존 계정: 101~250 자산(208 차량운반구도 자산), 251~ 부채·자본,
+    962 임차보증금은 자산 (2026-11-15 실제 시산표)."""
+    g = str(g)[:3]
+    return 1 if (g < "251" or g in BS_EXTRA) else -1
+
+
+BS_EXTRA = ("962",)   # 9로 시작하지만 재무상태표 계정 (임차보증금)
+
+
+def _is_bs(g):
+    return g[:1] in "12" or g in BS_EXTRA
 
 
 def trial_balances(d):
@@ -201,9 +211,12 @@ def bs_balances(d):
     bal = collections.defaultdict(int)
     for r in (data.get("main") if isinstance(data, dict) else None) or []:
         code = re.sub(r"\D", "", str(r.get("cd_acctit") or ""))
-        if len(code) != 5 or code[0] not in "123":
+        if len(code) != 5 or not (code[0] in "123" or code[:3] in BS_EXTRA):
             continue
-        v = _num(r.get("mn_bungae_right") or r.get("mn_bungae"))
+        # 화면 두 칸: 왼쪽 = 계정 금액(차감 계정은 차감 금액), 오른쪽 = 소계·순액 (2026-11-15 실제: 차량운반구 왼쪽 취득가·오른쪽 0,
+        # 감가상각누계액 왼쪽 누계·오른쪽 장부가액). 왼쪽이 있으면 왼쪽을 쓴다
+        left = str(r.get("mn_bungae_left") or "").strip()
+        v = _num(left) if left else _num(r.get("mn_bungae_right") or r.get("mn_bungae"))
         nm = str(r.get("nm_acctit") or "")
         contra = "누계" in nm or "충당금" in nm   # 감가상각누계액·대손충당금: 자산 쪽 차감
         bal[code[:3]] += (-v if contra else v) * _sign(code)
@@ -211,7 +224,7 @@ def bs_balances(d):
 
 
 def _compare_balances(rows, src, other, book, same_time, basis):
-    keys = sorted(set(k for k in other if k[0] in "12") | set(k for k in CEO_WHAT))
+    keys = sorted(set(k for k in other if _is_bs(k)) | set(k for k in CEO_WHAT))
     n_same = n_diff = 0
     for g in keys:
         o, b = other.get(g, 0), book.get(g, 0)
@@ -297,10 +310,12 @@ def pl_rows(journal, d, when, jstamp):
             if dd is None or dd.year != year or dd > when.date() or not c.startswith(first):
                 continue
             book += (int(j.get("credit") or 0) - int(j.get("debit") or 0)) * (1 if first == "4" else -1)
-        verdict = "같음" if other == book else ("다름" if same else "참고")
+        small = abs(other - book) < 100_000   # 2026-11-15 실제: 위하고 손익계산서 판관비가 같은 때 시산표 합보다 1,200원 큼(끝전)
+        verdict = "같음" if other == book else ("다름" if same and not small else "참고")
         rows.append(_row("손익", "%d년 %s" % (year, name), "손익계산서", other, book,
                          "손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)), verdict,
-                         "" if verdict == "같음" else "결산 대체 전표(매출원가 대체 등)나 받은 시각 차이일 수 있습니다."))
+                         "" if verdict == "같음" else ("10만 원 안쪽 끝전 차이입니다 (위하고 손익계산서 표시 차이)." if small
+                                                      else "결산 대체 전표(매출원가 대체 등)나 받은 시각 차이일 수 있습니다.")))
     return rows
 
 
