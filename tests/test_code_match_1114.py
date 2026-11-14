@@ -270,3 +270,20 @@ class TestPlanMonthGap(unittest.TestCase):
         self.assertIn("2026-12", note)
         self.assertEqual([p["firm"]["avail"] for p in R["s2"]["periods"]], [1, None, None])
         self.assertEqual(gate.blank_plan_gaps(self.R(["2026-10", "2026-11", "2026-12", "2027-01"])), "")
+
+
+class TestByNameShownInMgmt(unittest.TestCase):
+    def test_by_name_rows_listed_and_code_rows_not(self):
+        from ceo_report import render
+        ev_old = {"source": "자금일정", "date": D(2026, 11, 10), "desc": "가상세무서 원천세", "amount": 90_000}
+        R = {"tax": [{"kind": "원천세", "period": "2026-10", "amount": 90_000, "by_name": True, "matched": ev_old},
+                     {"kind": "부가세", "period": "2026 3기", "amount": 5, "by_name": False, "matched": ev_old}],
+             "fundplan": {"matched": [{"plan": {"date": D(2026, 11, 13), "desc": "가상음향", "amount": 2_200_000},
+                                       "old": ev_old, "by_name": True},
+                                      {"plan": {"date": D(2026, 11, 13), "desc": "가상조명", "amount": 1},
+                                       "old": ev_old, "by_name": False}]}}
+        html = "".join(render._by_name_notes(R))
+        self.assertIn("이름으로 맞춤 (2건", html)
+        self.assertIn("가상음향", html)
+        self.assertNotIn("가상조명", html)
+        self.assertEqual(render._by_name_notes({"tax": [], "fundplan": None}), [])
