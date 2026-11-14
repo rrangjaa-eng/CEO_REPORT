@@ -21,4 +21,6 @@ SAMPLE = os.path.join(_TMP, "입력")
 def refresh():
     """샘플 폴더를 지우고 make_sample.py 로 새로 쓴다 (테스트 모듈 시작마다: 앞 모듈이 바꾼 것이 남지 않게)."""
     shutil.rmtree(SAMPLE, ignore_errors=True)
-    subprocess.run([sys.executable, MAKE_SAMPLE, SAMPLE], check=True, stdout=subprocess.DEVNULL)
+    # 한글 안내 글을 찍으므로 콘솔 글꼴표가 cp1252 인 Windows 빌드(GitHub)에서도 깨지지 않게 UTF-8 로
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    subprocess.run([sys.executable, MAKE_SAMPLE, SAMPLE], check=True, stdout=subprocess.DEVNULL, env=env)
