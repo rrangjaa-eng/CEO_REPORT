@@ -22,7 +22,7 @@
   window.addEventListener("message", (e) => {
     if (e.source === window && e.data && e.data.__ceoArm === 1) armUntil = Date.now() + (+e.data.ms || 15000);
   });
-  const isApi = (url) => /\/smarta\/[a-z0-9]+\//i.test(String(url));
+  const isApi = (url) => /\/smarta\/[a-z0-9]+\/|\/superbook\/collectingdata\//i.test(String(url));   // 자료수집현황은 superbook 경로
   const pathOf = (url) => { try { return new URL(String(url), location.href).pathname; } catch (e) { return ""; } };
   const postRaw = (url, text) => window.postMessage({__ceoReport: 1, kind: "결산원본", path: pathOf(url), params: {}, text}, location.origin);
   const post = (kind, url, body, text) => window.postMessage({__ceoReport: 1, kind, params: params(url, body), text}, location.origin);
