@@ -109,35 +109,44 @@ def _md(d):
 
 def ceo_issue(D, top=3, compact=False):
     """행사 후 미발행 중 자금에 영향 있는 것: 언제까지 발행해야 자금이 모자라기 전에 들어오나 (사용자 2026-11-12).
-    compact: 표 없이 두어 줄만 (출금 목록이 길어 대표 보고 쪽 수를 넘을 때, 2026-11-13 실제 자료 21건에서 4쪽이 됨)."""
-    if not D or not D["rows"]:
+    compact: 표 없이 두어 줄만 (출금 목록이 길어 대표 보고 쪽 수를 넘을 때, 2026-11-13 실제 자료 21건에서 4쪽이 됨).
+
+    2026-11-14 F13: 미발행은 '받을 돈(부가세 포함)' 한 금액(끝전 포함, 실적 칸과 같은 숫자). 잔액·지급 자료가 없어 못 따지면 '확인 필요'.
+    모자라지 않을 때 문장은 자금계획서 범위·판단 기준을 밝힌다 — 대표 보고에는 싣지 않음 (render._issue_card 가 경영관리용으로만 감쌈)."""
+    n = D.get("n", len(D["rows"])) if D else 0
+    if not n:
         return ""
-    if D["short"]:
-        day, gap, wday, wgap = D["short"]
-        head = ("예상 지급까지 넣으면 <b>%s</b>에 잔액이 늘 남겨 둘 돈보다 %s원 모자랍니다%s. 작성일 뒤 %d일 입금이라 "
-                % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
-        if D["late"]:
-            head += ("<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(D["rows"][0]["pay_if_today"])))
-        else:
-            head += "<b class='ins-neg'>%s까지 발행</b>해야 그 전에 들어옵니다." % _md(D["deadline"])
-    else:   # 늦어도 자금이 모자라지 않으면 한 줄만
-        return ("<div class='ins-line'>행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함): 지금 일정으로는 %s까지 잔액이 "
-                "늘 남겨 둘 돈 아래로 내려가지 않아 발행이 늦어도 자금은 모자라지 않습니다 (작성일 뒤 %d일 입금 기준).</div>"
-                % (len(D["rows"]), W(D["total"]), D["horizon"].strftime("%Y-%m-%d"), D["days"]))
+    total, rows = D["total"], D["rows"]
+    what = "행사 끝나고 아직 발행 안 한 계산서 %d건 받을 돈 %s원 (부가세 포함)" % (n, W(total))
+    if D.get("unknown"):
+        return ("<div class='ins-line'>%s: 잔액·지급 자료가 없어 발행이 늦을 때 자금이 모자라는지 판단 못 함 "
+                "<b class='ins-neg'>(확인 필요)</b>.</div>" % what)
+    if not D["short"]:
+        return ("<div class='ins-line'>%s: 예상 입금·지급까지 넣은 지금 일정으로는 %s(%s)까지 잔액이 늘 남겨 둘 돈 아래로 "
+                "내려가지 않습니다 (자금만 본 것 · 세금계산서 발행 기한은 따로 · 작성일 뒤 %d일 입금 기준).</div>"
+                % (what, D["horizon"].strftime("%Y-%m-%d"), "자금계획서 끝" if D.get("horizon_plan") else "일정 끝", D["days"]))
+    day, gap, wday, wgap = D["short"]
+    head = ("예상 입금·지급까지 넣으면 <b>%s</b>에 잔액이 늘 남겨 둘 돈보다 %s원 모자랍니다%s. 작성일 뒤 %d일 입금이라 "
+            % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
+    if D["late"]:
+        pay = D.get("pay_if_today") or rows[0]["pay_if_today"]
+        head += "<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
+    else:
+        head += "<b class='ins-neg'>%s까지 발행</b>해야 그 전에 들어옵니다." % _md(D["deadline"])
     if compact:
-        big = D["rows"][0]
-        return ("<div class='ins-line'><b>계산서 늦으면 자금에 영향</b> · 행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함, 가장 큰 것 [%s] %s %s원). %s</div>"
-                % (len(D["rows"]), W(D["total"]), esc(big["id"]), esc(big["name"]), W(big["amount"]), head))
-    rows = D["rows"][:top]
+        big = (", 가장 큰 것 [%s] %s %s원" % (esc(rows[0]["id"]), esc(rows[0]["name"]), W(rows[0]["amount"]))) if rows else ""
+        return ("<div class='ins-line'><b>계산서 늦으면 자금에 영향</b> · 행사 끝나고 아직 발행 안 한 계산서 %d건 %s원 (부가세 포함%s). %s</div>"
+                % (n, W(total), big, head))
+    shown = rows[:top]
     body = "".join("<tr><td>[%s] %s</td><td>%s일</td><td class='vin'>%s</td><td>%s</td></tr>"
-                   % (esc(r["id"]), esc(r["name"]), r["days"], W(r["amount"]), _md(r["pay_if_today"])) for r in rows)
-    rest = D["rows"][top:]
-    if rest:
+                   % (esc(r["id"]), esc(r["name"]), r["days"], W(r["amount"]), _md(r["pay_if_today"])) for r in shown)
+    rest_n = n - len(shown)
+    if rest_n:   # 1만 원 밑 끝전도 여기에 (합계는 실적 칸과 같은 숫자)
         body += "<tr class='mut'><td>그 밖 %d건</td><td></td><td class='vin'>%s</td><td></td></tr>" % (
-            len(rest), W(sum(r["amount"] for r in rest)))
-    body += "<tr class='tot'><td>합계 %d건</td><td></td><td class='vin'>%s</td><td></td></tr>" % (len(D["rows"]), W(D["total"]))
+            rest_n, W(total - sum(r["amount"] for r in shown)))
+    body += "<tr class='tot'><td>합계 %d건</td><td></td><td class='vin'>%s</td><td></td></tr>" % (n, W(total))
     return ("<div class='card ins-card'><div class='lab'>계산서 늦으면 자금에 영향 · 행사 끝나고 아직 발행 안 한 돈</div>"
-            "<div class='ins-line'>%s</div><table class='pt iss'><thead><tr><th>프로젝트</th><th>행사 후</th><th>미발행 (부가세 포함)</th>"
+            "<div class='ins-line'>%s</div><table class='pt iss'><thead><tr><th>프로젝트</th><th>행사 후</th><th>받을 돈 (부가세 포함)</th>"
             "<th>오늘 발행하면 입금</th></tr></thead><tbody>%s</tbody></table></div>" % (head, body))
 
 
@@ -347,8 +356,8 @@ def mgmt_section(I, R):
     D = I.get("issue")
     if D is None:
         body = _none("계산서 자료 없음")
-    elif not D["rows"]:
-        body = _none("행사 끝나고 1만 원 넘게 발행 안 한 프로젝트 없음")
+    elif not D.get("n"):
+        body = _none("행사 끝나고 발행 안 한 프로젝트 없음")
     else:
         body = ceo_issue(D, top=len(D["rows"]))
     sub(14, "계산서 발행 기한 (늦으면 자금이 모자라는 것)", body)

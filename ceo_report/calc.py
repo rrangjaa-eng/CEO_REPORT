@@ -1029,6 +1029,19 @@ def event_unissued(inv_proj, asof, in_missing):
             "total": None if in_missing else sum(y["unissued"] for y in rows)}
 
 
+def with_vat(supply):
+    """공급가액 → 받을 돈 (부가세 10% 포함)."""
+    return int(round(supply * 1.1))
+
+
+def unissued_due(E):
+    """행사 후 미발행의 받을 돈 합계 (부가세 포함, 끝전 포함). 대표 보고 실적 칸과 계산서 발행 기한이 같은 숫자를 쓴다
+    (2026-11-14 F13: 같은 미발행이 공급가액·부가세 포함 두 금액으로 보이던 것). 계산서 자료가 없으면 None."""
+    if E.get("missing") or E.get("total") is None:
+        return None
+    return sum(with_vat(y["unissued"]) for y in E.get("rows") or [])
+
+
 def expected_revenue(inv_proj, asof, in_missing):
     """인트라넷 사전견적(예상 매출) 중 아직 계산서가 안 나간 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
 

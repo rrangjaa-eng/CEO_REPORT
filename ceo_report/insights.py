@@ -25,7 +25,7 @@ import os
 import re
 import statistics
 
-from .calc import counts_in
+from .calc import counts_in, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -467,19 +467,38 @@ def delay_risk(R, n=3):
 
 
 # ───────────── 계산서 발행 기한 (사용자 2026-11-12: 대표 보고) ─────────────
+def _plan_end(R):
+    """자금계획서가 있는 마지막 달의 말일 (자금계획서를 안 썼으면 None)."""
+    fp = R.get("fundplan") or {}
+    months = fp.get("months") if fp.get("used") else None
+    if not months:
+        return None
+    y, m = (int(v) for v in max(months)[:7].split("-"))
+    return (dt.date(y + (m == 12), m % 12 + 1, 1) - DAY)
+
+
 PAY_AFTER_ISSUE = 60   # 이 회사 매출 계산서는 대부분 작성일 뒤 60일쯤 입금 (사용자 2026-11-12)
 ISSUE_SMALL = 10000    # 1만 원 밑 끝전은 자금에 영향 없음
 
 
-def _first_short(R, mode):
-    """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None."""
+def _can_judge(R):
+    """잔액·최소 보유현금·지급 자료가 있어 자금이 모자라는 날을 따질 수 있나."""
+    s2 = R["s2"]
+    return s2.get("start") is not None and s2.get("min_cash") is not None and not s2.get("out_missing")
+
+
+def _first_short(R, mode, skip=()):
+    """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None.
+    skip: 이 프로젝트들의 입금은 빼고 본다 (발행한 계산서 입금은 그대로)."""
     s2 = R["s2"]
     start, mc = s2.get("start"), s2.get("min_cash")
-    if start is None or mc is None or s2.get("out_missing"):
+    if not _can_judge(R):
         return None
     daily = collections.defaultdict(int)
     for e in s2.get("dated") or []:
         if e["date"] <= R["asof"] or e.get("amount") is None or not counts_in(e, mode):
+            continue
+        if e["io"] == "in" and e.get("project") in skip and e.get("source") != "계산서":
             continue
         daily[e["date"]] += e["amount"] if e["io"] == "in" else -e["amount"]
     bal, first, worst = start, None, None
@@ -504,18 +523,27 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     if E.get("missing") or E.get("total") is None:
         return None
     asof = R["asof"]
-    rows = []
+    rows, small_rows = [], []
     for x in E.get("rows") or []:
         if x["unissued"] < small:
+            small_rows.append(x)
             continue
         rows.append({"id": x["P"]["id"], "name": x["P"].get("name") or "", "event": x["event"], "days": x["days"],
-                     "amount": int(round(x["unissued"] * 1.1)), "pay_if_today": asof + dt.timedelta(days=days)})
+                     "amount": with_vat(x["unissued"]), "pay_if_today": asof + dt.timedelta(days=days)})
     rows.sort(key=lambda r: (-r["amount"], r["id"]))
-    short = _first_short(R, "all")
-    firm = _first_short(R, "firm")
-    out = {"rows": rows, "total": sum(r["amount"] for r in rows), "days": days, "short": short, "firm_short": firm,
-           "deadline": None, "late": False, "small_n": sum(1 for x in E.get("rows") or [] if x["unissued"] < small),
-           "horizon": max([e["date"] for e in R["s2"].get("dated") or []] or [asof])}
+    # 미발행 프로젝트의 입금이 자금일정에 이미 있어도 믿지 않는다: 발행해야 60일 뒤 들어오는 돈 (2026-11-14 F13)
+    own = set(x["P"]["id"] for x in E.get("rows") or [])
+    short = _first_short(R, "all", own)
+    firm = _first_short(R, "firm", own)
+    last = max([e["date"] for e in R["s2"].get("dated") or []] or [asof])
+    plan = _plan_end(R)
+    out = {"rows": rows, "total": unissued_due(E), "n": len(E.get("rows") or []), "days": days, "short": short, "firm_short": firm,
+           "deadline": None, "late": False, "small_n": len(small_rows), "small_total": sum(with_vat(x["unissued"]) for x in small_rows),
+           # 잔액·지급 자료가 없어 따질 수 없으면 '모자라지 않음'이 아니라 '확인 필요' (2026-11-14 F13)
+           "unknown": not _can_judge(R),
+           # '모자라지 않음'은 자금계획서가 있는 달까지만 말한다: 그 뒤는 지급이 빠져 잔액이 높게 보임 (2026-11-14 F13)
+           "horizon": min(last, plan) if plan else last, "horizon_plan": bool(plan and plan <= last),
+           "pay_if_today": asof + dt.timedelta(days=days)}
     if short:
         out["deadline"] = short[0] - dt.timedelta(days=days)
         out["late"] = out["deadline"] < asof

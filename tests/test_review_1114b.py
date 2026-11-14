@@ -293,5 +293,123 @@ class TestF2SameBaseEverywhere(unittest.TestCase):
             self.assertNotIn("{:,}".format(shown), render(R, "mgmt"))
 
 
+# ───────────── P1·F12·F13·F14: 대표용 문구 (사용자 2026-11-14 결정 D2 '높음·중간 전부 + 빼기', 경영관리는 그대로) ─────────────
+def _fake_issue_R(start, events, unissued, fundplan=None):
+    """계산서 발행 기한 시험용 R: 기준일 2026-11-14, 최소 보유현금 100."""
+    asof = D(2026, 11, 14)
+    rows = [{"P": {"id": i, "name": "프로젝트 " + i}, "event": asof - dt.timedelta(days=20), "days": 20, "unissued": u}
+            for i, u in unissued]
+    return {"asof": asof, "kind": "weekly", "fundplan": fundplan,
+            "s2": {"start": start, "min_cash": 100, "dated": events, "periods": [], "out_missing": []},
+            "s5": {"event_unissued": {"missing": False, "rows": rows, "unknown": [], "total": sum(u for _, u in unissued)}}}
+
+
+class TestCeoWording(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from ceo_report.render import render
+        cls.W = compute(load(SAMPLE_DIR), "weekly", D(2026, 11, 6))
+        cls.M = compute(load(SAMPLE_DIR), "monthly", D(2026, 10, 31))
+        cls.page = dict(((R["kind"], m), render(R, m)) for R in (cls.W, cls.M) for m in ("ceo", "mgmt"))
+
+    def test_p1_month_profit_forecast_is_mgmt_only(self):
+        """P1: 월초엔 비용만 먼저 잡혀 큰 적자로 보이는 '이번 달 예상 영업이익'은 대표 주간에서 뺀다."""
+        self.assertNotIn("예상 영업이익", self.page["weekly", "ceo"])
+        self.assertIn("11월 예상 영업이익", self.page["weekly", "mgmt"])
+
+    def test_f12_change_reasons_are_mgmt_only(self):
+        """F12: '지난 보고 뒤 여유 자금을 바꾼 것'은 예상 줄로 채워지고 금액도 큰 숫자에 준 영향이 아니라 대표용에서 뺀다."""
+        from ceo_report import insights
+        from ceo_report.render import render
+        from test_report import numbers_of
+        for kind, day in (("weekly", D(2026, 11, 6)), ("monthly", D(2026, 10, 31))):
+            R = compute(load(SAMPLE_DIR), kind, day)
+            I = insights.compute(R)
+            I["reasons"] = [("시험 입금 (예상)", 1234567)]
+            R["_ins"] = I
+            ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+            self.assertNotIn("지난 보고 뒤 여유 자금을 바꾼 것", ceo, kind)
+            self.assertIn("지난 보고 뒤 여유 자금을 바꾼 것", mgmt, kind)
+            self.assertEqual(numbers_of(ceo), numbers_of(mgmt), kind)
+
+    def test_f13_no_all_clear_sentence_for_ceo(self):
+        """F13: '발행이 늦어도 자금은 모자라지 않습니다'는 대표용에서 뺀다 (모자랄 때만 경고). 경영관리는 범위·기준을 밝혀 남긴다."""
+        for kind in ("weekly", "monthly"):
+            self.assertNotIn("모자라지 않습니다", self.page[kind, "ceo"], kind)
+            self.assertNotIn("발행이 늦어도", self.page[kind, "mgmt"], kind)
+        self.assertIn("2027-04-30(일정 끝)까지", self.page["weekly", "mgmt"])
+        self.assertIn("예상 입금·지급까지 넣은", self.page["weekly", "mgmt"])
+
+    def test_f13_unissued_is_one_amount_with_vat(self):
+        """F13: 같은 미발행이 4,500만(공급가액)과 4,950만(부가세 포함)으로 따로 보이던 것 → '받을 돈(부가세 포함)' 하나."""
+        import re
+        for kind in ("weekly", "monthly"):
+            for mode in ("ceo", "mgmt"):
+                card = self.page[kind, mode].split("행사 후 세금계산서 미발행</div><div class='big'>")[1]
+                big, foot = re.match(r"(.*?)</div><div class='foot'>(.*?)</div>", card).groups()
+                self.assertEqual(big, "49,500,000", (kind, mode))
+                self.assertIn("받을 돈 (부가세 포함)", foot, (kind, mode))
+
+    def test_f13_unknown_when_balance_cannot_be_judged(self):
+        """F13: 잔액·최소 보유현금을 몰라 계산을 못 해도 '모자라지 않습니다'가 나오던 것 → '확인 필요'."""
+        from ceo_report import insights, insights_render as IR
+        X = insights.issue_deadline(_fake_issue_R(None, [], [("P1", 1000000)]))
+        self.assertTrue(X["unknown"])
+        html = IR.ceo_issue(X)
+        self.assertIn("확인 필요", html)
+        self.assertNotIn("모자라지 않습니다", html)
+        self.assertIn("1,100,000", html)
+
+    def test_f13_own_inflow_of_unissued_project_is_not_trusted(self):
+        """F13: 미발행 프로젝트의 입금이 자금일정에 이미 있으면 그 돈을 믿고 '괜찮다'고 하던 것 → 그 입금은 빼고 판단 (발행 뒤 60일에야 들어옴)."""
+        from ceo_report import insights
+        ev = [dict(_ev(D(2026, 11, 20), "in", 500), project="P1"), _ev(D(2026, 11, 27), "out", 300, firm=True)]
+        X = insights.issue_deadline(_fake_issue_R(300, ev, [("P1", 1000000)]))
+        self.assertEqual(X["short"][:2], (D(2026, 11, 27), 100))
+        # 발행한 계산서의 입금(출처 '계산서')은 그대로 믿는다
+        ev[0]["source"] = "계산서"
+        self.assertIsNone(insights.issue_deadline(_fake_issue_R(300, ev, [("P1", 1000000)]))["short"])
+
+    def test_f13_all_clear_is_limited_to_the_fund_plan(self):
+        """F13: 자금계획서 범위를 넘어 6달 뒤까지 '모자라지 않음'이라 하던 것 → 자금계획서 끝까지만."""
+        from ceo_report import insights, insights_render as IR
+        ev = [_ev(D(2026, 12, 4), "out", 10, firm=True), _ev(D(2027, 3, 5), "out", 10, firm=True)]
+        X = insights.issue_deadline(_fake_issue_R(1000, ev, [("P1", 1000000)], fundplan={"used": True, "months": ["2026-11", "2026-12"]}))
+        self.assertEqual(X["horizon"], D(2026, 12, 31))
+        self.assertIn("2026-12-31(자금계획서 끝)까지", IR.ceo_issue(X))
+
+    def test_f13_small_rows_stay_in_the_total(self):
+        """미발행은 끝전도 빼지 않는다 (사용자 2026-11-05): 발행 기한 표에서 1만 원 밑은 '그 밖'으로 묶되 합계는 실적 칸과 같은 숫자."""
+        from ceo_report import insights, insights_render as IR
+        ev = [_ev(D(2027, 1, 11), "out", 950, firm=True)]
+        X = insights.issue_deadline(_fake_issue_R(1000, ev, [("P1", 1000000), ("P2", 500)]))
+        self.assertEqual(X["total"], 1100000 + 550)
+        html = IR.ceo_issue(X)
+        self.assertIn("합계 2건", html)
+        self.assertIn("1,100,550", html)
+
+    def test_f13_short_sentence_names_both_expected_sides(self):
+        """모자라는 날은 예상 입금·지급을 모두 넣어 판단한다 → 글도 '예상 입금·지급까지 넣으면' (예상 지급만이 아님)."""
+        from ceo_report import insights, insights_render as IR
+        ev = [_ev(D(2027, 1, 11), "out", 950, firm=True)]
+        html = IR.ceo_issue(insights.issue_deadline(_fake_issue_R(1000, ev, [("P1", 1000000)])))
+        self.assertIn("예상 입금·지급까지 넣으면", html)
+
+    def test_f14_failed_analysis_is_said_in_both_editions(self):
+        """F14: 자동 분석이 실패하면 대표 경보·발행 기한이 조용히 사라져 대표는 '경보 없음'으로 읽는다 → 두 판 모두에 한 줄."""
+        from unittest import mock
+        from ceo_report import insights
+        from ceo_report.render import render
+        from test_report import numbers_of
+        for kind, day in (("weekly", D(2026, 11, 6)), ("monthly", D(2026, 10, 31))):
+            R = compute(load(SAMPLE_DIR), kind, day)
+            with mock.patch.object(insights, "compute", side_effect=RuntimeError("시험 실패")):
+                ceo, mgmt = render(R, "ceo"), render(R, "mgmt")
+            for page in (ceo, mgmt):
+                self.assertIn("자동 분석을 못 했습니다", page, kind)
+            self.assertNotIn("시험 실패", ceo)
+            self.assertEqual(numbers_of(ceo), numbers_of(mgmt), kind)
+
+
 if __name__ == "__main__":
     unittest.main()

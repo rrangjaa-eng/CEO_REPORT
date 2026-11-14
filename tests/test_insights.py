@@ -164,7 +164,9 @@ class TestIssueDeadline(unittest.TestCase):
         X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
         self.assertIsNone(X["deadline"])
         html = insights_render.ceo_issue(X)
-        self.assertIn("자금은 모자라지 않습니다", html)
+        # 2026-11-14 F13: '발행이 늦어도 자금은 모자라지 않습니다' → 범위·기준을 밝힌 문장 (경영관리용에만 실림)
+        self.assertIn("늘 남겨 둘 돈 아래로 내려가지 않습니다", html)
+        self.assertNotIn("발행이 늦어도", html)
         self.assertNotIn("<table", html)
 
     def test_ceo_reports_carry_issue_and_month_line(self):
@@ -173,8 +175,12 @@ class TestIssueDeadline(unittest.TestCase):
         from ceo_report.areas import strip_ui
         R = compute(d, "weekly", D(2026, 11, 6))
         h = render(R, "ceo")
-        self.assertIn("행사 끝나고 아직 발행 안 한 계산서", h)
-        self.assertIn("11월 예상 영업이익", h)
+        # 2026-11-14 P1·F13 (사용자 결정 D2): 이번 달 예상 영업이익·'모자라지 않음' 문장은 경영관리용에만. 대표용은 모자랄 때만 경고
+        m = render(R, "mgmt")
+        self.assertIn("행사 끝나고 아직 발행 안 한 계산서", m)
+        self.assertIn("11월 예상 영업이익", m)
+        self.assertNotIn("행사 끝나고 아직 발행 안 한 계산서", h)   # 샘플은 모자라지 않음
+        self.assertNotIn("예상 영업이익", h)
         self.assertNotIn("늦으면</b>", h)   # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12)
         self.assertNotIn("큰 입금이", render(compute(d, "monthly", D(2026, 10, 31)), "ceo"))
         import re
