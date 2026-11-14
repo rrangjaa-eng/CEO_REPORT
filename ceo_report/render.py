@@ -492,7 +492,8 @@ def render(R, mode):
     allk, hide = mgmt_topics.build(R, R["kind"] == "monthly", {
         "summ": summ, "evid": evid, "mark": areas.SUMMARY_MARK, "risk": _risk_section(R), "auto": body, "I": I, "L": Lt,
         "chap": chapd, "order": order, "periodic": _periodic(R, digest.periodic(R)), "docs": digest.docs_section(R, I, Lt),
-        "guide": lambda k: digest.guide_box(k, R, I, Lt), "filing": digest.filing_line(R)})
+        "guide": lambda k: digest.guide_box(k, R, I, Lt), "filing": digest.filing_line(R),
+        "recon_diff": sum(1 for r in R.get("recon_rows") or [] if r.get("판정") == "다름")})
 
     def sec(i):
         k, lab, g, body_, _, _, _, fold = allk[i]

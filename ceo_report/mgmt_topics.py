@@ -756,7 +756,7 @@ def build(R, mode_css_mon, parts):
             body += "".join(fs % p for p in place["cash6"])
         t.append(_layer(6, body or "<div class='tp-note'>이 주제를 가리키는 근거 번호 없음 (표가 근거)</div>",
                         "대표가 물어볼 때 낼 자료", lx=True))
-        nt = len(by_topic[k])
+        nt = len(by_topic[k]) + (parts.get("recon_diff") or 0 if k == "data" else 0)   # 자료 대조 '다름' 줄 수도 목록 숫자에 (예전 B-7-1 목록 숫자)
         badge, bkind = (("자료 없음", "nod") if na else ((nt, "wa" if x["lv"] != "bad" else "") if nt else (None, "")))
         topics.append((k, "%d. %s" % (num_of[k], x["name"]), "주제 (신호등 순서)", "".join(t), badge, bkind, lv, not x["open2"]))
     # 자동 분석 중 남은 것 (번호 표에 없는 새 분석 — 빠지지 않게 자금 ④ 뒤 대신 전체 표 모음에)

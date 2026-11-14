@@ -52,6 +52,24 @@ class TestTopics(unittest.TestCase):
                 for t in ts:
                     self.assertIn(t, shown)
 
+    def test_recon_chapter_sits_in_data_topic_after_chapter_7(self):
+        """자료 대조(H, 2026-11-14 '대조 결과를 한곳에')는 6. 자료 확인 ⑤에서 7장 바로 뒤. 표는 한 줄도 빼지 않는다."""
+        from ceo_report import reconcile
+        from ceo_report.render import esc
+        R = copy.deepcopy(self.month)
+        R["recon_rows"] = [{"구분": "재무상태표", "항목": "보통예금", "비교자료": "위하고 재무상태표", "비교값": 100, "장부값": 90,
+                            "차이": -10, "판정": "다름", "할일": "전표 확인", "기준": "같은 날 자료"},
+                           {"구분": "차입금", "항목": "신한", "비교자료": "차입금현황", "비교값": 5, "장부값": 5, "차이": 0, "판정": "같음",
+                            "할일": "", "기준": ""}]
+        page = render(R, "mgmt")
+        d = area(page, "data")
+        h = reconcile.render(R["recon_rows"], esc)
+        self.assertIn(h, d)
+        self.assertLess(d.index("<h2 id='s7'>"), d.index("<span id='a-recon'>"))
+        self.assertIn("B-7-1", area(page, "all"))
+        self.assertRegex(page, r"href='#a-data'[^>]*>.*?<span class='[^']*'>[1-9]")   # '다름' 1줄이 목록 숫자에   # 옛 번호 찾기에도 있다
+        self.assertNotIn(h, areas.strip_ui(page))   # 예전 문서 비교에서는 gasu 처럼 새 내용으로 뺀다
+
     def test_old_chapters_sit_in_their_topic(self):
         page = self.pages["monthly"]
         where = {"s1": "cash", "s2": "cash", "s3": "proj", "s4": "pl", "s5": "ar", "s6": "other", "s7": "data", "s8": "xchk"}
