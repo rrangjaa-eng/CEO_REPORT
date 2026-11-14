@@ -206,6 +206,14 @@ def convert_time(input_dir):
     return t
 
 
+def _is_stop_page(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return "— 만들지 않음</title>" in f.read(4000)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def latest_reports(output_dir):
     """가장 최근에 만든 보고 -> {'대표': pdf 또는 html, '경영관리': html(영역별 보기) 또는 pdf, 'at': 시각, 'kind': '주간'·'월간'}."""
     found = []
@@ -219,6 +227,9 @@ def latest_reports(output_dir):
 
     def best(who, exts=(".pdf", ".html")):
         from . import pdfname
+        page = "%s_%s.html" % (base, who)
+        if _is_stop_page(page):   # 막힌 보고: 예전 PDF 를 최신처럼 열지 않는다 (2026-11-14 코덱스 검토) → '만들지 않음' 안내
+            return page
         for ext in exts:
             # PDF 는 이름에 만든 시각이 붙는다 (사용자 2026-11-12): 같은 보고 중 가장 새로 만든 것
             p = pdfname.newest("%s_%s" % (base, who)) if ext == ".pdf" else "%s_%s%s" % (base, who, ext)

@@ -52,6 +52,10 @@ def build(mgmt_html, nums, who="대표", when=""):
     parts = ["<div class='wrap'><h1>%s</h1><div class='meta'>요청: %s%s · 제출: 경영관리</div>" % (
         _html.escape(name), _html.escape(who), (" · " + _html.escape(when)) if when else ""),
         "<table class='pt evt' style='margin:10px 0 16px'><thead><tr><th>번호</th><th>대표용 항목</th></tr></thead><tbody>%s</tbody></table>" % rows]
+    # 경영관리 보고가 자료 미반영 경고를 달고 있으면 근거자료에도 그대로 붙인다 (2026-11-14 코덱스 검토: 떼어 낸 근거엔 경고가 없었음)
+    warn = re.search(r"<style>[^<]*</style><div class='gate'>.*?</ul></div>", mgmt_html, re.S)
+    if warn:
+        parts.append(warn.group(0))
     seen = set()
     for n in nums:
         t, w = idx[n]

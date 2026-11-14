@@ -6,7 +6,7 @@
 - 수익률 = 매출총이익 ÷ 매출 (판관비 빼기 전). 매출·매출원가는 손익.csv WEHAGO 팀 줄(분개장 부서명, 전표일자 기준).
 - 프로젝트별은 손익.csv WEHAGO 프로젝트 줄을 프로젝트 목록의 팀으로 묶는다. 팀 합계와 다르면 그 차이를 한 줄로 따로 보인다.
 - 진행·예정 프로젝트: 사전견적 · 추정 예산(팀 목표 수익률 기준, calc) · 집행액 · 잔여(추정 예산 − 집행액). 원가율 숫자는 쓰지 않는다.
-- 문서에 자료 출처(위하고·분개장 등)는 쓰지 않는다 (사용자 2026-11-05).
+- 문서 머리에 계산에 쓴 자료의 날짜 한 줄 ('사용한 자료: 분개장 날짜 · 자금계획서 날짜', 사용자 2026-11-14 결정. 11/5 '출처 문구 없음'을 바꿈).
 모르는 값은 0이 아니라 '미확인'.
 """
 import datetime as dt
@@ -21,7 +21,8 @@ LOW_GAP = 4.0   # 누계 프로젝트 수익률이 팀 목표 수익률보다 �
 
 
 def esc(v):
-    return html.escape("" if v is None else str(v))
+    from .util import esc as _esc   # 주민번호 모양은 가린다 (2026-11-14 코덱스 검토)
+    return _esc("" if v is None else str(v))
 
 
 def W(v):
@@ -502,6 +503,9 @@ def write_all(d, R, out_dir, today=None):
         T = build(d, R, team)
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
         page = render(T, today)
+        from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-14)
+        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div><div class='excl'>"
+                            % esc(gate.sources_line(R)), 1)
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)

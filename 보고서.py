@@ -277,6 +277,10 @@ def _annual(a):
         _say(_write_help(a.출력, e))
         return 7
     D = load(a.입력)
+    from ceo_report import gate
+    stop = gate.check_dir(a.입력, today)   # 연간 대표 보고도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
+    if stop:
+        _say("연간 대표 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
     A = annual.compute(a.입력, year, D.settings, D)
     if A["Y"] is None:
         _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
@@ -285,7 +289,17 @@ def _annual(a):
     made, pdf_failed = [], False
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
         base = os.path.join(a.출력, "%d_연간_%s" % (year, who))
+        if mode == "ceo" and stop:
+            try:
+                with open(base + ".html", "w", encoding="utf-8") as f:
+                    f.write(gate.stop_page("%d년 연간 대표보고" % year, stop))
+            except OSError as e:
+                _say(_write_help(a.출력, e))
+                return 7
+            continue
         page = annual.render(A, mode)
+        if stop:
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고", blanked=False), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)
@@ -405,6 +419,8 @@ def main(argv=None):
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
     from ceo_report import insights
     R["auto_facts"] = insights.read_facts(a.입력)
+    from ceo_report import gate as _gate   # 자료가 막히면 경영관리·현황에서도 자금 숫자를 비운다 (사용자 2026-11-14)
+    _gate.blank_funds(R)
     R["_invoices"] = data.invoices
     R["auto_prev"] = insights.load_previous(a.출력, asof)
     R["auto_records"] = insights.load_records(a.출력)
