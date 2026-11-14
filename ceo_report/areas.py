@@ -13,24 +13,30 @@ import html as _html
 SUMMARY_MARK = "<!--영역:근거-->"
 
 
-def section(key, label, body, group):
-    """한 영역. id 는 'a-키' (상세 장의 h2 id='sN' 은 그대로 안에 남는다: 근거 뽑기·본문 링크가 그대로 쓴다)."""
-    return ("<section class='area' id='a-%s' data-label='%s' data-group='%s'>%s</section>"
-            % (key, _html.escape(label, quote=True), _html.escape(group, quote=True), body))
+def section(key, label, body, group, cls=""):
+    """한 영역. id 는 'a-키' (상세 장의 h2 id='sN' 은 그대로 안에 남는다: 근거 뽑기·본문 링크가 그대로 쓴다).
+    cls: ' tfold' 면 화면에서 ③~⑥ 층을 접어 둔다 (경영관리 주제 장, 인쇄에는 전부)."""
+    return ("<section class='area%s' id='a-%s' data-label='%s' data-group='%s'>%s</section>"
+            % (cls, key, _html.escape(label, quote=True), _html.escape(group, quote=True), body))
 
 
 def nav(items):
-    """영역 목록 + 인쇄 단추. items = [(키, 이름, 묶음, 표시 숫자 또는 None)].
+    """영역 목록 + 인쇄 단추. items = [(키, 이름, 묶음, 표시 숫자 또는 None[, 배지 종류, 신호 점])].
+    배지 종류: '' 빨강 · 'wa' 노랑 · 'na' 회색('자료 없음'). 신호 점: ok·wa·bad·na (주제 장, 사용자 2026-11-14 주제별 묶기).
     <div class='toc'> 는 예전 목차 자리(첫 화면과 상세 장의 경계)를 그대로 쓴다 (시험이 이 경계로 두 판 숫자를 비교)."""
     out, last = [], None
-    for key, label, group, badge in items:
+    for it in items:
+        key, label, group, badge = it[:4]
+        bkind = it[4] if len(it) > 4 else ""
+        dot = it[5] if len(it) > 5 else None
         if group != last:
             out.append("<div class='ag'>%s</div>" % _html.escape(group))
             last = group
-        b = " <span class='abg'>%s</span>" % _html.escape(str(badge)) if badge else ""
+        b = " <span class='abg%s'>%s</span>" % (" " + bkind if bkind else "", _html.escape(str(badge))) if badge else ""
+        d = "<span class='dot %s'></span>" % dot if dot else ""
         out.append("<label class='ai'><input type='checkbox' class='apk' value='%s' aria-label='%s 인쇄에 넣기'>"
-                   "<a href='#a-%s' data-k='%s'>%s%s</a></label>"
-                   % (key, _html.escape(label, quote=True), key, key, _html.escape(label), b))
+                   "<a href='#a-%s' data-k='%s'>%s%s%s</a></label>"
+                   % (key, _html.escape(label, quote=True), key, key, d, _html.escape(label), b))
     # 영역 보기 CSS 도 여기(본문 안)에 둔다: 머리의 공통 CSS 는 대표용과 같게 (시험이 두 판 숫자를 비교)
     return ("<div class='toc'><style>" + CSS + "</style><nav class='anav' id='anav' aria-label='보고서 영역'>"
             "<div class='ahd'><b>영역</b><button type='button' id='aall' aria-pressed='false'>전체 보기</button></div>"
@@ -198,14 +204,26 @@ JS = r"""
 </script>"""
 
 
+def old_view(page):
+    """주제별로 묶은 경영관리 보고(2026-11-14)를 예전 순서(대표 화면·근거 묶음 | 목차 | 위험 분석·상세 장)로 되돌린 HTML.
+    예전 보고(조각 표시 없음)는 그대로. 시험이 '첫 화면 묶음'·'상세 장'을 예전처럼 나눠 볼 때 쓴다."""
+    if "<!--o:" not in page:
+        return page
+    from .mgmt_topics import restore
+    return restore(page, toc=True)
+
+
 def strip_ui(page):
     """영역 보기 장치(목록·단추·스크립트·영역 틀)를 뺀 문서 본문. 시험이 '숫자·문구는 예전과 같다'를 확인할 때 쓴다.
     예전 목차 줄(<div class='toc'>상세자료: …</div>)도 함께 뺀다."""
     import re
+    if "<!--o:" in page:   # 주제별 묶기 (2026-11-14): 옮긴 조각을 예전 순서로 다시 잇는다
+        from .mgmt_topics import restore
+        page = restore(page)
     # 자동 분석 영역(2026-11-12 추가)은 새 내용이라 예전과 비교할 때 뺀다
     page = re.sub(r"<section class='area' id='a-auto'.*?</section>", "", page, flags=re.S)
-    # 1쪽 요약·본문과 부록 C 정기 절(2026-11-12 추가), 가수금 갚을 시기(2026-11-13)도 새 내용이라 뺀다
-    page = re.sub(r"<section class='area' id='a-(?:one|docs|gasu|c\d)'.*?</section>", "", page, flags=re.S)
+    # 1쪽 요약·본문과 부록 C 정기 절(2026-11-12 추가), 가수금 갚을 시기(2026-11-13)·자료 대조(2026-11-14)도 새 내용이라 뺀다
+    page = re.sub(r"<section class='area' id='a-(?:one|docs|gasu|recon|c\d)'.*?</section>", "", page, flags=re.S)
     page = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", page, flags=re.S)   # 쉬운 설명·제안 상자 (2026-11-13)
     page = re.sub(r"<!--ins-->.*?<!--/ins-->|/\*ins\*/.*?/\*/ins\*/", "", page, flags=re.S)
     page = re.sub(r"<div class='toc'><style>.*?</nav></div>", "", page, flags=re.S)

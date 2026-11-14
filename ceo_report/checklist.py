@@ -349,6 +349,11 @@ def gather(app_dir, input_dir, asof):
     items = conv + _report_items(input_dir, asof) + bank_items(input_dir) + _integrity_items(app_dir)
     from . import reconcile   # 자료 대조 '다름' 줄 (사용자 2026-11-14)
     items += reconcile.check_items(input_dir)
+    try:   # 경영관리 보고 할 일 (사용자 2026-11-14 주제별 묶기): 결정·메모가 다음 보고 할 일 표에 붙는다
+        from . import mgmt_topics
+        items += mgmt_topics.check_items(os.path.join(app_dir, "출력"))
+    except Exception:
+        pass
     seen, uniq = set(), []
     for it in items:
         if it["id"] in seen:

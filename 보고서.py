@@ -429,6 +429,9 @@ def main(argv=None):
     from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
     R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)
+    from ceo_report import mgmt_topics, checklist as _ck   # 경영관리 할 일 이월·결정 (사용자 2026-11-14 주제별 묶기)
+    R["todo_prev"] = mgmt_topics.load_previous(a.출력, kind, asof)
+    R["todo_decisions"] = _ck.read_decisions(a.입력)
     from ceo_report import gasu   # 가수금 갚을 시기 (사용자 2026-11-13: 전부 갚아도 자금에 영향 없는지) — 경영관리 B-2-1
     R["gasu"] = gasu.for_report(a.입력, R)
     from ceo_report import reconcile   # 자료 대조 (사용자 2026-11-14): 1천만 원 넘게 어긋나면 대표 보고 맨 위 경고 한 줄, 상세는 경영관리
@@ -541,6 +544,10 @@ def main(argv=None):
         digest.write_record(a.출력, R)
     except OSError as e:
         _say("경영관리 신호등 기록을 남기지 못했습니다 (다음 보고 '바뀜' 표시에 쓰임): %s" % e)
+    try:
+        mgmt_topics.write_record(a.출력, R)
+    except OSError as e:
+        _say("경영관리 할 일 기록을 남기지 못했습니다 (다음 보고 '이월' 표시에 쓰임): %s" % e)
     try:
         insights.write_record(a.출력, R)
     except OSError as e:

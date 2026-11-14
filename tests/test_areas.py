@@ -16,11 +16,13 @@ from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 
-WEEK = ["one", "docs", "sum", "ev", "risk", "auto", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]   # 1쪽 요약·본문 맨 앞 (2026-11-12)
+# 주제별 묶기 (사용자 2026-11-14 '구성안대로 바꾸기'): 첫 화면 · 주제(신호등 순서) · 부록
+WEEK = ["home", "cash", "proj", "pl", "ar", "other", "data", "sum", "docs", "all"]
+MONTH = ["home", "cash", "proj", "pl", "ar", "other", "data", "xchk", "cf", "sum", "docs", "all"]
 
 
 def area_ids(page):
-    return re.findall(r"<section class='area' id='a-([^']+)'", page)
+    return re.findall(r"<section class='area[^']*' id='a-([^']+)'", page)
 
 
 class TestAreas(unittest.TestCase):
@@ -32,7 +34,7 @@ class TestAreas(unittest.TestCase):
         cls.month = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
 
     def test_management_report_is_split_into_areas_in_order(self):
-        for R, ids in ((self.week, WEEK), (self.month, WEEK + ["s8", "s9"])):
+        for R, ids in ((self.week, WEEK), (self.month, MONTH)):
             page = render(R, "mgmt")
             with self.subTest(R["kind"]):
                 self.assertEqual(area_ids(page), ids)
@@ -63,12 +65,19 @@ class TestAreas(unittest.TestCase):
         # 접힌 표 줄은 화면에서만 숨김
         self.assertIn("table.afold:not(.aopen) tr.afx{display:none}", screen)
 
-    def test_risk_badge_counts_high_risks(self):
+    def test_topic_badge_counts_its_todos(self):
+        """주제 옆 배지 = 그 주제 할 일 수 (주제별 묶기 2026-11-14). 첫 화면 배지 = 할 일 전부."""
         page = render(self.month, "mgmt")
-        hi = sum(1 for r in self.month["risks"] if r["level"] == "높음")
-        m = re.search(r"data-k='risk'>A-3 위험 분석·해결방안(?: <span class='abg'>(\d+)</span>)?</a>", page)
-        self.assertIsNotNone(m)
-        self.assertEqual(int(m.group(1) or 0), hi)
+        from ceo_report import mgmt_topics
+        T = self.month["_topics"]["todos"]
+        for k in ("cash", "proj", "ar", "data"):
+            n = sum(1 for it in T if it["topic"] == k)
+            m = re.search(r"data-k='%s'><span class='dot [a-z]+'></span>[^<]*(?: <span class='abg[^']*'>(\d+)</span>)?</a>" % k, page)
+            self.assertIsNotNone(m, k)
+            self.assertEqual(int(m.group(1) or 0), n, k)
+        m = re.search(r"data-k='home'>요약 · 할 일 <span class='abg[^']*'>(\d+)</span>", page)
+        self.assertEqual(int(m.group(1)), len(T))
+        self.assertTrue(mgmt_topics.TOPIC_KEYS)
 
     def test_evidence_blocks_stay_whole(self):
         """근거 뽑기: 상세 장을 가리키는 번호도 영역 틀·단추 없이 장 내용만."""

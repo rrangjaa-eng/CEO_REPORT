@@ -14,6 +14,7 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from ceo_report import app, evidence  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import evidence_index, render, week_outflows  # noqa: E402
@@ -38,6 +39,7 @@ def ev_tags(html):
 
 
 def text(html):
+    html = old_view(html)
     body = html[html.index("<body"):].split("<div class='toc'>")[0]
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
 

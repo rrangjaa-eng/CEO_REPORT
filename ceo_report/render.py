@@ -455,10 +455,9 @@ def render(R, mode):
         h.append("</div></body></html>")
         return "".join(h)
 
-    # 경영관리용: 1쪽 요약·본문 + 부록 A·B(지금까지의 모든 장 그대로) + 정기 절 부록 C
-    # (사용자 2026-11-12 승인: 경영관리보고 짧게. 상세는 하나도 빼지 않고 부록에서 모두 볼 수 있게.
-    #  결산·세무·신용평가는 분기·반기·연간 보고로 — 3·6·9·12월분 월간 뒤에 부록 C)
-    # 영역별 보기·인쇄 (사용자 2026-11-11) 는 그대로
+    # 경영관리용 (사용자 2026-11-14 '구성안대로 바꾸기'): 첫 화면 · 주제 장 8개(①~⑥) · 정기 장 · 부록 — mgmt_topics.build
+    # 지금까지의 장·표는 하나도 빼지 않고 주제 장·부록으로 자리만 옮긴다 (11/12 '빠짐없이' 조건).
+    # 결산·세무·신용평가는 분기·반기·연간 (3·6·9·12월분 월간의 정기 장). 영역별 보기·인쇄 (사용자 2026-11-11) 는 그대로
     from . import digest
     toc = ["현재 자금·입출금", "입금·지급 일정", "프로젝트 예산·집행", "매출·손익", "계산서·수금", "프로젝트 밖 지급", "변동·자료 범위"]
     chap = [_s1(R, per), _s2(R), _s3(R, per), _s4(R), _s5(R), _s6(R), _s7(R)]
@@ -470,50 +469,41 @@ def render(R, mode):
         chap.append(cashflow.render(R.get("cf")))
     summ, evid = h[fs_i].split(areas.SUMMARY_MARK)
     evid = areas.SUMMARY_MARK + evid   # 표시는 남겨 둔다 (areas.strip_ui 가 예전 한 덩어리로 되돌릴 때 쓴다)
-    hi = sum(1 for r in R["risks"] if r["level"] == "높음")
     # 자동 분석 15가지 (사용자 2026-11-12: 경영관리 보고에는 전부)
     from . import insights, insights_render
     I, why = insights.for_report(R)
     body = insights_render.mgmt_section(I, R) if I is not None else "<h2>자동 분석</h2>" + _na("계산하지 못함 (%s)" % why)
-    # 1쪽 요약·본문
     Lt = digest.lights(R, I)
     todo = digest.todos(R, I)
     prev = R.get("lights_prev")
     digest.decide(Lt, prev, set(k for k, _, _ in todo if k))
     R["_lights"] = Lt   # 보고서.py 가 다음 보고 비교용으로 남긴다
-    G0, G1, G2, G3 = "요약", "부록 A · 보고 요약 묶음", "부록 B · 상세 장", "부록 C · 정기 (결산·세무·신용평가)"
-    one = [("one", "1쪽 요약 · 본문", G0, digest.render(R, I, Lt, todo, digest.filing_line(R), prev), None)]
-    top = [("sum", "A-1 대표 보고 화면", G1, summ, None), ("ev", "A-2 근거자료 · 확인할 것", G1, evid, None)]
-    rest = [("risk", "A-3 위험 분석·해결방안", G1, _risk_section(R), hi or None),
-            ("auto", "A-4 자동 분석", G1, body, sum(1 for lv, _ in (I or {}).get("alerts", []) if lv == "높음") or None)]
-    rest += [("s%d" % i, "B-%d %s" % (i, t), G2, body, None) for i, (t, body) in enumerate(zip(toc, chap), 1)]
-    if "gasu" in R:   # B-2-1 가수금 갚을 시기 (사용자 2026-11-13) — 2장 바로 뒤
+    chapd = dict(("s%d" % i, b) for i, b in enumerate(chap, 1))
+    order = dict(("s%d" % i, 40 + i) for i in range(1, len(chap) + 1))   # 예전 보고서 안 순서 (areas.strip_ui 가 되돌릴 때)
+    if "gasu" in R:   # 가수금 갚을 시기 (사용자 2026-11-13) — 1. 자금 ⑤, 2장 바로 뒤
         from . import gasu
-        i2 = [x[0] for x in rest].index("s2") + 1
-        rest.insert(i2, ("gasu", "B-2-1 가수금 갚을 시기", G2, gasu.render(R["gasu"]), None))
-    if "recon_rows" in R:   # B-7-1 자료 대조 (사용자 2026-11-14: 대조 결과를 한곳에) — 7장 '변동·자료 범위' 바로 뒤
+        chapd["gasu"], order["gasu"] = gasu.render(R["gasu"]), 0
+    if "recon_rows" in R:   # 자료 대조 (사용자 2026-11-14: 대조 결과를 한곳에) — 6. 자료 확인 ⑤, 7장 바로 뒤
         from . import reconcile
-        i7 = [x[0] for x in rest].index("s7") + 1
-        nd = sum(1 for r in R["recon_rows"] if r.get("판정") == "다름")
-        rest.insert(i7, ("recon", "B-7-1 자료 대조", G2, reconcile.render(R["recon_rows"], esc), nd or None))
-    rest += [(k, lab, G3, b, None) for k, lab, b in _periodic(R, digest.periodic(R))]
-    # 쉬운 설명 · 제안 상자를 모든 장 맨 위에 (사용자 2026-11-13: 요청한 자료는 전부 쉬운 설명과 제안을 붙여 경영관리에서)
+        chapd["recon"], order["recon"] = reconcile.render(R["recon_rows"], esc), 0
     R["docs_files"] = R.get("docs_files") or {}
-    one.append(("docs", "자료 안내 (요청 자료 전부)", G0, digest.docs_section(R, I, Lt), None))
-    top = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in top]
-    rest = [(k, lab, g, digest.guide_box(k, R, I, Lt) + b, n) for k, lab, g, b, n in rest]
-    allk = one + top + rest
+    # 주제별 묶기 (사용자 2026-11-14 '구성안대로 바꾸기'): 첫 화면 · 주제 8 · 정기 · 부록. 계산·표는 그대로, 자리만 옮김
+    from . import mgmt_topics
+    allk, hide = mgmt_topics.build(R, R["kind"] == "monthly", {
+        "summ": summ, "evid": evid, "mark": areas.SUMMARY_MARK, "risk": _risk_section(R), "auto": body, "I": I, "L": Lt,
+        "chap": chapd, "order": order, "periodic": _periodic(R, digest.periodic(R)), "docs": digest.docs_section(R, I, Lt),
+        "guide": lambda k: digest.guide_box(k, R, I, Lt), "filing": digest.filing_line(R),
+        "recon_diff": sum(1 for r in R.get("recon_rows") or [] if r.get("판정") == "다름")})
 
     def sec(i):
-        k, lab, g, body, _ = allk[i]
+        k, lab, g, body_, _, _, _, fold = allk[i]
         prev_ = allk[i - 1][:2] if i else None
         nxt = allk[i + 1][:2] if i + 1 < len(allk) else None
-        return areas.section(k, lab, body + areas.pager(prev_, nxt), g)
-    n_top = len(one) + len(top)
-    out = h[:fs_i] + [sec(i) for i in range(n_top)]
-    out.append(areas.nav([(k, lab, g, b) for k, lab, g, _, b in allk]))   # 예전 목차 자리 (첫 화면 | 상세 장 경계)
-    out += [sec(i) for i in range(n_top, len(allk))]
-    out.append("</div>" + areas.JS + "</body></html>")
+        return areas.section(k, lab, body_ + areas.pager(prev_, nxt), g, " tfold" if fold else "")
+    out = h[:fs_i] + ["<!--/head-->", hide]
+    out.append(areas.nav([(k, lab, g, b, bk, dot) for k, lab, g, _, b, bk, dot, _ in allk]))
+    out += [sec(i) for i in range(len(allk))]
+    out.append("</div>" + areas.JS + mgmt_topics.JS + "</body></html>")
     return "".join(out)
 
 

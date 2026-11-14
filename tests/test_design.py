@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.areas import strip_ui  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
@@ -65,7 +66,7 @@ class TestReportFirstScreenLayout(unittest.TestCase):
 
 
 def first_screen(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 class TestAvailableFundsTable(unittest.TestCase):
@@ -453,7 +454,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
         self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
         mgmt = render(R, "mgmt")
-        fs = mgmt.split("<div class='toc'>")[0]
+        fs = old_view(mgmt).split("<div class='toc'>")[0]
         ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", fs)
         # 완료 P26202·05는 남은 지급이 없어 빠진다. 완료 P26206은 금액 모르는 요청 줄이 남아 들어가고,
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다

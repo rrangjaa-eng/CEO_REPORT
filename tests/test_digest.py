@@ -20,7 +20,7 @@ from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 
 
 def area_ids(page):
-    return re.findall(r"<section class='area' id='a-([^']+)'", page)
+    return re.findall(r"<section class='area[^']*' id='a-([^']+)'", page)
 
 
 def month_R(month):
@@ -47,12 +47,12 @@ class TestReport(unittest.TestCase):
 
     def test_monthly_without_regular_part_has_no_tax_or_credit(self):
         page = render(self.oct, "mgmt")
-        self.assertEqual(area_ids(page)[0], "one")
-        self.assertFalse([k for k in area_ids(page) if k.startswith("c")])
+        self.assertEqual(area_ids(page)[0], "home")   # 첫 화면 (2026-11-14 주제별 묶기)
+        self.assertFalse([k for k in area_ids(page) if re.fullmatch(r"c\d", k)])
         for hid in ("c1", "c2", "c3", "c4", "c5"):
             self.assertNotIn("<h2 id='%s'>" % hid, page)
         # 대신 자료 안내에 줄이 있고 언제 들어가는지 적힘 (사용자 2026-11-13)
-        docs = page[page.index("id='a-docs'"):page.index("id='a-sum'")]
+        docs = page[page.index("id='a-docs'"):page.index("id='a-all'")]
         for word in ("이익잉여금처분계산서", "기업신용평가", "신고 일정", "세무조정 예상", "내년 예산", "연간 보고", "팀장용", "예측 오차", "현금흐름표"):
             self.assertIn(word, docs)
         self.assertIn("반기(6·12월)분 보고에 들어감", docs)
@@ -60,8 +60,8 @@ class TestReport(unittest.TestCase):
     def test_every_area_has_easy_explanation_and_suggestion(self):
         for R in (self.oct, self.sep, self.jun):
             page = render(R, "mgmt")
-            secs = re.findall(r"<section class='area' id='a-([^']+)'.*?</section>", page, flags=re.S)
-            for k, body in zip(secs, re.findall(r"<section class='area' id='a-[^']+'.*?</section>", page, flags=re.S)):
+            secs = re.findall(r"<section class='area[^']*' id='a-([^']+)'.*?</section>", page, flags=re.S)
+            for k, body in zip(secs, re.findall(r"<section class='area[^']*' id='a-[^']+'.*?</section>", page, flags=re.S)):
                 with self.subTest(k):
                     self.assertIn("<b class='gk'>쉬운 설명</b>", body)
                     self.assertIn("<b class='gk'>제안</b>", body)
@@ -71,7 +71,7 @@ class TestReport(unittest.TestCase):
         R = _c.copy(self.oct)
         R["credit_brief"] = "기업신용평가 미리보기 (2026년 결산 기준): 추정 BB0 ~ BBB-"
         page = render(R, "mgmt")
-        docs = page[page.index("id='a-docs'"):page.index("id='a-sum'")]
+        docs = page[page.index("id='a-docs'"):page.index("id='a-all'")]
         self.assertIn("최근 결과: 기업신용평가 미리보기 (2026년 결산 기준): 추정 BB0 ~ BBB-", docs)
 
     def test_track_suggestions(self):
@@ -83,16 +83,16 @@ class TestReport(unittest.TestCase):
         self.assertTrue(any("확정이라던 입금이 20% 덜" in x for x in s), s)
 
     def test_quarter_half_and_closing_prep(self):
-        self.assertEqual([k for k in area_ids(render(self.jun, "mgmt")) if k.startswith("c")], ["c1", "c2", "c3", "c4"])
-        self.assertEqual([k for k in area_ids(render(self.sep, "mgmt")) if k.startswith("c")], ["c1", "c2", "c3", "c5"])
+        self.assertEqual([k for k in area_ids(render(self.jun, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c4"])
+        self.assertEqual([k for k in area_ids(render(self.sep, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c5"])
 
     def test_every_old_chapter_is_still_in_the_appendix(self):
         page = render(self.oct, "mgmt")
         for i in range(1, 10):
             self.assertIn("<h2 id='s%d'>" % i if i < 9 else "id='a-s9'", page)
-        for k in ("sum", "ev", "risk", "auto"):
+        for k in ("sum", "ev", "risk", "auto"):   # 예전 영역 이름은 그 자리를 가리키는 표시로 남음 (링크가 그대로 감)
             self.assertIn("id='a-%s'" % k, page)
-        self.assertIn("15. 지난 예상 대비 실제 오차", page)
+        self.assertIn("지난 예상 대비 실제 오차 (보고 기록 ↔ 나중 장부) <small class='oldl'>자동 분석 15</small>", page)
 
     def test_ceo_edition_unchanged_by_summary(self):
         page = render(self.oct, "ceo")
@@ -101,15 +101,13 @@ class TestReport(unittest.TestCase):
 
     def test_one_page_summary_parts(self):
         page = render(self.oct, "mgmt")
-        one = page[page.index("id='a-one'"):page.index("id='a-sum'")]
-        self.assertIn("영역별 신호등", one)
-        self.assertIn("지난 예상 대비 실제", one)
-        self.assertIn("해야 할 일", one)
-        self.assertIn("이번 달 기한 신고", one)
-        self.assertEqual(one.count("class='tile "), 8)   # 월간 8영역
+        one = page[page.index("id='a-home'"):page.index("id='a-cash'")]   # 첫 화면 (2026-11-14 주제별 묶기)
+        for word in ("자료 상태", "대표에게 나간 숫자", "주제별 신호", "할 일", "지난 예상 대비 실제", "이번 달 기한 신고"):
+            self.assertIn(word, one)
+        self.assertEqual(one.count("<a class='tq-sg "), 8)   # 월간 8주제
         week = compute(load(SAMPLE), "weekly", dt.date(2026, 11, 2))
         p = render(week, "mgmt")
-        self.assertEqual(p[p.index("id='a-one'"):p.index("id='a-sum'")].count("class='tile "), 6)
+        self.assertEqual(p[p.index("id='a-home'"):p.index("id='a-cash'")].count("<a class='tq-sg "), 6)
 
     def test_lights_follow_existing_risk_levels(self):
         R = copy.copy(self.oct)
