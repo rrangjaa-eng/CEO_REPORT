@@ -461,7 +461,24 @@ def compute(d, values, year, asof, settings=None):
     sga_pay = [_r4(v * (1 + VAT * 0.5)) for v in sga_m]
     cout = [None if sal[i] is None else cpay[i] + sal[i] + sga_pay[i] + tax_m[i] for i in range(12)]
     bal = []
-    b = None if bal0 is None else bal0 - restricted
+    # 지금 잔액에서 연초(1월 1일)까지 들어오고 나갈 돈을 먼저 더하고 뺀다 (2026-11-14 코덱스 검토: 11월 잔액을 그대로
+    # 1월 잔액으로 써서 11·12월 급여·지급만큼 전망이 높았음). 일정은 주간 보고와 같은 계산(자금계획서·예상 포함)
+    roll, roll_n, roll_ok = 0, 0, True
+    y0 = dt.date(year, 1, 1)
+    if bal0 is not None and bal_date is not None and bal_date < y0 - dt.timedelta(days=1):
+        try:
+            from .calc import compute as _calc
+            R = _calc(d, "weekly", asof)
+            evs = [e for e in R["s2"].get("dated") or [] if bal_date < e["date"] < y0 and e.get("amount") is not None]
+            roll = sum(e["amount"] if e["io"] == "in" else -e["amount"] for e in evs)
+            roll_n = len(evs)
+            if (R["s2"].get("horizon") or y0) < y0 - dt.timedelta(days=1):
+                notes.append("연말까지 일정이 %s까지만 있어 그 뒤 입출금은 연초 잔액에 넣지 못함" % R["s2"]["horizon"].isoformat())
+        except Exception:   # 일정을 못 구하면 연초 잔액을 모른다고 둔다
+            roll_ok = False
+            notes.append("연말까지 입출금 일정을 계산하지 못해 연초 잔액을 모름")
+    start = None if (bal0 is None or not roll_ok) else bal0 - restricted + roll
+    b = start
     for i in range(12):
         if b is None or cout[i] is None:
             b = None
@@ -477,7 +494,7 @@ def compute(d, values, year, asof, settings=None):
         "Y": Y, "L": L, "got": got, "seas": seas, "seas_src": seas_src, "SGA": SGA, "dep_src": D["source"],
         "heads0": heads0, "hires": hires, "heads": heads, "havg": havg, "per": per, "sal_last": sal_last, "last_ym": last_ym,
         "raise": raise_, "infl": infl, "cost_rate": cost_rate,
-        "cash": {"bal0": bal0, "bal_date": bal_date, "restricted": restricted, "cin": cin, "cpay": cpay, "sga_pay": sga_pay,
+        "cash": {"bal0": bal0, "bal_date": bal_date, "restricted": restricted, "roll": roll, "roll_n": roll_n, "start": start, "cin": cin, "cpay": cpay, "sga_pay": sga_pay,
                  "tax": tax_m, "nio": nio, "bal": bal, "lo": lo, "min_cash": min_cash, "days": days, "n_days": n_days,
                  "split": split},
         "fix": FIX, "notes": notes,

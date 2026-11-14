@@ -114,7 +114,7 @@ def calendar(journal, asof, input_dir=None, ahead_days=100, back_days=40):
                         HOMETAX["원천세"])
         wage_months = [m for m in range(1, 13) if ev.get((y, m), {}).get("근로")]
         if wage_months:
-            cyc = taxlaw.value(input_dir, y, "근로간이지급주기")[0] or ""
+            cyc = taxlaw.checked(input_dir, y, "근로간이지급주기", "")[0] or ""
             if str(cyc).startswith("매월"):
                 for m in wage_months:
                     add(_next_month_end(y, m), "근로소득 간이지급명세서", "%d년 %d월 지급분" % (y, m), "급여 전표 있음", HOMETAX["간이지급"])

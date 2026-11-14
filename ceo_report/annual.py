@@ -229,10 +229,13 @@ def compute(input_dir, year, settings=None, D=None):
     if dep_est is None:
         dep_est, dep_src = (Lp["dep"] if Lp else None), "작년 장부"
     A["dep_est"], A["dep_src"] = dep_est, dep_src
-    A["closed"] = Yp["dep"] > 0   # 12월 결산 전표(감가상각비)가 들어왔는지
+    ann_y = dict((n, v) for n, _, v in get(Y, "결산"))
+    # 결산 끝 = 감가상각비가 들어왔고, 결산 법인세도 들어왔거나 감가상각비가 올해 예상만큼 다 들어옴 (2026-11-14 코덱스 검토: 1원만 있어도 끝으로 봤음)
+    A["closed"] = Yp["dep"] > 0 and (bool(ann_y.get("법인세등")) or not dep_est or Yp["dep"] >= dep_est)
     if not A["closed"] and dep_est:
-        Yp["dep_pending"] = dep_est
-        Yp["pre"] -= dep_est   # 결산 전: 월간과 같게 감가상각비 예상을 먼저 비용으로
+        pend = max(dep_est - Yp["dep"], 0)   # 일부만 들어왔으면 나머지만 예상으로
+        Yp["dep_pending"] = pend
+        Yp["pre"] -= pend   # 결산 전: 월간과 같게 감가상각비 예상을 먼저 비용으로
     pre_est = Yp["pre"] + (Yp["dep"] - (dep_est or 0) if A["closed"] else 0)
     from .corptax import national   # 작년 신고서 감면·넘어온 공제 (사용자 2026-11-13). 지방소득세는 감면 없이 산출세액 10%
     n_est, c_est, _ = national(pre_est, Y, input_dir)
@@ -241,7 +244,11 @@ def compute(input_dir, year, settings=None, D=None):
     A["prepaid"] = booked.get("선납세금", 0)
     if booked.get("법인세등"):
         A["tax"], A["tax_fixed"] = booked["법인세등"], True
-        A["corp"] = int(round(A["tax"] * 10 / 11.0))
+        # 지방소득세 = 산출세액 × 10% (감면 없음). 법인세 = 장부 법인세등 − 지방소득세
+        # (2026-11-14 코덱스 검토: 10:1로 나누면 감면이 있을 때 3/31·4/30 납부액이 틀림)
+        c_now = national(Yp["pre"], Y, input_dir)[1]
+        local = c_now // 10 if c_now is not None else int(round(A["tax"] / 11.0))
+        A["corp"] = A["tax"] - min(local, A["tax"])
     else:
         n_now, c_now, _ = national(Yp["pre"], Y, input_dir)
         A["corp"] = n_now

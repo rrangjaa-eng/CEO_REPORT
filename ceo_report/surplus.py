@@ -139,12 +139,14 @@ def estimate(journal, cfg, asof, input_dir=None):
         return None
     r = corp[0]
     base, tax = int(r["과세표준"]), int(r.get("산출세액") or 0)
+    adj = int(r.get("세무조정") or 0)   # 세무조정은 세금 계산에만 쓰고 장부 이익엔 없다 (코덱스 검토 2026-11-14)
     local = int(tax * corptax.LOCAL_RATE)
     tax = corptax.national(base, corptax._last_full_month(asof)[:4], input_dir)[0] if input_dir else tax   # 작년 신고서 감면·공제 (사용자 2026-11-13)
     ym = corptax._last_full_month(asof)
-    why = ("%s년 1~%d월 장부: %s → 당기순이익 = 과세표준 − 법인세 %s − 지방소득세 %s"
-           % (ym[:4], int(ym[5:]), (r.get("근거") or "").split(" → ")[0], "{:,}".format(tax), "{:,}".format(local)))
-    return int(ym[:4]), base - tax - local, why
+    why = ("%s년 1~%d월 장부: %s → 당기순이익 = 과세표준%s − 법인세 %s − 지방소득세 %s"
+           % (ym[:4], int(ym[5:]), (r.get("근거") or "").split(" → ")[0],
+              " − 세무조정 %s" % "{:,}".format(adj) if adj else "", "{:,}".format(tax), "{:,}".format(local)))
+    return int(ym[:4]), base - adj - tax - local, why
 
 
 def statements(years, first_year, est):

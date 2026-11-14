@@ -549,7 +549,9 @@ def advise(R, S, D, input_dir=None):
             due = t.get("due")
             if due and end < due <= pay_day and t.get("amount") and t.get("kind") in ("법인세", "법인지방소득세"):
                 v = t["amount"]
-                c = cut if t["kind"] == "법인세" else int(cut * 0.1)   # 지방소득세는 법인세의 10%라 같이 줄어듦
+                # 지방소득세는 감면이 없다(산출세액 × 10%). 법인세 예상이 이미 '감면·공제 뒤'면 또 빼지 않는다 (코덱스 검토 2026-11-14)
+                done = "감면·공제 뒤" in (t.get("basis") or t.get("note") or "")
+                c = cut if t["kind"] == "법인세" and not done else 0
                 if c:
                     v = max(v - c, 0)
                 big.append(("%s (%s)%s" % (t["kind"], due.isoformat(), " — 감면·공제 %s원 뺌" % W(c) if c else ""), v))

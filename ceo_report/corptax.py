@@ -210,11 +210,13 @@ def bad_debt(journal, cfg, ym, input_dir=None):
     partial = bool(years) and min(years) > FOUNDED and not opening
     rec = max(rec, 0)
     from . import taxlaw
-    rate = taxlaw.value(input_dir, int(ym[:4]), "대손충당금률")[0] or BAD_DEBT_RATE
+    rate, rate_ok = taxlaw.checked(input_dir, int(ym[:4]), "대손충당금률", BAD_DEBT_RATE)
     amount = max(int(rec * rate) - allow, 0)
     note = "받을 돈 %s × %g%% − 쌓인 충당금 %s" % ("{:,}".format(rec), rate * 100, "{:,}".format(allow))
     if partial:
         note += " (작년 말 잔액 없어 올해 늘어난 몫만 — 작게 잡힘)"
+    if not rate_ok:
+        note += " (한도율이 '세법 기준 확인'에서 확인되지 않아 기본 %g%%로 봄)" % (BAD_DEBT_RATE * 100)
     return {"receivable": rec, "allowance": allow, "amount": amount, "partial": partial, "note": note}
 
 
@@ -314,8 +316,8 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
-                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"])),
+                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"])),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
-                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="")]
+                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
     return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))

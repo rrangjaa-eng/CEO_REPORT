@@ -74,6 +74,7 @@ def headcount(input_dir, exclude=(), young=False):
     for r in _read_csv(os.path.join(input_dir, "사원급여.csv")):
         ym, name = (r.get("연월") or "").strip(), (r.get("사원명") or "").strip()
         if len(ym) >= 7 and name and name not in ex:
+            per[ym[:7]]   # 급여가 나간 달은 청년이 없어도 0명으로 평균에 넣는다 (코덱스 검토 2026-11-14: 빼면 평균이 부풀려짐)
             if young and not (name in birth and young_or_old(birth[name], int(ym[:4]))):
                 continue
             per[ym[:7]].add(name)

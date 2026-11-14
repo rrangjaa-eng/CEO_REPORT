@@ -437,10 +437,10 @@ def collection(input_dir, p0, p1):
                         ev[key][2] += 1
                     else:
                         ev[key][3] += 1
-        elif paid is None or paid > p1:
-            total = _i(r.get("공급가액")) + _i(r.get("부가세"))
-            if total:
-                open_rows.append(((r.get("거래처") or "").strip(), iss, total, (p1 - iss).days))
+        total = _i(r.get("공급가액")) + _i(r.get("부가세"))
+        got = amt if (paid is not None and paid <= p1 and amt > 0) else 0
+        if (total and (paid is None or paid > p1)) or (got and total - got > 0):   # 일부만 받은 계산서는 남은 돈도 못 받은 돈으로 (코덱스 검토 2026-11-14)
+            open_rows.append(((r.get("거래처") or "").strip(), iss, total - got, (p1 - iss).days))
 
     def avg(keys):
         a = sum(by_m[k][0] for k in keys)

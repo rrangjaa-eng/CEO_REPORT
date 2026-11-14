@@ -151,3 +151,16 @@ class TestConvert(unittest.TestCase):
                 with open(os.path.join(t, n), "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False)
             self.assertEqual([k[1] for k in wehago_raw.files(t)], [2026])
+
+
+class TestTaxClose(unittest.TestCase):
+    def test_partial_receipt_counts_rest_as_open(self):
+        import tempfile, shutil, datetime as dt
+        from ceo_report import cashflow as C
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        with open(os.path.join(d, "계산서.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("프로젝트번호,거래처,발행일,구분,공급가액,부가세,입금예정일,예정일확정,입금일,입금액\n")
+            f.write(",가,2026-09-01,발행,1000,100,,,2026-10-05,600\n")
+        c = C.collection(d, dt.date(2026, 10, 1), dt.date(2026, 10, 31))
+        self.assertEqual(c["open_total"], 500)   # 1,100 중 600만 받음 → 500 남음

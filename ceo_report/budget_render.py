@@ -164,8 +164,8 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     h.append("<div class='yl'>매출 예산 중 <b>%s (%s)</b>는 이미 받은 일입니다. 나머지 <b>%s</b>를 새로 받아야 합니다. %s</div>"
              % (won(gt), _pct(gt, Y["rev"]), won(Y["rev"] - gt), cash_line))
     if B["missing"]:
-        h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 0%%(목표 수익률은 1 − 원가율 %d%%)로 계산했습니다.</div>"
-                 % (", ".join(B["missing"]), round(B["cost_rate"] * 100)))
+        h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 성장률 0%%, 목표 수익률은 기본 원가율 설정으로 계산했습니다.</div>"
+                 % ", ".join(B["missing"]))
     # 1. 정할 값
     h.append("<div class='sec'><div class='q'>1. 정해야 할 값%s</div>" % S("in", "입력값"))
     cols = "".join("<th>%s</th>" % esc(t) for t in teams)
@@ -290,7 +290,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         h.append("<div class='card'><div class='wsub' style='margin-top:0'>월말 통장 잔액 예상 (사용할 수 있는 돈)</div>%s" % _cash_svg(B))
         if mg:
             ct = ["<table class='pt r small' style='margin-top:6px'><thead><tr><th>월</th><th>월초</th><th>매출 입금</th><th>매입 지급</th><th>급여</th><th>판관비</th><th>세금</th><th>영업외</th><th>월말</th><th>최소 보유현금 위</th></tr></thead><tbody>"]
-            bb = c["bal0"] - c["restricted"]
+            bb = c["start"]
             for i in range(12):
                 ct.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td class='%s'>%s</td></tr>"
                           % (MON[i], won(bb), won(c["cin"][i]), won(c["cpay"][i]), won(B["sal"][i]), won(c["sga_pay"][i]),
@@ -298,17 +298,19 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
                              "lowc" if (i == c["lo"] or c["bal"][i] < c["min_cash"]) else "", _sgn(c["bal"][i] - c["min_cash"])))
                 bb = c["bal"][i]
             ct.append("<tr class='tot'><td>1년</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
-                      % (won(c["bal0"] - c["restricted"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])),
+                      % (won(c["start"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])),
                          _sgn(sum(c["nio"])) if sum(c["nio"]) else "—", won(c["bal"][-1])))
             dtext = ("%d년 계산서 %d건 평균 %.0f일" % (base, c["n_days"], c["days"])) if c["days"] is not None else "계산서 입금 자료 없음 — 45일로 가정"
-            ct.append("<div class='note'>월초 = %s 장부 통장 잔액 %s − 사용 제한 %s (1월에 실제 잔액으로 바꿈). 매출 입금 = 매출 × 1.1을 회수 기간(%s)만큼 늦춰 받음. "
+            ct.append("<div class='note'>1월 월초 = %s 장부 통장 잔액 %s − 사용 제한 %s%s (1월에 실제 잔액으로 바꿈). 매출 입금 = 매출 × 1.1을 회수 기간(%s)만큼 늦춰 받음. "
                       "매입 지급 = 매출원가 × 1.1을 행사 달 40%%·다음 달 60%% (가정). 1~2월 입금에는 %d년 말 매출, 1월 지급에는 %d년 12월 매입이 들어 있습니다. 판관비 지급 = 판관비 × 1.05.</div>"
-                      % (c["bal_date"].isoformat(), won(c["bal0"]), won(c["restricted"]), dtext, base, base))
+                      % (c["bal_date"].isoformat(), won(c["bal0"]), won(c["restricted"]),
+                         (" %s 연말까지 들어오고 나갈 돈 예상 %d건 %s" % ("+" if c.get("roll", 0) >= 0 else "−", c.get("roll_n", 0), won(abs(c.get("roll", 0)))))
+                         if c.get("roll_n") else "", dtext, base, base))
             h.append("".join(ct))
         else:
             lo = c["lo"]
             h.append("<div class='note'>연초 %s → 연말 %s. 가장 적은 달 %d월 %s%s.</div>"
-                     % (won(c["bal0"] - c["restricted"]), won(c["bal"][-1]), lo + 1, won(c["bal"][lo]),
+                     % (won(c["start"]), won(c["bal"][-1]), lo + 1, won(c["bal"][lo]),
                         (" (그달 세금 %s)" % won(c["tax"][lo])) if c["tax"][lo] else ""))
         h.append("</div></div>")
     # 자료 확인 (경영관리용)
