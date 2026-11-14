@@ -216,5 +216,16 @@ class TestIntranetAndEtax(unittest.TestCase):
                                  "합계": "1650", "건수": "2", "전표처리": "1·5"}])
 
 
+
+class RawScreenNameTest(unittest.TestCase):
+    def test_raw_screen_files_are_not_books(self):
+        from ceo_report import wehago
+        for n in ("261115 대조_전자세금계산서 자동수집.json", "261115 결산_분개장 자동수집.json",
+                  "261115 인사_사원등록 자동수집.json"):
+            self.assertEqual(wehago._kind_of(n), (None, False), n)
+        self.assertEqual(wehago._kind_of("261115 분개장 자동수집.json")[0], "분개장")
+        self.assertEqual(wehago._kind_of("전자세금계산서(매입)_2026.xlsx")[0], "전자세금계산서(매입)")
+
+
 if __name__ == "__main__":
     unittest.main()

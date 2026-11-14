@@ -335,8 +335,9 @@ async function collectClosing(prefix = "결산") {
   const run = closingRun; closingRun = null;
   if (!run.got.length) return {error: `${ack.screen || "이 화면"}: 응답이 오지 않음 (조회 조건을 고른 뒤 다시 눌러 보세요)`};
   const name = (ack.screen || ack.code || "화면").replace(/[\\/:*?"<>|\s]+/g, "");
+  const safe = name.replace(/전자세금계산서/g, "전자계산서").replace(/분개장/g, "분개").replace(/자금계획/g, "자금");   // 프로그램이 장부·자금계획서 파일로 잘못 알아보지 않게
   const file = {"종류": prefix + "원본", "형식": 1, "수집시각": "", "화면": ack.screen, "화면코드": ack.code, "응답수": run.got.length, "응답": run.got};
-  const r = await saveFile(prefix + "_" + name, file, JSON.stringify(run.got), {rows: run.got.length, screen: ack.screen});
+  const r = await saveFile(prefix + "_" + safe, file, JSON.stringify(run.got), {rows: run.got.length, screen: ack.screen});
   const logKey = {"인사": "hrLog", "연말정산": "yearEndLog"}[prefix] || "closingLog";
   const log = (await chrome.storage.local.get(logKey))[logKey] || [];
   const s = stamp();
@@ -373,7 +374,7 @@ const RECON_SCREENS = [
   {prefix: "대조", mod: "account", code: "SAFM0109", name: "차입금현황"},       // 대출 만기·상환 방식 (잔액은 장부를 씀)
   {prefix: "대조", mod: "account", code: "SAFM0107", name: "예적금현황"},       // 정기예금 만기 (계좌번호는 지움)
   {prefix: "대조", mod: "account", code: "SACL0106", name: "손익계산서"},       // 매출·판관비 합계
-  {prefix: "대조", mod: "account", code: "SAAC0103", name: "전자세금계산서"},   // 홈택스에서 받은 매출 계산서 (장부 매출전표와 맞춤)
+  {prefix: "대조", mod: "account", code: "SAAC0103", name: "홈택스매출계산서"},   // 홈택스에서 받은 매출 계산서 (장부 매출전표와 맞춤). 이름에 '전자세금계산서'를 넣지 않는다: 프로그램이 매입 계산서 파일로 잘못 알아봄
 ];
 let reconRun = false;
 

@@ -567,8 +567,13 @@ def _sales_kind_of(name):
     return None
 
 
+RAW_SCREEN = re.compile(r"(?:^|\s)(?:결산|대조|인사|연말정산)_")
+
+
 def _kind_of(name):
     """파일 이름이 속하는 종류와 읽어도 되는지. 매출 전자세금계산서·매입매출장(매출)은 종류는 같지만 매입 쪽으로는 읽지 않는다 (W-1)."""
+    if RAW_SCREEN.search(name):   # 확장이 화면 응답을 그대로 저장한 파일 (결산_·대조_·인사_·연말정산_) — 장부 파일이 아니다
+        return None, False
     if "매입매출장" in name:
         return "매입매출장", _sales_kind_of(name) is None
     if "분개장" in name:
