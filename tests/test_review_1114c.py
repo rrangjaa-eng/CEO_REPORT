@@ -476,3 +476,132 @@ class MidYearBudget(Base):
         """11월 6일 기준: 11월 급여 줄이 있어도 진행 중인 달이라 급여 기준 달은 10월."""
         B = self.B()
         self.assertEqual(B["last_ym"], "2026-10")
+
+
+# ───────────── 예산 급여·인원을 위하고 급여 화면·사원등록으로 (전수조사 제안 3-①⑤, 사용자 2026-11-14 '제안 전부') ─────────────
+class WehagoPayBudget(Base):
+    # 가상 사원 8명: 장부 부서비용(2026-10)과 같은 부서·급여 합계 (기획1팀 3명 900만, 기획2팀 3명 750만, 기획본부 1명 400만, 경영관리 1명 300만)
+    STAFF = [("가", "기획1팀", 3000000), ("나", "기획1팀", 3000000), ("다", "기획1팀", 3000000),
+             ("라", "기획2팀", 2500000), ("마", "기획2팀", 2500000), ("바", "기획2팀", 2500000),
+             ("사", "기획본부", 4000000), ("아", "경영관리", 3000000)]
+
+    def put(self, staff=None, extra_emps=(), months=range(1, 11)):
+        staff = staff or self.STAFF
+        with open(os.path.join(self.inp, "사원.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["사원명", "생년월일", "입사일", "퇴사일", "부서"])
+            for n, dpt, _ in staff:
+                w.writerow(["사원" + n, "", "2025-03-01", "", dpt])
+            for row in extra_emps:
+                w.writerow(row)
+        with open(os.path.join(self.inp, "급여명세.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["연월", "사원명", "구분", "항목", "금액"])
+            for m in months:
+                for n, _, v in staff:
+                    w.writerow(["2026-%02d" % m, "사원" + n, "지급", "지급합계", v])
+
+    def WB(self, asof=ASOF):
+        d = load(self.inp)
+        return budget.compute(d, budget.read_values(self.inp), 2027, asof, d.settings, self.inp)
+
+    def test_same_as_ledger_when_they_match(self):
+        old = self.B()
+        self.put()
+        B = self.WB()
+        self.assertEqual(B["sal_src"], "위하고 급여 화면·사원등록")
+        self.assertEqual(B["last_ym"], "2026-10")
+        self.assertEqual(B["sal_last"], 23500000)
+        self.assertEqual(dict(B["heads0"]), {"기획1팀": 3, "기획2팀": 3, "기획본부": 1, "경영관리": 1})
+        self.assertEqual(B["sal_last"], old["sal_last"])
+        self.assertEqual(sum(B["heads0"].values()), sum(old["heads0"].values()))
+        self.assertFalse(any("급여 화면과 다른 달" in n for n in B["notes"]), B["notes"])
+
+    def test_payroll_screen_fills_month_before_ledger(self):
+        """장부에 10월 급여 전표가 아직 없어도 급여 화면 10월로 잡고, 다른 달로 알림."""
+        self.put()
+        self.edit("부서비용.csv", lambda rows: [r for r in rows if r["연월"] != "2026-10"])
+        B = self.WB()
+        self.assertEqual(B["last_ym"], "2026-10")
+        self.assertEqual(B["sal_last"], 23500000)
+        self.assertTrue(any("2026-10 장부 급여 전표 없음" in n for n in B["notes"]), B["notes"])
+
+    def test_left_and_joined_by_asof(self):
+        """기준일까지 퇴사한 사람은 빼고, 기준 달 뒤 입사해 급여가 아직 없는 사람은 1인 평균으로 넣는다."""
+        staff = self.STAFF[:]
+        self.put(staff, extra_emps=[("사원자", "", "2026-11-02", "", "기획2팀")])
+        with open(os.path.join(self.inp, "사원.csv"), encoding="utf-8-sig") as f:
+            body = f.read().replace("사원가,,2025-03-01,,기획1팀", "사원가,,2025-03-01,2026-11-03,기획1팀")
+        with open(os.path.join(self.inp, "사원.csv"), "w", encoding="utf-8-sig") as f:
+            f.write(body)
+        B = self.WB()
+        self.assertEqual(B["heads0"]["기획1팀"], 2)
+        self.assertEqual(B["heads0"]["기획2팀"], 4)
+        self.assertEqual(B["sal_last"], 20500000 + int(round(20500000 / 7.0)))
+        self.assertTrue(any("퇴사" in n for n in B["notes"]) and any("1인 평균" in n for n in B["notes"]), B["notes"])
+
+    def test_no_names_in_documents(self):
+        self.put()
+        B = self.WB()
+        for mode in ("ceo", "mgmt"):
+            h = render_budget(B, mode, "")
+            self.assertNotIn("사원가", h)
+            if mode == "mgmt":
+                self.assertIn("위하고 급여 화면·사원등록", h)
+
+    def test_without_files_uses_ledger(self):
+        B = self.WB()
+        self.assertTrue(B["sal_src"].startswith("부서비용"))
+
+
+# ───────────── 대출 원금 상환: 차입금현황 만기·상환 방식 + 장부 잔액 (전수조사 G2, 사용자 2026-11-14 '제안 전부') ─────────────
+class LoanPlanBudget(Base):
+    def put(self):
+        from ceo_report import debts
+        rows = [("차입금", "29300", "장기차입금", "301", "기업은행", "100,000,000"),
+                ("차입금", "29300", "장기차입금", "302", "캐피탈갑", "12,000,000"),
+                ("차입금", "26000", "단기차입금", "303", "은행을", "200,000,000"),
+                ("차입금", "29300", "장기차입금", "304", "은행병", "50,000,000")]
+        with open(os.path.join(self.inp, debts.FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(debts.KEYS)
+            for r in rows:
+                w.writerow(list(r) + ["2026-11-05", "", "", ""])
+        with open(os.path.join(self.inp, budget.LOAN_FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도"])
+            w.writerow(["기업은행", "000301", "29300", "2025-03-31", "2027-03-31", "일시", "100,000,000", "", "운전자금"])
+            # 위하고 원금·잔액은 쓰지 않는다 (상환 미갱신) — 장부 잔액 12,000,000 기준
+            w.writerow(["캐피탈갑", "302", "29300", "2025-12-15", "2027-12-15", "분할", "20,000,000", "1,000,000", "차량"])
+            w.writerow(["은행을", "303", "26000", "2025-04-17", "2026-04-17", "일시", "200,000,000", "", "운전자금"])   # 만기 지남(연장)
+            w.writerow(["은행병", "304", "29300", "2026-01-10", "2029-01-10", "일시", "50,000,000", "", "시설"])
+
+    def WB(self):
+        d = load(self.inp)
+        return budget.compute(d, budget.read_values(self.inp), 2027, ASOF, d.settings, self.inp)
+
+    def test_lump_installment_and_overdue(self):
+        before = self.B()
+        self.put()
+        B = self.WB()
+        fx = B["cash"]["fixed"]
+        self.assertEqual(fx[2], 100000000 + 1000000)        # 3월: 기업은행 만기 일시 (자금일정 차입금원금 1억과 겹치지 않음) + 분할 1백만
+        self.assertEqual(fx[:11], [1000000, 1000000, 101000000] + [1000000] * 8)
+        self.assertEqual(fx[11], 0)                         # 장부 잔액 12백만 = 2026-12 1번 + 2027-01~11 11번
+        self.assertEqual(sum(fx), 100000000 + 11000000)
+        self.assertFalse(any("은행을" in f["name"] for f in B["fix"]))
+        self.assertTrue(any("은행을" in n and "연장 확인 필요" in n for n in B["notes"]), B["notes"])
+        self.assertFalse(any("은행병" in f["name"] for f in B["fix"]))   # 만기 2029 → 예산 연도엔 없음
+        # 2026-12 분할 1백만은 연초 잔액에서 뺀다
+        self.assertEqual(B["cash"]["start"], before["cash"]["start"] - 1000000)
+
+    def test_without_file_keeps_schedule_rows(self):
+        B = self.WB()
+        self.assertEqual(B["cash"]["fixed"][2], 100000000)   # 자금일정.csv 차입금원금 그대로
+
+    def test_interest_rows_not_dropped_from_start(self):
+        """차입금.csv 가 있어도 자금일정의 차입금이자 줄은 연초 잔액 계산에 그대로 남는다."""
+        before = self.B()
+        self.put()
+        B = self.WB()
+        self.assertEqual(B["cash"]["roll_n"], before["cash"]["roll_n"] + 1)

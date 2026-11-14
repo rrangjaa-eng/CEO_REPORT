@@ -57,7 +57,7 @@ def main(argv=None):
         _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s)" % (out, e.strerror or type(e).__name__))
         return 7
     d = load(a.입력)
-    B = budget.compute(d, budget.read_values(a.입력), year, asof, d.settings)
+    B = budget.compute(d, budget.read_values(a.입력), year, asof, d.settings, a.입력)
     if not B["teams"]:
         _say("%d년 팀 매출 자료(손익.csv 팀 줄)가 없어 예산을 만들 수 없습니다. 먼저 '자료 변환'을 하세요." % B["base"])
         return 2

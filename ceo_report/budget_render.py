@@ -248,9 +248,9 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     # 4. 급여·판관비 (경영관리용)
     n = 4
     if mg:
-        h.append("<div class='sec pgb'><div class='q'>%d. 급여·판관비 예산%s</div>" % (n, S("ok", "부서비용·계정별비용")))
-        h.append("<div class='card'><div class='wsub' style='margin-top:0'>인원 계획 (%s 급여 전표 부서명 기준)</div><table class='pt r'><thead><tr><th>부서</th><th>%d년 말</th><th>%d년 늘림</th><th>입사 월</th><th>%d년 말</th><th>1년 평균</th></tr></thead><tbody>"
-                 % (B["last_ym"] or "자료 없음", base, y, y))
+        h.append("<div class='sec pgb'><div class='q'>%d. 급여·판관비 예산%s</div>" % (n, S("ok", "%s·계정별비용" % ("위하고 급여 화면" if B.get("sal_src", "").startswith("위하고") else "부서비용"))))
+        h.append("<div class='card'><div class='wsub' style='margin-top:0'>인원 계획 (%s 급여, %s)</div><table class='pt r'><thead><tr><th>부서</th><th>%d년 말</th><th>%d년 늘림</th><th>입사 월</th><th>%d년 말</th><th>1년 평균</th></tr></thead><tbody>"
+                 % (B["last_ym"] or "자료 없음", "위하고 사원등록 부서 기준" if B.get("sal_src", "").startswith("위하고") else "급여 전표 부서명 기준", base, y, y))
         for dname, n0 in B["heads0"].items():
             add, mo = B["hires"].get(dname, (0, None))
             avg = n0 + (add * (13 - mo) / 12.0 if add else 0)
@@ -278,7 +278,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         h.append("<div class='note'>%d년 실적이 1년이 안 되면 달 수로 나눠 12달로 늘렸습니다. 인원 비례 = 복리후생비·여비교통비·통신비 등.</div></div></div>" % base)
         n += 1
     # 정해진 지급 일정
-    h.append("<div class='sec'><div class='q'>%d. 정해진 지급 일정%s</div>" % (n, S("ok", "세금예상 + 자금일정·자금계획서 + 예산 숫자")))
+    h.append("<div class='sec'><div class='q'>%d. 정해진 지급 일정%s</div>" % (n, S("ok", "세금예상 + 자금일정·자금계획서%s + 예산 숫자" % (" + 차입금현황" if any(f.get("src") == "차입금현황 + 장부" for f in B["fix"]) else ""))))
     h.append("<div class='card'><table class='pt r'><thead><tr><th class='l'>날짜</th><th class='l'>항목</th><th>금액</th>%s</tr></thead><tbody>"
              % ("<th class='l'>계산</th><th class='l'>자료</th>" if mg else ""))
     for f in B["fix"]:
@@ -342,7 +342,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
                 ("이미 받은 %d년 일" % y, "인트라넷 프로젝트 (행사일이 %d년)" % y, "%d건" % len(B["got"])),
                 ("목표 수익률", "팀목표.csv %d년" % y, "입력 전 팀 있음" if any(not T[t]["rate_set"] for t in teams) else "입력됨"),
                 ("성장률·인원·인상률", "예산값.csv %d년" % y, "입력 전: " + ", ".join(B["missing"]) if B["missing"] else "입력됨"),
-                ("급여·인원", "부서비용.csv (%s)" % (B["last_ym"] or "없음"), ""),
+                ("급여·인원", "%s (%s)" % (B.get("sal_src") or "부서비용.csv", B["last_ym"] or "없음"), ""),
                 ("판관비 계정별", "계정별비용.csv", "%d개 계정" % len(B["SGA"])),
                 ("감가상각비", B["dep_src"] or "모름", ""),
                 ("세금 일정", "세금예상.csv + 예산 숫자", ""),
