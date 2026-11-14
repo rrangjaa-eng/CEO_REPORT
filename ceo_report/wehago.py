@@ -642,6 +642,8 @@ def invoices_from_journal(journal):
                "code": code, "vendor_norm": norm_vendor(vendor)}
         if kind == "매출":
             row["type"] = ""
+            # 선금 계산서: 품명 낱말이 아니라 대변에 선수금 계정 줄이 있는지로 판단 (사용자 2026-11-14 "계정과목으로 판단")
+            row["advance"] = any(_is_advance(ln) for ln in main)
             # 카드 매출: 매출채권은 수수료를 뺀 금액만 잡히고 수수료는 같은 전표 비용(지급수수료) 차변 (2026-11-04 실제 자료).
             # 자산(1xxxx)이 아닌 차변 = 매출 때 이미 차감된 금액 → 계산서 입금액에 넣어 미수로 남지 않게 한다
             row["deducted"] = sum(ln["debit"] or 0 for ln in lines
@@ -650,6 +652,13 @@ def invoices_from_journal(journal):
         else:
             buys.append(row)
     return buys, sales
+
+
+ADVANCE_CODES = ("25900",)   # 선수금
+
+
+def _is_advance(line):
+    return _squash(line.get("account_code")) in ADVANCE_CODES or "선수금" in _squash(line.get("account"))
 
 
 def compare_invoices(derived, ledger_rows, label):
@@ -990,7 +999,7 @@ def _sales_row(item):
     return {"date": item["date"], "no": item.get("no", ""), "vendor": item["vendor"], "vendor_norm": item["vendor_norm"],
             "item": item["item"], "supply": item["supply"], "vat": item["vat"], "total": item["total"],
             "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", ""),
-            "deducted": item.get("deducted") or 0}
+            "deducted": item.get("deducted") or 0, "advance": item.get("advance")}
 
 
 def load_sales(folder, asof, books):

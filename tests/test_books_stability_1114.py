@@ -246,3 +246,34 @@ class TestSideFilesRollBack(unittest.TestCase):
         for n in side:
             self.assertEqual(_bytes(os.path.join(input_dir, n)), before[n], n)
         self.assertTrue([ln for ln in res.lines if ln.startswith("함께 바뀐 파일도 변환 전으로 되돌림")], res.lines)
+
+
+class TestAdvanceInvoiceByAccount(unittest.TestCase):
+    """선금 계산서는 품명 낱말이 아니라 매출전표의 선수금 계정 줄로 판단 (사용자 2026-11-14)."""
+
+    def sale(self, credit_code, credit_name, memo):
+        d = dt.date(2026, 9, 15)
+        return [{"date": d, "no": "7", "sort": "매출전표", "account_code": "10800", "account": "외상매출금",
+                 "debit": 1100, "credit": None, "vendor": "가상고객", "memo": memo},
+                {"date": d, "no": "7", "sort": "매출전표", "account_code": credit_code, "account": credit_name,
+                 "debit": None, "credit": 1000, "vendor": "가상고객", "memo": memo},
+                {"date": d, "no": "7", "sort": "매출전표", "account_code": "25500", "account": "부가세예수금",
+                 "debit": None, "credit": 100, "vendor": "가상고객", "memo": memo}]
+
+    def kind(self, journal):
+        from ceo_report import convert_invoices as CI
+        sales = wehago.invoices_from_journal(journal)[1]
+        inv = CI._invoices([wehago._sales_row(r) for r in sales])[0]
+        return CI._kind_of(inv)
+
+    def test_advance_account_without_word_is_advance(self):
+        self.assertEqual(self.kind(self.sale("25900", "선수금", "[26222] 봄 축제")), "선수금")
+
+    def test_word_without_advance_account_is_plain_issue(self):
+        self.assertEqual(self.kind(self.sale("41200", "용역매출", "[26222] 봄 축제 계약금")), "발행")
+
+    def test_sales_excel_without_accounts_still_uses_words(self):
+        from ceo_report import convert_invoices as CI
+        inv = CI._invoices([{"date": dt.date(2026, 9, 15), "vendor": "가", "item": "봄 축제 선금", "supply": 1000, "vat": 100,
+                             "total": 1100, "type": ""}])[0]
+        self.assertEqual(CI._kind_of(inv), "선수금")
