@@ -419,7 +419,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         due, lo = window(r)
         by_slip = {}
         for i, line in enumerate(journal):
-            if i in used or (line["date"], str(line.get("no") or i)) in used_slips or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+            if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
                 continue
             amount, named = kind(line, r["입출금"])
             if not amount or not same_vendor(r, line):
@@ -430,12 +430,25 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         return sorted(by_slip.values(), key=lambda c: (journal[c[0]]["date"], c[0]))
 
     found = {}
-    used_slips = set()   # 한 전표의 채무 줄·예금 줄을 서로 다른 지급계획 둘에 쓰지 않게 전표 단위로도 막는다 (2026-11-14 코덱스 검토)
+    slips = collections.defaultdict(list)   # 전표(일자·번호) -> 분개장 줄 번호들
+    for i, line in enumerate(journal or []):
+        slips[(line["date"], str(line.get("no") or i))].append(i)
 
-    def take(idx):
+    def take(idx, r):
+        """분개장 줄을 이 계획 줄에 쓴다. 같은 전표에서 같은 거래처의 '다른 쪽' 줄(채무 줄을 썼으면 예금 줄, 예금 줄을 썼으면
+        채무 줄)도 함께 막는다: 한 지급을 채무 줄·예금 줄 두 번으로 세지 않게 (2026-11-14 코덱스 검토).
+        전표 전체를 막지는 않는다: 한 이체 전표로 여러 거래처에 준 돈, 같은 거래처 계산서 여러 장을 한 번에 준 돈은
+        다른 계획 줄이 그 전표의 다른 채무 줄을 쓸 수 있어야 한다 (2026-11-14 오후 점검 F1: 둘째 거래처가 '안 준 돈'으로 남아
+        다음 금요일 출금 목록에 다시 올라갔음)."""
         for i in idx:
             used.add(i)
-            used_slips.add((journal[i]["date"], str(journal[i].get("no") or i)))
+            named_i = kind(journal[i], r["입출금"])[1]
+            for j in slips[(journal[i]["date"], str(journal[i].get("no") or i))]:
+                if j in used:
+                    continue
+                amount_j, named_j = kind(journal[j], r["입출금"])
+                if amount_j and named_j != named_i and same_vendor(r, journal[j]):
+                    used.add(j)
     if journal is not None:
         # ① 같은 금액 한 줄 (예전 규칙)
         for n, r in enumerate(rows):
@@ -448,13 +461,14 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 if best is None or rank < best[0]:
                     best = (rank, i)
             if best is not None:
-                take([best[1]])
+                take([best[1]], r)
                 found[n] = [best[1]]
         # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
         for n, r in enumerate(rows):
             if n in found:
                 continue
-            cands = [c for c in candidates(r) if c[1] < r["금액"]][:12]
+            every = [c for c in candidates(r) if c[1] < r["금액"]]
+            cands = every[:12]
             hit = None
             for size in (2, 3, 4):
                 for combo in itertools.combinations(cands, size):
@@ -463,8 +477,12 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                         break
                 if hit:
                     break
+            if hit is None and len(every) >= 5 and sum(c[1] for c in every) == r["금액"]:
+                # 다섯 번 넘게 나눠 낸 돈: 그 거래처의 기간 안 돈 줄을 모두 더한 것이 원 단위로 같을 때만 (2026-11-14 오후 점검 F1).
+                # 일부만 골라 맞추면 다른 지급끼리 우연히 맞을 수 있어 '전부의 합'만 본다
+                hit = [c[0] for c in every]
             if hit:
-                take(hit)
+                take(hit, r)
                 found[n] = hit
         # ③ 한 번에 여러 줄을 함께 낸(받은) 돈: 같은 거래처·같은 입출금의 남은 줄 2~4개 합이 분개장 한 줄과 같으면
         rest = collections.OrderedDict()
@@ -488,7 +506,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                     hit = sorted(c for c in cand(combo[0]) if c[1] == total and c[0] not in used
                                  and all(c in cand(n) for n in combo[1:]))
                     if hit:
-                        take([hit[0][0]])
+                        take([hit[0][0]], rows[combo[0]])
                         for n in combo:
                             found[n] = [hit[0][0]]
     for n, r in enumerate(rows):

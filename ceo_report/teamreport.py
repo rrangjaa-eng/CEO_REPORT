@@ -190,9 +190,13 @@ def build(d, R, team):
                    "date": e, "estimate": P_.get("estimate"), "budget": P_.get("budget"), "paid": paid,
                    "left": _sub(P_.get("budget"), paid)})
     up.sort(key=lambda r: (r["date"], r["id"]))
-    # 사전견적·예산이 없는 건은 합계·예상에서 빼고 건수를 알린다 (그 건 칸은 '미확인')
-    known = [r for r in up if r["estimate"] is not None and r["budget"] is not None and r["paid"] is not None]
-    up_tot = {k: sum(r[k] for r in known) for k in ("estimate", "budget", "paid", "left")}
+    # 사전견적·예산이 없는 건은 합계·예상에서 빼고 건수를 알린다 (그 건 칸은 '미확인').
+    # 매출·이익 예상은 사전견적·추정 예산만 있으면 된다. 집행액을 모르는 건은 집행액·잔여 합계만 '미확인' (2026-11-14 오후 점검 T4)
+    known = [r for r in up if r["estimate"] is not None and r["budget"] is not None]
+    up_paid_unknown = sum(1 for r in known if r["paid"] is None)
+    up_tot = {k: sum(r[k] for r in known) for k in ("estimate", "budget")}
+    for k in ("paid", "left"):
+        up_tot[k] = None if up_paid_unknown else sum(r[k] for r in known)
     up_missing = len(up) - len(known)
     up_gp = _sub(up_tot["estimate"], up_tot["budget"])
     exp_rev = None if tot["revenue"] is None or up_tot["estimate"] is None else tot["revenue"] + up_tot["estimate"]
@@ -221,7 +225,7 @@ def build(d, R, team):
     show_net = (d.settings or {}).get(NET_SETTING, "").strip() == "표시"
     return {"team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
             "company_rate": company_rate, "cur": cur, "ytd": ytd, "cur_gap": cur_gap, "ytd_gap": ytd_gap,
-            "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp,
+            "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp,
             "acc": acc, "show_net": show_net, "company": (d.settings or {}).get("회사명", "")}
 
 
@@ -438,6 +442,9 @@ def render(T, today=None):
         a("</tbody></table>")
         if T["up_missing"]:
             a("<p class='note'>※ 사전견적 또는 추정 예산이 없는 %d건은 합계와 아래 예상에서 뺌</p>" % T["up_missing"])
+        if T.get("up_paid_unknown"):
+            a("<p class='note'>※ 집행 금액 미확인 %d건: 그 건의 집행액·잔여와 합계는 미확인 (아래 매출·이익 예상에는 넣음)</p>"
+              % T["up_paid_unknown"])
     a("<table class='g kv'><tbody>")
     tr_, tg_ = T["t_rev"], T["t_gp"]
     a(_tr([_td("올해 매출 예상", "l th2"), _num(T["exp_rev"]),
