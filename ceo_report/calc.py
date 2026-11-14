@@ -294,7 +294,15 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     prior_exec = []
     for e in d.execs:
         if from_intranet(e) and not INTRANET_IN_FUNDS:
-            continue   # 쓴 돈(예상총집행)에 넣지 않는다 — 아래 일정에서도 빼고 intranet_only 로 센다
+            # 쓴 돈(예상총집행)·자금 일정에는 넣지 않는다 (11/4 규칙 그대로) — 아래 일정에서도 빼고 intranet_only 로 센다.
+            # 손익 판단(이익 흐름·예산 초과 경보)에는 장부 전 지급요청도 '나갈 돈'으로 본다 (2026-11-14 오후 점검 T1, 사용자 승인)
+            if e["project"] in proj and not is_prior(e):
+                Pq = proj[e["project"]]
+                if e["supply"] is None:
+                    Pq["intranet_req_unknown"] += 1
+                else:
+                    Pq["intranet_req"] += e["supply"]
+            continue
         if is_prior(e):
             prior_exec.append(e)   # 지난해 프로젝트: 참고로만 (미연결로 세지 않음)
             continue
@@ -339,6 +347,15 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]
         P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
         P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
+        # 손익 판단용 등록 지출 = 쓴 돈 + 요청(장부 전 인트라넷 지급요청 포함) + 카드 미결제 + 계획 (T1). 금액 모르는 줄이 있으면 None
+        P["committed"] = None if (P["unknown_cost"] or P["intranet_req_unknown"]) else P["expected"] + P["intranet_req"]
+        P["closed"] = is_closed(P)
+        # 지금 예상 이익: 끝난 프로젝트 = 계약 − 등록 지출. 진행 중 = 계약 − 추정 예산과 등록 지출 중 큰 쪽
+        # (아직 요청·계획으로 올리지 않은 남은 예산도 나갈 돈으로 본다 — 예전엔 남은 예산만큼 늘 '이익 개선'으로 보였음)
+        if P["contract"] is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
+            P["profit_now"] = None
+        else:
+            P["profit_now"] = P["contract"] - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
     plist = [P for P in proj.values() if (P.get("state") or "").strip() != OLD_STATE]   # 예전 인트라넷 끝난 행사 (사용자 2026-11-05)
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
@@ -473,6 +490,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     if not ar_rows and ar_unknown_n:
         ar_tot = None  # 미수 줄이 금액 미확인뿐이면 0이 아니라 미확인
     overdue_tot = sum(v["outstanding"] for v in overdue)
+    # F9 (2026-11-14): 금액(부가세 등)을 몰라 미수액이 미확인인 연체 계산서도 '없음'으로 가리지 않고 건수로
+    overdue_unknown = [v for v in invs if v["outstanding"] is None and v["kind"] != "환불" and v["due"] and v["due"] < asof]
     if in_missing:
         issued_tot = unissued_tot = ar_tot = overdue_tot = None  # 계산서 자료 없음 (0 아님)
     R["s5"] = {
@@ -487,6 +506,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "unissued": unissued_tot,
         "ar": ar_tot,
         "overdue_total": overdue_tot,
+        "overdue_unknown_n": 0 if in_missing else len(overdue_unknown),
         "unissued_aged": [x for x in inv_proj if x["unissued_days"] is not None],
         "event_unissued": event_unissued(inv_proj, asof, in_missing),
         "expected": expected_revenue(inv_proj, asof, in_missing),
@@ -497,11 +517,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for s in d.schedule:
         events.append({"date": s["date"], "io": "in" if s["io"] == "입금" else "out", "amount": s["amount"],
                        "firm": s["firm"], "cat": s["cat"], "desc": s["vendor"] or s["memo"], "basis": s["basis"],
-                       "project": s["project"], "source": "자금일정"})
+                       "project": s["project"], "source": "자금일정", "vendor_code": s.get("vendor_code") or ""})
     for v in ar_rows:
         events.append({"date": v["due"], "io": "in", "amount": v["outstanding"], "firm": v["due_firm"],
                        "cat": "수금(발행 계산서)", "desc": v["client"], "basis": "계산서 %s" % (v["date"] or ""),
-                       "project": v["project"], "source": "계산서"})
+                       "project": v["project"], "source": "계산서",
+                       # 같은 계산서 (여러 프로젝트로 나눈 줄도 같은 값): 자금계획서 입금 한 줄과 합쳐서 맞춘다 (F10, 2026-11-14)
+                       "inv_key": (v["client"], v["date"]) if v["date"] else None})
     for v in invs:
         if v["kind"] == "환불" and v["outstanding"] is not None and v["outstanding"] < 0 and not v["paid_date"]:
             events.append({"date": v["due"], "io": "out", "amount": -v["outstanding"], "firm": v["due_firm"],
@@ -564,7 +586,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax
-    events, R["tax"] = merge_tax(events, getattr(d, "tax", None))
+    # 2026-11-14 F3: 납부일 지난 세금·급여 줄은 장부 기준일·통장 잔액 기준일을 보고 다음 금요일로 (자금계획서 줄과 같은 규칙)
+    events, R["tax"] = merge_tax(events, getattr(d, "tax", None), asof, cash_date=min(known) if known else None)
+    mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
     from .payreq import attach as attach_reqs   # 지급 요청서 세부사항 첫 줄: 프로젝트 번호 + 금액 (사용자 2026-11-05)
@@ -606,7 +630,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             continue
         for b in buckets:
             if b["from"] <= ev["date"] <= b["to"]:
-                b[("in_" if ev["io"] == "in" else "out_") + ("firm" if ev["firm"] else "est")] += ev["amount"]
+                b[("in_" if ev["io"] == "in" else "out_") + ("firm" if counts_in(ev, "firm") else "est")] += ev["amount"]
                 break
     start_cash = R["s1"]["available"]
     out_missing = list(getattr(d, "out_missing", []))
@@ -631,7 +655,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         bal, low, low_d = start_cash, start_cash, asof
         daily = defaultdict(int)
         for ev in dated:
-            if mode == "firm" and not ev["firm"]:
+            if not counts_in(ev, mode):
                 continue
             daily[ev["date"]] += ev["amount"] if ev["io"] == "in" else -ev["amount"]
         for day in sorted(daily):
@@ -830,21 +854,41 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["last_pay"] = last_payday_out(d.txns, R["payday"])
+    from .gate import blank_plan_gaps   # F8 (2026-11-14): 자금계획서 빠진 달까지 걸친 기간 여유 자금은 비움 (경고·분석보다 먼저)
+    R["plan_gap_note"] = blank_plan_gaps(R)
     R["risks"] = risks(R)
     return R
 
 
-def last_payday_out(txns, payday):
-    """지난주 출금일(이번 출금일 − 7일)에 통장에서 실제로 나간 돈 (사용자 2026-11-05: 지난주 대비는 진짜 지난주 금요일과 비교).
+def last_payday_out(txns, payday, prev=None):
+    """지난주 대비의 '지난주' (사용자 2026-11-14 '같은 범위로 바꾸기', 11/5 '진짜 지난주와 비교'는 그대로).
 
-    장부입출금(분개장 보통예금) 또는 입출금내역의 그날 출금, 계좌 간 이체는 뺀다. 입출금 자료가 그날까지 오지 않았으면 None."""
+    지난주 출금일(이번 출금일 − 7일)로 끝나는 7일 동안 통장에서 실제로 나간 돈. 계좌 간 이체와 카드·세금 자동 출금
+    (auto_debit)은 뺀다. prev = 지난주 보고가 남긴 지급 예정 기록(weekdiff)이고 그 기록을 지난 출금일 전 7일 안에 만들었으면
+    그때 출금 목록(확정·금액 있는 지급, 지난 출금일까지)에 있던 거래처 것만 (목록 밖 급한 지급은 비교하지 않음, listed=True).
+    입출금 자료가 지난 출금일까지 오지 않았으면 None."""
+    from .wehago import norm_vendor
     day = payday - 7 * DAY
+    start = day - 6 * DAY
     if not txns or max(t["date"] for t in txns) < day:
         return None
-    rows = [{"vendor": (t.get("vendor") or "").strip() or (t.get("memo") or "").strip() or "(거래처 없음)",
-             "amount": t["amount"], "memo": t.get("memo") or ""}
-            for t in txns if t["date"] == day and t["io"] == "출금" and t["cat"] != TRANSFER]
-    return {"date": day, "rows": rows, "total": sum(r["amount"] for r in rows)}
+    keys = None
+    if prev and day - 7 * DAY <= prev["asof"] < day:   # 금요일에 만든 보고는 다음 금요일 목록 (기준일 = 지난 출금일 − 7일까지)
+        keys = set(norm_vendor(r.get("desc") or "") for r in prev["rows"]
+                   if r.get("firm") and r.get("amount") is not None and prev["asof"] < r["date"] <= day)
+    rows = []
+    for t in txns:
+        if not (start <= t["date"] <= day) or t["io"] != "출금" or t["cat"] == TRANSFER:
+            continue
+        vendor = (t.get("vendor") or "").strip()
+        if auto_debit({"io": "out", "desc": vendor, "cat": "%s %s" % (t.get("cat") or "", t.get("memo") or "")}):
+            continue
+        if keys is not None and norm_vendor(vendor) not in keys:
+            continue
+        rows.append({"vendor": vendor or (t.get("memo") or "").strip() or "(거래처 없음)", "amount": t["amount"],
+                     "memo": t.get("memo") or "", "date": t["date"]})
+    return {"start": start, "date": day, "rows": rows, "total": sum(r["amount"] for r in rows),
+            "listed": keys is not None, "prev_asof": prev["asof"] if keys is not None else None}
 
 
 ACCOUNT_GROUP_ORDER = ("원가", "판매비와관리비", "영업외비용")
@@ -913,8 +957,70 @@ def period_ends(kind, asof, payday=None):
     return [("%d월" % _month_end(_add_months(asof, i)).month, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 
 
+MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금")
+MUST_CAT_EXTRA = ("세금", "회사부담금")
+MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
+LOAN_WORDS = ("차입금", "대출", "이자")
+
+
+def must_pay(ev, card=True, loans=False, pay=True):
+    """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급.
+    날짜·금액이 거의 정해진 돈이라 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
+
+    · 프로그램이 장부로 계산한 줄(세금예상): 세목으로.
+    · 손으로 넣은 일정: 분류에 세목 낱말(세금 맞추기와 같은 낱말)이 있거나 거래처가 세무서·구청·공단·카드사.
+    정기예금 가입·프로젝트 원가·남은 예산·입금은 아니다.
+
+    '꼭 나갈 돈' 판정은 여기 한 곳 (2026-11-14 K1). 기간 뒤 떼어 보는 줄(사용자 2026-11-12: 급여·4대보험·세금·대출 원금·이자)은
+    card=False, loans=True 로 같은 낱말을 쓴다. pay=False 는 급여를 뺀 것 (auto_debit)."""
+    from .tax import KEYWORDS, NOT_TAX
+    if ev.get("io") != "out":
+        return False
+    kinds = [k for k in MUST_KINDS if (card or k != "카드대금") and (pay or k != "급여")]
+    if ev.get("source") == "세금예상":
+        return (ev.get("kind") or str(ev.get("cat") or "").split(" (")[0]) in kinds
+    if ev.get("source") in NOT_TAX:
+        return False
+    cat = "".join(str(ev.get("cat") or "").split())
+    vendor = "".join(str(ev.get("desc") or "").split())
+    words = [w for k in kinds for w in KEYWORDS.get(k, ())] + list(MUST_CAT_EXTRA) + (list(LOAN_WORDS) if loans else [])
+    return any(w in cat for w in words) or any(w in vendor for w in MUST_VENDOR) or (card and vendor.endswith("카드"))
+
+
+def auto_debit(ev):
+    """카드대금·세금·4대보험처럼 통장에서 저절로 나가는 돈 (사용자 2026-11-14 '지난주 대비는 같은 범위끼리': 비교에서 뺌).
+
+    '꼭 나갈 돈'(must_pay)과 같은 낱말에서 급여만 뺀 것 (급여는 출금 목록에도 오르는 지급). 통장 줄은 분류 자리에
+    분류·적요를 넣어 부른다. 거래처가 '카드사_끝번호'(장부 카드 거래처)면 카드대금."""
+    from .tax import CARD_PREFIX
+    if ev.get("io") != "out":
+        return False
+    return must_pay(ev, pay=False) or bool(CARD_PREFIX.match(str(ev.get("desc") or "").strip()))
+
+
+def mark_must(events, tax_info=None):
+    """일정마다 ev['must'] 를 단다. 장부 계산 세금·급여·카드 줄과 맞춰 그 줄 대신 쓰인 일정(자금일정 '예상' 등)도 꼭 나갈 돈."""
+    for ev in events:
+        ev["must"] = must_pay(ev)
+    for t in tax_info or []:
+        if t.get("kind") not in MUST_KINDS:
+            continue
+        for m in [t.get("matched")] + list(t.get("matched_all") or []):   # 코드로 여러 줄을 함께 맞춘 경우 모두 (B, 2026-11-14)
+            if isinstance(m, dict) and m.get("io") == "out":
+                m["must"] = True
+
+
+def counts_in(ev, mode):
+    """mode 에 넣는 일정인가. firm = 확정 + 꼭 나갈 정기 지출 예상 (큰 숫자) · spend = 그 위에 예상 지급(프로젝트 남은 예산 등)
+    · all = 예상 입금까지 모두 (2026-11-14 F7: '예상 지급까지 빼면'에 예상 입금이 섞이지 않게)."""
+    if mode == "all" or ev["firm"] or ev.get("must"):
+        return True
+    return mode == "spend" and ev["io"] == "out"
+
+
 def available_periods(start, dated, ends, min_cash, asof):
-    """기간마다 확정분만(firm)·예상분 포함(all)으로 입금·지급 예정, 예상 잔액, 기간 중 최저 잔액(날짜), 가용자금.
+    """기간마다 firm(확정 + 꼭 나갈 정기 지출 예상: 큰 숫자)·spend(예상 지급까지)·all(예상 입금까지 모두)으로
+    입금·지급 예정, 예상 잔액, 기간 중 최저 잔액(날짜), 가용자금.
 
     같은 날 입출금은 합쳐서 본다. 시작 가용액을 모르면 잔액·가용자금은 None, 최소 보유현금을 모르면 가용자금만 None."""
     out = []
@@ -924,11 +1030,11 @@ def available_periods(start, dated, ends, min_cash, asof):
         if label != "지정일":
             prev = end
         row = {"label": label, "end": end, "from": frm + DAY}
-        for mode in ("firm", "all"):
+        for mode in ("firm", "spend", "all"):
             daily = defaultdict(int)
             tin = tout = 0
             for e in dated:
-                if not (asof < e["date"] <= end) or (mode == "firm" and not e["firm"]):
+                if not (asof < e["date"] <= end) or not counts_in(e, mode):
                     continue
                 if e["io"] == "in":
                     tin += e["amount"]
@@ -936,8 +1042,8 @@ def available_periods(start, dated, ends, min_cash, asof):
                 else:
                     tout += e["amount"]
                     daily[e["date"]] -= e["amount"]
-            pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and (mode == "all" or e["firm"]))
-            pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and (mode == "all" or e["firm"]))
+            pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and counts_in(e, mode))
+            pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and counts_in(e, mode))
             r = {"in": tin, "out": tout, "pin": pin, "pout": pout, "bal": None, "low": None, "low_date": None, "avail": None}
             if start is not None:
                 bal, low, low_d = start, start, asof
@@ -984,21 +1090,72 @@ def event_unissued(inv_proj, asof, in_missing):
             "total": None if in_missing else sum(y["unissued"] for y in rows)}
 
 
-def expected_revenue(inv_proj, asof, in_missing):
-    """인트라넷 사전견적(예상 매출) 중 아직 계산서가 안 나간 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
+def with_vat(supply):
+    """공급가액 → 받을 돈 (부가세 10% 포함)."""
+    return int(round(supply * 1.1))
 
-    남은 예상 매출 = 사전견적(공급가액) − 발행 공급가액, 0 밑은 0. 묶음: 행사 끝남(= 행사 끝난 뒤 미발행과 같은 수),
-    올해 남은 행사, 다음 해 이후. 사전견적이 있는 프로젝트만 센다. 행사일·발행금액을 모르면 금액에 넣지 않고 건수로만."""
+
+def unissued_due(E):
+    """행사 후 미발행의 받을 돈 합계 (부가세 포함, 끝전 포함). 대표 보고 실적 칸과 계산서 발행 기한이 같은 숫자를 쓴다
+    (2026-11-14 F13: 같은 미발행이 공급가액·부가세 포함 두 금액으로 보이던 것). 계산서 자료가 없으면 None."""
+    if E.get("missing") or E.get("total") is None:
+        return None
+    return sum(with_vat(y["unissued"]) for y in E.get("rows") or [])
+
+
+def left_basis(P):
+    """올해 매출 예상에 쓰는 프로젝트 매출 금액: revenue_basis, 사전견적이 없으면 계약금액 (예산이 예전부터 그렇게 셈)."""
+    v = revenue_basis(P)
+    return v if v is not None else P.get("contract")
+
+
+def revenue_left(P):
+    """아직 매출로 안 잡힌 금액 (공급가액) = 매출 기준 금액(사전견적, 대표이사 승인 끝나면 확정 견적) − 매출반영누계(장부 매출).
+
+    0 밑은 0. 기준 금액이나 매출반영누계를 모르면 None (0으로 치지 않음).
+    '올해 매출 예상'은 대표 월간·팀장용·예산 모두 이 금액을 장부 매출에 더한다 (2026-11-14 오후 점검 P2·K1: 예전엔
+    대표 월간은 발행 계산서, 팀장용은 매출이 조금이라도 잡히면 통째로 빼고, 예산은 이 계산 — 세 곳이 서로 달랐음)."""
+    base = left_basis(P)
+    rec = P.get("recognized")
+    if base is None or rec is None:
+        return None
+    return max(base - rec, 0)
+
+
+def year_revenue_left(projects, year, team=None):
+    """그 해 행사 프로젝트별 '아직 매출로 안 잡힌 금액' -> [{P, event, left}] (left None = 모름). 예전 인트라넷 끝난 행사는 뺀다."""
+    out = []
+    for P in projects:
+        if (P.get("state") or "").strip() == OLD_STATE:
+            continue
+        if team is not None and (P.get("team") or "").strip() != team:
+            continue
+        ev = _event_date(P.get("event_date"))
+        if ev is None or ev.year != int(year):
+            continue
+        if left_basis(P) is None:
+            continue
+        out.append({"P": P, "event": ev, "left": revenue_left(P)})
+    return out
+
+
+def expected_revenue(inv_proj, asof, in_missing):
+    """인트라넷 사전견적(예상 매출) 중 아직 장부 매출로 안 잡힌 금액을 행사일로 나눈다 (사용자 2026-11-04: 대표 보고에도).
+
+    남은 예상 매출 = revenue_left (사전견적 − 매출반영누계, 0 밑은 0, 2026-11-14 오후 점검 P2: 예전엔 발행 계산서를 빼서
+    선수금 계산서는 빠지고 계산서 없이 잡은 매출은 두 번 셈). 묶음: 행사 끝남, 올해 남은 행사, 다음 해 이후.
+    사전견적이 있는 프로젝트만 센다. 행사일·매출반영누계를 모르면 금액에 넣지 않고 건수로만. in_missing(계산서 자료 없음)은
+    이 계산에 쓰지 않는다 (장부 매출 기준)."""
     groups = {"past": [0, 0], "this_year": [0, 0], "later": [0, 0]}
     est_total = est_n = 0
-    no_date = unknown_issued = year_est = year_n = quoted_n = 0
+    no_date = unknown_left = year_est = year_n = quoted_n = 0
     by_team = {}
     for x in inv_proj:
         P = x["P"]
-        base = revenue_basis(P)
+        base = left_basis(P)
         if base is None:
             continue
-        if base != P.get("estimate"):
+        if base == P.get("quote") and base != P.get("estimate") and revenue_basis(P) is not None:
             quoted_n += 1
         est_total += base
         est_n += 1
@@ -1009,10 +1166,10 @@ def expected_revenue(inv_proj, asof, in_missing):
         if ev.year == asof.year:   # 올해 행사의 예상 매출 합계: 누적 매출과 견줘 보인다 (사용자 2026-11-04)
             year_est += base
             year_n += 1
-        if in_missing or x["issued"] is None:
-            unknown_issued += 1
+        left = revenue_left(P)
+        if left is None:
+            unknown_left += 1
             continue
-        left = base - x["issued"]
         if left <= 0:
             continue
         g = "past" if ev < asof else ("this_year" if ev.year == asof.year else "later")
@@ -1022,11 +1179,11 @@ def expected_revenue(inv_proj, asof, in_missing):
             t = by_team.setdefault((P.get("team") or "").strip(), {"past": 0, "this_year": 0, "n": 0})
             t[g] += left
             t["n"] += 1
-    return {"missing": bool(in_missing), "est_total": est_total, "est_n": est_n,
+    return {"missing": False, "est_total": est_total, "est_n": est_n,
             "past": groups["past"][0], "past_n": groups["past"][1],
             "this_year": groups["this_year"][0], "this_year_n": groups["this_year"][1],
             "later": groups["later"][0], "later_n": groups["later"][1],
-            "no_date_n": no_date, "unknown_n": unknown_issued, "year_est": year_est, "year_n": year_n, "by_team": by_team,
+            "no_date_n": no_date, "unknown_n": unknown_left, "year_est": year_est, "year_n": year_n, "by_team": by_team,
             "quoted_n": quoted_n}   # 사전견적 대신 확정 견적금액을 쓴 프로젝트 수 (대표이사 승인 끝남)
 
 
@@ -1096,7 +1253,7 @@ def _blank_proj(p, rate):
     rate, P["cost_rate_source"] = rate if isinstance(rate, tuple) else (rate, "기본")
     P["cost_rate"] = rate
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "paid_cash_reason": None, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
-              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
+              "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0, "intranet_req": 0, "intranet_req_unknown": 0,
               # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다
               "line_n": dict.fromkeys(EXEC_STATES, 0), "line_unknown": dict.fromkeys(EXEC_STATES, 0)})
     est = P["estimate"]
@@ -1140,7 +1297,7 @@ def risks(R):
     data_days = sn["위험_자료경과일"]
     over_pct = sn["위험_예산초과율"]
     s2 = R["s2"]
-    for mode, label in (("firm", "확정 일정만"), ("all", "확정+추정")):
+    for mode, label in (("firm", "확정·정기 지출"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]
         if low is None:
             continue  # 시작 잔액을 모르면 자금 위험을 만들지 않는다 (아래 자료 항목에서 알림)
@@ -1191,10 +1348,11 @@ def risks(R):
                 "%s %s: 입금예정일 %s에서 %d일 경과, 미수 %s원." % (v["project"], v["client"], d2s(v["due"]),
                                                        v["overdue_days"], won(v["outstanding"])),
                 "거래처 담당자에게 지급 일정 확인, 필요 시 공문 발송.")
-    for x in R["s5"]["unissued_aged"]:
-        if x["unissued_days"] >= ui_days:
-            add("중간", "수금", "%s %s: 완료 후 %d일, 미발행 %s원." % (x["P"]["id"], x["P"]["name"], x["unissued_days"],
-                                                          won(x["unissued"])),
+    # 미발행은 대표 보고 칸·계산서 발행 기한과 같은 기준 (행사 후 · 사전견적/확정 견적 − 발행, 2026-11-14 K1)
+    for y in R["s5"]["event_unissued"]["rows"]:
+        if y["days"] >= ui_days:
+            add("중간", "수금", "%s %s: 행사 후 %d일, 미발행 %s원 (받을 돈 %s원, 부가세 포함)." % (
+                y["P"]["id"], y["P"]["name"], y["days"], won(y["unissued"]), won(with_vat(y["unissued"]))),
                 "발행 조건(검수·정산) 확인 후 계산서 발행.")
     s7 = R["s7"]
     if s7["unlinked_txn_total"] or R["s3"]["unlinked_total"]:

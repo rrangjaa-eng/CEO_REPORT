@@ -88,8 +88,8 @@ class TestAddSchedule(unittest.TestCase):
         app.add_schedule(P.input, "2026-11-04", "입금", "1000", "확정", "가상고객")
         with open(os.path.join(P.input, "자금일정.csv"), encoding="utf-8-sig") as f:
             text = f.read().splitlines()
-        self.assertEqual(text[0], "예정일,입출금,금액,확정여부,분류,프로젝트번호,거래처,근거,비고")
-        self.assertEqual(text[1], "2026-11-04,입금,\"1,000\",확정,기타입금,,가상고객,직접 입력,")
+        self.assertEqual(text[0], "예정일,입출금,금액,확정여부,분류,프로젝트번호,거래처,근거,비고,거래처코드")   # 2026-11-14 거래처코드 칸
+        self.assertEqual(text[1], "2026-11-04,입금,\"1,000\",확정,기타입금,,가상고객,직접 입력,,")
 
     def test_wrong_values_are_refused_with_a_reason(self):
         P = program(self)
@@ -182,6 +182,77 @@ class TestOneWindow(unittest.TestCase):
         self.assertIn('show="●"', text)
         self.assertIn('self.pw.set("")', text)
         self.assertNotIn("self.pw.get()))", text.replace("(uid, pw)", ""))
+
+
+
+class TestHeadless(unittest.TestCase):
+    """창 없이 '자동' 한 번 (2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고).
+    대표보고.exe --자동 <결과 파일> [기준일] = 창에서 '자동'을 누른 것과 같게 (변환 → 지금 현황 → 주간·월간)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from sample_input import refresh
+        refresh()
+
+    def company(self):
+        from test_convert_e2e import full_company
+        tmp = full_company(self)[0]
+        return app.Paths(tmp)
+
+    def test_runs_auto_and_writes_the_lines(self):
+        from ceo_report import winstate
+        P = self.company()
+        log = os.path.join(P.root, "자동결과.txt")
+        rc = app.headless(P, log, asof="2026-10-31")
+        self.assertEqual(rc, 0)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("자동: 주간 보고", text)
+        self.assertIn("자동: 월간 보고", text)
+        self.assertIn("2026-10-31_주간_경영관리보고.html", text)
+        self.assertTrue(text.rstrip().endswith("rc=0"), text[-200:])
+        self.assertTrue(winstate.load(P.input)["runs"]["자동"]["ok"])
+
+    def test_uses_the_values_the_window_would_show(self):
+        """출금일은 창을 열 때처럼 지난번 값이 기준일보다 뒤면 그대로 (창상태.json)."""
+        from ceo_report import winstate
+        P = self.company()
+        winstate.save(P.input, payday="2026-11-13")
+        self.assertEqual(app.headless(P, os.path.join(P.root, "r.txt"), asof="2026-10-31"), 0)
+        with open(os.path.join(P.output, "2026-10-31_주간_경영관리보고.html"), encoding="utf-8") as f:
+            self.assertIn("11/13(금) 출금 목록", f.read())
+
+    def test_bad_date_is_written_not_raised(self):
+        P = self.company()
+        log = os.path.join(P.root, "r.txt")
+        self.assertEqual(app.headless(P, log, asof="2026-13-40"), 2)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("기준일 형식 오류", text)
+        self.assertTrue(text.rstrip().endswith("rc=2"))
+
+    def test_window_main_has_the_option(self):
+        with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('if argv[:1] == ["--자동"]:', text)
+        self.assertIn("app.headless(app.Paths(),", text)
+
+
+
+class TestSelfCheck(unittest.TestCase):
+    def test_sample_check_makes_a_real_ceo_report(self):
+        """exe 빌드 점검(--점검): 샘플로 대표 보고가 '만들지 않음' 안내 없이 끝까지 나와야 한다.
+        2026-11-15 빌드가 rc=10 으로 멈춤 — 샘플에 자금계획서가 없어 자료 확인(게이트)에서 대표 보고가 막혔음."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        log = os.path.join(tmp, "점검결과.txt")
+        rc = app.self_check(log, base=ROOT)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(rc, 0, text)
+        self.assertIn("_주간_대표보고.html", text)
+        self.assertNotIn("만들지 않음", text)
+        self.assertNotIn("만들지 않습니다", text)
 
 
 if __name__ == "__main__":

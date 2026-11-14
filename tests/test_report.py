@@ -21,6 +21,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.util import num, date, read_csv, Issues, is_blank, setting_num, pct  # noqa: E402
@@ -38,7 +39,7 @@ def numbers_of(html):
     # 경영관리 1쪽 요약·본문(2026-11-12)은 같은 숫자를 다시 모아 보이는 곳이라 뺀다 (대표용에는 없음)
     html = re.sub(r"<section class='area' id='a-(?:one|docs)'.*?</section>", "", html, flags=re.S)
     html = re.sub(r"<style>[^<]*</style><div class='gbox'>.*?<!-- /gbox -->", "", html, flags=re.S)   # 쉬운 설명·제안 상자는 경영관리용에만
-    html = html.split("<div class='toc'>")[0]
+    html = old_view(html).split("<div class='toc'>")[0]
     html = re.sub(r" data-label='[^']*'|<div class='apager'>.*?</div>", "", html, flags=re.S)   # 영역 이름(부록 A-1 등)은 화면 장치
     html = re.sub(r"<h2 id='risk'>.*?</table>", "", html, flags=re.S)
     html = re.sub(r"<div id='xchk-detail'>.*?<!-- /xchk-detail -->", "", html, flags=re.S)
@@ -70,7 +71,7 @@ def probe_folder(test, filename, mutate):
 
 
 def first_screen(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 def section(html, n):
@@ -503,14 +504,14 @@ class TestUnknownAmountsAndPastDue(Base):
         s2 = R["s2"]
         self.assertEqual((s2["vat_unknown_n"], s2["vat_unknown_n4"], s2["vat_unknown_firm_n"]), (1, 1, 1))
         self.assertEqual(s2["out4_firm"], 170_100_000)
-        self.assertEqual(s2["min"]["firm"], (23_800_000, dt.date(2027, 4, 25)))
+        self.assertEqual(s2["min"]["firm"], (-29_100_000, dt.date(2027, 4, 25)))  # 2026-11-14 D1: 정기 지출 예상 5,290만(카드 1,500만·부가세 3,500만·원천세 차액 290만)도 큰 숫자 기준에 넣음
         self.assertEqual(s2["min"]["all"], (126_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (A5)
         fs = first_screen(html)
         self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)  # 가용자금 표 아래
         self.assertEqual(box_item(fs, "부가세 미확인"), "부가세 미확인 지급 예정 1건 (공급가액만 반영)")
         s2h = section(html, 2)
         self.assertIn("부가세 미확인 1건은 공급가액만 반영", s2h)
-        for lab in ("기간 중 최저 계산 잔액 · 확정 일정만", "기간 중 최저 계산 잔액 · 확정+추정"):
+        for lab in ("기간 중 최저 계산 잔액 · 확정·정기 지출", "기간 중 최저 계산 잔액 · 확정+추정"):
             self.assertIn("부가세 미확인 1건", kv_value(s2h, lab), lab)
         row = re.search(r"<tr[^>]*><td>2026-11-13</td><td>지급</td>.*?</tr>", s2h, re.S).group(0)
         self.assertIn("40,000,000", row)
@@ -526,6 +527,7 @@ class TestUnknownAmountsAndPastDue(Base):
 
 def _risk_part(html):
     """경영관리용 위험 분석 묶음 (제목부터 1번 상세자료 앞까지)."""
+    html = old_view(html)   # 주제별 묶기(2026-11-14): 위험 분석 전체 표는 부록 '전체 표 모음'
     return html[html.index("<h2 id='risk'>"):html.index("<h2 id='s1'>")]
 
 
@@ -876,12 +878,12 @@ class TestUserRulesLocked(Base):
 
     def test_min_balance_firm_and_estimate(self):
         mn = self.R["s2"]["min"]
-        self.assertEqual(mn["firm"], (19_800_000, dt.date(2027, 4, 25)))
+        self.assertEqual(mn["firm"], (-33_100_000, dt.date(2027, 4, 25)))  # 2026-11-14 D1: 정기 지출 예상 5,290만(카드 1,500만·부가세 3,500만·원천세 차액 290만)도 큰 숫자 기준에 넣음
         self.assertEqual(mn["all"], (122_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (2026-11-04 A5)
         fs = first_screen(render(self.R, "mgmt"))
         self.assertIn("오늘부터 가장 적을 때 잔액", fs)
-        self.assertIn("확정분만", fs)
-        self.assertIn("여유 자금은 확정된 돈만으로 계산", fs)
+        self.assertIn("확정분과 정기 지출 예상", fs)
+        self.assertIn("여유 자금은 확정된 돈과 꼭 나갈 정기 지출", fs)
 
     def test_profit_and_cash_kept_apart(self):
         rows = {x["target"]: x for x in self.R["s4"]["sources"]["WEHAGO"]["table"]}
@@ -1113,7 +1115,7 @@ class TestNoBalanceKnown(unittest.TestCase):
                 check_editions(self, R)
 
     def test_balance_known_sample_unchanged(self):
-        self.assertEqual(sample_result()["s2"]["min"]["firm"], (19_800_000, dt.date(2027, 4, 25)))
+        self.assertEqual(sample_result()["s2"]["min"]["firm"], (-33_100_000, dt.date(2027, 4, 25)))  # 2026-11-14 D1: 정기 지출 예상 5,290만(카드 1,500만·부가세 3,500만·원천세 차액 290만)도 큰 숫자 기준에 넣음
 
 
 def table_cells(row_html):

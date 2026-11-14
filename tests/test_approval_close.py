@@ -103,15 +103,16 @@ class TestRevenueBasis(unittest.TestCase):
     def test_expected_revenue_and_unissued_shrink_to_the_quote(self):
         before = weekly(folder_with(self, {}))
         x = [y for y in before["s5"]["by_project"] if y["P"]["id"] == "P26205"][0]
-        est, issued = x["P"]["estimate"], x["issued"]
+        est, issued, rec = x["P"]["estimate"], x["issued"], x["P"]["recognized"]
         self.assertGreater(est - issued, 0)   # 샘플: 행사 끝남, 사전견적보다 덜 발행
-        quote = issued + 1000000
+        self.assertGreaterEqual(rec, est)     # 장부 매출은 사전견적보다 많음 → 앞으로 잡힐 매출 0 (P2: 장부 매출 기준)
+        quote = rec + 1000000
         after = weekly(folder_with(self, {"P26205": (str(quote), "대표이사")}))
         E0, E1 = before["s5"]["expected"], after["s5"]["expected"]
-        self.assertEqual(E1["past"], E0["past"] - (est - issued) + 1000000)
+        self.assertEqual(E1["past"], E0["past"] + 1000000)   # 확정 견적 − 장부 매출
         self.assertEqual(E1["quoted_n"], 1)
         row = [r for r in after["s5"]["event_unissued"]["rows"] if r["P"]["id"] == "P26205"][0]
-        self.assertEqual((row["estimate"], row["unissued"], row["quoted"]), (quote, 1000000, True))
+        self.assertEqual((row["estimate"], row["unissued"], row["quoted"]), (quote, quote - issued, True))
         # 승인이 관리팀까지면 사전견적 그대로
         mid = weekly(folder_with(self, {"P26205": (str(quote), "관리팀")}))
         self.assertEqual(mid["s5"]["expected"]["past"], E0["past"])

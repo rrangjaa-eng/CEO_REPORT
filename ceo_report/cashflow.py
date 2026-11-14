@@ -191,6 +191,35 @@ def deposit_terms(journal):
     return out
 
 
+def _vendor_item(lines):
+    for ln in lines:
+        vend = (ln.get("vendor") or "").strip()
+        if CARD.match(vend) or "카드" in vend:
+            return "카드"
+        if "급여" in vend:
+            return "급여"
+    return None
+
+
+def cash_only_slips(journal, cash_codes):
+    """통장(보통예금) 줄만 있고 상대 계정 줄이 없는 전표 -> [(일자, 전표번호, 금액)]. 전기이월은 뺀다.
+    이런 전표는 돈이 왜 오갔는지 계정으로 알 수 없어 거래처·적요로 짐작한다 → '확인할 것'에 올려 상대 계정 줄을 넣게 한다."""
+    codes = set(_sq(c) for c in cash_codes)
+    slips = collections.defaultdict(list)
+    for ln in journal:
+        if ln.get("date") is not None:
+            slips[(ln["date"], ln.get("no"), ln.get("sort", ""))].append(ln)
+    out = []
+    for (d, no, _), lines in sorted(slips.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+        if any(w in (ln.get("memo") or "") for ln in lines for w in OPENING):
+            continue
+        if lines and all(_sq(ln.get("account_code")) in codes for ln in lines):
+            net = sum((ln.get("debit") or 0) - (ln.get("credit") or 0) for ln in lines)
+            if net:
+                out.append((d, no, net))
+    return out
+
+
 def _memo_item(memo):
     if "카드" in memo:
         return "카드"
@@ -246,7 +275,8 @@ def build_rows(journal, cash_codes):
                 att += x
         res = c - att
         if res:
-            item = _memo_item(" ".join(ln.get("memo") or "" for ln in mine))
+            # 상대 계정 줄이 없는 통장 전표: 통장 줄 거래처(카드사·직원)로 먼저, 모르면 적요로 (2026-11-14 '적요 대신 계정·거래처로' ⑤)
+            item = _vendor_item(mine) or _memo_item(" ".join(ln.get("memo") or "" for ln in mine))
             agg[(d, "현금", item or "이체")] += res
     for v, (days, sh, why) in terms.items():   # 보고서 '만든 기준'에 보일 정기예금 판정 (금액 칸 = 날수, 모르면 −1)
         agg[(dt.date(1900, 1, 1), "예금판정", "%s|%s|%s" % (v, "현금성" if sh else "단기금융상품", why))] = days if days is not None else -1
@@ -261,7 +291,14 @@ def build_table(books, cfg):
     out = [dict(zip(KEYS, [d.isoformat(), g, k, str(int(v))])) for d, g, k, v in rows]
     days = [r[0] for r in rows if r[1] in FLOW]
     note = "현금흐름표 자료 %d줄 (%s ~ %s)" % (len(out), min(days).isoformat(), max(days).isoformat()) if days else "현금흐름표 자료 없음"
-    return Table(FILE, KEYS, out, notes=[note])
+    notes = [note]
+    alone = cash_only_slips(books.journal, cfg["cash_codes"])
+    if alone:
+        notes.append("[확인] 통장 줄만 있는 전표 %d건 (상대 계정 줄 없음): %s — 현금흐름표는 거래처·적요로 나눠 짐작함. "
+                     "전표에 상대 계정(미지급비용·미지급금 등) 줄을 넣으면 계정으로 정확히 나뉩니다"
+                     % (len(alone), ", ".join("%s 전표 %s %s원" % (d.isoformat(), no, "{:,}".format(v)) for d, no, v in alone[:10])
+                        + (" 외 %d건" % (len(alone) - 10) if len(alone) > 10 else "")))
+    return Table(FILE, KEYS, out, notes=notes)
 
 
 # ───────────── 보고 쪽 ─────────────

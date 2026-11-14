@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -856,6 +856,8 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
     tables.append(filing.build_table(books, cfg, asof, input_dir))
     from . import filehelp   # 신고 도우미 (사용자 2026-11-12)
     tables.append(filehelp.build_table(books, cfg, asof, input_dir))
+    from . import reconcile   # 자료 대조 (사용자 2026-11-14): 장부 ↔ 위하고 시산표·재무상태표·차입금현황 등, 차입금.csv·카드사용.csv
+    tables.extend(reconcile.build_tables(books, input_dir, wehago_dir, asof, snap))
     return tables, states
 
 
@@ -916,8 +918,9 @@ def build_bank(books, cfg):
                 Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], [], written=False, reason=why)]
     if not getattr(books, "from_start", True):
         # 작년 분개장이 빠지면 잔액이 '올해 증감'뿐이다: 머리글만 쓴다 (예전 파일이 남아 낡은 잔액을 쓰지 않게) → 보고서는 계좌잔액.csv
-        why = "작년 분개장 없음 (분개장 %s부터, 전기이월·설립 자본금 줄 없음) → 통장 잔액은 계좌잔액.csv 사용" % min(
-            ln["date"] for ln in lines).isoformat()
+        why = ("%s → 통장 잔액은 계좌잔액.csv 사용" % books.start_gap if getattr(books, "start_gap", "") else
+               "작년 분개장 없음 (분개장 %s부터, 전기이월·설립 자본금 줄 없음) → 통장 잔액은 계좌잔액.csv 사용" % min(
+                   ln["date"] for ln in lines).isoformat())
         return [Table(data.BOOK_BAL_FILE, data.BOOK_BAL_KEYS, [], notes=[why]),
                 Table(data.BOOK_TXN_FILE, data.SCHEMA["입출금내역.csv"], [], notes=[why])]
     lines.sort(key=lambda ln: (ln["date"], str(ln.get("no") or "")))
@@ -979,20 +982,27 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     from . import tax
     mode = cfg["withholding_mode"] if cfg["withholding_mode"] in ("자동", "반기", "매월") else "자동"
     card_days, card_notes = tax.read_card_days(input_dir) if input_dir else ({}, [])
+    from . import screen_tax, wehago_raw   # 위하고 급여·원천징수 화면과 대조 (제안 3, 2026-11-14)
+    scr_notes, scr = screen_tax.compare(books.journal, wehago_raw.files(wehago_dir), asof, cfg["withholding_codes"],
+                                        cfg["withholding_vendors"], cfg["insurance_vendors"]) if wehago_dir else ([], {})
+    card_real, card_upto = screen_tax.card_usage(wehago_dir) if wehago_dir else ({}, None)
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
-        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode) + \
+        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
-        tax.cards(books.journal, asof, card_days) + tax.deposits(books.journal, asof)
+        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
-    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, corptax.read(input_dir) if input_dir else {}, input_dir, wehago_dir)
+    manual = corptax.read(input_dir) if input_dir else {}
+    ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
     rows += ct_rows
+    rows += corptax.carry_rows(books.journal, cfg, asof, manual, input_dir, wehago_dir)   # 작년분 4/30까지·8/31 중간예납 (2026-11-14 F5)
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
                                        "입금" if r["세목"] == tax.DEPOSIT_IN else "납부", "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
     if cfg["withholding_mode"] not in ("자동", "반기", "매월"):
         notes.append("설정 변환_원천세납부 값 '%s' 사용할 수 없음 → 자동" % cfg["withholding_mode"])
     notes.extend(card_notes)
+    notes.extend(scr_notes)
     thin = [r for r in rows if r["세목"] == "카드대금" and r["근거"].startswith(tax.CARD_THIN_MARK)]
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
         notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
@@ -1032,7 +1042,8 @@ def fundplan_opening_checks(openings, books, cfg):
     if not openings:
         return []
     if not getattr(books, "from_start", True):
-        return ["자금계획서 전월이월 대조 안 함: 작년 분개장이 없어 보통예금 잔액을 셀 수 없음"]
+        return ["자금계획서 전월이월 대조 안 함: %s 보통예금 잔액을 셀 수 없음"
+                % ("%s라" % books.start_gap if getattr(books, "start_gap", "") else "작년 분개장이 없어")]
     cash = set(wehago._squash(c) for c in cfg["cash_codes"])
     out = []
     for (y, m), amount, name in openings:
@@ -1076,8 +1087,123 @@ def build_fundplan(books, cfg, wehago_dir, asof):
     return Table("자금계획.csv", fundplan.COLUMNS, res["rows"], notes=notes)
 
 
+def book_note_table(books):
+    """장부 읽기 [확인] 알림 (지난 기수 파일 못 읽음·분개장 빈 기간 등, 2026-11-14 K2·K3) -> 장부알림.csv.
+    알림이 없어도 머리글만 써서 지난 변환의 알림이 남지 않게 한다. 보고서는 경영관리 '입력 자료 확인 필요'에 한 줄씩 보인다."""
+    rows = [{"알림": n} for n in getattr(books, "notes", []) if str(n).startswith("[확인]")]
+    return Table(data.BOOK_NOTE_FILE, data.BOOK_NOTE_KEYS, rows)
+
+
+LOCK_FILE = "변환중.lock"
+LOCK_STALE_SECONDS = 15 * 60   # 이보다 오래된 잠금은 꺼진 창이 남긴 것으로 보고 치운다 (변환은 길어야 1~2분)
+
+
+def _take_lock(input_dir):
+    """입력 폴더 잠금 (2026-11-14 K4: 창 두 개·창 + 명령 창에서 동시에 변환하면 같은 임시 파일 이름을 써서 섞인다).
+    -> (잠금 파일 경로 또는 None, 다른 변환이 잡고 있으면 그 잠금의 나이(초) 또는 None).
+    잠금 파일을 만들 수 없는 폴더(읽기 전용 등)면 잠그지 않고 진행한다 — 그때는 어차피 쓰기에서 막힌다."""
+    import time
+    path = os.path.join(input_dir, LOCK_FILE)
+    for _ in range(3):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(path)
+            except OSError:
+                continue   # 그 사이 풀렸다
+            if age <= LOCK_STALE_SECONDS:
+                return None, age
+            try:
+                os.remove(path)
+            except OSError:
+                return None, age
+            continue
+        except OSError:
+            return None, None
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("%d %s\n" % (os.getpid(), time.strftime("%Y-%m-%d %H:%M:%S")))
+        return path, None
+    return None, None
+
+
 def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
-    """변환 한 번. 장부·스냅숏·파일 문제로 예외를 내지 않고 Result.code 로 알린다."""
+    """변환 한 번. 장부·스냅숏·파일 문제로 예외를 내지 않고 Result.code 로 알린다.
+    다른 변환이 같은 입력 폴더를 쓰는 중이면 아무것도 바꾸지 않고 코드 7 (K4)."""
+    try:
+        os.makedirs(input_dir, exist_ok=True)
+    except OSError:
+        pass   # _run 이 알린다
+    held, busy = _take_lock(input_dir)
+    if busy is not None:
+        res = Result()
+        res.code = 7
+        res.lines = ["다른 창(또는 명령 창)에서 자료 변환이 이미 돌고 있어 이번 변환은 하지 않음 — 끝난 뒤 다시 실행하세요",
+                     "(입력\\%s, %d분 전부터. 창을 모두 닫았는데도 이 글이 계속 나오면 그 파일을 지우고 다시 실행하세요)"
+                     % (LOCK_FILE, max(0, int(busy // 60)))]
+        return res
+    try:
+        return _run(input_dir, collect_dir, wehago_dir, asof, now, stamp)
+    finally:
+        if held:
+            try:
+                os.remove(held)
+            except OSError:
+                pass
+
+
+def _side_names():
+    """변환 2단계(변환결과.txt 쓰기 전)에 바뀌는 파일: 마지막 쓰기가 실패하면 CSV 와 함께 되돌린다 (K4)."""
+    from . import checklist, insights, payreq, review_checks
+    return [payreq.FILE, review_checks.SCHEDULE, review_checks.ARCHIVE, insights.FILE, checklist.CONVERT_FILE]
+
+
+def _keep_side(input_dir):
+    """{이름: 바이트 | None(없던 파일) | False(읽지 못해 되돌릴 수 없음)}."""
+    out = {}
+    for n in _side_names():
+        try:
+            with open(os.path.join(input_dir, n), "rb") as f:
+                out[n] = f.read()
+        except FileNotFoundError:
+            out[n] = None
+        except OSError:
+            out[n] = False
+    return out
+
+
+def _put_back_side(input_dir, kept):
+    """_keep_side 때로 되돌린다 -> (되돌린 이름, 되돌리지 못한 이름). 바뀌지 않은 파일은 건드리지 않는다."""
+    done, lost = [], []
+    for n, before in kept.items():
+        path = os.path.join(input_dir, n)
+        try:
+            with open(path, "rb") as f:
+                now_bytes = f.read()
+        except FileNotFoundError:
+            now_bytes = None
+        except OSError:
+            lost.append(n)
+            continue
+        if now_bytes == before:
+            continue
+        if before is False:
+            lost.append(n)
+            continue
+        try:
+            if before is None:
+                os.remove(path)
+            else:
+                with open(path + ".되돌림", "wb") as f:
+                    f.write(before)
+                os.replace(path + ".되돌림", path)
+            done.append(n)
+        except OSError:
+            lost.append(n)
+    return done, lost
+
+
+def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     res = Result()
     stamp = stamp or now.strftime("%Y%m%d_%H%M%S")
     try:
@@ -1096,6 +1222,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     else:
         drop_closing_pl(books, cfg)
         tables, states = _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res)
+        tables.append(book_note_table(books))
         cross = cross_checks(tables)
     res.tables = tables
     names = [t.name for t in tables if t.written] + ["변환결과.txt"]
@@ -1120,6 +1247,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         res.lines = _failure_result(input_dir, now, asof, e, stamp, backup) if e.stage == "replace" else _write_failed_lines(e)
         return res
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
+    side_kept = _keep_side(input_dir)   # 2단계에서 바뀌는 파일: 변환결과.txt 를 못 쓰면 CSV 와 함께 되돌린다 (K4)
     listings, summary = [], []
     if snap is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05): 최근 스냅숏 것을 입력 폴더로
         from . import payreq
@@ -1161,8 +1289,13 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         res.code = 7
         # 새 CSV 와 맞는 변환결과.txt 를 쓰지 못했다: CSV 도 되돌려 폴더가 한 실행의 결과만 담게 한다 (WR-01)
         restored, lost = roll_back(input_dir, [n for n, _ in csv_payloads], set(moved), backup)
+        side_done, side_lost = _put_back_side(input_dir, side_kept)
         e.replaced, e.restored, e.lost, e.backup = [n for n, _ in csv_payloads], restored, lost, backup
         res.lines = _write_failed_lines(e)
+        if side_done:
+            res.lines.append("함께 바뀐 파일도 변환 전으로 되돌림: " + ", ".join(side_done))
+        if side_lost:
+            res.lines.append("되돌리지 못한 파일 (새 내용 그대로): %s — 자료 변환을 다시 실행하세요" % ", ".join(side_lost))
         return res
     res.backup = os.path.join(input_dir, "이전", backup) if backup else None
     out = []

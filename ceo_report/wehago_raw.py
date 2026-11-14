@@ -194,15 +194,28 @@ def _withholding(F):
     """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)])."""
     emps, out = {}, []
     for year, d in _pick(F, "인사_소득자별근로소득원천징수부"):
+        seen, coded = set(), set()
         for r in d.get("응답") or []:
             path = str(r.get("path") or "").rstrip("/")
             data = r.get("data")
+            # 같은 내용의 응답이 두 번 저장되기도 한다 (실제 2026-11-14: 첫 사원 소득 응답이 두 번 → 원천세가 매달 부풀려짐)
+            # 사번은 응답 안 값을 먼저 본다 (밖의 사번이 잘못 붙은 중복도 같은 것으로), 없으면 밖의 사번 (다른 사원이 금액만 같은 경우는 남김)
+            key = (path, str(_find(data, "cd_emp") or r.get("cd_emp") or ""),
+                   json.dumps(data, sort_keys=True, ensure_ascii=False, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
             if path.endswith("/emp"):
                 for e in data if isinstance(data, list) else (_find(data, "data") or []):
                     if isinstance(e, dict) and e.get("cd_emp"):
                         emps.setdefault(str(e["cd_emp"]), e)   # 최근 해 것이 먼저 온다: 작년 값으로 덮지 않음 (코덱스 검토)
             elif path.endswith("/emp/income"):
                 code = r.get("cd_emp") or _find(data, "cd_emp")
+                if code and str(code) in coded:
+                    # 같은 해 같은 사원의 소득 응답은 한 번만 (예전 수집 파일: 첫 사원 응답이 감싼 모양만 다르게 두 번 → 매달 두 배)
+                    continue
+                if code:
+                    coded.add(str(code))
                 rows = _find(data, "group1") or []
                 for g in rows if isinstance(rows, list) else []:
                     ym = re.sub(r"\D", "", str(g.get("ym_rvrs") or g.get("ym_pay") or ""))

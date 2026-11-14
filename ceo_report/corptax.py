@@ -321,3 +321,96 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
                       "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
     return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))
+
+
+# ───────────── 작년분 법인세·지방소득세, 8/31 중간예납 (2026-11-14 F5) ─────────────
+INTERIM_MIN = 500_000   # 중소기업은 중간예납세액이 50만 원 미만이면 내지 않는다 (법인세법 63조)
+
+
+def _bank_tax_slips(journal, start, end, prepaid_codes):
+    """start~end 사이 통장에서 낸 법인세 쪽 전표 -> [(선납세금인가, 금액)].
+    선납세금 코드 차변, 또는 계정 이름에 '법인세'·'지방소득세'가 있는 차변(미지급법인세·법인세등)의 합. 같은 전표에 통장 대변이 있을 때만."""
+    from .convert_pl import _squash
+    from .tax import _from_bank
+    slips = {}
+    for ln in journal:
+        if ln.get("date") is not None and start <= ln["date"] <= end:
+            slips.setdefault((ln["date"], ln.get("no")), []).append(ln)
+    out = []
+    for lines in slips.values():
+        if not _from_bank(lines):
+            continue
+        pre = sum((x.get("debit") or 0) for x in lines if _squash(x["account_code"]) in prepaid_codes)
+        tax = sum((x.get("debit") or 0) for x in lines if _squash(x["account_code"]) not in prepaid_codes
+                  and ("법인세" in _squash(x["account"]) or "지방소득세" in _squash(x["account"])))
+        out += [(True, pre)] * bool(pre) + [(False, tax)] * bool(tax)
+    return out
+
+
+def _paid(slips, amount, prepaid=False):
+    """금액이 거의 같은 납부 전표가 있나 (반~1.5배: 법인세와 지방소득세(약 1/10)를 금액으로 가른다)."""
+    return bool(amount) and any(p == prepaid and 0.5 * amount <= v <= 1.5 * amount for p, v in slips)
+
+
+def carry_rows(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=None):
+    """-> 세금예상 줄 목록 (2026-11-14 F5: 1/31부터 작년 법인세·지방소득세 줄이 사라지고 8/31 중간예납이 일정에 없던 것).
+
+    · 작년분: from_journal 이 올해를 계산하기 시작하는 1월 말부터 납부일(법인세 3/31·지방소득세 4/30)까지 남긴다.
+      작년 신고서(법인세신고.csv '확정')가 있으면 그 금액(차감납부세액 + 농어촌특별세, 지방소득세), 없으면 작년 1~12월 장부로 같은 계산.
+      신고서에 실제납부가 적혔거나 올해 통장에서 거의 같은 금액을 낸 전표가 있으면 뺀다.
+    · 중간예납: 올해 8/31(토·일이면 월요일)까지. (작년 총부담세액 − 원천징수 등) × 6/12, 50만 원 미만이면 없음.
+      올해 7/1 뒤 통장에서 선납세금으로 거의 같은 금액을 냈으면 뺀다."""
+    import datetime as dt
+    from .convert_pl import _squash
+    from .tax import _row, _workday
+    from . import taxreturn
+    Y = asof.year
+    prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
+    paid = _bank_tax_slips(journal, dt.date(Y, 1, 1), asof, prepaid_codes)
+    D = taxreturn.load(input_dir) if input_dir else {}
+    last, last_mid = D.get((Y - 1, "확정")), D.get((Y - 1, "중간예납"))
+    prev = None   # 작년 1~12월 장부로 한 계산 (신고서가 없을 때)
+    if any(ln.get("date") is not None and ln["date"].year == Y - 1 for ln in journal):
+        prev, _ = from_journal(journal, cfg, dt.date(Y - 1, 12, 31), manual, input_dir, wehago_dir)
+    rows = []
+    if int(_last_full_month(asof)[:4]) == Y:   # 1월 30일까지는 from_journal 이 작년분을 낸다
+        if last and last.get("차감납부세액") is not None:
+            period = "%d년 (신고서)" % (Y - 1)
+            nat_amt = last["차감납부세액"] + (last.get("농특세") or 0)
+            items = [("법인세", 3, 31, None if last.get("실제납부") is not None else nat_amt,
+                      "%d년 법인세 신고서: 차감납부세액 %s + 농어촌특별세 %s" % (Y - 1, "{:,}".format(last["차감납부세액"]),
+                                                                    "{:,}".format(last.get("농특세") or 0)), "확정(신고서)"),
+                     ("법인지방소득세", 4, 30, last.get("지방소득세"), "%d년 법인세 신고서 지방소득세" % (Y - 1), "확정(신고서)")]
+        elif prev:
+            period = prev[0]["대상기간"]
+            items = [(r["세목"], 3 if r["세목"] == "법인세" else 4, 31 if r["세목"] == "법인세" else 30,
+                      None if r["금액"] == "" else int(r["금액"]), r["근거"], r["상태"]) for r in prev]
+        else:
+            items = []
+        for kind, m, day, amount, basis, state in items:
+            due = _workday(dt.date(Y, m, day))
+            if due < asof or amount is None or _paid(paid, amount):
+                continue
+            row = _row(kind, period, due, amount, state, basis)
+            if kind == "법인세" and prev and not last:
+                row.update(dict((k, prev[0].get(k, "")) for k in ("과세표준", "산출세액", "기납부", "대손충당금", "세무조정")))
+            rows.append(row)
+    # 중간예납 (설립 다음 해부터, 작년 법인세의 절반)
+    due = _workday(dt.date(Y, 8, 31))
+    if asof <= due:
+        base_tax = how = None
+        if last and last.get("총부담세액") is not None:
+            w = max((last.get("기납부세액") or 0) - ((last_mid or {}).get("차감납부세액") or 0), 0)
+            base_tax = last["총부담세액"] - w
+            how = "%d년 신고서 총부담세액 %s − 원천징수 등 %s" % (Y - 1, "{:,}".format(last["총부담세액"]), "{:,}".format(w))
+        elif prev and prev[0].get("과세표준"):
+            nat, corp, C = national(int(prev[0]["과세표준"]), str(Y - 1), input_dir)
+            total = C["final"] if C else corp
+            mid_prev = sum(v for p, v in _bank_tax_slips(journal, dt.date(Y - 1, 7, 1), dt.date(Y - 1, 12, 31), prepaid_codes) if p)
+            w = max(int(prev[0].get("기납부") or 0) - mid_prev, 0)
+            base_tax = total - w
+            how = "%d년 장부로 계산한 법인세 %s − 원천징수 등 %s" % (Y - 1, "{:,}".format(total), "{:,}".format(w))
+        amount = None if base_tax is None else int(base_tax * 6 / 12)
+        if amount and amount >= INTERIM_MIN and not _paid(_bank_tax_slips(journal, dt.date(Y, 7, 1), asof, prepaid_codes), amount, True):
+            rows.append(_row("법인세", "%d년 중간예납" % Y, due, amount, "예상", how + " × 6/12 (50만 원 미만이면 안 냄)"))
+    return rows

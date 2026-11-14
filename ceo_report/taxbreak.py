@@ -34,7 +34,8 @@ def _read_csv(path):
 def corp_base(input_dir, year):
     """세금예상.csv 법인세 줄 -> (과세표준, 산출세액, 근거) 또는 None."""
     for r in _read_csv(os.path.join(input_dir, "세금예상.csv")):
-        if (r.get("세목") or "").strip() == "법인세" and str(year) in (r.get("대상기간") or ""):
+        # 과세표준이 있는 그해 계산 줄만 (작년분 신고서·중간예납 줄은 과세표준이 비어 있음, 2026-11-14 F5)
+        if (r.get("세목") or "").strip() == "법인세" and str(year) in (r.get("대상기간") or "") and (r.get("과세표준") or "").strip():
             try:
                 return int(float(r.get("과세표준") or 0)), int(float(r.get("산출세액") or 0)), (r.get("대상기간") or "").strip()
             except ValueError:

@@ -322,6 +322,77 @@ def run_auto(paths, say, asof="", pick="", payday="", group="", only=""):
     return worst, list(dict.fromkeys(files))
 
 
+def headless(paths, log_path, asof="", today=None):
+    """창 없이 '자동'(변환 → 지금 현황 → 주간·월간 보고)을 한 번 돌리고 글을 log_path 에 남긴다. -> 종료코드.
+
+    2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고 (대표보고.exe --자동 결과.txt [기준일]).
+    창에서 '자동'을 누른 것과 같게: 기준일은 비우면 오늘, 출금일·가용자금 날짜·출금 목록 합침은 창을 열 때 칸 값 그대로."""
+    from . import winstate
+    lines = []
+    day = parse_date(asof) if asof else (today or dt.date.today())
+    vals = winstate.start_values(paths.input, day) if day else {"payday": "", "pick": ""}
+    group, only = load_merge(paths)
+    try:
+        rc, files = run_auto(paths, lines.append, asof=asof or day.isoformat(), pick=vals["pick"], payday=vals["payday"],
+                             group=group, only=only)
+        if files:
+            lines.append("만든 파일: %s" % ", ".join(os.path.basename(f) for f in files))
+    except Exception as e:   # 트레이스백 대신 한 줄
+        lines.append("예상하지 못한 오류 (%s): %s" % (type(e).__name__, str(e)[:200]))
+        rc = 7
+    if day:   # 창도 날짜가 틀리면 돌리지 않아 기록을 남기지 않는다
+        winstate.remember_run(paths.input, "자동", rc == 0)
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+    return rc
+
+
+CHECK_ASOF = "2026-10-31"   # 점검 기준일 (샘플 자료일)
+
+
+def _check_plan(input_dir, stamp):
+    """점검용 자금계획.csv: 샘플에는 자금계획서가 없어 자료 확인(게이트)이 대표 보고를 막는다 (2026-11-15 빌드 점검 rc=10).
+    점검은 대표 보고가 끝까지 만들어지는지만 보므로, 보고 기간 달(11·12월)에 작은 지급 예정 한 줄씩만 넣는다."""
+    rows = [("2026-11-06", 1000000), ("2026-12-04", 1000000)]
+    with open(os.path.join(input_dir, "자금계획.csv"), "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(fundplan.COLUMNS)
+        for due, amount in rows:
+            w.writerow([due, "지급", "미지급금 지급", "점검용 지급처", "", amount, due[:7], stamp, "점검", "예정", "", "", ""])
+
+
+def self_check(log_path, base=None):
+    """exe 점검: 창 없이 샘플로 주간 보고를 만들어 본다 (빌드 확인용). 0 이면 정상.
+    gui 에서 옮김 (2026-11-15, tkinter 없이 시험하려고). base = 입력양식 이 있는 곳 (exe 는 풀린 임시 폴더)."""
+    import tempfile
+    from . import winstate
+    base = base or getattr(sys, "_MEIPASS", program_dir())
+    sample = os.path.join(base, "입력양식", "샘플")
+    tmp = tempfile.mkdtemp()
+    lines = []
+    try:
+        shutil.copytree(sample, os.path.join(tmp, "입력"))
+        os.makedirs(os.path.join(tmp, "수집", "위하고"))
+        _check_plan(os.path.join(tmp, "입력"), CHECK_ASOF)
+        P = Paths(tmp)
+        rc, files = run_task("주간", P, lines.append, asof=CHECK_ASOF)
+        lines.append("파일: %s" % ", ".join(os.path.basename(f) for f in files))
+        if rc == 0 and not any(f.endswith("_주간_대표보고.html") for f in files):
+            rc = 9
+        # '만들지 않음' 안내만 나왔으면 실패 (코덱스 검토 2026-11-14)
+        if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
+            lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
+            rc = 10
+    except Exception as e:
+        lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
+        rc = 8
+    finally:
+        shutil.rmtree(tmp, True)
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+    return rc
+
+
 MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' 칸 값 (다음에 열 때 그대로, 사용자 2026-11-05)
 
 
@@ -369,8 +440,11 @@ def _encoding(path):
         return "cp949", raw
 
 
-def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis="", memo="", project=""):
-    """입력/자금일정.csv 에 한 줄을 더한다. 잘못된 값은 ValueError (글은 그대로 화면에 보인다). -> 더한 줄 dict."""
+def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis="", memo="", project="", vendor_code=""):
+    """입력/자금일정.csv 에 한 줄을 더한다. 잘못된 값은 ValueError (글은 그대로 화면에 보인다). -> 더한 줄 dict.
+
+    vendor_code (2026-11-14 사용자 "이름 말고 코드로"): 창에서 위하고 거래처를 고르면 그 거래처코드. 자금계획서·장부와 코드로 맞춘다.
+    옛 파일에 거래처코드 칸이 없으면 머리글 끝에 칸을 더한다 (앞 줄은 빈칸 = 코드 없음, 이름으로 맞춤)."""
     d = _check_day((day or "").strip(), "예정일")
     if d is None:
         raise ValueError("예정일을 넣으세요 (예: 2026-11-30)")
@@ -383,8 +457,9 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
         raise ValueError("금액은 0보다 큰 숫자 (예: 3,300,000)")
     if not (vendor or "").strip():
         raise ValueError("거래처를 넣으세요")
-    header = SCHEMA[SCHED_FILE]
-    row = {"예정일": d.isoformat(), "입출금": io_kind, "금액": "{:,}".format(int(text)), "확정여부": firm,
+    from .data import SCHED_OPTIONAL
+    header = SCHEMA[SCHED_FILE] + SCHED_OPTIONAL
+    row = {"거래처코드": str(vendor_code or "").strip(), "예정일": d.isoformat(), "입출금": io_kind, "금액": "{:,}".format(int(text)), "확정여부": firm,
            "분류": cat.strip() or ("기타지급" if io_kind == "지급" else "기타입금"), "프로젝트번호": project.strip(),
            "거래처": vendor.strip(), "근거": basis.strip() or "직접 입력", "비고": memo.strip()}
     path = os.path.join(input_dir, SCHED_FILE)
@@ -402,6 +477,13 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
             raise ValueError("자금일정.csv 머리글에 %s 칸이 없어 넣지 않았습니다 — 첫 줄을 양식(%s)대로 맞추세요"
                              % ("·".join("'%s'" % c for c in lack), ",".join(header)))
         nl = "\r\n" if "\r\n" in text_now else "\n"
+        if row["거래처코드"] and "거래처코드" not in cols:   # 옛 파일: 머리글 끝에 칸을 더해 다시 쓴다 (앞 줄은 빈칸)
+            lines = text_now.splitlines()
+            lines[0] = lines[0] + ",거래처코드"
+            text_now = nl.join(lines) + nl
+            cols = cols + ["거래처코드"]
+            with open(path, "wb") as f:
+                f.write(text_now.encode("utf-8-sig" if enc == "utf-8-sig" else enc))
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])
         add = ("" if not text_now or text_now.endswith(("\n", "\r")) else nl) + buf.getvalue()

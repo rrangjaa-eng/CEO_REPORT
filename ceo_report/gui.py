@@ -396,8 +396,10 @@ class Window(object):
         e_amt.pack(side="left", padx=(3, 8))
         self._amount(e_amt, self.s_amt)
         ttk.Label(r, text="거래처").pack(side="left")
-        e_v = ttk.Entry(r, textvariable=self.s_vendor, width=14)
-        e_v.pack(side="left", padx=(3, 0))
+        # 위하고 거래처 목록에서 고르면 거래처코드도 같이 저장 (2026-11-14 사용자 "이름 말고 코드로"). 목록에 없으면 이름만 적어도 됨
+        e_v = self.s_vbox = ttk.Combobox(r, textvariable=self.s_vendor, width=22)
+        e_v.pack(side="left", padx=(3, 0), fill="x", expand=True)
+        e_v.bind("<KeyRelease>", self.filter_sched_vendors)
         r = self._row(f)
         ttk.Label(r, text="내용").pack(side="left")
         e_n = ttk.Entry(r, textvariable=self.s_note, width=22)
@@ -1249,16 +1251,37 @@ class Window(object):
         self.refresh_state()
 
     # ───────────── 가끔 넣는 값 ─────────────
+    def sched_vendor(self):
+        """거래처 칸 글 -> (이름, 코드). 목록의 '이름 [코드] · …' 줄을 골랐으면 그 코드, 아니면 (적은 글, '')."""
+        text = self.s_vendor.get().strip()
+        for label, code, name, _ in getattr(self, "account_rows", None) or []:
+            if text == label:
+                return name, code
+        return text, ""
+
+    def filter_sched_vendors(self, event=None):
+        """글자를 치면 이름·코드에 그 글자가 든 위하고 거래처만 목록에 보인다 (거래처 계좌 칸과 같은 목록)."""
+        if event is not None and event.keysym in ("Return", "Down", "Up"):
+            return
+        if not getattr(self, "account_rows", None):
+            self.refresh_accounts()
+        text = self.s_vendor.get().strip().replace(" ", "")
+        self.s_vbox["values"] = [c[0] for c in self.account_rows
+                                 if text and text in c[0].replace(" ", "")][:200]
+
     def add_schedule(self):
+        vendor, code = self.sched_vendor()
         try:
             row = app.add_schedule(self.paths.input, self.s_day.get(), self.s_io.get(), self.s_amt.get(), self.s_firm.get(),
-                                   self.s_vendor.get(), memo=self.s_note.get())
+                                   vendor, memo=self.s_note.get(), vendor_code=code)
         except (ValueError, OSError) as e:
             self.say("넣지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             self.f_sched.sub.configure(text="넣지 못함 (진행 상황 참고)", foreground=C["red"])
             return
         self.say("자금일정에 넣음: %s %s %s원 (%s) %s — 보고서를 다시 만들면 가용자금에 반영됩니다"
-                 % (row["예정일"], row["입출금"], row["금액"], row["확정여부"], row["거래처"]))
+                 % (row["예정일"], row["입출금"], row["금액"], row["확정여부"],
+                    "%s [%s]" % (row["거래처"], row["거래처코드"]) if row.get("거래처코드")
+                    else row["거래처"] + " (거래처코드 없음: 목록에서 고르면 장부와 코드로 맞춥니다)"))
         for v in (self.s_amt, self.s_vendor, self.s_note):
             v.set("")
         self._flash(self.f_sched, "넣음: %s %s원" % (row["거래처"], row["금액"]), lambda: "가용자금에 바로 반영")
@@ -1781,33 +1804,8 @@ def sharp_text():
 
 
 def self_check(log_path):
-    """exe 점검: 창 없이 샘플로 주간 보고를 만들어 본다 (빌드 확인용). 0 이면 정상."""
-    import shutil
-    import tempfile
-    base = getattr(sys, "_MEIPASS", app.program_dir())
-    sample = os.path.join(base, "입력양식", "샘플")
-    tmp = tempfile.mkdtemp()
-    lines = []
-    try:
-        shutil.copytree(sample, os.path.join(tmp, "입력"))
-        os.makedirs(os.path.join(tmp, "수집", "위하고"))
-        P = app.Paths(tmp)
-        rc, files = app.run_task("주간", P, lines.append, asof="2026-10-31")
-        lines.append("파일: %s" % ", ".join(os.path.basename(f) for f in files))
-        if rc == 0 and not any(f.endswith("_주간_대표보고.html") for f in files):
-            rc = 9
-        from . import winstate   # '만들지 않음' 안내만 나왔으면 실패 (코덱스 검토 2026-11-14)
-        if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
-            lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
-            rc = 10
-    except Exception as e:
-        lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
-        rc = 8
-    finally:
-        shutil.rmtree(tmp, True)
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
-    return rc
+    """exe 점검 (빌드 확인용): app.self_check 로 (창 없이 시험할 수 있게 옮김, 2026-11-15)."""
+    return app.self_check(log_path)
 
 
 def main(argv=None):
@@ -1818,6 +1816,9 @@ def main(argv=None):
         sys.stderr = open(os.devnull, "w")
     if argv[:1] == ["--점검"]:
         return self_check(argv[1] if len(argv) > 1 else "점검결과.txt")
+    if argv[:1] == ["--자동"]:   # 창 없이 '자동' 한 번 (2026-11-14 밤 통합): 결과 글은 파일로, 기준일은 비우면 오늘
+        out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "자동결과.txt")
+        return app.headless(app.Paths(), out, argv[2] if len(argv) > 2 else "")
     if argv[:1] == ["--정합성"]:   # 자료 정합성 점검 (사용자 2026-11-04): 입력 폴더는 바꾸지 않는다
         from . import integrity
         out = argv[1] if len(argv) > 1 else os.path.join(app.program_dir(), "정합성점검.txt")

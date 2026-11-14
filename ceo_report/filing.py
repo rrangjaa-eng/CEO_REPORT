@@ -48,10 +48,35 @@ def _next_month_end(y, m):
     return _month_end(y + (m == 12), 1 if m == 12 else m + 1)
 
 
+SALARY_CODES = ("80200", "80300", "50300", "50400")   # 급여·상여 (판관비·원가)
+
+
+def _kind_of_slip(lines):
+    """원천세를 뗀 전표가 무슨 소득인지 계정·거래처로 (2026-11-14 사용자 "적요 대신 계정과목으로 판단할 수 있으면 그렇게"):
+    같은 전표에 급여·상여 계정 차변 → 근로, 다른 줄 거래처가 '사업소득'·'기타소득' → 사업·기타. 모르면 None (적요로 예비 판단)."""
+    if any(_sq(x.get("account_code")) in SALARY_CODES or any(w in _sq(x.get("account")) for w in ("급여", "임금", "상여"))
+           for x in lines if (x.get("debit") or 0)):
+        return "근로"
+    for x in lines:
+        v = _sq(x.get("vendor"))
+        if "사업소득" in v:
+            return "사업"
+        if "기타소득" in v:
+            return "기타"
+    return None
+
+
 def scan(journal):
-    """장부 → 달별로 생긴 일 {(y, m): {"사업": 세액, "기타": 세액, "근로": 세액, "경품": 금액}} 와 원천세 낸 날."""
+    """장부 → 달별로 생긴 일 {(y, m): {"사업": 세액, "기타": 세액, "근로": 세액, "경품": 금액}} 와 원천세 낸 날.
+
+    소득 종류는 같은 전표의 계정(급여·상여)·거래처('사업소득'·'기타소득')로 먼저 보고, 알 수 없을 때만 적요 낱말로 본다.
+    경품은 계정 이름에 '경품'이 있는 줄(전용 계정), 없으면 예전처럼 기타소득 계정 + 적요 '경품'·'상품권'."""
     ev = collections.defaultdict(lambda: collections.defaultdict(int))
     paid = []
+    slips = collections.defaultdict(list)
+    for ln in journal or []:
+        if ln.get("date") is not None:
+            slips[(ln["date"], str(ln.get("no") or ""))].append(ln)
     for ln in journal or []:
         d = ln.get("date")
         if d is None:
@@ -61,15 +86,14 @@ def scan(journal):
         key = (d.year, d.month)
         if name == "예수금" and "세무서" in vendor:
             if cr:
-                if "사업소득" in memo:
-                    ev[key]["사업"] += cr
-                elif "기타소득" in memo:
-                    ev[key]["기타"] += cr
-                elif "급여" in memo:
-                    ev[key]["근로"] += cr
+                kind = _kind_of_slip(slips.get((d, str(ln.get("no") or ""))) or [])
+                if kind is None:   # 예비: 적요 낱말 (예전 규칙)
+                    kind = "사업" if "사업소득" in memo else "기타" if "기타소득" in memo else "근로" if "급여" in memo else None
+                if kind:
+                    ev[key][kind] += cr
             elif dr:
                 paid.append(d)
-        if "기타소득" in name and dr and ("경품" in memo or "상품권" in memo):
+        if dr and ("경품" in name or ("기타소득" in name and ("경품" in memo or "상품권" in memo))):
             ev[key]["경품"] += dr
     return ev, paid
 

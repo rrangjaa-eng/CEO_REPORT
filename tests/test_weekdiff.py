@@ -15,6 +15,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report import weekdiff  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.calc import compute  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
@@ -28,7 +29,7 @@ def ev(day, amount, desc, project="", cat="외주", firm=True):
 
 
 def first_screen(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 class TestRecord(unittest.TestCase):
@@ -94,7 +95,8 @@ class TestWeeklyReport(unittest.TestCase):
 
     def R(self, rows):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
-        R["last_pay"] = {"date": D(2026, 10, 30), "rows": rows, "total": sum(r["amount"] for r in rows)}
+        R["last_pay"] = {"start": D(2026, 10, 24), "date": D(2026, 10, 30), "rows": rows, "total": sum(r["amount"] for r in rows),
+                         "listed": False, "prev_asof": None}
         return R
 
     def test_outflow_list_is_first_and_shows_change_from_last_week(self):
@@ -102,7 +104,7 @@ class TestWeeklyReport(unittest.TestCase):
         for edition in ("ceo", "mgmt"):
             fs = first_screen(render(R, edition))
             self.assertLess(fs.index("출금 목록"), fs.index("자금 현황"))
-            self.assertIn("지난주 대비: 지난주(10/30) 출금 45,000,000 → 이번 출금", fs)
+            self.assertIn("지난주 대비: 지난주(10/24~10/30) 출금 45,000,000 → 이번 출금", fs)
 
     def test_renders_when_last_week_record_exists(self):
         """지난주 보고 기록(지급예정_*.csv)이 있어도 두 판 모두 만들어짐 (11/5 PC에서 NameError 'compare')."""
@@ -150,18 +152,19 @@ class TestWeeklyReport(unittest.TestCase):
         R = compute(load(SAMPLE), "weekly", D(2026, 10, 31))
         R["last_pay"] = None
         fs = first_screen(render(R, "ceo"))
-        self.assertIn("지난주(10/30) 출금 자료 없음", fs)
+        self.assertIn("지난주(10/24~10/30) 출금 자료 없음", fs)
         self.assertNotIn("지난주 대비", render(compute(load(SAMPLE), "monthly", D(2026, 10, 31)), "ceo"))
 
 
 class TestLastPayday(unittest.TestCase):
-    def test_bank_outflows_on_last_payday_without_transfers(self):
+    def test_bank_outflows_in_last_week_without_transfers(self):
+        """지난 출금일로 끝나는 7일 (사용자 2026-11-14 '같은 범위로': 전에는 지난 출금일 하루만)."""
         from ceo_report.calc import last_payday_out
         t = lambda d, io, amt, cat="", v="가": {"date": d, "io": io, "amount": amt, "cat": cat, "vendor": v, "memo": ""}
         txns = [t(D(2026, 10, 30), "출금", 100), t(D(2026, 10, 30), "출금", 50, "계좌간이체"), t(D(2026, 10, 30), "입금", 7),
-                t(D(2026, 10, 29), "출금", 9), t(D(2026, 11, 2), "출금", 1)]
+                t(D(2026, 10, 29), "출금", 9), t(D(2026, 10, 23), "출금", 3), t(D(2026, 11, 2), "출금", 1)]
         L = last_payday_out(txns, D(2026, 11, 6))
-        self.assertEqual((L["date"], L["total"], len(L["rows"])), (D(2026, 10, 30), 100, 1))
+        self.assertEqual((L["start"], L["date"], L["total"], len(L["rows"])), (D(2026, 10, 24), D(2026, 10, 30), 109, 2))
         self.assertIsNone(last_payday_out([t(D(2026, 10, 20), "출금", 1)], D(2026, 11, 6)))   # 그날까지 자료 없음
 
 

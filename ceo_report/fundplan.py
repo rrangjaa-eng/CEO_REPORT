@@ -17,7 +17,8 @@ from .xls import XlsError, read_xls
 DETAIL_RE = re.compile(r"^예정일\s*:\s*(\d{4})\.(\d{1,2})\.(\d{1,2})\s*-\s*(.*?)\s*\[(\d+)\]\s*$")
 PERIOD_RE = re.compile(r"계획기간\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월")
 SECTIONS = {"지급계획": "out", "입금계획": "in"}
-COLUMNS = ["예정일", "입출금", "분류", "거래처", "거래처코드", "금액", "대상월", "자료일", "파일", "상태", "근거"]
+COLUMNS = ["예정일", "입출금", "분류", "거래처", "거래처코드", "금액", "대상월", "자료일", "파일", "상태", "근거",
+           "원전표", "프로젝트"]   # 원전표·프로젝트: 비고의 원전표 날짜+거래처코드+금액으로 이은 장부 전표와 그 관리항목 프로젝트 (제안 2, 2026-11-14)
 # 예정일보다 이만큼 앞선 전표까지 그 줄을 미리 지급·입금한 것으로 본다. 지급은 짧게: 매달 같은 금액을 내는 지급(복리후생비 등)의
 # 지난달 전표를 이번 달 지급으로 잘못 보면 지급이 빠진다 (실제 파일에서 확인). 입금은 잘못 맞아도 입금이 빠지는 쪽이라 길게 둔다.
 EARLY_DAYS = {"지급": 14, "입금": 45}
@@ -43,6 +44,23 @@ AUTO_PLAN_SUFFIX = "자금계획 자동수집.json"
 def is_auto_plan_name(name):
     base = os.path.basename(name)
     return not base.startswith("~$") and base.endswith(AUTO_PLAN_SUFFIX)
+
+
+# 자금계획 비고(rmk_fplan): '구분 - 거래처코드(10자리)-원전표일자(8자리)+순번(2자리)-[지급예정일:YYYY.MM.DD]-…'
+# (2026-11-14 PC 실제 파일 152줄 모두 이 모양, 코드는 늘 cd_trade 와 같음. 순번은 분개장 전표번호와 다름 → 날짜만 씀)
+RMK_ORIGIN_RE = re.compile(r"-\s*(\d{10})\s*-\s*(\d{8})\d{2}\s*-")
+
+
+def origin_of(remark, vendor_code):
+    """비고에서 원전표 일자 (거래처코드가 이 줄과 같을 때만) -> date | None."""
+    m = RMK_ORIGIN_RE.search(str(remark or ""))
+    if not m or m.group(1).lstrip("0") != str(vendor_code or "").lstrip("0"):
+        return None
+    s = m.group(2)
+    try:
+        return dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
+    except ValueError:
+        return None
 
 
 def parse_auto(path):
@@ -89,9 +107,11 @@ def parse_auto(path):
             bad += 1
             continue
         code = str(row[ix["cd_trade"]] or "").lstrip("0")
+        rmk = row[cols.index("rmk_fplan")] if "rmk_fplan" in cols and cols.index("rmk_fplan") < len(row) else ""
         items[(day.year, day.month)].append({"date": day, "cat": str(row[ix["nm_fitem"]] or ""),
                                              "vendor": str(row[ix["nm_trade"]] or ""),
-                                             "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount})
+                                             "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount,
+                                             "origin": origin_of(rmk, code)})
     out = []
     for mo in months:
         reason = ""
@@ -344,7 +364,9 @@ def load(folder):
             out["rows"].append({"예정일": it["date"].isoformat(), "입출금": "지급" if it["io"] == "out" else "입금",
                                 "분류": it["cat"], "거래처": it["vendor"], "거래처코드": it["vendor_code"],
                                 "금액": it["amount"], "대상월": ym, "자료일": stamp.isoformat(), "파일": n,
-                                "상태": "", "근거": ""})
+                                "상태": "", "근거": "",
+                                # 처음엔 비고의 원전표 날짜만, settle 이 장부 전표를 찾으면 '날짜 전표 번호'로 바꾼다
+                                "원전표": it["origin"].isoformat() if it.get("origin") else "", "프로젝트": ""})
         sums = dict((io, sum(it["amount"] for it in res["items"] if it["io"] == io)) for io in ("out", "in"))
         out["notes"].append("%s %s: 지급 %d줄 %s원 · 입금 %d줄 %s원 (%s)" % (
             ym, n, sum(1 for it in res["items"] if it["io"] == "out"), "{:,}".format(sums["out"]),
@@ -365,6 +387,14 @@ RECEIVABLE_CODES = ("10800",)        # 외상매출금(수입수수료미수금)
 CASH_CODES = ("10300",)              # 보통예금
 
 
+def _origin_day(r):
+    t = str(r.get("원전표") or "")[:10]
+    try:
+        return dt.date(*[int(x) for x in t.split("-")]) if len(t) == 10 else None
+    except ValueError:
+        return None
+
+
 def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES, cash=CASH_CODES):
     """자금계획 줄마다 상태를 정한다 (2026-11-03 사용자 질문: 예정일보다 빠르거나 늦게 지급·입금된 건).
 
@@ -379,12 +409,33 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     ref = books.book_date if journal is not None else None
     used = set()
     counts = dict((k, 0) for k in STATES)
+    from .tax import CARD_PREFIX
+    by_slip_lines = collections.defaultdict(list)   # 같은 전표의 다른 줄 (상대 계정·거래처를 본다, 2026-11-14)
+    for ln in journal or []:
+        by_slip_lines[(ln["date"], str(ln.get("no") or ""))].append(ln)
+
+    def mates(line):
+        return by_slip_lines.get((line["date"], str(line.get("no") or ""))) or [line]
+
+    def paid_out(line):
+        """미지급 계정 차변이 정말 돈이 나간 지급인가 (F11, 2026-11-14): 같은 전표에 통장 출금 없이 다른 미지급 계정 대변
+        (미지급금 → 미지급비용 재분류 같은 대체)만 있으면 지급이 아니다. 카드 미지급(카드사_번호 거래처)으로 옮긴 것은 카드로 낸 것."""
+        bank_out, moved = False, False
+        for x in mates(line):
+            c = _squash(x.get("account_code"))
+            if x is line or not (x.get("credit") or 0):
+                continue
+            if c in cash or c.startswith(("101", "102", "103")):
+                bank_out = True
+            elif c in payable and not CARD_PREFIX.match(str(x.get("vendor") or "").strip()):
+                moved = True
+        return bank_out or not moved
 
     def kind(line, io):
         code = _squash(line.get("account_code"))
         debit, credit = line.get("debit") or 0, line.get("credit") or 0
         if io == "지급":
-            if code in payable and debit:
+            if code in payable and debit and paid_out(line):
                 return debit, True
             if code in cash and credit:
                 return credit, False
@@ -402,24 +453,36 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
             # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
             lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+        od = _origin_day(r)
+        if od is not None:
+            # 이 돈을 만든 원전표(계산서·비용 전표) 날짜 전의 지급·입금은 이 줄의 것이 아니다 (비고의 원전표 일자, ②)
+            lo = max(lo, od)
         return due, lo
 
     def same_vendor(r, line):
         # 거래처가 같아야 한다: 예금 줄만 금액이 같은 것은 다른 거래처 지급일 수 있다 (실제 분개장에서 확인).
         # 두 쪽에 거래처코드가 있으면 코드로만 본다 (사용자 2026-11-04: 글자 말고 코드로). 자금계획서 [000101] 의
         # 앞 0을 떼면 분개장 거래처Code 00101 과 같다 (실제 파일 3개월 515줄 모두 같은 거래처). 한쪽이라도 코드가 없을 때만 이름으로.
-        vcode, lcode = norm_code(r.get("거래처코드")), norm_code(line.get("vendor_code"))
-        if vcode and lcode:
-            return lcode == vcode
-        key = norm_vendor(r["거래처"])
-        return bool(key) and norm_vendor(line["vendor"]) == key
+        # 통장 줄은 거래처가 은행인 경우가 많다: 같은 전표 다른 줄(선급금·선수금·미지급금 등, 계정 무관)의 거래처로도 본다
+        # (2026-11-14 사용자 "적요 대신 계정·거래처로" ①: 선급금·선수금을 통장으로 바로 주고받은 전표도 짝을 찾게)
+        vcode, key = norm_code(r.get("거래처코드")), norm_vendor(r["거래처"])
+        pool = [line] if _squash(line.get("account_code")) not in cash else mates(line)
+        for x in pool:
+            lcode = norm_code(x.get("vendor_code"))
+            if vcode and lcode:
+                if lcode == vcode:
+                    return True
+                continue
+            if key and norm_vendor(x.get("vendor")) == key:
+                return True
+        return False
 
     def candidates(r):
         """이 줄과 같은 거래처·기간의 아직 안 쓴 분개장 돈 줄 -> [(i, 금액, 채무·채권 줄인가)] (전표 하나에서는 한 줄만: 채무·채권 줄 먼저)."""
         due, lo = window(r)
         by_slip = {}
         for i, line in enumerate(journal):
-            if i in used or (line["date"], str(line.get("no") or i)) in used_slips or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+            if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
                 continue
             amount, named = kind(line, r["입출금"])
             if not amount or not same_vendor(r, line):
@@ -429,13 +492,53 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 by_slip[k] = (i, amount, named)
         return sorted(by_slip.values(), key=lambda c: (journal[c[0]]["date"], c[0]))
 
-    found = {}
-    used_slips = set()   # 한 전표의 채무 줄·예금 줄을 서로 다른 지급계획 둘에 쓰지 않게 전표 단위로도 막는다 (2026-11-14 코덱스 검토)
+    # 제안 2 (2026-11-14 사용자 '정합성 제안 전부'): 비고의 원전표 날짜 + 거래처코드 + 금액으로 장부 전표(미지급금 대변·
+    # 외상매출금 차변)를 찾는다. 실제 152줄 중 142줄은 전표 하나, 10줄은 같은 날·거래처·금액 전표가 둘 (금액은 같음)
+    origin = collections.defaultdict(list)
+    for line in journal or []:
+        code = norm_code(line.get("vendor_code"))
+        if line["date"] is None or not code:
+            continue
+        ac = _squash(line.get("account_code"))
+        if ac in payable and (line.get("credit") or 0) > 0:
+            origin[("지급", line["date"], code, line["credit"])].append(line)
+        elif ac in receivable and (line.get("debit") or 0) > 0:
+            origin[("입금", line["date"], code, line["debit"])].append(line)
+    lost = set()
+    for n, r in enumerate(rows):
+        od = _origin_day(r)
+        if od is None or journal is None:
+            continue
+        hits = origin.get((r["입출금"], od, norm_code(r.get("거래처코드")), r["금액"])) or []
+        if hits:
+            nos = sorted(set(str(x.get("no") or "") for x in hits))
+            r["원전표"] = "%s 전표 %s" % (od.isoformat(), ", ".join(nos))
+            projs = set(x.get("line_project") or "" for x in hits)
+            if len(projs) == 1 and next(iter(projs)):
+                r["프로젝트"] = next(iter(projs))
+        elif ref is not None and od <= ref:
+            lost.add(n)
 
-    def take(idx):
+    found = {}
+    slips = collections.defaultdict(list)   # 전표(일자·번호) -> 분개장 줄 번호들
+    for i, line in enumerate(journal or []):
+        slips[(line["date"], str(line.get("no") or i))].append(i)
+
+    def take(idx, r):
+        """분개장 줄을 이 계획 줄에 쓴다. 같은 전표에서 같은 거래처의 '다른 쪽' 줄(채무 줄을 썼으면 예금 줄, 예금 줄을 썼으면
+        채무 줄)도 함께 막는다: 한 지급을 채무 줄·예금 줄 두 번으로 세지 않게 (2026-11-14 코덱스 검토).
+        전표 전체를 막지는 않는다: 한 이체 전표로 여러 거래처에 준 돈, 같은 거래처 계산서 여러 장을 한 번에 준 돈은
+        다른 계획 줄이 그 전표의 다른 채무 줄을 쓸 수 있어야 한다 (2026-11-14 오후 점검 F1: 둘째 거래처가 '안 준 돈'으로 남아
+        다음 금요일 출금 목록에 다시 올라갔음)."""
         for i in idx:
             used.add(i)
-            used_slips.add((journal[i]["date"], str(journal[i].get("no") or i)))
+            named_i = kind(journal[i], r["입출금"])[1]
+            for j in slips[(journal[i]["date"], str(journal[i].get("no") or i))]:
+                if j in used:
+                    continue
+                amount_j, named_j = kind(journal[j], r["입출금"])
+                if amount_j and named_j != named_i and same_vendor(r, journal[j]):
+                    used.add(j)
     if journal is not None:
         # ① 같은 금액 한 줄 (예전 규칙)
         for n, r in enumerate(rows):
@@ -448,13 +551,14 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                 if best is None or rank < best[0]:
                     best = (rank, i)
             if best is not None:
-                take([best[1]])
+                take([best[1]], r)
                 found[n] = [best[1]]
         # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
         for n, r in enumerate(rows):
             if n in found:
                 continue
-            cands = [c for c in candidates(r) if c[1] < r["금액"]][:12]
+            every = [c for c in candidates(r) if c[1] < r["금액"]]
+            cands = every[:12]
             hit = None
             for size in (2, 3, 4):
                 for combo in itertools.combinations(cands, size):
@@ -463,8 +567,12 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                         break
                 if hit:
                     break
+            if hit is None and len(every) >= 5 and sum(c[1] for c in every) == r["금액"]:
+                # 다섯 번 넘게 나눠 낸 돈: 그 거래처의 기간 안 돈 줄을 모두 더한 것이 원 단위로 같을 때만 (2026-11-14 오후 점검 F1).
+                # 일부만 골라 맞추면 다른 지급끼리 우연히 맞을 수 있어 '전부의 합'만 본다
+                hit = [c[0] for c in every]
             if hit:
-                take(hit)
+                take(hit, r)
                 found[n] = hit
         # ③ 한 번에 여러 줄을 함께 낸(받은) 돈: 같은 거래처·같은 입출금의 남은 줄 2~4개 합이 분개장 한 줄과 같으면
         rest = collections.OrderedDict()
@@ -488,7 +596,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                     hit = sorted(c for c in cand(combo[0]) if c[1] == total and c[0] not in used
                                  and all(c in cand(n) for n in combo[1:]))
                     if hit:
-                        take([hit[0][0]])
+                        take([hit[0][0]], rows[combo[0]])
                         for n in combo:
                             found[n] = [hit[0][0]]
     for n, r in enumerate(rows):
@@ -515,12 +623,15 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
         else:
             r["상태"] = "예정"
             r["근거"] = "" if journal is not None else "분개장 없음: 미리 지급·입금했는지 확인 못함"
+        if n in lost:
+            r["근거"] = (r["근거"] + " · " if r["근거"] else "") + "원전표(%s·거래처코드·금액)를 장부에서 못 찾음" % r["원전표"][:10]
         counts[r["상태"]] += 1
     return counts
 
 
 # ───────────── 보고서 계산에 반영 (calc) ─────────────
 MATCH_DAYS = 7               # 거래처가 달라도 같은 금액·이 날수 안이면 같은 건으로 본다
+DONE_DAYS = 31               # 이미 지급·입금 줄이 지우는 기존 일정은 예정일이 이 날수 안인 것만 (F18 ②, 2026-11-14)
 FLAG_SOURCES = ("자금일정", "계산서", "프로젝트집행")   # 자금계획서에 없으면 알리는 기존 일정 (남은 예산은 원래 추정이라 알리지 않음)
 
 
@@ -587,6 +698,8 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
     taken = set()
 
     def find(p):
+        p.pop("_by_name", None)
+        p.pop("_split", None)
         io = "out" if p["io"] == "지급" else "in"
         key = norm_vendor(p["vendor"])
         # 이미 지급·입금 줄은 맞는 기존 일정을 지운다: 거래처가 같을 때만 (2026-11-04 점검: 금액·날짜만 같은 다른 거래처
@@ -603,13 +716,38 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
             if not (same or (near and not done)):
                 continue
+            if done and (ev["date"] is None or abs((ev["date"] - p["date"]).days) > DONE_DAYS):
+                continue   # F18 ②: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 몇 달 뒤 일정(다음 달 급여 등)을 지우지 않게
             rank = (0 if same else 1, abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, i)
         if best is None:
-            return None
+            return split_invoice(p, io, key)
         taken.add(best[1])
+        p["_by_name"] = not (norm_code(p.get("vendor_code")) and norm_code(events[best[1]].get("vendor_code")))
         return events[best[1]]
+
+    def split_invoice(p, io, key):
+        """F10: 한 계산서를 여러 프로젝트로 나눈 줄(계산서 한 장 = 일정 여러 줄)은 합쳐서 자금계획서 한 줄과 맞춘다.
+        같은 계산서 = 같은 거래처·같은 발행일(inv_key). 합이 원 단위로 같을 때만. -> 첫 줄 (나머지도 taken 으로 뺀다)."""
+        groups = collections.OrderedDict()
+        for i, ev in enumerate(events):
+            if i in taken or ev["io"] != io or ev.get("source") != "계산서" or not ev.get("inv_key") or ev["amount"] is None:
+                continue
+            groups.setdefault(ev["inv_key"], []).append(i)
+        for k, idx in groups.items():
+            if len(idx) < 2 or sum(events[i]["amount"] for i in idx) != p["amount"]:
+                continue
+            first = events[idx[0]]
+            same = bool(key) and norm_vendor(first.get("desc") or "") == key
+            near = first["date"] is not None and abs((first["date"] - p["date"]).days) <= MATCH_DAYS
+            if not (same or (near and p["state"] not in ("이미 지급", "이미 입금"))):
+                continue
+            taken.update(idx)
+            p["_by_name"] = True
+            p["_split"] = [events[i] for i in idx]
+            return first
+        return None
 
     new = []
     for p in sorted(plan, key=lambda x: (x["date"], x["io"], x["vendor"])):
@@ -626,11 +764,12 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
         ev = {"date": p["date"], "io": io, "amount": p["amount"], "firm": True,
               "cat": "자금계획서 " + (p["cat"] or p["io"]), "desc": p["vendor"],
               "basis": "자금계획서 예정일 %s (%s)" % (p["date"].isoformat(), p["file"] or "자료일 %s" % p["stamp"]),
-              "project": old["project"] if old else "", "source": "자금계획서", "plan_state": p["state"],
+              "project": (old["project"] if old else "") or p.get("project") or "", "source": "자금계획서", "plan_state": p["state"],
               "vendor_code": p.get("vendor_code") or ""}
         # 변환 때 '예정'이었어도 보고 기준일에 날짜가 지났으면 같은 규칙 (2026-11-03 검토: 그대로 두면 일정에서 빠져 자금이 커 보임)
         if p["state"] == "예정일 지남" or (p["state"] == "예정" and p["date"] <= asof):
             if io == "out":
+                ev["orig_date"] = p["date"]   # 원래 예정일 (세금 줄과 맞출 때 씀, 2026-11-14)
                 ev["date"] = _next_friday(asof)
                 ev["basis"] += ", 예정일 지난 미지급 → 다음 금요일"
                 if _unverified(p):
@@ -643,7 +782,7 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
                 info["late_in"].append(ev)
         new.append(ev)
         if old is not None:
-            info["matched"].append({"plan": ev, "old": old})
+            info["matched"].append({"plan": ev, "old": old, "by_name": bool(p.get("_by_name")), "split": p.get("_split") or []})
         else:
             info["added"].append(ev)
     for i, ev in enumerate(events):

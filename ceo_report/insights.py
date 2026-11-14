@@ -15,7 +15,7 @@
  12 입금 지연 위험  큰 입금이 30일 늦으면 여유 자금이 얼마가 되나
  13 입력 누락     매달 있던 전표(급여·4대보험·원천세·카드·고정비)가 이번 달에 없음
 
-정한 계산 기준(여유 자금 = 확정분 최저 잔액 − 최소 보유현금)은 바꾸지 않는다. 9·10·12 는 '반영하면 X'로 따로만 보인다.
+정한 계산 기준(여유 자금 = 확정분·정기 지출 예상 최저 잔액 − 최소 보유현금)은 바꾸지 않는다. 9·10·12 는 '반영하면 X'로 따로만 보인다.
 장부(분개장)가 있어야 하는 10·13 은 자료 변환 때 book_facts() 로 계산해 입력\\자동분석.json 에 둔다.
 """
 import collections
@@ -24,6 +24,8 @@ import json
 import os
 import re
 import statistics
+
+from .calc import counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -189,13 +191,9 @@ def _last(R):
     return per[-1] if per else None
 
 
-MUST_WORDS = ("급여", "회사부담금", "4대보험", "세금", "부가세", "원천세", "법인세", "지방소득세", "차입금", "대출", "이자")
-
-
 def _is_must(e):
-    """꼭 나갈 돈: 급여(4대보험 포함)·세금·대출 원금·이자 (사용자 2026-11-12)."""
-    cat = str(e.get("cat") or "")
-    return e.get("io") == "out" and any(w in cat for w in MUST_WORDS)
+    """꼭 나갈 돈: 급여(4대보험 포함)·세금·대출 원금·이자 (사용자 2026-11-12). 판정은 calc.must_pay 한 곳 (2026-11-14 K1)."""
+    return must_pay(e, card=False, loans=True)
 
 
 def _next_month_end(d):
@@ -272,18 +270,23 @@ def alerts(R):
     out = []
     for p in R["s2"].get("periods") or []:
         if p["firm"]["avail"] is not None and p["firm"]["avail"] < 0:
-            out.append(("높음", "%s 여유 자금이 %s원 모자람 (확정분 기준, %s 가장 낮음)" % (
+            out.append(("높음", "%s 여유 자금이 %s원 모자람 (확정된 돈과 급여·세금·카드 예상 기준, %s 가장 낮음)" % (
                 p["label"], "{:,}".format(-p["firm"]["avail"]), p["firm"]["low_date"])))
             break
     for p in (R.get("s3") or {}).get("projects") or []:
-        b, paid = p.get("budget"), p.get("paid_total")
+        # 경보는 '쓴 돈 + 요청(장부 전 지급요청 포함) + 계획' 기준 (2026-11-14 오후 점검 T1: 예전엔 지급 끝난 돈만 봐서
+        # 요청이 쌓여 예산을 넘어도 경보가 안 떴음). calc 가 committed 를 안 만든 예전 결과면 쓴 돈으로.
+        b = p.get("budget")
+        used = p.get("committed") if "committed" in p else p.get("paid_total")
         name = "[%s] %s" % (p.get("id"), p.get("name"))
-        if b and paid is not None and paid >= b:
-            out.append(("높음", "%s 집행 %s원이 추정 예산 %s원을 넘음 (%.0f%%)" % (name, "{:,}".format(paid), "{:,}".format(b), 100.0 * paid / b)))
-        elif b and paid is not None and paid >= 0.8 * b:
-            out.append(("주의", "%s 집행이 추정 예산의 %.0f%%" % (name, 100.0 * paid / b)))
-        if p.get("profit_end") is not None and p["profit_end"] < 0:
-            out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-p["profit_end"]))))
+        if b and used is not None and used > b:
+            out.append(("높음", "%s 쓴 돈·요청·계획 %s원이 추정 예산 %s원을 넘음 (%.0f%%, %s원 초과)" % (
+                name, "{:,}".format(used), "{:,}".format(b), 100.0 * used / b, "{:,}".format(used - b))))
+        elif b and used is not None and used >= 0.8 * b:
+            out.append(("주의", "%s 쓴 돈·요청·계획이 추정 예산의 %.0f%%" % (name, 100.0 * used / b)))
+        now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
+        if now is not None and now < 0:
+            out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-now))))
     return out
 
 
@@ -299,7 +302,7 @@ def calendar(R, days=CAL_DAYS):
             continue
         v = e["amount"] if e["io"] == "in" else -e["amount"]
         flow["all"][e["date"]] += v
-        if e["firm"]:
+        if counts_in(e, "firm"):   # 큰 숫자와 같은 기준: 확정 + 꼭 나갈 정기 지출 예상 (2026-11-14 D1)
             flow["firm"][e["date"]] += v
     out, bf, ba = [], s2["start"], s2["start"]
     for i in range(1, days + 1):
@@ -362,15 +365,20 @@ def invoice_pairs(R):
 
 
 def profit_flow(R):
-    """8: 프로젝트 견적 이익 → 지금 예상 이익 -> [{name, team, quote, now, diff}] (줄어든 순)."""
+    """8: 프로젝트 견적 이익 → 지금 예상 이익 -> [{name, team, quote, now, diff, closed}] (줄어든 순).
+
+    지금 예상 이익 = calc profit_now: 끝난 프로젝트는 계약 − 등록 지출(쓴 돈 + 요청 + 계획), 진행 중은 계약 − (추정 예산과
+    등록 지출 중 큰 쪽). 그래서 진행 중 프로젝트의 차이는 '추정 예산을 넘은 만큼'만 나온다 (2026-11-14 오후 점검 T1:
+    예전엔 남은 예산이 그대로 '이익 개선'으로 보였음). closed = 끝난 프로젝트 (보고에서 진행 중과 나눠 보인다)."""
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
-        c, b, now = p.get("contract"), p.get("budget"), p.get("profit_end")
+        c, b = p.get("contract"), p.get("budget")
+        now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if not c or b is None or now is None:
             continue
         q = c - b
         out.append({"name": "[%s] %s" % (p.get("id"), p.get("name")), "team": p.get("team") or "", "quote": q, "now": now,
-                    "diff": now - q, "contract": c})
+                    "diff": now - q, "contract": c, "closed": bool(p.get("closed"))})
     return sorted(out, key=lambda r: r["diff"])
 
 
@@ -465,19 +473,38 @@ def delay_risk(R, n=3):
 
 
 # ───────────── 계산서 발행 기한 (사용자 2026-11-12: 대표 보고) ─────────────
+def _plan_end(R):
+    """자금계획서가 있는 마지막 달의 말일 (자금계획서를 안 썼으면 None)."""
+    fp = R.get("fundplan") or {}
+    months = fp.get("months") if fp.get("used") else None
+    if not months:
+        return None
+    y, m = (int(v) for v in max(months)[:7].split("-"))
+    return (dt.date(y + (m == 12), m % 12 + 1, 1) - DAY)
+
+
 PAY_AFTER_ISSUE = 60   # 이 회사 매출 계산서는 대부분 작성일 뒤 60일쯤 입금 (사용자 2026-11-12)
 ISSUE_SMALL = 10000    # 1만 원 밑 끝전은 자금에 영향 없음
 
 
-def _first_short(R, mode):
-    """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None."""
+def _can_judge(R):
+    """잔액·최소 보유현금·지급 자료가 있어 자금이 모자라는 날을 따질 수 있나."""
+    s2 = R["s2"]
+    return s2.get("start") is not None and s2.get("min_cash") is not None and not s2.get("out_missing")
+
+
+def _first_short(R, mode, skip=()):
+    """일정을 날마다 더해 잔액이 최소 보유현금 밑으로 처음 내려가는 날 -> (날짜, 모자란 돈, 가장 모자란 날, 가장 모자란 돈) 또는 None.
+    skip: 이 프로젝트들의 입금은 빼고 본다 (발행한 계산서 입금은 그대로)."""
     s2 = R["s2"]
     start, mc = s2.get("start"), s2.get("min_cash")
-    if start is None or mc is None or s2.get("out_missing"):
+    if not _can_judge(R):
         return None
     daily = collections.defaultdict(int)
     for e in s2.get("dated") or []:
-        if e["date"] <= R["asof"] or e.get("amount") is None or (mode == "firm" and not e["firm"]):
+        if e["date"] <= R["asof"] or e.get("amount") is None or not counts_in(e, mode):
+            continue
+        if e["io"] == "in" and e.get("project") in skip and e.get("source") != "계산서":
             continue
         daily[e["date"]] += e["amount"] if e["io"] == "in" else -e["amount"]
     bal, first, worst = start, None, None
@@ -502,18 +529,27 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     if E.get("missing") or E.get("total") is None:
         return None
     asof = R["asof"]
-    rows = []
+    rows, small_rows = [], []
     for x in E.get("rows") or []:
         if x["unissued"] < small:
+            small_rows.append(x)
             continue
         rows.append({"id": x["P"]["id"], "name": x["P"].get("name") or "", "event": x["event"], "days": x["days"],
-                     "amount": int(round(x["unissued"] * 1.1)), "pay_if_today": asof + dt.timedelta(days=days)})
+                     "amount": with_vat(x["unissued"]), "pay_if_today": asof + dt.timedelta(days=days)})
     rows.sort(key=lambda r: (-r["amount"], r["id"]))
-    short = _first_short(R, "all")
-    firm = _first_short(R, "firm")
-    out = {"rows": rows, "total": sum(r["amount"] for r in rows), "days": days, "short": short, "firm_short": firm,
-           "deadline": None, "late": False, "small_n": sum(1 for x in E.get("rows") or [] if x["unissued"] < small),
-           "horizon": max([e["date"] for e in R["s2"].get("dated") or []] or [asof])}
+    # 미발행 프로젝트의 입금이 자금일정에 이미 있어도 믿지 않는다: 발행해야 60일 뒤 들어오는 돈 (2026-11-14 F13)
+    own = set(x["P"]["id"] for x in E.get("rows") or [])
+    short = _first_short(R, "all", own)
+    firm = _first_short(R, "firm", own)
+    last = max([e["date"] for e in R["s2"].get("dated") or []] or [asof])
+    plan = _plan_end(R)
+    out = {"rows": rows, "total": unissued_due(E), "n": len(E.get("rows") or []), "days": days, "short": short, "firm_short": firm,
+           "deadline": None, "late": False, "small_n": len(small_rows), "small_total": sum(with_vat(x["unissued"]) for x in small_rows),
+           # 잔액·지급 자료가 없어 따질 수 없으면 '모자라지 않음'이 아니라 '확인 필요' (2026-11-14 F13)
+           "unknown": not _can_judge(R),
+           # '모자라지 않음'은 자금계획서가 있는 달까지만 말한다: 그 뒤는 지급이 빠져 잔액이 높게 보임 (2026-11-14 F13)
+           "horizon": min(last, plan) if plan else last, "horizon_plan": bool(plan and plan <= last),
+           "pay_if_today": asof + dt.timedelta(days=days)}
     if short:
         out["deadline"] = short[0] - dt.timedelta(days=days)
         out["late"] = out["deadline"] < asof

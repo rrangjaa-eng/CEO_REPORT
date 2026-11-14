@@ -28,7 +28,7 @@ STORE_COLS = ["항목ID", "결정", "메모", "결정일", "내용"]
 BANK_FILE = "통장잔액.csv"
 BANK_COLS = ["날짜", "통장잔액", "메모"]
 FIX_WORDS = ("고칠 것", "넣을 것", "지울 것", "발급할 것", "확인 필요")
-ORDER = ("중복 의심 전표", "미지급금 예정 > 장부", "두 출처 출금", "통장 잔액 대조", "홈택스 대조", "계좌 없는 이체 거래처",
+ORDER = ("중복 의심 전표", "미지급금 예정 > 장부", "두 출처 출금", "통장 잔액 대조", "자료 대조", "홈택스 대조", "계좌 없는 이체 거래처",
          "변환 대조", "카드 전표", "정합성 점검", "입력 자료")
 
 
@@ -67,6 +67,14 @@ def convert_items(tables, cross, notes):
             out.append({"id": "카드|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
                         "title": "카드 전표를 아직 넣지 않은 달이 있음 (빠진 카드는 최근 3달 평균으로 예상)",
                         "detail": n.replace("[확인] ", ""), "choices": ["명세서 오면 확정 금액 넣음", "확인함"]})
+        if n.startswith("[확인] 원천세 장부·위하고") or n.startswith("[확인] 4대보험 직원분 장부·위하고"):   # 제안 3 (2026-11-14)
+            out.append({"id": "원천대조|%s" % _h(n), "kind": "세금 대조", "date": "", "amount": None, "vendor": "",
+                        "title": "장부 %s가 위하고 화면과 다름" % ("원천세" if "원천세" in n[:12] else "4대보험 직원분"),
+                        "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "차이 원인 확인함"]})
+        if n.startswith("[확인] 통장 줄만 있는 전표"):   # 2026-11-14: 적요 대신 계정으로 판단하려면 상대 계정 줄이 필요
+            out.append({"id": "통장만|%s" % _h(n), "kind": "전표 입력", "date": "", "amount": None, "vendor": "",
+                        "title": "통장 줄만 있는 전표가 있음 (상대 계정 줄을 넣어 주세요)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
     return out
 
 
@@ -339,6 +347,13 @@ def gather(app_dir, input_dir, asof):
     """-> {'items': [항목 + decision], 'convert_at': 변환 시각, 'counts': {...}}."""
     conv, when = _load_convert_items(input_dir)
     items = conv + _report_items(input_dir, asof) + bank_items(input_dir) + _integrity_items(app_dir)
+    from . import reconcile   # 자료 대조 '다름' 줄 (사용자 2026-11-14)
+    items += reconcile.check_items(input_dir)
+    try:   # 경영관리 보고 할 일 (사용자 2026-11-14 주제별 묶기): 결정·메모가 다음 보고 할 일 표에 붙는다
+        from . import mgmt_topics
+        items += mgmt_topics.check_items(os.path.join(app_dir, "출력"))
+    except Exception:
+        pass
     seen, uniq = set(), []
     for it in items:
         if it["id"] in seen:

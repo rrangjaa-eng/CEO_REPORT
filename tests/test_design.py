@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.areas import strip_ui  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
@@ -65,7 +66,7 @@ class TestReportFirstScreenLayout(unittest.TestCase):
 
 
 def first_screen(html):
-    return html.split("<div class='toc'>")[0]
+    return old_view(html).split("<div class='toc'>")[0]
 
 
 class TestAvailableFundsTable(unittest.TestCase):
@@ -109,14 +110,16 @@ class TestAvailableFundsTable(unittest.TestCase):
         self.assertRegex(html, r"<b class='neg'>[^<0-9]?5,000,000</b>")
 
     def test_estimate_shown_apart_not_in_big_number(self):
-        """예상 지급(확정 전)은 큰 숫자에서 빼지 않고 칸 아래 '예상 지급까지 빼면'·'예상 − … 별도'로 따로 적는다 (사용자 2026-11-05)."""
+        """예상 지급(확정 전)은 큰 숫자에서 빼지 않고 칸 아래 '프로젝트 지급 예상 등까지 빼면'·'예상 − … 별도'로 따로 적는다 (사용자 2026-11-05).
+        2026-11-14 D1·F7: 급여·세금·카드 같은 정기 지출 예상은 큰 숫자에 넣고, 작은 줄엔 예상 입금을 넣지 않는다."""
         R = self.R["weekly"]
         html = first_screen(render(R, "ceo"))
         for p in R["s2"]["periods"]:
-            f, a = p["firm"]["avail"], p["all"]["avail"]
+            f, a = p["firm"]["avail"], p["spend"]["avail"]
             self.assertIn("<b class='%s'>%s</b>" % ("neg" if f < 0 else "", "{:,}".format(f)), html)
             if a != f:
-                self.assertIn("예상 지급까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0 else "예상 지급까지 빼면 {:,}".format(a), html)
+                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
+                              else "프로젝트 지급 예상 등까지 빼면 {:,}".format(a), html)
 
     def test_unknown_balance_says_so(self):
         import shutil
@@ -283,9 +286,9 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "1,350,000,000"])
             self.assertEqual(ytd[3][6], "132,000,000")   # 기획본부 영업외 비용은 영업이익에 넣지 않음 (사용자 2026-11-04 정정)
             self.assertEqual(ytd[3][7:11], ["7.0명", "18,857,143", "0.6배", ""])   # 회사 줄엔 공통비 나눈 뒤 칸 없음 (사용자 2026-11-04)   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
-            # 누적 결산 끝: 세전 이익 − 법인세 예상(지방세 포함) = 당기순이익 예상 (사용자 2026-11-04)
+            # 누적 결산 끝: 세전 이익 − 법인세 예상(지방세 포함) = 당기순이익 예상 (사용자 2026-11-04). 2026-11-14 P3: '지금까지 이익 기준'
             self.assertEqual([[c for c in r if c] for r in ytd[-3:]], [
-                ["세전 이익", "135,000,000"], ["− 법인세 예상 (지방소득세 포함)", "14,850,000"], ["당기순이익 (예상)", "120,150,000"]])
+                ["세전 이익", "135,000,000"], ["− 법인세·지방소득세 (지금까지 이익 기준 예상)", "14,850,000"], ["당기순이익 (예상)", "120,150,000"]])
             self.assertNotIn("당기순이익", tables[0])   # 이번 달 표에는 넣지 않음
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
@@ -331,7 +334,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("지정일", rows[-1][0])
         self.assertIn(pick.isoformat(), rows[-1][0])
-        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][3])
+        self.assertIn("{:,}".format(last["spend"]["avail"]), rows[-1][3])   # 예상 입금은 넣지 않은 작은 줄 (2026-11-14 F7)
         self.assertEqual(len(same), 3)
 
     def test_no_pick_date_no_row(self):
@@ -451,7 +454,7 @@ class TestWeeklyOrderAndActiveProjects(unittest.TestCase):
         self.assertNotIn("예산 초과", ceo)   # 대표용엔 예산 언급 없음 (사용자 2026-11-03)
         self.assertIn("<b class='neg'>예산 초과 2건</b> · C사 전시 부스 <b class='neg'>53,000,000 초과</b>", render(R, "mgmt"))
         mgmt = render(R, "mgmt")
-        fs = mgmt.split("<div class='toc'>")[0]
+        fs = old_view(mgmt).split("<div class='toc'>")[0]
         ids = re.findall(r"<div class='prow' id='pj-(P\d+)'>", fs)
         # 완료 P26202·05는 남은 지급이 없어 빠진다. 완료 P26206은 금액 모르는 요청 줄이 남아 들어가고,
         # 준비 중이어도 카드 미결제가 있는 P26208은 들어간다
@@ -491,7 +494,7 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         # ⑥ 누적 실적(앞으로 들어올 매출 포함)은 3쪽에 통째로 (사용자 2026-11-04: 6번이 쪽에 걸치면 안 됨)
         self.assertIn(".fs.mon .sec.pgb{break-before:page}", mon)
         self.assertEqual(mon.count("<div class='sec pgb'><div class='q'>6."), 1)
-        self.assertIn("10월말 통장 잔액", mon)   # 1쪽 맨 위 한눈에 칸
+        self.assertIn("10월말 쓸 수 있는 돈", mon)   # 1쪽 맨 위 한눈에 칸 (2026-11-14 P5: 통장 잔액 → 쓸 수 있는 돈)
         # 결산 줄 이름은 빈 칸을 합친 칸에 써서 첫 칸(팀 이름)이 넓어지지 않는다
         self.assertIn("<tr class='mut nonop'><td colspan='6'>+ 영업외 수익", mon)
 

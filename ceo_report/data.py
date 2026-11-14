@@ -48,9 +48,13 @@ DEPT_ACCOUNT_KEYS = ["연월", "부서", "계정코드", "계정과목", "금액
 BOOK_BAL_FILE = "장부잔액.csv"
 BOOK_BAL_KEYS = ["기준일", "계좌명", "은행", "잔액"]
 BOOK_TXN_FILE = "장부입출금.csv"
+# 장부 읽기 알림 (변환.py, 2026-11-14 K2·K3): 지난 기수 파일을 못 읽음·분개장 빈 기간 등 [확인] 줄. 경영관리 '입력 자료 확인 필요'에 보인다
+BOOK_NOTE_FILE = "장부알림.csv"
+BOOK_NOTE_KEYS = ["알림"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
+SCHED_OPTIONAL = ["거래처코드"]   # 자금일정.csv 선택 칸 (2026-11-14): 없는 옛 파일도 그대로 읽는다. 새 파일·양식에는 넣는다
 TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
 
 # 지급 일정의 출처 파일과, 없으면 지급 금액·날짜를 알 수 없는 열. 이 파일이 없거나 이 열이 없으면
@@ -169,6 +173,13 @@ def load(folder):
             raw["입출금내역.csv"] = trows
             d.present["계좌잔액.csv"] = d.present["입출금내역.csv"] = True
 
+    npath = os.path.join(folder, BOOK_NOTE_FILE)   # 없으면 아무 말도 하지 않는다 (예전 변환·직접 넣은 입력)
+    if os.path.exists(npath):
+        for r in read_csv(npath, BOOK_NOTE_KEYS, iss, {})[0]:
+            text = (r.get("알림") or "").strip()
+            if text:
+                iss.add(BOOK_NOTE_FILE, "-", text.replace("[확인] ", "", 1))
+
     # 계좌잔액
     d.balances = []
     for r in raw["계좌잔액.csv"]:
@@ -202,6 +213,8 @@ def load(folder):
         s = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": "지급" if io == "출금" else io,  # '출금'도 지급으로 읽는다
              "amount": num(r.get("금액"), iss, r, "금액"), "firm": r.get("확정여부", "") == "확정",
              "cat": r.get("분류", "") or "미분류", "project": r.get("프로젝트번호", ""), "vendor": r.get("거래처", ""),
+             # 거래처코드 (선택 칸, 2026-11-14 사용자 "이름 말고 코드로"): 창에서 위하고 거래처를 고르면 같이 저장된다
+             "vendor_code": (r.get("거래처코드") or "").strip(),
              "basis": r.get("근거", ""), "memo": r.get("비고", ""), "source": "자금일정", "row": r}
         if not _check(iss, r, "입출금", s["io"], ["입금", "지급"]):
             continue
@@ -227,7 +240,8 @@ def load(folder):
                      "vendor": r.get("거래처", ""), "vendor_code": (r.get("거래처코드") or "").strip(),
                      "amount": num(r.get("금액"), iss, r, "금액"), "ym": r.get("대상월", ""),
                      "stamp": date(r.get("자료일"), iss, r, "자료일"), "state": r.get("상태", "") or "예정",
-                     "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r}
+                     "basis": r.get("근거", ""), "file": r.get("파일", ""), "row": r,
+                     "project": (r.get("프로젝트") or "").strip(), "origin": (r.get("원전표") or "").strip()}
                 if f["date"] is None or f["amount"] is None or f["stamp"] is None or f["io"] not in ("지급", "입금"):
                     iss.add(r["_file"], r["_line"], "예정일·입출금·금액·자료일 중 확인 불가 → 자금계획 전체를 쓰지 않음")
                     bad += 1
@@ -323,6 +337,9 @@ def load(folder):
                 d.tax.append({"kind": r.get("세목", ""), "period": r.get("대상기간", ""), "due": due,
                               "amount": num(r.get("금액"), iss, r, "금액"), "state": r.get("상태", "") or "예상",
                               "basis": r.get("근거", ""),
+                              # 2026-11-14: 이 줄을 계산한 장부 줄의 거래처코드 (자금계획서·자금일정 줄과 코드로 맞춘다)와 장부 기준일 (F3)
+                              "codes": tuple(c for c in (r.get("거래처코드") or "").split() if c),
+                              "book": date(r.get("장부기준일"), iss, r, "장부기준일"),
                               # 법인세 줄만 (2026-11-04): 과세표준·산출세액·기납부(중간예납 등 선납세금)
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,

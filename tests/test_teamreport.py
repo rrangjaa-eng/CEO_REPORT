@@ -107,7 +107,8 @@ class TestNumbers(TeamReportCase):
         self.assertEqual(a["left"], a["budget"] - a["paid"])
         self.assertEqual(T["up_missing"], 1)   # P26204 사전견적 없음
         self.assertIn("사전견적 또는 추정 예산이 없는 1건", page)
-        self.assertEqual(T["exp_rev"], T["tot"]["revenue"] + 300_000_000)
+        # 아직 매출로 안 잡힌 금액 = A사 사전견적 3억 + D사(사전견적 없음) 계약금액 5,000만 (2026-11-14 오후 점검 P2·K1: 예산과 같은 계산)
+        self.assertEqual(T["exp_rev"], T["tot"]["revenue"] + 300_000_000 + 50_000_000)
 
 
 class TestDocumentRules(TeamReportCase):

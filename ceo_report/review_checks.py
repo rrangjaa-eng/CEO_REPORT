@@ -61,7 +61,7 @@ def classify_duplicates(journal):
     """중복 의심 묶음을 장부로 더 따져 본다 (사용자 2026-11-05: 확인할 것이 최소한으로).
 
     정상으로 보는 것 (확인할 것에 올리지 않음):
-      · 적요나 프로젝트가 전표마다 다름 → 다른 물건·다른 행사
+      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표가 있으면 적요로)
       · 같은 거래처 같은 금액의 취소(−) 전표가 앞뒤 31일 안에 있음 → 취소 후 다시 발행
       · 전표 수만큼 같은 금액이 정산됨(미지급금 지급·외상매출금 입금) → 각각 실제로 오간 돈
     -> [(날짜, [전표번호], 금액, 판단 글, 정상 여부)] 금액 큰 순."""
@@ -77,8 +77,13 @@ def classify_duplicates(journal):
         memos = set(tuple(sorted(set(_sq(ln.get("memo")) for ln in slips[(day, n)]))) for n in nos)
         projs = set(tuple(sorted(set(_sq(ln.get("project_name")) for ln in slips[(day, n)]))) for n in nos)
         why, ok = "", False
-        if len(memos) > 1 or len(projs) > 1:
-            why, ok = "적요·프로젝트가 전표마다 다름 → 다른 거래로 봄", True
+        # 관리항목 프로젝트로 먼저 가림, 프로젝트 빈 전표가 있을 때만 적요로 (2026-11-14 사용자 "적요 대신 계정과목으로")
+        # 장부 줄에 증빙(계산서) 번호 칸은 없어 쓰지 않음
+        has_proj = bool(projs) and all(any(p) for p in projs)
+        if len(projs) > 1 and has_proj:
+            why, ok = "관리항목 프로젝트가 전표마다 다름 → 다른 거래로 봄", True
+        elif not has_proj and len(memos) > 1:
+            why, ok = "프로젝트 없음 · 적요가 전표마다 다름 → 다른 거래로 봄 (적요로 판단)", True
         elif sort:
             code, side = CONTROL[sort]
             other = "credit" if side == "debit" else "debit"
@@ -94,10 +99,10 @@ def classify_duplicates(journal):
             elif len(settled) >= len(nos):
                 why, ok = "같은 금액 %s %d번 → 각각 실제로 오간 돈으로 봄" % ("지급" if sort == "매입전표" else "입금", len(settled)), True
             else:
-                why = "적요·프로젝트 같음 · 같은 금액 %s %d번 (전표 %d건) → 이중 입력 가능성 높음" % (
-                    "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
+                why = "%s 같음 · 같은 금액 %s %d번 (전표 %d건) → 이중 입력 가능성 높음" % (
+                    "프로젝트" if has_proj else "적요", "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
         else:
-            why = "적요·프로젝트 같음 → 이중 입력 가능성"
+            why = ("프로젝트 같음" if has_proj else "적요 같음") + " → 이중 입력 가능성"
         out.append((day, nos, total, why, ok))
     return out
 
@@ -136,17 +141,28 @@ def duplicate_items(journal):
 
 
 def _bank_lines(journal, cash_codes):
-    """보통예금 줄: [(날짜, 금액, 거래처 정규화, 전표번호, '지급'|'입금')]. 대변은 출금(지급), 차변은 입금."""
+    """보통예금 줄: [(날짜, 금액, 거래처 정규화, 전표번호, '지급'|'입금', 거래처 이름들, 거래처코드들)]. 대변은 출금(지급), 차변은 입금.
+
+    거래처 이름들·코드들 = 그 전표 모든 줄(통장 줄 포함, 계정 무관)의 거래처 (2026-11-14 사용자 "적요·이름 대신 계정·거래처로"):
+    통장 줄에는 은행 이름만 있고 상대 줄(미지급금·선급금·선수금 등)에 진짜 거래처가 있는 전표도 맞춘다."""
+    from .wehago import norm_code
     codes = set(_sq(c) for c in cash_codes)
+    slips = collections.defaultdict(list)
+    for ln in journal:
+        if ln.get("date") is not None:
+            slips[(ln["date"], str(ln.get("no") or ""))].append(ln)
     out = []
     for ln in journal:
         if _sq(ln.get("account_code")) not in codes or ln.get("date") is None:
             continue
         vn = ln.get("vendor_norm") or norm_vendor(ln.get("vendor"))
+        mates = slips.get((ln["date"], str(ln.get("no") or ""))) or [ln]
+        names = frozenset(n for n in ((x.get("vendor_norm") or norm_vendor(x.get("vendor"))) for x in mates) if n)
+        vcodes = frozenset(c for c in (norm_code(x.get("vendor_code")) for x in mates if str(x.get("vendor_code") or "").strip()) if c)
         if (ln.get("credit") or 0) > 0:
-            out.append((ln["date"], ln["credit"], vn, str(ln.get("no") or ""), "지급"))
+            out.append((ln["date"], ln["credit"], vn, str(ln.get("no") or ""), "지급", names, vcodes))
         if (ln.get("debit") or 0) > 0:
-            out.append((ln["date"], ln["debit"], vn, str(ln.get("no") or ""), "입금"))
+            out.append((ln["date"], ln["debit"], vn, str(ln.get("no") or ""), "입금", names, vcodes))
     return out
 
 
@@ -186,6 +202,8 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
     rows, ok = util.read_csv(path, data.SCHEMA[SCHEDULE], util.Issues(), info)
     if not ok or info.get("missing"):
         return ["자금일정 정리: %s를 읽지 못해 그대로 둠" % SCHEDULE]
+    from .wehago import norm_code
+    has_code = any("거래처코드" in r for r in rows)   # 2026-11-14 선택 칸: 있으면 다시 쓸 때도 남긴다
     arc_path = os.path.join(input_dir, ARCHIVE)
     before = _used_before(arc_path)
     bank = [b for b in _bank_lines(journal, cash_codes) if b[0] <= book_date
@@ -202,20 +220,26 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         if io_kind not in EARLY_DAYS or day is None or not amount:
             continue
         vn = norm_vendor(r.get("거래처") or "")
+        vc = norm_code(r.get("거래처코드")) if str(r.get("거래처코드") or "").strip() else ""
         best = None
-        for k, (bday, bamt, bvn, bno, bio) in enumerate(bank):
+        for k, (bday, bamt, bvn, bno, bio, bnames, bcodes) in enumerate(bank):
             if k in used or bio != io_kind or bamt != abs(amount):
                 continue
             gap = (bday - day).days
-            if abs(gap) <= MATCH_DAYS:
-                if vn and bvn and vn != bvn:
+            if gap < -EARLY_DAYS[io_kind]:
+                continue   # 너무 일찍 움직인 돈은 다른 지급 (늦은 것은 장부 기준일까지 본다)
+            if vc and bcodes:   # 두 쪽에 거래처코드: 코드로만 (2026-11-14 사용자 "이름 말고 코드로")
+                same = vc in bcodes
+                if not same:
                     continue
-            elif -EARLY_DAYS[io_kind] <= gap:
-                if not (vn and bvn and vn == bvn):
+            else:               # 코드 없는 옛 줄: 전표 어느 줄이든 거래처 이름이 같으면 같은 거래처
+                same = bool(vn) and (vn == bvn or vn in bnames)
+                if abs(gap) <= MATCH_DAYS:
+                    if vn and bnames and not same:
+                        continue
+                elif not same:
                     continue
-            else:
-                continue
-            rank = (0 if vn and vn == bvn else 1, abs(gap))
+            rank = (0 if same else 1, abs(gap))
             if best is None or rank < best[0]:
                 best = (rank, k)
         if best is not None:
@@ -226,7 +250,7 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         if i not in hits:
             keep.append(r)
             continue
-        bday, _, _, bno, bio = bank[hits[i]]
+        bday, _, _, bno, bio, _, _ = bank[hits[i]]
         day = util.date(r.get("예정일"), util.Issues(), r, "예정일")
         when = "예정일 %d일 전" % (day - bday).days if bday < day - dt.timedelta(days=MATCH_DAYS) else (
             "예정일 %d일 뒤" % (bday - day).days if bday > day + dt.timedelta(days=MATCH_DAYS) else "")
@@ -234,7 +258,7 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "")))
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
-    cols = data.SCHEMA[SCHEDULE]
+    cols = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
     # 두 파일을 임시 파일로 다 만든 뒤 바꾼다: 한쪽만 바뀌어 줄이 사라지거나 두 번 옮겨지지 않게 (코덱스 검토 2026-11-14)
     tmp, arc_tmp = path + ".tmp", arc_path + ".tmp"
     try:

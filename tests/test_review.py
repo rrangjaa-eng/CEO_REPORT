@@ -459,7 +459,7 @@ def _kpi_sub(html, label):
     return re.sub(r"<[^>]+>", "", m.group(1)) if m else None
 
 
-FIRM_MIN = "최저 계산 잔액 · 확정 일정만"
+FIRM_MIN = "최저 계산 잔액 · 확정·정기 지출"
 ALL_MIN = "최저 계산 잔액 · 확정+추정"
 
 

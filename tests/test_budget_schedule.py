@@ -117,7 +117,9 @@ class TestBudgetEvents(unittest.TestCase):
         R = compute(load(SAMPLE), "weekly", ASOF)
         dec = [b for b in R["s2"]["buckets"] if b["type"] == "month" and b["from"].month == 12][0]
         R0 = compute(load(SAMPLE), "weekly", ASOF)
-        self.assertGreaterEqual(dec["out_est"], 7700000)
+        budget = sum(e["amount"] for e in R["events"] if e["source"] == "남은 예산" and e["date"] and dec["from"] <= e["date"] <= dec["to"])
+        self.assertGreater(budget, 0)
+        self.assertGreaterEqual(dec["out_est"], budget)   # 카드 추정 등 정기 지출 예상은 2026-11-14 D1부터 확정 칸 쪽
         self.assertEqual(R0["s2"]["buckets"][0]["label"], "1주차")
 
 

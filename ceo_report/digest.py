@@ -86,10 +86,10 @@ def lights(R, I=None):
     per = (s2.get("periods") or [])
     p = per[0] if per else None
     firm = p and p.get("firm", {}).get("avail")
-    allv = p and p.get("all", {}).get("avail")
+    spend = p and (p.get("spend") or {}).get("avail")   # 프로젝트 지급 예상 등까지 뺀 것 (A F2, 2026-11-14)
     out.append({"key": "cash", "name": "자금", "appx": [("s1", "B-1"), ("s2", "B-2")], "lv": lv,
                 "num": _eok(firm) if p else "미확인",
-                "sub": ("%s 여유 자금(확정). 예상 포함 %s" % (p["label"], _eok(allv))) if p else "여유 자금 계산 못 함",
+                "sub": ("%s 여유 자금. 프로젝트 지급 예상 등까지 빼면 %s" % (p["label"], _eok(spend))) if p else "여유 자금 계산 못 함",
                 "facts": [r["fact"] for r in rs]})
 
     # ② 프로젝트 예산 — 위험 분석 '프로젝트'

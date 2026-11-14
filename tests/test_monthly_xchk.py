@@ -26,6 +26,7 @@ for _p in (ROOT, HERE):
 import datetime as dt  # noqa: E402
 
 from ceo_report.calc import compute  # noqa: E402
+from ceo_report.areas import old_view  # noqa: E402
 from ceo_report.data import load  # noqa: E402
 from ceo_report.render import render  # noqa: E402
 from ceo_report.areas import strip_ui  # noqa: E402
@@ -34,8 +35,8 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-# 주간 보고와 calc.py 를 일부러 바꾼 마지막 커밋(인트라넷 승인 단계 = 종결·견적금액 기준, 2026-11-11). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "b48cdaf"
+# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(밤사이 통합: H 자료 대조·확장 0.9 #26 합침, 2026-11-14). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+BASELINE = "620653d"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
@@ -125,7 +126,7 @@ def summary_rows(page):
 
 def detail(pages):
     """상세 장(8번 포함)이 있는 판만: 대표 보고는 요약만 싣는다 (문서 1~2쪽, 사용자 2026-11-03)."""
-    return {"mgmt": pages["mgmt"]}
+    return {"mgmt": old_view(pages["mgmt"])}   # 주제별 묶기(2026-11-14): 예전 순서로 되돌려 봄
 
 
 def section8(page):
@@ -213,7 +214,7 @@ class TestMonthlySection(unittest.TestCase):
         for mode, page in detail(self.pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn("<a href='#a-s8' data-k='s8'>B-8 WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
+                self.assertIn("<a href='#a-xchk' data-k='xchk'>", self.pages["mgmt"])   # 영역 목록: 주제 7 위하고 대조 (2026-11-14)
 
     def test_section_8_comes_after_section_7(self):
         for page in detail(self.pages).values():
@@ -678,7 +679,7 @@ class TestMonthlyMissing(unittest.TestCase):
         for mode, page in detail(pages).items():
             with self.subTest(mode):
                 self.assertIn("<h2 id='s8'>8. WEHAGO 기준 대조</h2>", page)
-                self.assertIn("<a href='#a-s8' data-k='s8'>B-8 WEHAGO 기준 대조</a>", page)   # 영역 목록 (2026-11-11)
+                self.assertIn("<a href='#a-xchk' data-k='xchk'>", pages["mgmt"])   # 영역 목록: 주제 7 위하고 대조 (2026-11-14)
                 self.assertIn(NO_FILE_TEXT, section8_text(page))
                 self.assertNotIn("xchk-summary", page)
                 self.assertNotIn("xchk-detail", page)
@@ -817,6 +818,8 @@ class TestReportProbesMonthlyXchk(unittest.TestCase):
         from ceo_report import insights, gasu   # 가수금 갚을 시기도 CLI 가 붙인다 (2026-11-13)
         R["auto_facts"] = insights.read_facts(folder)
         R["gasu"] = gasu.for_report(folder, R)
+        from ceo_report import reconcile   # 자료 대조도 CLI 가 붙인다 (2026-11-14)
+        R["recon"], R["recon_rows"] = reconcile.for_report(folder)
         for mode in ("ceo", "mgmt"):
             self.assertEqual(STAMP.sub("", render(R, mode)), STAMP.sub("", pages[mode]))
 

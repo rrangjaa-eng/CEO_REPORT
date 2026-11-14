@@ -281,7 +281,7 @@ def _annual(a):
     stop = gate.check_dir(a.입력, today)   # 연간 대표 보고도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
     if stop:
         _say("연간 대표 보고를 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
-    A = annual.compute(a.입력, year, D.settings, D)
+    A = annual.compute(a.입력, year, D.settings, D, today)   # 연중이면 기준일까지 (끝난 달·작년 같은 기간)
     if A["Y"] is None:
         _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
         return 2
@@ -297,9 +297,9 @@ def _annual(a):
                 _say(_write_help(a.출력, e))
                 return 7
             continue
-        page = annual.render(A, mode)
-        if stop:
-            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고", blanked=False), 1)
+        page = annual.render(annual.blank_cash(A) if stop else A, mode)
+        if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
+            page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
             with open(base + ".html", "w", encoding="utf-8") as f:
                 f.write(page)
@@ -429,12 +429,20 @@ def main(argv=None):
     from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
     R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)
+    from ceo_report import mgmt_topics, checklist as _ck   # 경영관리 할 일 이월·결정 (사용자 2026-11-14 주제별 묶기)
+    R["todo_prev"] = mgmt_topics.load_previous(a.출력, kind, asof)
+    R["todo_decisions"] = _ck.read_decisions(a.입력)
     from ceo_report import gasu   # 가수금 갚을 시기 (사용자 2026-11-13: 전부 갚아도 자금에 영향 없는지) — 경영관리 B-2-1
     R["gasu"] = gasu.for_report(a.입력, R)
+    from ceo_report import reconcile   # 자료 대조 (사용자 2026-11-14): 1천만 원 넘게 어긋나면 대표 보고 맨 위 경고 한 줄, 상세는 경영관리
+    R["recon"], R["recon_rows"] = reconcile.for_report(a.입력)
     if kind == "weekly":
-        # 지난주 보고가 남긴 지급 예정 기록과 비교 (사용자 2026-11-03). 이번 기록은 보고서를 다 쓴 뒤 남긴다.
+        # 지난주 대비 (사용자 2026-11-14 '같은 범위로'): 지난 출금일 전에 만든 지난주 보고의 지급 예정 기록으로 그때 출금 목록
+        # 거래처를 골라 그 주 통장 출금과 견준다. 이번 기록은 보고서를 다 쓴 뒤 남긴다.
         from ceo_report.weekdiff import load_previous
-        R["week_prev"] = load_previous(a.출력, asof)
+        from ceo_report.calc import last_payday_out
+        R["week_prev"] = load_previous(a.출력, R["payday"] - dt.timedelta(days=7))
+        R["last_pay"] = last_payday_out(data.txns, R["payday"], R["week_prev"])
     label = "주간" if kind == "weekly" else "월간"
     browser = find_browser() if a.pdf == "만듦" else None
     made = []
@@ -536,6 +544,10 @@ def main(argv=None):
         digest.write_record(a.출력, R)
     except OSError as e:
         _say("경영관리 신호등 기록을 남기지 못했습니다 (다음 보고 '바뀜' 표시에 쓰임): %s" % e)
+    try:
+        mgmt_topics.write_record(a.출력, R)
+    except OSError as e:
+        _say("경영관리 할 일 기록을 남기지 못했습니다 (다음 보고 '이월' 표시에 쓰임): %s" % e)
     try:
         insights.write_record(a.출력, R)
     except OSError as e:

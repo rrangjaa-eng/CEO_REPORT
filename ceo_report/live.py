@@ -61,8 +61,8 @@ def changes(prev, now):
     if not prev:
         return []
     out = []
-    for key, name in (("bank", "통장 잔액"), ("avail_firm", "여유 자금 (%s, 확정)" % now.get("avail_label")),
-                      ("avail_all", "여유 자금 (%s, 예상 포함)" % now.get("avail_label")), ("tax_total", "곧 낼 세금·카드·보험·급여"),
+    for key, name in (("bank", "통장 잔액"), ("avail_firm", "여유 자금 (%s)" % now.get("avail_label")),
+                      ("avail_all", "여유 자금 (%s, 예상 입출금 모두 넣으면)" % now.get("avail_label")), ("tax_total", "곧 낼 세금·카드·보험·급여"),
                       ("re_first", "미처분이익잉여금 (이번 주총에서 처리할 돈)")):
         a, b = prev.get(key), now.get(key)
         if a != b:
@@ -142,8 +142,8 @@ def render(R, now_snap, diff, meta, auto_html=""):
     cards = [("통장 잔액", s1.get("total"), "쓸 수 없는 돈 %s원 포함" % _won(s1.get("restricted")), False)]
     if last:
         cards.append(("여유 자금 (%s까지)" % last["label"], last["firm"]["avail"],
-                      "확정된 돈만 · 최소 보유현금 %s원 뺌" % _won(s2.get("min_cash")), True))
-        cards.append(("예상 지급까지 빼면", last["all"]["avail"], "남은 예산·세금 예상·카드 추정 포함", False))
+                      "확정된 돈과 급여·세금·카드 예상 · 최소 보유현금 %s원 뺌" % _won(s2.get("min_cash")), True))
+        cards.append(("프로젝트 지급 예상 등까지 빼면", last["spend"]["avail"], "확정 안 된 지급까지 (예상 입금은 넣지 않음)", False))
     cards.append(("곧 낼 세금·카드·보험·급여", now_snap.get("tax_total"), "%d일 안" % TAX_DAYS, False))
     h.append("<div class='cards'>")
     for k, v, s, main in cards:
@@ -152,9 +152,9 @@ def render(R, now_snap, diff, meta, auto_html=""):
     h.append("</div>")
     if per:
         h.append("<section><h2>주별 여유 자금</h2><table><tr><th>기간</th><th>끝나는 날</th><th class='n'>들어올 돈</th>"
-                 "<th class='n'>나갈 돈</th><th class='n'>여유 자금 (확정)</th><th class='n'>예상까지 빼면</th></tr>")
+                 "<th class='n'>나갈 돈</th><th class='n'>여유 자금</th><th class='n'>프로젝트 지급 예상 등까지 빼면</th></tr>")
         for p in per:
-            f, a = p["firm"], p["all"]
+            f, a = p["firm"], p["spend"]
             h.append("<tr><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n%s'><b>%s</b></td>"
                      "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f["in"]), _won(f["out"]),
                                                        " neg" if f["avail"] is not None and f["avail"] < 0 else "", _won(f["avail"]), _won(a["avail"])))
