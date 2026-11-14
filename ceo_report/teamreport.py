@@ -253,7 +253,7 @@ def build(d, R, team):
         acc.sort(key=lambda a: -(a["total"] or 0))
 
     show_net = (d.settings or {}).get(NET_SETTING, "").strip() == "표시"
-    return {"team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
+    return {"asof": R.get("asof"), "team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
             "company_rate": company_rate, "cur": cur, "ytd": ytd, "cur_gap": cur_gap, "ytd_gap": ytd_gap,
             "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_avail_unknown": up_avail_unknown,
             "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp, "add_rev": add_rev, "miss_rev": miss_rev, "miss_gp": miss_gp, "closed_left": closed_left,
@@ -525,6 +525,9 @@ def render(T, today=None):
 
     y, m = int(ym[:4]), mon
     last_day = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)).day
+    ad = T.get("asof")   # 월 중간에 만들면 기간 끝 = 기준일 (2026-11-14 점검 P6: 11/14에 만들어도 11/30로 찍혔음)
+    if isinstance(ad, dt.date) and (ad.year, ad.month) == (y, m) and ad.day < last_day:
+        last_day = ad.day
     excl = "※ 이 자료의 판관비·이익 금액에는 <b>팀 급여가 제외</b>되어 있습니다." + (
         " 급여 반영 손익은 흑자·적자로만 표시합니다." if T["show_net"] else "")
     head = ("<div class='top'><span>%s · 경영관리</span><span>대외비 · %s 배포용</span></div>"

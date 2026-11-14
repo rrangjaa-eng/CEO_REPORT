@@ -617,3 +617,16 @@ class LoanPlanBudget(Base):
         self.put()
         B = self.WB()
         self.assertEqual(B["cash"]["roll_n"], before["cash"]["roll_n"] + 1)
+
+
+class TeamLeaderPeriodEnd(TeamReportCase):
+    """월 중간에 만든 팀장용: 기간 끝 = 기준일 (점검 P6). 말일에 만들면 말일."""
+    def test_mid_month_end_is_asof(self):
+        from ceo_report import teamreport
+        _, R, T, _ = self.make()
+        y, m = int(T["ym"][:4]), int(T["ym"][5:7])
+        T = dict(T, asof=dt.date(y, m, 14))
+        self.assertIn("%02d.14" % m, teamreport.render(T))
+        last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)).day
+        T2 = dict(T, asof=dt.date(y + (m == 12), m % 12 + 1, 3))
+        self.assertIn("~ %02d.%02d" % (m, last), teamreport.render(T2))
