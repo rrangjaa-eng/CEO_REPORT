@@ -56,7 +56,7 @@ def W(v):
 def _min_rate(input_dir, year):
     try:
         from . import taxlaw
-        return taxlaw.value(input_dir, year, "최저한세율")[0] or MIN_RATE
+        return taxlaw.checked(input_dir, year, "최저한세율", MIN_RATE)[0] or MIN_RATE
     except Exception:
         return MIN_RATE
 

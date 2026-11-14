@@ -965,7 +965,7 @@ def _project_bars(R, per, flagged_only=False, active_only=False):
     h = ["<div class='card brk'><div class='keys'><span><i style='background:var(--accent)'></i>집행액 (지급 완료)</span>"
          "<span><i style='background:#9db6e3'></i>집행 예정액 (지급요청·카드 미결제·미요청 계획)</span>"
          "<span><i style='background:var(--ink);width:2px'></i>원가 예산</span><span>%s</span></div>"
-         % esc("원가 예산 = 사전견적 × 원가율 %s · 공급가액 기준(카드는 총액)" % _rate_text(s3))]
+         % esc("%s · 공급가액 기준(카드는 총액)" % _rate_text(s3))]
     for P in shown:
         due = P["requested"] + P["card_unpaid"] + P["planned"]
         w1, w2 = P["paid_total"] / scale * 100, due / scale * 100
@@ -2694,13 +2694,10 @@ def _no_budget_note(s3):
 
 
 def _rate_text(s3):
-    rate = s3["cost_rate"]
-    if rate is None:
-        return "설정 오류"
-    text = "%g%%" % round(rate * 100, 6)
-    if s3.get("team_rate_n"):   # 팀 목표 수익률이 있는 팀은 원가율 = 1 − 목표 수익률 (사용자 2026-11-05)
-        text += " (팀 목표 수익률이 있는 팀은 100% − 목표 수익률)"
-    return text
+    """추정 예산 설명. 기본 원가율 숫자('70%')는 문서에 쓰지 않는다 (사용자 2026-11-05, 코덱스 검토 2026-11-14)."""
+    if s3["cost_rate"] is None:
+        return "추정 예산 = 설정 오류 (원가율 설정을 확인하세요)"
+    return "추정 예산 = 사전견적 × (1 − 팀 목표 수익률), 목표가 없는 팀은 기본 원가율"
 
 
 PAID_STATES = ("지급완료", "카드결제완료")
@@ -2911,7 +2908,7 @@ def _s3(R, per):
     tot = s3["total"]
     h = [_h2(3, "프로젝트별 예산·지급·남은 집행")]
     note_nb = _no_budget_note(s3)
-    h.append("<div class='scope'>%s</div>" % esc("전체 %d건 모두 표시 · 원가 예산 = 사전견적 × 원가율 %s" % (len(s3["projects"]), _rate_text(s3))
+    h.append("<div class='scope'>%s</div>" % esc("전체 %d건 모두 표시 · %s" % (len(s3["projects"]), _rate_text(s3))
                                                    + (" · " + note_nb if note_nb else "")))
     rows = []
     for P in s3["ranked"]:

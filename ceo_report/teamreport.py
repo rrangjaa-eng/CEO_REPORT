@@ -6,7 +6,7 @@
 - 수익률 = 매출총이익 ÷ 매출 (판관비 빼기 전). 매출·매출원가는 손익.csv WEHAGO 팀 줄(분개장 부서명, 전표일자 기준).
 - 프로젝트별은 손익.csv WEHAGO 프로젝트 줄을 프로젝트 목록의 팀으로 묶는다. 팀 합계와 다르면 그 차이를 한 줄로 따로 보인다.
 - 진행·예정 프로젝트: 사전견적 · 추정 예산(팀 목표 수익률 기준, calc) · 집행액 · 잔여(추정 예산 − 집행액). 원가율 숫자는 쓰지 않는다.
-- 문서에 자료 출처(위하고·분개장 등)는 쓰지 않는다 (사용자 2026-11-05).
+- 문서 머리에 계산에 쓴 자료의 날짜 한 줄 ('사용한 자료: 분개장 날짜 · 자금계획서 날짜', 사용자 2026-11-14 결정. 11/5 '출처 문구 없음'을 바꿈).
 모르는 값은 0이 아니라 '미확인'.
 """
 import datetime as dt
@@ -21,7 +21,8 @@ LOW_GAP = 4.0   # 누계 프로젝트 수익률이 팀 목표 수익률보다 �
 
 
 def esc(v):
-    return html.escape("" if v is None else str(v))
+    from .util import esc as _esc   # 주민번호 모양은 가린다 (2026-11-14 코덱스 검토)
+    return _esc("" if v is None else str(v))
 
 
 def W(v):
@@ -94,7 +95,7 @@ def build(d, R, team):
             return _sum(r[key] for r in rows)
         return 0 if m in company_months else None   # 회사 줄이 있는 달에 팀 줄이 없으면 그 달 팀 전표 없음
 
-    dept = [r for r in (d.dept or []) if r["dept"] == team]
+    dept = [r for r in (d.dept or []) if "".join(str(r["dept"] or "").split()) == "".join(team.split())]   # 띄어쓰기 달라도 같은 부서
     dept_months = set(r["ym"] for r in (d.dept or []))
 
     def dept_cell(m, key):
@@ -184,7 +185,7 @@ def build(d, R, team):
         e = _event_date(P_.get("event_date"))
         if e is None or str(e.year) != year:
             continue
-        paid = P_.get("paid_total")
+        paid = None if P_.get("unknown_cost") else P_.get("paid_total")   # 금액 모르는 집행이 있으면 집행액·잔여는 '미확인' (코덱스 검토 2026-11-14)
         up.append({"id": P_["id"], "name": P_.get("name", ""), "client": P_.get("client", ""), "event": P_.get("event_date", ""),
                    "date": e, "estimate": P_.get("estimate"), "budget": P_.get("budget"), "paid": paid,
                    "left": _sub(P_.get("budget"), paid)})
@@ -199,7 +200,7 @@ def build(d, R, team):
 
     acc = None
     if getattr(d, "dept_accounts", None) is not None:
-        rows = [r for r in d.dept_accounts if r["dept"] == team and r["ym"] in months]
+        rows = [r for r in d.dept_accounts if "".join(str(r["dept"] or "").split()) == "".join(team.split()) and r["ym"] in months]
         names, order = {}, []
         for r in rows:
             if r["code"] not in names:
@@ -502,6 +503,9 @@ def write_all(d, R, out_dir, today=None):
         T = build(d, R, team)
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
         page = render(T, today)
+        from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-14)
+        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div><div class='excl'>"
+                            % esc(gate.sources_line(R)), 1)
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)

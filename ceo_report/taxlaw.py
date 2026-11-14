@@ -172,6 +172,12 @@ def value(input_dir, year, key, today=None):
     return v, v is not None and st == "자료확인", "%s · %s" % (st, why)
 
 
+def checked(input_dir, year, key, fallback=None):
+    """-> (값, 확인됨). 확인 안 된 값은 계산에 쓰지 않고 fallback 을 준다 (코덱스 검토 2026-11-14: 설명대로 막음)."""
+    v, ok, _ = value(input_dir, year, key)
+    return (v if ok and v is not None else fallback), bool(ok and v is not None)
+
+
 def _day(text):
     try:
         return dt.date.fromisoformat(str(text).strip()[:10])

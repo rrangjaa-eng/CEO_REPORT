@@ -9,8 +9,9 @@ import html
 from . import insights
 
 
-def esc(t):
-    return html.escape(str(t if t is not None else ""))
+def esc(v):
+    from .util import esc as _esc   # 주민번호 모양은 가린다 (2026-11-14 코덱스 검토)
+    return _esc("" if v is None else str(v))
 
 
 def W(v, empty="-"):

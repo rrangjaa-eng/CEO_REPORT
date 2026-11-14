@@ -26,16 +26,20 @@ async function show() {
   $("ymsg").innerHTML = yearEndLog.slice(0, 2).map((c) => `연말정산 ${c.at.slice(5, 16)} · ${c.screen || c.code} · ${c.file}`).join("<br>");
   $("hmsg").innerHTML = hrLog.slice(0, 2).map((c) => `인사·급여 ${c.at.slice(5, 16)} · ${c.screen || c.code} · ${c.file}`).join("<br>");
   $("cmsg").innerHTML = closingLog.slice(0, 2).map((c) => `결산 ${c.at.slice(5, 16)} · ${c.screen || c.code} · ${c.file}`).join("<br>");
+  const {booksLog} = await chrome.storage.local.get("booksLog");
+  $("bmsg").innerHTML = booksLog ? `마지막: ${booksLog.at.slice(5, 16)} · ${booksLog.done.length}개 화면 (${booksLog.seconds}초)` + (booksLog.same ? ` · ${booksLog.same}개는 바뀐 것 없음` : "")
+    + (booksLog.fails.length ? `<br><span class="err">${booksLog.fails.join("<br>")}</span>` : "") : "아직 받은 적 없음";
+  if (status.progress && /^결산·인사급여/.test(status.progress)) $("bmsg").innerHTML += `<br>${status.progress}`;
   if (status.error) $("pmsg").innerHTML += `<br><span class="err">${status.error}</span>`;
 }
 
 async function run(btn, msgId, label, message) {
-  $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = $("ye").disabled = true;
+  $("books").disabled = $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = $("ye").disabled = true;
   $(msgId).textContent = label;
   const timer = setInterval(show, 2000);
   const r = await chrome.runtime.sendMessage(message);
   clearInterval(timer);
-  $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = $("ye").disabled = false;
+  $("books").disabled = $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = $("ye").disabled = false;
   await show();
   if (r && r.parts) for (const [k, p] of Object.entries(r.parts)) if (p && p.same) $(msgId).innerHTML += `<br>${k}: 바뀐 것 없음`;
   if (r && r.same) $(msgId).innerHTML += "<br>바뀐 것 없음 — 새 파일 만들지 않음";
@@ -43,6 +47,7 @@ async function run(btn, msgId, label, message) {
 }
 
 $("all").onclick = () => run("all", "amsg", "분개장 → 자금계획 차례로 받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다.", {type: "collectAll", months: +$("months").value});
+$("books").onclick = () => run("books", "bmsg", "받는 중… 위하고 화면이 1~2분 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectBooks"});
 $("journal").onclick = () => run("journal", "jmsg", "받는 중… (1분 안쪽)", {type: "collectNow"});
 $("plan").onclick = () => run("plan", "pmsg", "받는 중… 위하고 화면이 잠깐 앞에 떴다 닫힙니다. 끝날 때까지 다른 탭으로 옮기지 마세요.", {type: "collectPlan", months: +$("months").value});
 $("closing").onclick = () => run("closing", "cmsg", "이 화면에서 [조회]를 누르고 15초 동안 받는 중… 화면을 닫지 마세요.", {type: "collectClosing"});

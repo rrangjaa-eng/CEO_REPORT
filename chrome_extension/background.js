@@ -57,7 +57,9 @@ async function writeOut(fname, text) {
   return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
 }
 
-// 내용(hashSource)이 지난번과 같고 이미 저장 폴더에 들어가 있으면 저장하지 않는다.
+// 내용(hashSource)이 지난번과 같고, 오늘 이미 지금 저장 폴더에 저장했으면 다시 저장하지 않는다.
+// 날이 바뀌면 같은 내용이라도 하루 한 번은 새로 저장한다 (2026-11-14 코덱스 검토: 자금계획 내용이 7일 동안 안 바뀌면
+// 프로그램은 파일의 받은 날짜만 보고 '오래된 자료'로 보고를 막았다). 저장 폴더를 바꿨으면 같은 내용도 새 폴더에 저장한다.
 async function saveFile(kind, file, hashSource, summary) {
   const s = stamp();
   const hash = await sha(hashSource);
@@ -65,8 +67,10 @@ async function saveFile(kind, file, hashSource, summary) {
   const prev = (await chrome.storage.local.get(key))[key];
   // 같은 내용이라도 지금 저장 폴더에 아직 안 들어갔으면(예전 다운로드 폴더 저장·허용 기다림) 다시 저장한다
   const dir = await getFolder();
-  const placed = prev && (dir ? prev.where === "위하고 폴더" : !!prev.where && prev.where !== "허용 기다림");
-  if (prev && prev.hash === hash && placed) {
+  const dirName = dir ? (dir.name || "") : "";
+  const placed = prev && (dir ? prev.where === "위하고 폴더" && (prev.dirName || "") === dirName : !!prev.where && prev.where !== "허용 기다림");
+  const sameDay = prev && String(prev.saved || "").slice(0, 10) === s.iso.slice(0, 10);
+  if (prev && prev.hash === hash && placed && sameDay) {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
     await setStatus({[kind]: info, error: ""});
@@ -75,7 +79,7 @@ async function saveFile(kind, file, hashSource, summary) {
   file["수집시각"] = s.iso;
   const fname = `${s.ymd6} ${kind} 자동수집.json`;
   const where = await writeOut(fname, JSON.stringify(file));
-  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, changed: !!prev}, summary);
+  const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, dirName, changed: !!prev && prev.hash !== hash}, summary);
   await chrome.storage.local.set({[key]: info});
   await setStatus({[kind]: info, error: ""});
   return {saved: true, file: fname, where};
@@ -137,6 +141,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     collectClosing(prefix).then(reply, (e) => reply({error: String(e.message || e)}));
     return true;
   }
+  if (msg.type === "collectBooks") {
+    collectBooks().then(reply, (e) => reply({error: String(e.message || e)}));
+    return true;
+  }
   if (msg.type === "openSaver") { openSaver(); return; }
   if (msg.type === "collectNow") {
     collectJournal().then(reply, (e) => reply({error: String(e.message || e)}));
@@ -159,9 +167,9 @@ async function findSmartaTab() {
 
 // 자금계획은 searchDate 없이 열어야 '0. 계획월' 보기(달 단위 조회)로 열린다.
 // 열린 SmartA 탭 주소의 회사 값(cno·cd_com…)을 그대로 쓰고 화면 번호(그리고 필요하면 기수·연도)만 바꾼다.
-function screenUrl(fromUrl, screen, year) {
+function screenUrl(fromUrl, screen, year, mod = "account") {
   const u = new URL(fromUrl);
-  const m = u.hash.match(/^#\/smarta\/account\/[A-Z0-9]+(\?.*)$/);
+  const m = u.hash.match(/^#\/smarta\/(?:account|humanresource)\/[A-Z0-9]+(\?.*)$/);
   if (!m) return null;
   let q = m[1];
   if (year) {
@@ -173,7 +181,7 @@ function screenUrl(fromUrl, screen, year) {
          .replace(/([?&]searchData=)\d+/, `$1${year}0101${year}1231`)
          .replace(/[?&]searchDate=\d+/, "");
   }
-  return `${u.origin}/#/smarta/account/${screen}${q}`;
+  return `${u.origin}/#/smarta/${mod}/${screen}${q}`;
 }
 
 function waitLoaded(tabId, ms) {
@@ -302,7 +310,7 @@ const CLOSING_MS = 15000;
 // 공제 항목을 다음 해 연말정산 예상·매달 원천세(간이세액표 공제대상가족 수)에 쓴다.
 // 직원 개인정보: 원본은 사용자 PC 저장 폴더에만 두고, 프로그램은 생년월일·입퇴사일·급여 항목만 읽는다 (주민번호 뒷자리는 쓰지 않음).
 async function collectClosing(prefix = "결산") {
-  if (pending || planRun || closingRun) return {error: "이미 받는 중입니다"};
+  if (pending || planRun || closingRun || booksRun) return {error: "이미 받는 중입니다"};
   const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
   if (!tab || !/^https:\/\/smarta\.wehago\.com\//.test(tab.url || "")) {
     return {error: {"인사": "위하고 SmartA 에서 사원등록·급여자료입력·사업소득·기타소득 화면 중 하나를 열고, 조회 조건을 고른 뒤 이 단추를 누르세요.",
@@ -329,6 +337,77 @@ async function collectClosing(prefix = "결산") {
   log.unshift({at: s.iso, screen: ack.screen, code: ack.code, file: r.file || "(바뀐 것 없음)", where: r.where || ""});
   await chrome.storage.local.set({[logKey]: log.slice(0, 8)});
   return Object.assign(r, {screen: ack.screen});
+}
+
+// 결산·인사급여 모두 받기 (사용자 2026-11-13: 화면마다 열고 [조회] 누르는 손일을 없앰).
+// 위하고 화면을 한 탭에 띄워 아래 화면을 차례로 열고 [조회]를 누른 뒤, 그 화면의 응답만 'YYMMDD 결산_재무상태표 자동수집.json' 처럼 저장한다.
+// 결산은 올해와 작년(결산 끝난 해) 두 해, 인사·급여는 올해. 위하고에서는 화면 열기·[조회]·'불러오시겠습니까' [확인]만 한다 (읽기 전용).
+// 연말정산현황은 작년 해 탭에서 '계속근무자' 쪽을 눌러 받는다. 사업/기타소득조회는 귀속년월 1~12월과 소득자 전체를 골라 [조회]한다.
+const AUTO_SCREENS = [
+  {prefix: "결산", mod: "account", code: "SACL0105", name: "재무상태표", years: [0, -1]},
+  {prefix: "결산", mod: "account", code: "SACL0108", name: "이익잉여금처분계산서", years: [0, -1]},
+  {prefix: "결산", mod: "account", code: "SAAS0107", name: "고정자산관리대장", years: [0]},
+  {prefix: "인사", mod: "humanresource", code: "SWPM0108", name: "사원등록", years: [0], onOpen: true},
+  {prefix: "인사", mod: "humanresource", code: "SWSA0105", name: "월별급상여수당지급현황", years: [0, -1]},
+  // 사업·기타소득조회: 귀속년월(1~12월)과 소득자(코드도움에서 전체 체크)를 채워야 조회된다 (2026-11-13 실제 화면 확인)
+  {prefix: "인사", mod: "humanresource", code: "SWBU0103", name: "사업소득조회", years: [0, -1], fill: "earners"},
+  {prefix: "인사", mod: "humanresource", code: "SWET0107", name: "기타소득조회", years: [0, -1], fill: "earners"},
+  // 소득자별 근로소득원천징수부: 사원마다 줄을 눌러 달별 소득세·지방소득세를 받는다 (세무: 연말정산 환급·추가 납부 예상)
+  {prefix: "인사", mod: "humanresource", code: "SWYM0107", name: "소득자별근로소득원천징수부", years: [0, -1], fill: "rows"},
+  // 연말정산현황: 작년 해로 열면 '계속근무자' 쪽이 정산년월(작년 1월~올해 2월)을 스스로 채워 조회한다 (2026-11-13 실제 화면 확인)
+  {prefix: "연말정산", mod: "humanresource", code: "SWYM0102", name: "연말정산현황", years: [-1], tab: "계속근무자 연말정산현황"},
+];
+const SCREEN_MS = 15000;   // 응답을 기다리는 시간 (사원 줄 누르기는 따로 사원당 8초까지)
+let booksRun = false;
+
+async function collectBooks() {
+  if (pending || planRun || closingRun || booksRun) return {error: "이미 받는 중입니다"};
+  const src = await sourceTab();
+  const base = +((new URL(src.url).hash.match(/[?&]yminsa=(\d{4})/) || [])[1]) || new Date().getFullYear();
+  booksRun = true;
+  const t0 = Date.now();
+  const done = [], fails = [];
+  const [prev] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  try {
+    for (const dy of [0, -1]) {   // 해마다 탭 하나 (기수·연도는 주소로 처음 열 때만 바뀜)
+      const year = base + dy;
+      const list = AUTO_SCREENS.filter((x) => x.years.includes(dy));
+      const first = list[0];
+      const url = screenUrl(src.url, first.code, year, first.mod);
+      if (!url) { fails.push(`${year}: SmartA 화면 주소에서 기수를 찾지 못함`); continue; }
+      // 그림 표·안내 창은 숨은 탭에서 그리지 않을 수 있어 받는 동안만 앞에 띄운다 (자금계획과 같음)
+      const tab = await chrome.tabs.create({url, active: true, windowId: prev ? prev.windowId : undefined});
+      await waitLoaded(tab.id, 30000);
+      for (const sc of list) {
+        await setStatus({progress: `결산·인사급여: ${year} ${sc.name} 받는 중…`});
+        let r;
+        try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, onOpen: !!sc.onOpen, tab: sc.tab || "", fill: sc.fill || "", year, ms: SCREEN_MS}); }
+        catch (e) { r = null; }
+        if (!r || (r.v || 0) < 6) {
+          fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요");
+          break;
+        }
+        if (!r.ok) { fails.push(`${year} ${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : (sc.onOpen || r.clicked ? "" : (sc.tab ? ` ('${sc.tab}' 못 찾음)` : " ([조회] 버튼 못 찾음)")))); continue; }
+        const kind = `${sc.prefix}_${sc.name}` + (dy ? `_${year}` : "");
+        const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
+                      "자동": true, "응답수": r.got.length, "응답": r.got};
+        const saved = await saveFile(kind, file, JSON.stringify(r.got), {rows: r.got.length, screen: sc.name});
+        done.push({kind, file: saved.file || "(바뀐 것 없음)", same: !!saved.same});
+      }
+      try { await chrome.tabs.remove(tab.id); } catch (e) { /* 이미 닫힘 */ }
+      if (fails.some((f) => f.startsWith("확장 파일"))) break;
+    }
+  } finally {
+    booksRun = false;
+    if (prev) { try { await chrome.tabs.update(prev.id, {active: true}); } catch (e) { /* 닫힘 */ } }
+  }
+  const s = stamp();
+  const log = {at: s.iso, seconds: Math.round((Date.now() - t0) / 1000), done: done.map((d) => d.kind), same: done.filter((d) => d.same).length, fails};
+  await chrome.storage.local.set({booksLog: log});
+  await setStatus({progress: ""});
+  const r = {done: done.length, same: done.filter((d) => d.same).length, files: done};
+  if (fails.length) r.error = fails.join(" / ");
+  return r;
 }
 
 chrome.runtime.onInstalled.addListener(() => { chrome.alarms && chrome.alarms.clearAll(); });

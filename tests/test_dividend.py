@@ -182,7 +182,14 @@ class Advise(unittest.TestCase):
                {"kind": "법인지방소득세", "due": dt.date(2027, 4, 30), "amount": 5_000_000}]
         s = dict(S, tb={"total": 20_000_000})
         A = dv.advise(R(100_000_000, tax=tax), s, {"best": 90_000_000}, ready())
-        self.assertEqual(A["amount"], 67_000_000)   # 1억 − (5천만−2천만) − (5백만−2백만)
+        self.assertEqual(A["amount"], 65_000_000)   # 1억 − (5천만−2천만) − 5백만 (지방소득세는 감면 없음, 코덱스 검토 11/14)
+
+    def test_taxbreak_not_cut_twice(self):
+        tax = [{"kind": "법인세", "due": dt.date(2027, 3, 31), "amount": 30_000_000,
+                "basis": "과세표준 … → 감면·공제 뒤 30,000,000 + 농어촌특별세 0 − 중간예납 등 0"}]
+        s = dict(S, tb={"total": 20_000_000})
+        A = dv.advise(R(100_000_000, tax=tax), s, {"best": 90_000_000}, ready())
+        self.assertEqual(A["amount"], 70_000_000)   # 법인세 예상이 이미 감면 뒤라 또 빼지 않음
 
     def test_checklist_requires_shareholders(self):
         d = tempfile.mkdtemp()

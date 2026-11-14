@@ -116,7 +116,7 @@ def build_table(books):
         kind = "분할" if "분할" in (ln.get("memo") or "") or "할부" in (ln.get("memo") or "") else ("일시" if "일시" in (ln.get("memo") or "") else "")
         out.append(dict(zip(KEYS, [LOAN_ROW + ln["date"].isoformat(), code, "|".join([_sq(ln.get("vendor")), mat, kind]),
                                    str(int(ln.get("debit") or 0)), str(int(ln.get("credit") or 0))])))
-    # 대출 연장 (2026-11-13 실제: 4/3 '대출연장보증료_기술보증기금대출_311244508383'): 적요의 대출 계좌번호로 대출을 찾아 연장 줄
+    # 대출 연장 (2026-11-13 실제: 4/3 '대출연장보증료_기술보증기금대출_123456789012'): 적요의 대출 계좌번호로 대출을 찾아 연장 줄
     loan_vendors = set(_sq(ln.get("vendor")) for ln in books.journal if _sq(ln.get("account_code")).startswith(LOAN_DETAIL_PREFIX))
     acct = {}
     for ln in books.journal:
@@ -486,7 +486,9 @@ def _fin_values(L, y, mon, cf_op=None, collect_days=None, inp=None, maturity_shi
                   if st == "만기 모름" else (v, bal, m_, k, cur, st) for v, bal, m_, k, cur, st in LD]
         E["loans"] = LD
         if maturity_shift and LD:
-            mv = sum(cur for v, bal, m_, k, cur, st in LD if not v.startswith(("가수", "대표")))
+            # 단기차입금(260)·유동성장기부채(264)는 이미 유동부채라 장기 대출(291·293)만 옮긴다 (코덱스 검토 2026-11-14)
+            long_v = set(x[2] for x in L.get("loans", []) if str(x[1]).startswith(("291", "293")))
+            mv = sum(cur for v, bal, m_, k, cur, st in LD if v in long_v and not v.startswith(("가수", "대표")))
             if mv:
                 cl += mv   # 결산일부터 1년 안에 갚을 장기 대출 → 결산 재무상태표에서 유동부채(유동성장기부채)
                 E["moved"] = mv

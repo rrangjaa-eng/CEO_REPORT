@@ -120,7 +120,7 @@ def check(input_dir, ym, holders=()):
 def _insurance(out, n, s, e, ym, year, total, rates, week):
     # 2) 4대보험 근로자 몫
     meal = sum(v for k, v in s["pay"].items() if "식대" in k)
-    taxable = total - min(meal, rates["식대비과세"][0] or 0)
+    taxable = total - min(meal, (rates["식대비과세"][0] or 0) if rates["식대비과세"][1] else 0)
     birth = _d(e.get("생년월일"))
     age = (dt.date(year, int(ym[5:]), 1) - birth).days // 365 if birth else None
     exp = {}
@@ -197,7 +197,9 @@ def yearend(input_dir, year, asof, holders=()):
     from . import taxlaw
     emps, slips, detail = load(input_dir)
     prev = last_yearend(input_dir, year)
-    meal_lim = taxlaw.value(input_dir, year, "식대비과세")[0] or 0
+    meal_lim, meal_ok = taxlaw.checked(input_dir, year, "식대비과세", 0)
+    meal_lim = meal_lim or 0
+    rate_ok = all(taxlaw.checked(input_dir, year, k)[1] for k in ("국민연금요율", "건강보험료율", "장기요양비율", "고용보험요율"))
     by = collections.defaultdict(list)
     for (m, n), s in slips.items():
         if m[:4] == str(year) and m <= asof.strftime("%Y-%m") and n not in holders:
@@ -207,7 +209,10 @@ def yearend(input_dir, year, asof, holders=()):
         k = len(ss)
         e = emps.get(n, {})
         left = _d(e.get("퇴사일"))
-        scale = 1.0 if (left and left.year == year) else 12.0 / k
+        join = _d(e.get("입사일"))
+        # 올해 들어온 사람은 입사한 달부터 12월까지만 (코덱스 검토 2026-11-14: 12달로 늘리면 연봉·세금이 부풀려짐)
+        span = 12 - (join.month - 1 if join and join.year == year else 0)
+        scale = 1.0 if (left and left.year == year) else max(span, k) / float(k)
         pay = sum(sum(s["pay"].values()) for s in ss)
         meal = sum(min(sum(v for kk, v in s["pay"].items() if "식대" in kk), meal_lim) for s in ss)
         gross = int((pay - meal) * scale)
@@ -216,8 +221,8 @@ def yearend(input_dir, year, asof, holders=()):
         totals = all(_only_totals(s) for s in ss)
         has_tax = any(any("소득세" in kk and "지방" not in kk for kk in s["ded"]) for s in ss)
         if totals:   # 위하고 월별 합계만 (사용자 2026-11-13): 4대보험 근로자 몫은 요율로 어림
-            r = lambda key: taxlaw.value(input_dir, year, key)[0] or 0
-            months = 12 if scale != 1.0 else k
+            r = lambda key: taxlaw.checked(input_dir, year, key, 0)[0] or 0
+            months = max(span, k) if scale != 1.0 else k
             cap = r("국민연금상한") or gross / float(months)
             pension = int(min(gross / float(months), cap) * months * r("국민연금요율") / 2)
             h = gross * r("건강보험료율") / 2
@@ -248,6 +253,12 @@ def yearend(input_dir, year, asof, holders=()):
             notes.append("위하고 월별 지급·공제 합계만 있음 — 4대보험은 요율로 어림, 원천징수한 소득세를 나눌 수 없어 환급·추가 납부는 모름")
         if not e and not P:
             notes.append("사원 정보·작년 연말정산 없음 — 부양가족 0명으로 봄")
+        if join and join.year == year and scale != 1.0:
+            notes.append("%d월 입사 — %d달치로 계산" % (join.month, max(span, k)))
+        if not meal_ok:
+            notes.append("식대 비과세 한도가 확인되지 않아 식대도 세금 붙는 돈으로 봄")
+        if totals and not rate_ok:
+            notes.append("4대보험 요율이 확인되지 않아 보험료를 빼지 않음 — 세금이 조금 크게 나옴")
         out.append({"name": n, "months": k, "gross": gross, "tax": int(tax * 1.1), "paid": None if paid is None else int(paid * 1.1),
                     "diff": None if paid is None else int((paid - tax) * 1.1), "notes": notes})
     return out

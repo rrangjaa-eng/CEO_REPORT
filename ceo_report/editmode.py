@@ -173,12 +173,20 @@ class Session(object):
             return False, "보고서 내용이 아님", None
         with self.lock:
             tmp = self.dst + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(page)
-            os.replace(tmp, self.dst)
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(page)
+                os.replace(tmp, self.dst)
+            except OSError as e:   # 파일이 열려 있거나 폴더가 없으면 화면에 알린다 (코덱스 검토 2026-11-14)
+                msg = "저장하지 못함 (%s) — 같은 파일이 열려 있으면 닫고 다시 저장하세요" % type(e).__name__
+                self.on_saved(None, msg)
+                return False, msg, None
             self.src = self.dst              # 다시 열면 고친 것부터
             pdf = os.path.splitext(self.dst)[0] + ".pdf"
-            err = self.make_pdf(self.dst, pdf)
+            try:
+                err = self.make_pdf(self.dst, pdf)
+            except Exception as e:
+                err = "%s: %s" % (type(e).__name__, e)
         if err:
             self.on_saved(None, "%s 저장함, PDF는 못 만듦: %s" % (os.path.basename(self.dst), err))
             return False, err, None

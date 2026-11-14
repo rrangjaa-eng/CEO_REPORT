@@ -60,7 +60,7 @@ class TestRunTask(unittest.TestCase):
         orig = 승인검토.run_collect
         승인검토.run_collect = fake_collect
         try:
-            rc, _ = app.run_task("승인검토", P, lambda s: None, asof="2026-11-02", collect=True,
+            rc, _ = app.run_task("인트라넷", P, lambda s: None, asof="2026-11-02", collect=True,
                                  credentials=lambda: (" 가상ID ", "가상비번"))
         finally:
             승인검토.run_collect = orig

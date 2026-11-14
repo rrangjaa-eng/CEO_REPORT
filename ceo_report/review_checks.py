@@ -89,7 +89,7 @@ def classify_duplicates(journal):
                       and (ln.get("vendor_norm") or norm_vendor(ln.get("vendor"))) == vn]
             cancel = [ln for ln in same_v if (ln.get(other) or 0) == -amt and amt and abs((ln["date"] - day).days) <= CANCEL_DAYS]
             settled = [ln for ln in same_v if (ln.get(side) or 0) == amt and amt and ln["date"] >= day]
-            if cancel:
+            if cancel and len(cancel) >= len(nos) - 1:   # 취소 1건은 한 번 다시 발행한 것만 설명 (코덱스 검토 2026-11-14)
                 why, ok = "취소(−) 전표 %s 있음 → 취소 후 다시 발행으로 봄" % ", ".join(sorted(str(c.get("no") or "") for c in cancel)), True
             elif len(settled) >= len(nos):
                 why, ok = "같은 금액 %s %d번 → 각각 실제로 오간 돈으로 봄" % ("지급" if sort == "매입전표" else "입금", len(settled)), True
@@ -235,24 +235,44 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
     cols = data.SCHEMA[SCHEDULE]
+    # 두 파일을 임시 파일로 다 만든 뒤 바꾼다: 한쪽만 바뀌어 줄이 사라지거나 두 번 옮겨지지 않게 (코덱스 검토 2026-11-14)
+    tmp, arc_tmp = path + ".tmp", arc_path + ".tmp"
     try:
-        new_arc = not os.path.exists(arc_path)
-        with open(arc_path, "a", encoding="utf-8-sig" if new_arc else "utf-8", newline="") as f:
-            w = csv.writer(f)
-            if new_arc:
-                w.writerow(cols + ["정리일", "정리 근거"])
-            for r, why in moved:
-                w.writerow([r.get(c, "") for c in cols] + [dt.date.today().isoformat(), why])
+        with open(path, "rb") as f:
+            before = f.read()
+        old_arc = b""
+        if os.path.exists(arc_path):
+            with open(arc_path, "rb") as f:
+                old_arc = f.read()
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        if not old_arc:
+            w.writerow(cols + ["정리일", "정리 근거"])
+        for r, why in moved:
+            w.writerow([r.get(c, "") for c in cols] + [dt.date.today().isoformat(), why])
+        with open(arc_tmp, "wb") as f:
+            f.write(old_arc or b"\xef\xbb\xbf")
+            f.write(buf.getvalue().encode("utf-8"))
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(cols)
         for r in keep:
             w.writerow([r.get(c, "") for c in cols])
-        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
             f.write(buf.getvalue())
         os.replace(tmp, path)
+        try:
+            os.replace(arc_tmp, arc_path)
+        except OSError:
+            with open(path, "wb") as f:   # 보관 파일을 못 바꾸면 자금일정도 되돌린다
+                f.write(before)
+            raise
     except OSError as e:
+        for t in (tmp, arc_tmp):
+            try:
+                os.remove(t)
+            except OSError:
+                pass
         return ["자금일정 정리: 파일을 고치지 못해 그대로 둠 (%s — 엑셀에서 열려 있으면 닫고 다시 변환)" % type(e).__name__]
     out = ["자금일정 정리: 통장에서 이미 나가거나 들어온 %d줄 %s → %s 로 옮김" % (
         len(moved), util.won(sum(abs(util.num(r.get("금액")) or 0) for r, _ in moved)), ARCHIVE)]

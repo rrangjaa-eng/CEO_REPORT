@@ -88,7 +88,8 @@ class Compute(Base):
         self.assertIn("목표 수익률", B["missing"])
         # 자금: 월말 = 월초 + 입금 − 지급 + 영업외
         c = B["cash"]
-        b = c["bal0"] - c["restricted"]
+        b = c["bal0"] - c["restricted"] + c["roll"]   # 지금 잔액 + 연말까지 입출금 예상 = 1월 월초 (2026-11-14)
+        self.assertEqual(c["start"], b)
         for i in range(12):
             b = b + c["cin"][i] - (c["cpay"][i] + B["sal"][i] + c["sga_pay"][i] + c["tax"][i]) + c["nio"][i]
             self.assertEqual(c["bal"][i], b)

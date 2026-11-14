@@ -56,7 +56,9 @@ class TestBudgetFollowsTeamTarget(unittest.TestCase):
         self.assertEqual(P["P26203"]["budget"], round(150_000_000 * 0.7))    # 기획2팀 목표 없음 → 70%
         self.assertEqual(P["P26208"]["budget"], round(20_000_000 * 0.7))     # 2027 행사, 2027 목표 없음 → 70%
         self.assertEqual(R["s3"]["team_rate_n"], 3)   # P26201·P26204·P26205 (P26204 는 사전견적이 없어 예산은 없지만 원가율은 팀 목표)
-        self.assertIn("원가율 70% (팀 목표 수익률이 있는 팀은 100% − 목표 수익률)", render(R, "mgmt"))
+        h = render(R, "mgmt")
+        self.assertIn("추정 예산 = 사전견적 × (1 − 팀 목표 수익률)", h)
+        self.assertNotIn("70%", h)
 
     def test_same_as_default_keeps_label(self):
         with open(os.path.join(self.folder, "팀목표.csv"), "w", encoding="utf-8-sig", newline="") as f:

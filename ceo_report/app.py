@@ -1,7 +1,7 @@
 """한 화면 프로그램의 일 (사용자 2026-11-03: 실행 파일 여러 개 말고 창 하나에서 버튼·입력으로).
 
 창(gui.py)은 이 함수들만 부른다. 창 없이도 시험할 수 있게 tkinter 를 쓰지 않는다.
-  · run_task: 변환 · 주간 · 월간 · 승인검토를 같은 프로세스에서 돌리고 화면에 찍을 글을 넘긴다
+  · run_task: 변환 · 주간 · 월간 · 인트라넷 가져오기를 같은 프로세스에서 돌리고 화면에 찍을 글을 넘긴다
   · add_schedule: 아직 장부에 없는 지출·입금 예정을 입력/자금일정.csv 에 한 줄 더한다 (가용자금에 바로 반영)
   · archive_old: 변환에 쓰지 않는 예전 WEHAGO 엑셀·자금계획서를 수집/위하고/지난자료 로 옮긴다
 """
@@ -20,7 +20,7 @@ from .util import date as parse_date
 
 ARCHIVE = "지난자료"
 SCHED_FILE = "자금일정.csv"
-TASKS = ("변환", "주간", "월간", "승인검토", "인트라넷", "자동")
+TASKS = ("변환", "주간", "월간", "인트라넷", "자동")   # 지급 승인 검토 화면은 뺌 (사용자 2026-11-04 불필요, 2026-11-14 확정)
 
 
 def program_dir():
@@ -98,8 +98,6 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
             raise ValueError("예산 연도는 4자리 (예: 2027)")
         return "예산", (day + (["--연도", y] if y else []) + ["--입력", paths.input, "--출력", paths.output]
                       + (["--확정", "함"] if task == "예산확정" else []))
-    if task == "승인검토":
-        return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect]
     if task == "인트라넷":   # 가져오기만 (사용자 2026-11-04: 승인 검토 화면은 만들지 않음)
         return "승인검토", day + ["--입력", paths.input, "--출력", paths.output, "--수집폴더", paths.collect, "--화면", "안함"]
     raise ValueError("모르는 작업: %s" % task)
@@ -399,6 +397,10 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
         cols = [c.strip() for c in first] or header
         if not set(["예정일", "입출금", "금액"]) <= set(cols):
             raise ValueError("자금일정.csv 머리글이 양식과 다릅니다 — 파일을 확인하세요")
+        lack = [c for c in ("확정여부", "거래처") if c not in cols]
+        if lack:   # 옛 파일에 넣으면 '확정'이 사라져 예상으로 읽힌다 (코덱스 검토 2026-11-14)
+            raise ValueError("자금일정.csv 머리글에 %s 칸이 없어 넣지 않았습니다 — 첫 줄을 양식(%s)대로 맞추세요"
+                             % ("·".join("'%s'" % c for c in lack), ",".join(header)))
         nl = "\r\n" if "\r\n" in text_now else "\n"
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])
@@ -447,13 +449,18 @@ def old_files(wehago_dir, asof):
                 out.append((n, "%s 더 새 파일이 있음" % kind))
     res = fundplan.load(wehago_dir)
     month_now = (asof.year, asof.month)
-    used = set()
+    used, past = set(), {}
     for ym, name, _ in res["months"]:
         y, m = int(str(ym)[:4]), int(str(ym)[5:7])
         if (y, m) < month_now:
-            out.append((name, "자금계획서 지난 달 (%s)" % ym))
+            past.setdefault(name, ym)
         else:
             used.add(name)
+    # 한 파일에 지난달·이번 달·다음 달이 함께 들어 있다(확장은 지난달부터 받음). 이번 달 이후에 쓰는 파일은 옮기지 않는다
+    # (2026-11-14 코덱스 검토: 지난달 줄 때문에 지금 쓰는 자금계획서까지 옮겨져 보고가 막혔음)
+    for name, ym in past.items():
+        if name not in used:
+            out.append((name, "자금계획서 지난 달 (%s)" % ym))
     month_names = set(name for _, name, _ in res["months"])
     for n in res["unused"]:
         if n in month_names or n in used:

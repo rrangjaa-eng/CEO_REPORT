@@ -83,7 +83,7 @@ TRANSFER = "계좌간이체"
 DEFAULT_SETTINGS = {
     "회사명": "회사명",
     "첫화면_프로젝트_표시수": "10",
-    "위험_최소보유현금": "50000000",
+    "위험_최소보유현금": "100000000",   # 규칙: 최소 보유현금 1억 (2026-11-14 코덱스 검토)
     "위험_미수경과일": "30",
     "위험_미발행경과일": "30",
     "위험_자료경과일": "7",
@@ -359,7 +359,8 @@ def load(folder):
         d.balances.append({"date": bdate, "account": "정기예금 " + (x["vendor"] or x["account"]), "bank": x["vendor"],
                            "balance": x["balance"], "restricted": x["balance"],
                            "reason": "정기예금 (만기 %s%s)" % (due.isoformat() if due else "확인 필요",
-                                                           " 추정" if due and "추정" in x.get("due_basis", "") else ""), "row": row, "release": due})
+                                                           " 추정" if due and "추정" in x.get("due_basis", "") else ""), "row": row, "release": due,
+                           "release_guess": bool(due and "추정" in x.get("due_basis", ""))})
 
     # 프로젝트
     d.projects = {}

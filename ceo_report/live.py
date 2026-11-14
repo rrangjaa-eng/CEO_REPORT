@@ -21,7 +21,8 @@ def _won(v):
 
 
 def _e(t):
-    return html.escape(str(t if t is not None else ""))
+    from .util import esc   # 주민번호 모양은 가린다 (2026-11-14 코덱스 검토)
+    return esc(str(t if t is not None else ""))
 
 
 def _eok(v):
@@ -156,7 +157,7 @@ def render(R, now_snap, diff, meta, auto_html=""):
             f, a = p["firm"], p["all"]
             h.append("<tr><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n%s'><b>%s</b></td>"
                      "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f["in"]), _won(f["out"]),
-                                                       " neg" if f["avail"] < 0 else "", _won(f["avail"]), _won(a["avail"])))
+                                                       " neg" if f["avail"] is not None and f["avail"] < 0 else "", _won(f["avail"]), _won(a["avail"])))
         h.append("</table></section>")
     # 세금 등
     taxes = sorted([t for t in (R.get("tax") or []) if t.get("due") and asof < t["due"] <= asof + dt.timedelta(days=TAX_DAYS)],
@@ -222,6 +223,9 @@ def build(input_dir, output_dir, asof=None, now=None):
     d = load(input_dir)
     R = compute(d, "weekly", asof)
     R["evid_month"] = getattr(d, "evid_month", None)
+    from . import insights as _ins, gate   # 자료가 막히면 자금 숫자를 비우고 경고만 (사용자 2026-11-14): 기록·화면 모두
+    R["auto_facts"] = _ins.read_facts(input_dir)
+    gate.blank_funds(R)
     snap = snapshot(R)
     # 이익잉여금 (사용자 2026-11-12: 분개장이 오면 자금·매입매출처럼 바로 반영)
     from . import surplus
@@ -242,7 +246,6 @@ def build(input_dir, output_dir, asof=None, now=None):
         meta += " · 지난 현황 %s" % hist[-1].get("at", "")
     # 자동 분석 13가지 (사용자 2026-11-12) — 지난 현황 때 일정과 비교해 '바뀐 이유'
     from . import insights, insights_render
-    R["auto_facts"] = insights.read_facts(input_dir)
     R["_invoices"] = d.invoices
     R["auto_prev"] = hist[-1].get("events") if hist else None
     R["auto_records"] = insights.load_records(output_dir)

@@ -1796,6 +1796,10 @@ def self_check(log_path):
         lines.append("파일: %s" % ", ".join(os.path.basename(f) for f in files))
         if rc == 0 and not any(f.endswith("_주간_대표보고.html") for f in files):
             rc = 9
+        from . import winstate   # '만들지 않음' 안내만 나왔으면 실패 (코덱스 검토 2026-11-14)
+        if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
+            lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
+            rc = 10
     except Exception as e:
         lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
         rc = 8

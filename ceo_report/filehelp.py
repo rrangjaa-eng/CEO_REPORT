@@ -90,7 +90,8 @@ def vat(journal, start, end):
              ("10", "세금계산서 수취분 — 일반 매입"), ("10고정", "세금계산서 수취분 — 고정자산 (칸 11)"),
              ("14", "그 밖의 공제 — 신용카드 수취분 일반 (칸 14, 명세서 41)"), ("14고정", "그 밖의 공제 — 신용카드 수취분 고정자산 (명세서 42)"),
              ("16", "공제받지 못할 매입세액 후보 (접대비 관련, 확인 필요)")]
-    rows = [(k.replace("고정", ""), n, box[k][0], box[k][1], "%d장" % box[k][2]) for k, n in names if box[k][2]]
+    box_no = {"10고정": "11", "14고정": "14"}   # 고정자산 매입은 신고서 칸 11 (2026-11-14 코덱스 검토: 10으로 나갔음)
+    rows = [(box_no.get(k, k), n, box[k][0], box[k][1], "%d장" % box[k][2]) for k, n in names if box[k][2]]
     out_tax = box["1"][1] + box["3"][1]
     in_tax = box["10"][1] + box["10고정"][1] + box["14"][1] + box["14고정"][1] - box["16"][1]
     return {"rows": rows, "check": check, "out": out_tax, "in": in_tax, "pay": out_tax - in_tax}

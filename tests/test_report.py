@@ -572,11 +572,11 @@ class TestSettingsAndKpi(Base):
         for name, make, line in cases:
             with self.subTest(name):
                 R = compute(load(make()), "weekly", ASOF)
-                self.assertEqual(R["settings_num"]["위험_최소보유현금"], 50_000_000)
+                self.assertEqual(R["settings_num"]["위험_최소보유현금"], 100_000_000)   # 기본값 1억 (코덱스 검토 2026-11-14)
                 self.assertEqual(R["settings_default"], {"위험_최소보유현금": "설정 비어 있음"})
-                self.assertIn(("설정.csv", line, "최소 보유현금 설정 비어 있음 → 기본값 50,000,000 사용"),
+                self.assertIn(("설정.csv", line, "최소 보유현금 설정 비어 있음 → 기본값 100,000,000 사용"),
                               R["s7"]["issues"])
-                self.assertIn("최소 보유현금 50,000,000원 · 기본값 사용(설정 비어 있음)",
+                self.assertIn("최소 보유현금 100,000,000원 · 기본값 사용(설정 비어 있음)",
                               _risk_part(render(R, "mgmt")))
                 self.assertIn("최소 보유현금 설정 비어 있음", section(render(R, "mgmt"), 7))
                 check_editions(self, R)
@@ -691,7 +691,8 @@ class TestProjectBudget(Base):
         self.assertEqual(s3["total"]["budget"], 465_500_000)
         self.assertEqual(s3["total"]["budget_missing"], 1)
         fs = first_screen(render(self.R, "mgmt"))
-        self.assertIn("원가 예산 = 사전견적 × 원가율 70%", fs)
+        self.assertIn("추정 예산 = 사전견적 × (1 − 팀 목표 수익률)", fs)
+        self.assertNotIn("70%", fs)
         self.assertIn("표시 6건 / 전체 8건", fs)
 
     def test_no_budget_reason_blank_estimate(self):

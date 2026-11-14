@@ -134,6 +134,12 @@ def compute(input_dir, R):
     s2 = R.get("s2") or {}
     if s2.get("start") is None:
         return {"ok": False, "why": "오늘 통장 잔액을 몰라 날마다 잔액을 계산하지 못함"}
+    end0 = _end(R)
+    unk = [e for e in s2.get("amount_unknown") or [] if e.get("io") == "out" and e.get("date") is not None and asof < e["date"] <= end0]
+    if s2.get("out_missing") or unk:
+        # 보는 기간 안에 금액을 모르는 지급이 있으면 '갚아도 괜찮다'고 말할 수 없다 (2026-11-14 코덱스 검토)
+        return {"ok": False, "why": "%s 금액을 모르는 지급이 있어 판단을 미룸 — 지급 금액을 확인한 뒤 다시 보세요"
+                % ("지급 자료가 빠져" if s2.get("out_missing") else "%s까지 %d건" % (end0.isoformat(), len(unk)))}
     floor = int(s2.get("min_cash") or 0)
     planned = sum(e.get("amount") or 0 for e in s2.get("dated") or [] if _is_gasu(e))
     rest = max(0, amt - planned)

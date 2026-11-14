@@ -11,13 +11,16 @@ import re
 
 KEEP_FROM = 5
 KEEP = 3
-_STAMP = re.compile(r" \((\d{2})-(\d{2}) (\d{2})시(\d{2})분 만듦\)$")
+_STAMP = re.compile(r" \((\d{2})-(\d{2}) (\d{2})시(\d{2})분(?:(\d{2})초)? 만듦\)$")
 
 
 def stamped(base, now=None):
-    """base(확장자 없는 경로) -> 만든 시각을 붙인 PDF 경로."""
+    """base(확장자 없는 경로) -> 만든 시각을 붙인 PDF 경로. 같은 분에 이미 있으면 초까지 붙여 앞 PDF 를 덮지 않는다 (코덱스 검토 2026-11-14)."""
     now = now or dt.datetime.now()
-    return "%s (%s 만듦).pdf" % (base, now.strftime("%m-%d %H시%M분"))
+    path = "%s (%s 만듦).pdf" % (base, now.strftime("%m-%d %H시%M분"))
+    if os.path.exists(path):
+        path = "%s (%s 만듦).pdf" % (base, now.strftime("%m-%d %H시%M분%S초"))
+    return path
 
 
 def same_report(base):
