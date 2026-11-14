@@ -35,7 +35,7 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
 # 주간 보고와 calc.py 를 일부러 바꾼 마지막 커밋(인트라넷 승인 단계 = 종결·견적금액 기준, 2026-11-11). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "b48cdaf"
+BASELINE = "e9005ca"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
