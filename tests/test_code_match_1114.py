@@ -229,3 +229,22 @@ class TestApplyMatching(unittest.TestCase):
         later = ev(D(2027, 2, 5), 30_000_000, "가상직원", source="자금일정")
         new, _ = fundplan.apply([later], [plan_ev("2026-11-05", 30_000_000, "가상직원", "이미 지급", "지급")], self.ASOF, 7)
         self.assertEqual(new, [later])
+
+
+class TestPlanMonthGap(unittest.TestCase):
+    """F8: 자금계획서가 보고 기간 일부 달만 있으면 그 기간 여유 자금을 비우고 대표용에도 한 줄."""
+
+    def R(self, months):
+        def per(label, end):
+            return {"label": label, "end": end, "firm": {"bal": 1, "low": 1, "low_date": end, "avail": 1},
+                    "all": {"bal": 1, "low": 1, "low_date": end, "avail": 1}}
+        return {"asof": D(2026, 10, 31), "fundplan": {"used": True, "months": months},
+                "s2": {"periods": [per("11월", D(2026, 11, 30)), per("12월", D(2026, 12, 31)), per("1월", D(2027, 1, 31))]}}
+
+    def test_missing_month_blanks_periods_that_reach_it(self):
+        from ceo_report import gate
+        R = self.R(["2026-10", "2026-11"])
+        note = gate.blank_plan_gaps(R)
+        self.assertIn("2026-12", note)
+        self.assertEqual([p["firm"]["avail"] for p in R["s2"]["periods"]], [1, None, None])
+        self.assertEqual(gate.blank_plan_gaps(self.R(["2026-10", "2026-11", "2026-12", "2027-01"])), "")
