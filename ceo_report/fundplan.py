@@ -45,6 +45,23 @@ def is_auto_plan_name(name):
     return not base.startswith("~$") and base.endswith(AUTO_PLAN_SUFFIX)
 
 
+# 자금계획 비고(rmk_fplan): '구분 - 거래처코드(10자리)-원전표일자(8자리)+순번(2자리)-[지급예정일:YYYY.MM.DD]-…'
+# (2026-11-14 PC 실제 파일 152줄 모두 이 모양, 코드는 늘 cd_trade 와 같음. 순번은 분개장 전표번호와 다름 → 날짜만 씀)
+RMK_ORIGIN_RE = re.compile(r"-\s*(\d{10})\s*-\s*(\d{8})\d{2}\s*-")
+
+
+def origin_of(remark, vendor_code):
+    """비고에서 원전표 일자 (거래처코드가 이 줄과 같을 때만) -> date | None."""
+    m = RMK_ORIGIN_RE.search(str(remark or ""))
+    if not m or m.group(1).lstrip("0") != str(vendor_code or "").lstrip("0"):
+        return None
+    s = m.group(2)
+    try:
+        return dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
+    except ValueError:
+        return None
+
+
 def parse_auto(path):
     """자동수집 자금계획(.json) -> [(달 res, 자료일)] (달마다 parse_cash 와 같은 모양, form '자동수집').
     받은 달(조회한달)만 ok (못 받은 달은 쓰지 않음 — 빠진 달을 0원으로 보지 않는다)."""
@@ -89,9 +106,11 @@ def parse_auto(path):
             bad += 1
             continue
         code = str(row[ix["cd_trade"]] or "").lstrip("0")
+        rmk = row[cols.index("rmk_fplan")] if "rmk_fplan" in cols and cols.index("rmk_fplan") < len(row) else ""
         items[(day.year, day.month)].append({"date": day, "cat": str(row[ix["nm_fitem"]] or ""),
                                              "vendor": str(row[ix["nm_trade"]] or ""),
-                                             "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount})
+                                             "vendor_code": code.zfill(6) if code else "", "io": io, "amount": amount,
+                                             "origin": origin_of(rmk, code)})
     out = []
     for mo in months:
         reason = ""
@@ -345,6 +364,8 @@ def load(folder):
                                 "분류": it["cat"], "거래처": it["vendor"], "거래처코드": it["vendor_code"],
                                 "금액": it["amount"], "대상월": ym, "자료일": stamp.isoformat(), "파일": n,
                                 "상태": "", "근거": ""})
+            if it.get("origin"):   # 원전표일: 자금계획.csv 칸에는 쓰지 않고 이번 대조에만 씀 (②, 2026-11-14)
+                out["rows"][-1]["원전표일"] = it["origin"].isoformat()
         sums = dict((io, sum(it["amount"] for it in res["items"] if it["io"] == io)) for io in ("out", "in"))
         out["notes"].append("%s %s: 지급 %d줄 %s원 · 입금 %d줄 %s원 (%s)" % (
             ym, n, sum(1 for it in res["items"] if it["io"] == "out"), "{:,}".format(sums["out"]),
@@ -423,6 +444,9 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
             # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
             lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+        if r.get("원전표일"):
+            # 이 돈을 만든 원전표(계산서·비용 전표) 날짜 전의 지급·입금은 이 줄의 것이 아니다 (비고의 원전표 일자, ②)
+            lo = max(lo, dt.date(*[int(x) for x in r["원전표일"].split("-")]))
         return due, lo
 
     def same_vendor(r, line):
