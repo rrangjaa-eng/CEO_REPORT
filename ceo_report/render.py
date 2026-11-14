@@ -2873,6 +2873,7 @@ def _s2(R):
         % (_won_or_unknown(s2["start"]), _bal_note(R["s1"]),
            " 부가세 미확인 %d건은 공급가액만 반영." % s2["vat_unknown_n"] if s2["vat_unknown_n"] else "")))
     h.extend(_fundplan_notes(R.get("fundplan")))
+    h.extend(_by_name_notes(R))
     if s2["in_missing"]:
         h.append("<div class='note'>%s</div>" % esc(
             "계산서 자료 없음(%s) — 계산서 입금예정(수금)이 빠진 채 입금 칸과 계산 잔액을 만듦. 입금이 빠졌으므로 "
@@ -2922,6 +2923,29 @@ def _s2(R):
              "프로젝트 지급요청은 공급가액+부가세(실제 출금액)로 반영. "
              "부가세가 비어 있으면 공급가액만 반영하고 ‘부가세 미확인’으로 표시.</div>")
     return "".join(h)
+
+
+def _by_name_notes(R):
+    """거래처코드가 없어 이름·금액으로 맞춘 줄 (경영관리용에만, 사용자 2026-11-14 "이름으로 맞추지 말고 코드로").
+    코드가 없는 옛 줄만 이름·금액으로 맞추므로, 그런 줄은 여기 모아 틀렸는지 볼 수 있게 한다."""
+    rows = []
+    for t in R.get("tax") or []:
+        if t.get("by_name") and t.get("matched"):
+            m = t["matched"]
+            rows.append([esc("세금 일정"), esc("%s %s" % (t["kind"], t["period"])), W(t.get("amount")),
+                         esc("%s %s %s" % (m.get("source") or "", d2s(m.get("date")), m.get("desc") or "")), W(m.get("amount"))])
+    F = R.get("fundplan") or {}
+    for x in F.get("matched") or []:
+        if x.get("by_name"):
+            o = x["old"]
+            rows.append([esc("자금계획서"), esc("%s %s" % (d2s(x["plan"]["date"]), x["plan"].get("desc") or "")), W(x["plan"]["amount"]),
+                         esc("%s %s %s" % (o.get("source") or "", d2s(o.get("date")), o.get("desc") or "")), W(o.get("amount"))])
+    if not rows:
+        return []
+    return ["<h3>이름으로 맞춤 (%d건 · 거래처코드가 없어 이름·금액으로 같은 건으로 봄)</h3>" % len(rows),
+            "<div class='note'>코드가 없는 옛 일정 줄만 이름·금액으로 맞춥니다. 다른 건이면 자금일정에서 거래처를 위하고 거래처로 다시 골라 "
+            "코드를 넣어 주세요.</div>",
+            table(["맞춘 쪽", "항목", "금액", "같은 건으로 본 일정", "일정 금액"], rows, num_cols=(2, 4))]
 
 
 def _fundplan_notes(F):
