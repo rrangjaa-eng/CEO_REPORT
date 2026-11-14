@@ -495,8 +495,8 @@ class TestPdfFailureMessage(unittest.TestCase):
                 mock.patch.object(cli, "to_pdf", return_value="PDF 실패 (브라우저가 파일을 만들지 않음)"):
             rc, out = run_report(self, ["주간", "--기준일", "2026-11-02", "--입력", SAMPLE])
         self.assertEqual(rc, 0)
-        self.assertIn("2026-11-02_주간_대표보고.pdf", out)
-        self.assertIn("2026-11-02_주간_경영관리보고.pdf", out)
+        self.assertRegex(out, r"2026-11-02_주간_대표보고 \(\d\d-\d\d \d\d시\d\d분 만듦\)\.pdf")   # 만든 시각 (2026-11-12)
+        self.assertRegex(out, r"2026-11-02_주간_경영관리보고 \(\d\d-\d\d \d\d시\d\d분 만듦\)\.pdf")
         self.assertIn("'PDF로 저장'", out)
 
     def test_timeout_is_korean(self):

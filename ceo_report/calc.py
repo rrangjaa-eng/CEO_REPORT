@@ -76,6 +76,23 @@ def _event_date(text):
 
 BUDGET_VAT = 0.1      # 남은 예산은 공급가 기준이므로 지급(현금)은 부가세 10%를 더한다 (적게 보이지 않게)
 DONE_STATES = ("완료", "완료(예전 인트라넷)")
+CEO_APPROVED = "대표이사"   # 프로젝트.csv 승인단계: 인트라넷에서 대표이사 승인까지 끝남 = 종결 (사용자 2026-11-11)
+
+
+def is_closed(P):
+    """끝난 프로젝트인가: 상태 칸이 완료이거나, 인트라넷에서 대표이사 승인(행사 뒤 결산)까지 끝남.
+    끝난 프로젝트의 남은 예산은 지급 예정으로 잡지 않는다 (원가가 예산보다 덜 든 차액이 계속 예상 지출로 남던 것)."""
+    return (P.get("state") or "").strip() in DONE_STATES or (P.get("approval") or "").strip() == CEO_APPROVED
+
+
+def revenue_basis(P):
+    """앞으로 들어올 매출·행사 후 미발행의 기준 금액 (공급가액). 대표이사 승인까지 끝난 프로젝트는 확정 견적금액,
+    그 밖에는 사전견적 (사용자 2026-11-11: 최종 정산이 사전견적보다 작으면 차액이 계속 '들어올 매출'로 남던 것)."""
+    if (P.get("approval") or "").strip() == CEO_APPROVED and P.get("quote") is not None:
+        return P["quote"]
+    return P.get("estimate")
+
+
 OLD_STATE = "완료(예전 인트라넷)"   # old_intranet.OLD_STATE: 원가·매출 줄 연결에만 쓰고 프로젝트 표·미발행·예상 매출에서 뺀다
 
 
@@ -267,7 +284,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # ───────────── 3. 프로젝트별 예산·지급 ─────────────
     proj = OrderedDict()
     for pid in d.project_order:
-        proj[pid] = _blank_proj(d.projects[pid], R["settings_num"]["예산_원가율"])
+        proj[pid] = _blank_proj(d.projects[pid], _cost_rate_of(d.projects[pid], R["settings_num"]["예산_원가율"],
+                                                             getattr(d, "team_targets", None) or {}, asof))
     unlinked_exec = []
     prior_exec = []
     for e in d.execs:
@@ -355,13 +373,12 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # D-54: 남은 예산 → 지급 예정 (완료 프로젝트 제외). 금액 미확인 원가가 있어 남은 예산을 모르면 0으로 넣지 않고 목록으로
     for P in plist:
         P["remain_due"], P["remain_cash"] = None, None
-        if (P.get("state") or "").strip() in DONE_STATES or P["budget"] is None:
+        if is_closed(P) or P["budget"] is None:
             continue
         if P["remain"] is not None and P["remain"] > 0:
             P["remain_cash"] = int(round(P["remain"] * (1 + BUDGET_VAT)))
             P["remain_due"] = budget_due(_event_date(P.get("event_date")), asof)
-    remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None
-                      and (P.get("state") or "").strip() not in DONE_STATES]
+    remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None and not is_closed(P)]
     by_team = OrderedDict()
     for P in sorted(plist, key=lambda P: P["team"]):
         t = by_team.setdefault(P["team"], {"team": P["team"], "n": 0, "budget": 0, "no_budget": 0, "expected": 0,
@@ -386,7 +403,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                "remain_unknown": remain_unknown, "by_team": list(by_team.values()),
                "unlinked": unlinked_exec, "unlinked_total": ue_tot,
                "prior": prior_exec, "prior_total": ssum(e["supply"] for e in prior_exec)[0],
-               "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n}
+               "cost_rate": R["settings_num"]["예산_원가율"], "no_budget_reasons": reason_n,
+               "team_rate_n": sum(1 for P in plist if P.get("cost_rate_source") == "팀 목표"
+                                 and P.get("cost_rate") != R["settings_num"]["예산_원가율"])}   # 기본과 다른 원가율을 쓴 프로젝트 수
     linked_lines = sum(len(P["lines"]) for P in plist)
     compare_only = 0 if INTRANET_IN_FUNDS else sum(1 for e in d.execs if from_intranet(e))
     counted = linked_lines + len(unlinked_exec) + compare_only + len(prior_exec)
@@ -790,6 +809,16 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "stale": stale_accounts,
     }
     R["targets"] = {t: v for (y, t), v in (getattr(d, "team_targets", None) or {}).items() if y == ym[:4]}
+    # 예산 대비 (사용자 2026-11-10): 그 해 확정 예산이 있을 때만. 실적 = 손익 팀 줄 달별 (WEHAGO 우선)
+    from .budget import compare as budget_compare
+    src0 = next(iter(pl_out.values()), None) if pl_out else None
+    act = {}
+    for m_, rows_ in (src0 or {}).get("by_month", []):
+        for r_ in rows_:
+            if r_["unit"] == "팀" and r_["cur"]:
+                act.setdefault(r_["target"], []).append((int(m_[5:7]), r_["cur"]["revenue"], r_["cur"]["gp"]))
+    R["budget_cmp"] = budget_compare(getattr(d, "budget_confirmed", None), ym, act)
+    R["budget_conf_rows"] = ((getattr(d, "budget_confirmed", None) or {}).get(ym[:4]) or {}).get("rows")
     from .corptax import depreciation   # 법인세 예상용 감가상각비 (사용자 2026-11-04)
     R["evid_month"] = getattr(d, "evid_month", None)   # 증빙 작성일자 기준 달별 매출·매입 (월간 흐름 그림)
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
@@ -933,15 +962,16 @@ def event_unissued(inv_proj, asof, in_missing):
             continue
         if ev >= asof:
             continue
-        if P.get("estimate") is None:
+        base = revenue_basis(P)
+        if base is None:
             unknown.append({"P": P, "why": "사전견적 없음"})
             continue
         if in_missing or x["issued"] is None:
             unknown.append({"P": P, "why": "발행금액 미확인"})
             continue
-        left = P["estimate"] - x["issued"]
+        left = base - x["issued"]
         if left > 0:
-            rows.append({"P": P, "event": ev, "days": (asof - ev).days, "estimate": P["estimate"],
+            rows.append({"P": P, "event": ev, "days": (asof - ev).days, "estimate": base, "quoted": base != P.get("estimate"),
                          "issued": x["issued"], "unissued": left})
     rows.sort(key=lambda y: (-y["days"], y["P"]["id"]))
     return {"rows": rows, "unknown": unknown, "missing": bool(in_missing),
@@ -955,25 +985,28 @@ def expected_revenue(inv_proj, asof, in_missing):
     올해 남은 행사, 다음 해 이후. 사전견적이 있는 프로젝트만 센다. 행사일·발행금액을 모르면 금액에 넣지 않고 건수로만."""
     groups = {"past": [0, 0], "this_year": [0, 0], "later": [0, 0]}
     est_total = est_n = 0
-    no_date = unknown_issued = year_est = year_n = 0
+    no_date = unknown_issued = year_est = year_n = quoted_n = 0
     by_team = {}
     for x in inv_proj:
         P = x["P"]
-        if P.get("estimate") is None:
+        base = revenue_basis(P)
+        if base is None:
             continue
-        est_total += P["estimate"]
+        if base != P.get("estimate"):
+            quoted_n += 1
+        est_total += base
         est_n += 1
         ev = _event_date(P.get("event_date"))
         if ev is None:
             no_date += 1
             continue
         if ev.year == asof.year:   # 올해 행사의 예상 매출 합계: 누적 매출과 견줘 보인다 (사용자 2026-11-04)
-            year_est += P["estimate"]
+            year_est += base
             year_n += 1
         if in_missing or x["issued"] is None:
             unknown_issued += 1
             continue
-        left = P["estimate"] - x["issued"]
+        left = base - x["issued"]
         if left <= 0:
             continue
         g = "past" if ev < asof else ("this_year" if ev.year == asof.year else "later")
@@ -987,7 +1020,8 @@ def expected_revenue(inv_proj, asof, in_missing):
             "past": groups["past"][0], "past_n": groups["past"][1],
             "this_year": groups["this_year"][0], "this_year_n": groups["this_year"][1],
             "later": groups["later"][0], "later_n": groups["later"][1],
-            "no_date_n": no_date, "unknown_n": unknown_issued, "year_est": year_est, "year_n": year_n, "by_team": by_team}
+            "no_date_n": no_date, "unknown_n": unknown_issued, "year_est": year_est, "year_n": year_n, "by_team": by_team,
+            "quoted_n": quoted_n}   # 사전견적 대신 확정 견적금액을 쓴 프로젝트 수 (대표이사 승인 끝남)
 
 
 def _net_credits(invs):
@@ -1036,9 +1070,25 @@ def _net_credits(invs):
         c["credit_applied"], c["credit_left"] = credit - left, left
 
 
+def _cost_rate_of(p, default, targets, asof):
+    """프로젝트 원가율 = 1 − 그 팀의 그 해 목표 수익률 (사용자 2026-11-05: 추정 예산은 팀 목표 수익률 기준).
+    해 = 행사일(기간이면 끝난 날)의 해, 행사일이 없으면 기준일의 해. 팀 목표(목표수익률)가 없으면 설정.csv 예산_원가율.
+    -> (원가율, 출처 '팀 목표'|'기본')."""
+    if default is None:   # 설정 오류면 팀 목표가 있어도 계산하지 않는다 (D-16: 오류를 숨기지 않음)
+        return None, "기본"
+    ev = _event_date(p.get("event_date"))
+    year = str((ev or asof).year) if (ev or asof) else ""
+    t = targets.get((year, (p.get("team") or "").strip()))
+    if t and t.get("rate") is not None and 0 <= t["rate"] < 100:
+        return round(1 - t["rate"] / 100.0, 6), "팀 목표"
+    return default, "기본"
+
+
 def _blank_proj(p, rate):
     """프로젝트 한 건의 빈 집계 틀. 원가 예산 = 사전견적 x 원가율. 만들 수 없으면 예산은 None, 이유를 남긴다 (D-16)."""
     P = dict(p)
+    rate, P["cost_rate_source"] = rate if isinstance(rate, tuple) else (rate, "기본")
+    P["cost_rate"] = rate
     P.update({"lines": [], "paid": 0, "paid_cash": 0, "paid_cash_reason": None, "vat_unknown": 0, "paid_period": 0, "card_paid": 0,
               "requested": 0, "card_unpaid": 0, "planned": 0, "unknown_cost": 0,
               # 상태별 줄 수와 금액 미확인 줄 수: 합계는 확인된 금액만이고, 첫 화면은 이 건수를 함께 보인다

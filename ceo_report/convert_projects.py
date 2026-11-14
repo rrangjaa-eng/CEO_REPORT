@@ -12,11 +12,11 @@ import re
 from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
 from .old_intranet import OLD_LAST_DAY, OLD_STATE
-from .wehago import norm_vendor
+from .wehago import journal_from_start, norm_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
 
-PROJECT_EXTRA = ["실행가"]
+PROJECT_EXTRA = ["실행가", "견적금액", "승인단계"]   # 견적금액·승인단계: 인트라넷 프로젝트 목록 (사용자 2026-11-11)
 CARRIED = ("상태", "예산수정일", "계약금액", "완료일")   # 이전 프로젝트.csv 에서 옮기는 칸 (D-49)
 
 
@@ -55,7 +55,7 @@ def _carry_cell(column, raw, key, notes):
 
 
 CARRY_LABEL = "이전 프로젝트.csv에만 있는 프로젝트 → 옮긴 줄"
-_AMOUNT_COLUMNS = ("사전견적예산", "계약금액", "매출반영누계", "실행가")
+_AMOUNT_COLUMNS = ("사전견적예산", "계약금액", "매출반영누계", "실행가", "견적금액")
 
 
 def _prev_only(prev_rows, keys):
@@ -172,6 +172,8 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
             row[column] = cell_amount(p[field])
             if p[field] is None and not is_blank(p.get(text)):
                 notes.append("%s %s 숫자 아님 → 빈칸" % (key, "사전견적" if field == "estimate" else "실행가"))
+        row["견적금액"] = cell_amount(p.get("quote"))
+        row["승인단계"] = p.get("approval") or ""
         row["행사일"] = p.get("event_text") if p.get("event_text") is not None else cell_date(p["event_date"])
         total = _sum_or_none(amounts.get(key, []))
         period_total[key] = total
@@ -193,6 +195,11 @@ def build_projects(projects, revenue, prev_rows, history=None, period=""):
     if n_old:
         notes.append("예전 인트라넷 프로젝트 %d건 더함 (지금 인트라넷에 없는 번호) · 그중 %s 이전 행사 %d건은 상태 '완료(예전 인트라넷)' — 보고서 표·미발행에서 뺌"
                      % (n_old, OLD_LAST_DAY.isoformat(), old_done))
+    stages = [projects[k].get("approval") or "" for k in keys if not projects[k].get("old")]
+    if any(stages):
+        from .linking import APPROVAL_STAGES
+        notes.append("인트라넷 승인 단계: %s · 승인 전 %d건 — 대표이사 승인 끝난 프로젝트는 종결로 봄 (남은 예산 지급 예정에서 뺌, 매출 예상은 견적금액 기준)"
+                     % (" · ".join("%s까지 %d건" % (s, stages.count(s)) for s in APPROVAL_STAGES), stages.count("")))
     columns = data.SCHEMA["프로젝트.csv"] + PROJECT_EXTRA
     only_prev = _prev_only(prev_rows, keys)
     order = sorted(only_prev, key=lambda k: (_digits(k) == "", int(_digits(k) or 0), k))   # 이전 파일 줄 순서와 무관하게
@@ -344,6 +351,9 @@ def _settle(books, keys, payable_codes):
         if (_squash(row.get("account_code")) in payable_codes and not _is_opening(row) and row.get("debit") is None
                 and row.get("credit") is None and (ref is None or row.get("date") is None or row["date"] <= ref)):
             unknown_pay = True
+    # 분개장이 회사 설립 달부터 있으면 (전기이월 줄이 없어도) 미지급 잔액을 처음부터 아는 것이라 2회전을 돈다.
+    # 실제 자료 2026-11-11: 설립 첫해부터 있는 분개장에서 2회전이 안 돌아 법인카드처럼 여러 건을 한 번에 갚는 지급 17억이 미배분으로 남았다
+    fifo = opening_any or (bool(books.journal) and journal_from_start(books.journal))
     items_by_idx = {}
     leftovers = []
     pay_total = 0
@@ -365,7 +375,7 @@ def _settle(books, keys, payable_codes):
                     p["used"], p["left"] = True, 0
                     it["remaining"], it["applied"], it["done"] = 0, it["amount"], p
                     break
-        if opening_any:   # 2회전: 남은 지급으로 오래된 항목부터
+        if fifo:   # 2회전: 남은 지급으로 오래된 항목부터
             for p in v["pays"]:
                 if p["used"]:
                     continue
@@ -380,6 +390,21 @@ def _settle(books, keys, payable_codes):
                     p["left"] -= take
                     if it["remaining"] == 0:
                         it["done"] = p
+        if fifo:   # 3회전: 먼저 낸 돈(선결제)을 그 뒤에 생긴 항목에 (실제 자료: 법인카드 선결제 뒤에 카드 사용 전표가 들어옴)
+            for p in v["pays"]:
+                if p["left"] <= 0:
+                    continue
+                for it in v["items"]:
+                    if p["left"] <= 0:
+                        break
+                    if it["remaining"] <= 0 or it["date"] is None or it["date"] <= p["date"]:
+                        continue
+                    take = min(p["left"], it["remaining"])
+                    it["remaining"] -= take
+                    it["applied"] += take
+                    p["left"] -= take
+                    if it["remaining"] == 0:
+                        it["done"] = dict(p, date=it["date"])   # 돈은 먼저 나갔고, 빚이 생긴 날 바로 갚은 것으로 본다
         for p in v["pays"]:
             pay_total += p["amount"]
             if p["left"] > 0:
@@ -394,6 +419,9 @@ def _settle(books, keys, payable_codes):
 
 def _first_line(g):
     return g["lines"][0]
+
+
+_CARD_NO = re.compile(r"^[^\s_]+_\d{4}$")   # 법인카드 거래처 이름: 카드사_카드번호 끝 4자리
 
 
 def _row_order(g):
@@ -424,6 +452,7 @@ def _wehago_rows(books, costs, cfg):
         base = "WEHAGO %s 전표 %s" % (g["day"].isoformat() if g["day"] else "날짜 없음", g["no"])
         g["basis"] = base
         g["card"] = False
+        g["card_pay"] = False
         g["paid_day"] = None
         g["firm"] = False
         if cash_paid and not pay_idx:
@@ -435,7 +464,10 @@ def _wehago_rows(books, costs, cfg):
             continue
         same = [i for i in pay_idx if books.journal[i].get("vendor_norm") == g["vendor_norm"]] or pay_idx
         pick = max(same, key=lambda i: (books.journal[i]["credit"], -i))
-        g["card"] = any(w and w in (books.journal[pick].get("vendor") or "") for w in words)
+        # 법인카드 거래처: 설정 낱말(card_words) 또는 실제 장부 이름 '신한_5860'(카드사_끝 4자리) — 사용자 2026-11-11 켬
+        pay_vendor = (books.journal[pick].get("vendor") or "").strip()
+        g["card"] = any(w and w in pay_vendor for w in words) or bool(_CARD_NO.match(pay_vendor))
+        g["card_pay"] = g["card"]
         it = items.get(pick)
         if it is not None and it["remaining"] == 0 and it["done"] is not None:
             g["state"] = "카드결제완료" if g["card"] else "지급완료"
@@ -465,12 +497,9 @@ def _wehago_rows(books, costs, cfg):
         g["item"] = first["memo"] or first["account"]
         g["vendor_text"] = first["vendor"]
         vat_value = g["vat"]
-        if g["card"]:
-            g["supply_cell"] = cell_amount(None if g["supply"] is None or vat_value is None else g["supply"] + vat_value)
-            g["vat_cell"] = ""
-        else:
-            g["supply_cell"] = cell_amount(g["supply"])
-            g["vat_cell"] = cell_amount(vat_value)
+        # 법인카드로 결제한 원가도 회계자료 기준 = 부가세 뺀 금액 (사용자 2026-11-11). 부가세는 다른 줄처럼 부가세 칸에 둔다
+        g["supply_cell"] = cell_amount(g["supply"])
+        g["vat_cell"] = cell_amount(vat_value)
     cost_source = _sum_or_none([ln["amount"] for ln in costs["lines"]])
     checks = [
         Check("원가 줄 합계 ((도) 차변−대변)", cost_source, _sum_or_none([g["supply"] for g in ordered])),
@@ -853,4 +882,12 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
                          % (len(unpaid), won(sum(known)),
                             " (금액 미확인 %d건 제외)" % (len(unpaid) - len(known)) if len(known) < len(unpaid) else ""))
     portions = [g["supply"] for g in groups] + [None] * (len(request_rows) + len(carried) + len(hand))
-    return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes, extra={"cost_portions": portions})
+    # 프로젝트별 법인카드 원가의 부가세 (사용자 2026-11-11: 인트라넷 실행가는 카드 금액이 부가세 포함 → 실행가 차이를 볼 때 장부 원가에 더한다)
+    card_vat = {}
+    for g in groups:
+        if g.get("card_pay") and g.get("project") and g.get("vat"):
+            cv = card_vat.setdefault(g["project"], [0, 0])
+            cv[0] += g["vat"]
+            cv[1] += 1
+    return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes,
+                 extra={"cost_portions": portions, "card_vat": card_vat})

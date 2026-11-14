@@ -39,6 +39,9 @@ NO_DEPT = "부서 없음"
 # 사원별 달별 급여 (분개장 급여 줄의 관리항목 사원명, 사용자 2026-11-04: 1인당 순이익을 본인 급여 비율로 나눔). 경영관리용에만 씀
 STAFF_FILE = "사원급여.csv"
 STAFF_KEYS = ["연월", "부서", "사원명", "급여"]
+# 부서별 판관비(급여 뺀 공통비) 계정과목별 달별 금액 (사용자 2026-11-09: 팀장용 월간 실적 '팀 판관비 내역')
+DEPT_ACCOUNT_FILE = "부서계정비용.csv"
+DEPT_ACCOUNT_KEYS = ["연월", "부서", "계정코드", "계정과목", "금액"]
 
 # 변환.py 가 분개장 보통예금으로 만드는 계좌 잔액·입출금 (사용자 2026-11-04: 분개장 합계 = 실제 통장 합계).
 # 있으면 계좌잔액.csv 는 사용제한(담보·전용 등)만 쓰고, 입출금내역.csv 대신 장부입출금.csv 를 쓴다.
@@ -258,6 +261,17 @@ def load(folder):
             d.staff = [{"ym": (r.get("연월") or "").strip(), "dept": (r.get("부서") or "").strip(),
                         "name": (r.get("사원명") or "").strip(), "salary": num(r.get("급여"), iss, r, "급여")} for r in rows]
 
+    # 부서별 판관비 계정과목별 (선택, 사용자 2026-11-09 팀장용). 읽지 못하면 쓰지 않는다. 금액 빈칸은 None (모름)
+    d.dept_accounts = None
+    path = os.path.join(folder, DEPT_ACCOUNT_FILE)
+    if os.path.exists(path):
+        info = {}
+        rows, ok = read_csv(path, DEPT_ACCOUNT_KEYS, iss, info)
+        if ok and not info["missing"]:
+            d.dept_accounts = [{"ym": (r.get("연월") or "").strip(), "dept": (r.get("부서") or "").strip(),
+                                "code": (r.get("계정코드") or "").strip(), "account": (r.get("계정과목") or "").strip(),
+                                "amount": num(r.get("금액"), iss, r, "금액")} for r in rows]
+
     # 증빙 작성일자 기준 달별 매출·매입 (선택). 빈칸은 None (모름)
     d.evid_month = None
     path = os.path.join(folder, EVID_FILE)
@@ -290,6 +304,8 @@ def load(folder):
     d.team_targets = read_targets(folder)
     from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)
     d.dep_manual = read_dep(folder)
+    from .budget import read_confirmed   # 확정한 예산 (사용자 2026-11-10: 월간 보고 '예산 대비'). 없으면 {}
+    d.budget_confirmed = read_confirmed(folder)
 
     # 세금 예상 (선택): 날짜를 못 읽은 줄은 넣지 않고 입력 확인에 남긴다
     d.tax = None
@@ -365,6 +381,9 @@ def load(folder):
             "contract": num(r.get("계약금액"), iss, r, "계약금액"),
             "recognized": num(r.get("매출반영누계"), iss, r, "매출반영누계"),
             "event_date": r.get("행사일", ""),
+            # 인트라넷 프로젝트 목록에서 온 칸 (없는 예전 파일은 빈칸): 확정 견적금액·실행가, 승인이 끝난 가장 높은 단계
+            "quote": num(r.get("견적금액"), iss, r, "견적금액"), "exec_budget": num(r.get("실행가"), iss, r, "실행가"),
+            "approval": (r.get("승인단계") or "").strip(),
             "done_date": date(r.get("완료일"), iss, r, "완료일"), "row": r}
         d.project_order.append(pid)
 

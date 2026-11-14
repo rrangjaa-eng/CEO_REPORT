@@ -108,6 +108,32 @@ def _project_of(inv, rev_lines, projects):
     return "", "미연결", " · ".join(reasons)
 
 
+def _portions(inv, rev_lines):
+    """계산서 한 장(매출전표)의 매출 줄이 여러 프로젝트로 나뉘어 있으면 [(프로젝트번호 또는 '', 공급가액)] (사용자 2026-11-11).
+
+    한 프로젝트에 통째로 붙이면 나머지 프로젝트가 '발행 0원'으로 보인다 (실제 자료: 매출전표 232장 중 27장).
+    같은 전표(전표일자·전표번호)의 매출 줄 합이 계산서 공급가액과 같을 때만 나눈다. 아니면 None (나누지 않음)."""
+    if not inv["no"] or inv["date"] is None or not inv["supply"]:
+        return None
+    mine = [ln for ln in rev_lines if ln["date"] == inv["date"] and _norm_no(ln["no"]) == _norm_no(inv["no"])]
+    if len(mine) < 2 or any(ln["amount"] is None for ln in mine) or sum(ln["amount"] for ln in mine) != inv["supply"]:
+        return None
+    parts = collections.OrderedDict()
+    for ln in mine:
+        key = "" if ln.get("prior") else (ln["project"] or "")
+        parts[key] = parts.get(key, 0) + ln["amount"]
+    if len(parts) < 2:
+        return None
+    return [(k, v) for k, v in parts.items() if v]
+
+
+def _share(total, parts):
+    """total 을 parts(공급가액들) 비율로 나눈다. 원 단위 끝전은 마지막 줄에 (합은 그대로)."""
+    base = sum(parts)
+    out = [int(round(total * float(a) / base)) for a in parts[:-1]]
+    return out + [total - sum(out)]
+
+
 def _invoices(rows):
     out = []
     for i, r in enumerate(rows):
@@ -348,6 +374,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         else:
             inv["project"], inv["basis"], inv["why"] = _project_of(inv, rev_lines, projects)
         inv["kind"] = _kind_of(inv)
+        inv["parts"] = _portions(inv, rev_lines)   # 지난해 프로젝트와 올해 프로젝트가 한 장에 섞인 계산서도 나눈다 (지난해 몫은 번호 없이)
     order = sorted(invoices, key=lambda x: (x["date"] or _FAR, x["idx"]))
     jr = _Journal(books, cfg)
     skip_fifo = _allocate(invoices, jr)
@@ -362,6 +389,13 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     picked, not_carried = _carry(order, prev_rows, carry_notes)
     rows, bases = [], []
     mismatch = []
+    split_n = split_rows = 0
+    split_prev = {}   # 이전 계산서.csv 줄 (거래처, 발행일, 공급가액) -> 줄 (하나뿐일 때만)
+    seen_prev = collections.Counter((norm_vendor(p.get("거래처", "")), parse_date(p.get("발행일")), num(p.get("공급가액"))) for p in prev_rows)
+    for p in prev_rows:
+        k = (norm_vendor(p.get("거래처", "")), parse_date(p.get("발행일")), num(p.get("공급가액")))
+        if seen_prev[k] == 1:
+            split_prev[k] = p
     for inv in order:
         old = picked.get(inv["idx"])
         due, firm = "", ""
@@ -375,11 +409,32 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
                 mismatch.append("이전 계산서.csv와 입금 기록 다름: %s %s 이전 %s · WEHAGO %s" % (
                     inv["vendor"], _day(inv["date"]), won(prev_paid), won(now_paid)))
         paid = inv["applied"] + inv["deducted"] != 0   # 지난해 수정 계산서(−)를 끝낸 것은 입금액이 − (사용자 2026-11-04)
-        rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
-                     "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
-                     "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                     "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else ""})
-        bases.append(inv["basis"])
+        parts = inv["parts"] if inv["vat"] is not None else None
+        if not parts:
+            rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
+                         "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
+                         "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
+                         "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else ""})
+            bases.append(inv["basis"])
+            continue
+        # 여러 프로젝트로 나뉜 계산서: 프로젝트마다 한 줄. 부가세·입금액은 공급가액 비율로 (합은 계산서 한 장과 같다)
+        split_n += 1
+        amounts = [a for _, a in parts]
+        vats = _share(inv["vat"], amounts)
+        gots = _share(inv["applied"] + inv["deducted"], amounts)
+        for (pid, amount), v, got in zip(parts, vats, gots):
+            mine_old = split_prev.get((inv["vendor_norm"], inv["date"], amount))
+            d2, f2 = due, firm
+            if old is None and mine_old is not None:   # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다
+                d2 = cell_date(parse_date(mine_old.get("입금예정일")))
+                f2 = (mine_old.get("예정일확정") or "").strip()
+                f2 = f2 if f2 in _FIRM else ""
+            rows.append({"프로젝트번호": pid, "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
+                         "구분": inv["kind"], "공급가액": cell_amount(amount), "부가세": cell_amount(v),
+                         "입금예정일": d2, "예정일확정": f2, "입금일": cell_date(inv["paid_date"]) if paid else "",
+                         "입금액": cell_amount(got) if paid else ""})
+            bases.append("분개장 매출 줄" if pid else ("참고" if inv["basis"] == "참고" else "미연결"))
+            split_rows += 1
 
     # 대조 (원본 합계 대 CSV 합계)
     csv_supply = _sum_or_none(int(r["공급가액"]) if r["공급가액"] else None for r in rows)
@@ -392,7 +447,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     left_sum = sum(r["left"] for r in leftover)
     credit_sum = sum(r["amount"] for r in jr.credits)
     checks = [
-        Check("계산서 줄 수", len(sales["rows"]), len(rows)),
+        Check("계산서 줄 수", len(sales["rows"]), len(rows) - (split_rows - split_n)),
         Check("공급가액 합계", _sum_or_none(r.get("supply") for r in sales["rows"]), csv_supply),
         Check("부가세 합계", _sum_or_none(r.get("vat") for r in sales["rows"]), csv_vat),
         Check("수금 (매출채권 대변 · 같은 전표 자산 계정(현금 계정·10xxx) 차변) = 입금액 합계 + 기초 미수 배분 + 미배분", cash,
@@ -417,6 +472,8 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         text = "%s %d건 %s" % (b, n, "미확인" if n and n == unknown else won(total))
         parts.append(text + (" (금액 미확인 %d건)" % unknown if unknown and n != unknown else ""))
     notes.append("프로젝트 연결: " + " · ".join(parts))
+    if split_n:
+        notes.append("여러 프로젝트로 나뉜 계산서 %d장 → 프로젝트마다 한 줄씩 %d줄로 적음 (부가세·입금액은 공급가액 비율)" % (split_n, split_rows))
     for inv in order:
         if inv["basis"] == "미연결":
             notes.append("  미연결 계산서 %s %s %s — %s" % (_day(inv["date"]), inv["vendor"], won(inv["supply"]), inv["why"]))

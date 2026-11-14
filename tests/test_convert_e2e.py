@@ -166,7 +166,7 @@ class TestConvertEndToEnd(unittest.TestCase):
         from ceo_report import data
         from ceo_report.convert_xchk import XCHK_COLUMNS
         want = dict((n, data.SCHEMA[n]) for n in GENERATED_CSV if n in data.SCHEMA)
-        want["프로젝트.csv"] = data.SCHEMA["프로젝트.csv"] + ["실행가"]
+        want["프로젝트.csv"] = data.SCHEMA["프로젝트.csv"] + ["실행가", "견적금액", "승인단계"]
         want["위하고대조.csv"] = XCHK_COLUMNS
         for name in GENERATED_CSV:
             self.assertEqual(read_csv_rows(os.path.join(self.input_dir, name))[0], want[name], name)
