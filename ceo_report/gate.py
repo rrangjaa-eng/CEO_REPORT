@@ -104,7 +104,7 @@ def blank_plan_gaps(R):
     for p in (R.get("s2") or {}).get("periods") or []:
         if (p.get("label") or "") in labels:
             p["plan_gap"] = True
-            for mode in ("firm", "all"):
+            for mode in ("firm", "spend", "all"):
                 r = p.get(mode) or {}
                 for k in ("bal", "low", "low_date", "avail"):
                     if k in r:
