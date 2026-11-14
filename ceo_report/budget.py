@@ -324,6 +324,14 @@ def _loan_plan(input_dir, debts, asof, until):
         if due is None:
             notes.append("대출 %s: 만기일이 없어 원금 상환을 넣지 못함" % name)
             continue
+        roll = (r.get("매년연장") or "").strip() in ("예", "Y", "y", "yes")   # 매년 연장하는 대출 (사용자 11/14: 신한 기보 2억)
+        if roll:
+            if due < asof:
+                notes.append("대출 %s: 매년 연장 대출인데 만기일 %s이 지남 → 연장 뒤 새 만기일 입력 필요 (장부 잔액 %s원, 갚을 돈으로 안 잡음)"
+                             % (name, due.isoformat(), format(bal, ",")))
+            else:
+                notes.append("대출 %s: 매년 연장 예정(만기 %s) — 원금 상환으로 잡지 않음 (장부 잔액 %s원)" % (name, due.isoformat(), format(bal, ",")))
+            continue
         if due < asof:
             notes.append("대출 %s: 만기일 %s이 지남 → 연장했으면 새 만기일을 직접 입력 (지금은 갚을 돈으로 안 잡음, 장부 잔액 %s원)"
                          % (name, due.isoformat(), format(bal, ",")))
