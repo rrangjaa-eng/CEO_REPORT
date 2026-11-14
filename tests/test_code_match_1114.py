@@ -208,6 +208,28 @@ class TestSettleByAccounts(unittest.TestCase):
         self.assertEqual(rows[0]["상태"], "예정일 지남")
 
 
+class TestPlanOrigin(unittest.TestCase):
+    """② 자금계획 비고의 원전표 일자 (PC 실제 모양 '구분 - 거래처코드10자리-YYYYMMDDNN-[지급예정일:…]-…', 합성 값)."""
+
+    def test_origin_date_read_only_when_code_matches(self):
+        rmk = "외주비 - 0000000123-2026101902-[지급예정일:2026.11.13]-가상 메모"
+        self.assertEqual(fundplan.origin_of(rmk, "000123"), D(2026, 10, 19))
+        self.assertIsNone(fundplan.origin_of(rmk, "000999"))
+        self.assertIsNone(fundplan.origin_of("메모만", "000123"))
+
+    def test_payment_before_the_origin_slip_is_not_this_line(self):
+        """10/19 계산서 지급(10/30) 뒤 11/3 같은 금액 새 계산서: 새 줄을 '이미 지급'으로 보지 않음."""
+        j = [ln(D(2026, 10, 30), "1", "25300", debit=2_200_000, vendor="가상음향", vcode="00123"),
+             ln(D(2026, 10, 30), "1", "10300", credit=2_200_000, vendor="신한은행", vcode="98001")]
+        row = dict(plan_row("2026-11-13", "지급", "가상음향", 2_200_000, "000123"), 자료일="2026-10-20", 파일="f.xls")
+        rows = [dict(row)]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "이미 지급")          # 원전표 일자를 모르면 예전처럼
+        rows = [dict(row, 원전표일="2026-11-03")]
+        fundplan.settle(rows, books(j), D(2026, 11, 12))
+        self.assertEqual(rows[0]["상태"], "예정")
+
+
 def plan_ev(due, amount, vendor="가상고객", state="예정", io="입금", code=""):
     return {"date": D(*map(int, due.split("-"))), "io": io, "cat": "", "vendor": vendor, "vendor_code": code,
             "amount": amount, "ym": due[:7], "stamp": D(2026, 11, 10), "state": state, "basis": "", "file": ""}
