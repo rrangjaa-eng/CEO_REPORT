@@ -441,6 +441,9 @@ def render(R, mode):
         _ins("<br>" + esc(gate.sources_line(R)))))
     h.append("</div>")
     h.append(_ins(gate.banner(gate.problems(R))))
+    gap_note = gate.blank_plan_gaps(R)   # F8: 자금계획서 빠진 달이 있으면 대표용에도 경고 한 줄 (그 기간 숫자는 비움)
+    if gap_note:
+        h.append("<style>%s</style><div class='gate'>%s</div>" % (gate.BANNER_CSS, esc(gap_note)))
 
     fs_i = len(h)
     h.append(_first_screen(R, mode, per))

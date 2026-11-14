@@ -837,6 +837,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["last_pay"] = last_payday_out(d.txns, R["payday"])
+    from .gate import blank_plan_gaps   # F8 (2026-11-14): 자금계획서 빠진 달까지 걸친 기간 여유 자금은 비움 (경고·분석보다 먼저)
+    R["plan_gap_note"] = blank_plan_gaps(R)
     R["risks"] = risks(R)
     return R
 
