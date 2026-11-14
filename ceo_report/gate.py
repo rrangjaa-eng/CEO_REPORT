@@ -71,6 +71,49 @@ def blank_funds(R):
     return probs
 
 
+def plan_gaps(R):
+    """F8 (2026-11-14): 보고 기간 안에 자금계획서를 받지 못한 달이 있는 기간 -> [(기간 이름, [빠진 달 'YYYY-MM'])].
+    자금계획서를 쓰지 않은 보고(없음·오래됨)는 problems() 가 막으므로 여기선 빈 목록."""
+    fp = R.get("fundplan")
+    if not fp or not fp.get("used"):
+        return []
+    have = set(fp.get("months") or [])
+    out = []
+    for p in (R.get("s2") or {}).get("periods") or []:
+        end = p.get("end")
+        if end is None:
+            continue
+        y, m = R["asof"].year, R["asof"].month
+        lack = []
+        while (y, m) <= (end.year, end.month):
+            if "%d-%02d" % (y, m) not in have:
+                lack.append("%d-%02d" % (y, m))
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        if lack:
+            out.append((p.get("label") or "", lack))
+    return out
+
+
+def blank_plan_gaps(R):
+    """자금계획서가 빠진 달까지 걸친 기간의 잔액·최저 잔액·여유 자금을 비운다 (그 달 지급이 빠진 채 크게 나오지 않게,
+    11/12 절대 규칙과 같은 방식). 여러 번 불러도 같다. -> 경고 한 줄 ('' 이면 없음)."""
+    gaps = plan_gaps(R)
+    if not gaps:
+        return ""
+    labels = set(l for l, _ in gaps)
+    for p in (R.get("s2") or {}).get("periods") or []:
+        if (p.get("label") or "") in labels:
+            p["plan_gap"] = True
+            for mode in ("firm", "spend", "all"):
+                r = p.get(mode) or {}
+                for k in ("bal", "low", "low_date", "avail"):
+                    if k in r:
+                        r[k] = None
+    months = sorted(set(m for _, ms in gaps for m in ms))
+    return ("자금계획서를 받지 못한 달(%s)이 있어 %s 여유 자금은 비웠습니다 — 위하고 확장에서 '모두 받기'로 그 달을 받은 뒤 다시 만드세요"
+            % (", ".join(months), "·".join(l for l, _ in gaps)))
+
+
 def book_date(R):
     """분개장(위하고 장부) 기준일. 변환이 입력\\자동분석.json 에 적은 것 → 없으면 자료기준일.csv 의 '회계' 줄."""
     v = (R.get("auto_facts") or {}).get("book_date")

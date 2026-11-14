@@ -88,8 +88,8 @@ class TestAddSchedule(unittest.TestCase):
         app.add_schedule(P.input, "2026-11-04", "입금", "1000", "확정", "가상고객")
         with open(os.path.join(P.input, "자금일정.csv"), encoding="utf-8-sig") as f:
             text = f.read().splitlines()
-        self.assertEqual(text[0], "예정일,입출금,금액,확정여부,분류,프로젝트번호,거래처,근거,비고")
-        self.assertEqual(text[1], "2026-11-04,입금,\"1,000\",확정,기타입금,,가상고객,직접 입력,")
+        self.assertEqual(text[0], "예정일,입출금,금액,확정여부,분류,프로젝트번호,거래처,근거,비고,거래처코드")   # 2026-11-14 거래처코드 칸
+        self.assertEqual(text[1], "2026-11-04,입금,\"1,000\",확정,기타입금,,가상고객,직접 입력,,")
 
     def test_wrong_values_are_refused_with_a_reason(self):
         P = program(self)

@@ -369,8 +369,11 @@ def _encoding(path):
         return "cp949", raw
 
 
-def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis="", memo="", project=""):
-    """입력/자금일정.csv 에 한 줄을 더한다. 잘못된 값은 ValueError (글은 그대로 화면에 보인다). -> 더한 줄 dict."""
+def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis="", memo="", project="", vendor_code=""):
+    """입력/자금일정.csv 에 한 줄을 더한다. 잘못된 값은 ValueError (글은 그대로 화면에 보인다). -> 더한 줄 dict.
+
+    vendor_code (2026-11-14 사용자 "이름 말고 코드로"): 창에서 위하고 거래처를 고르면 그 거래처코드. 자금계획서·장부와 코드로 맞춘다.
+    옛 파일에 거래처코드 칸이 없으면 머리글 끝에 칸을 더한다 (앞 줄은 빈칸 = 코드 없음, 이름으로 맞춤)."""
     d = _check_day((day or "").strip(), "예정일")
     if d is None:
         raise ValueError("예정일을 넣으세요 (예: 2026-11-30)")
@@ -383,8 +386,9 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
         raise ValueError("금액은 0보다 큰 숫자 (예: 3,300,000)")
     if not (vendor or "").strip():
         raise ValueError("거래처를 넣으세요")
-    header = SCHEMA[SCHED_FILE]
-    row = {"예정일": d.isoformat(), "입출금": io_kind, "금액": "{:,}".format(int(text)), "확정여부": firm,
+    from .data import SCHED_OPTIONAL
+    header = SCHEMA[SCHED_FILE] + SCHED_OPTIONAL
+    row = {"거래처코드": str(vendor_code or "").strip(), "예정일": d.isoformat(), "입출금": io_kind, "금액": "{:,}".format(int(text)), "확정여부": firm,
            "분류": cat.strip() or ("기타지급" if io_kind == "지급" else "기타입금"), "프로젝트번호": project.strip(),
            "거래처": vendor.strip(), "근거": basis.strip() or "직접 입력", "비고": memo.strip()}
     path = os.path.join(input_dir, SCHED_FILE)
@@ -402,6 +406,13 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
             raise ValueError("자금일정.csv 머리글에 %s 칸이 없어 넣지 않았습니다 — 첫 줄을 양식(%s)대로 맞추세요"
                              % ("·".join("'%s'" % c for c in lack), ",".join(header)))
         nl = "\r\n" if "\r\n" in text_now else "\n"
+        if row["거래처코드"] and "거래처코드" not in cols:   # 옛 파일: 머리글 끝에 칸을 더해 다시 쓴다 (앞 줄은 빈칸)
+            lines = text_now.splitlines()
+            lines[0] = lines[0] + ",거래처코드"
+            text_now = nl.join(lines) + nl
+            cols = cols + ["거래처코드"]
+            with open(path, "wb") as f:
+                f.write(text_now.encode("utf-8-sig" if enc == "utf-8-sig" else enc))
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])
         add = ("" if not text_now or text_now.endswith(("\n", "\r")) else nl) + buf.getvalue()
