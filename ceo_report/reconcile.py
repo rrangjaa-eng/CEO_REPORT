@@ -18,6 +18,8 @@
   7  고정자산관리대장 ↔ 장부 유형자산.
   9  위하고 차입금현황(만기·상환 방식만, 잔액은 장부), 손익계산서, 예적금현황(정기예금 만기), 전자세금계산서(매출) ↔ 장부 매출전표,
      신용카드(실제 사용액), 거래처원장(거래처별 미지급금).
+  0.9.1 (사용자 2026-11-15 카드): 원천징수이행상황신고서 소득세 ↔ 장부 예수금(세무서), 거래처별초기이월 ↔ 작년 말 장부,
+     자료수집현황(은행·카드·홈택스 자료가 언제까지·오류), 부가세 예정고지, 차입금스케줄관리(이자율·상환 시작일 → 차입금.csv).
 개인정보: 위하고 원본의 계좌번호·카드번호·담당자 이름은 쓰지 않는다 (확장이 저장할 때도 지운다).
 """
 import collections
@@ -30,7 +32,8 @@ import re
 FILE = "자료대조.csv"
 KEYS = ["구분", "항목", "비교자료", "비교값", "장부값", "차이", "기준", "판정", "할일", "대표경고"]
 LOAN_FILE = "차입금.csv"
-LOAN_KEYS = ["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도", "만기근거", "매년연장"]
+LOAN_KEYS = ["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도", "만기근거", "매년연장",
+             "이자율", "상환시작일"]   # 이자율·상환시작일: 위하고 차입금스케줄관리 (0.9.1)
 MATURITY_FILE = "대출만기.csv"   # 사용자가 직접 넣는 새 만기일 (위하고 차입금현황·차입금스케줄관리에서는 만기일이 안 고쳐짐, 11/14)
 MATURITY_KEYS = ["거래처코드", "차입처", "새만기일", "매년연장", "메모"]
 # 사용자 2026-11-14: 신한 기술보증기금 2억 새 만기 2027-04-17, 기보 3억(만기 2027-04-21) 둘 다 매년 연장. 파일이 없을 때 처음 만들 줄
@@ -507,6 +510,12 @@ def loan_rows(journal, raw, input_dir, asof):
                 bal[k] += int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
     data = _resp(got[2], "/safm0109") if got else None
     items = (data or {}).get("group01") if isinstance(data, dict) else None
+    sched = {}   # 차입금스케줄관리: 거래처코드 -> (이자율, 상환 시작일)
+    sg = (raw.get("SAFM0108") or [None])[0]
+    for r in (sg[2].get("응답") or []) if sg else []:
+        if re.search(r"/safm0108/\d+/?$", str(r.get("path") or "")) and isinstance(r.get("data"), list):
+            for it in r["data"]:
+                sched[_code(it.get("cd_trade"))] = (str(it.get("rt_int") or "").strip(), _iso(it.get("da_frefund")))
     for it in items or []:
         k = _code(it.get("cd_trade"))
         name = re.sub(r"_\d{6,}", "", str(it.get("nm_trade") or "")).strip()   # 이름 끝 계좌번호는 뺀다
@@ -518,7 +527,7 @@ def loan_rows(journal, raw, input_dir, asof):
         loans.append({"차입처": name, "거래처코드": k, "계정코드": acct.get(k, ""), "차입일": _iso(it.get("da_floan")),
                       "만기일": mat, "상환방식": kind, "원금": str(_num(it.get("mn_prin"))), "월상환액": "",
                       "자금용도": str(it.get("ty_funduse2") or ""), "만기근거": "직접 입력" if _iso(o.get("새만기일")) else "차입금현황",
-                      "매년연장": yearly})
+                      "매년연장": yearly, "이자율": (sched.get(k) or ("", ""))[0], "상환시작일": (sched.get(k) or ("", ""))[1]})
         w = _num(it.get("mn_janac"))
         b = bal.get(k)
         if b is not None and w != b:
@@ -651,6 +660,129 @@ def ledger_rows(journal, raw):
     return rows
 
 
+# ───────────── 0.9.1 원천세 신고·초기이월·자료수집현황·부가세 예정고지 ─────────────
+def _ym(v):
+    t = re.sub(r"\D", "", str(v or ""))[:6]
+    return (int(t[:4]), int(t[4:6])) if len(t) == 6 and 1 <= int(t[4:6]) <= 12 else None
+
+
+def withholding_rows(journal, raw):
+    """위하고에 저장된 원천징수이행상황신고서(신고리스트) 소득세 ↔ 장부 예수금(254) 세무서 대변 (지급 달 기준)."""
+    got = (raw.get("SWTA0101") or [None])[0]
+    items = _resp(got[2], "/swta0101/sglist") if got else None
+    if not isinstance(items, list):
+        return []
+    rows = []
+    for it in items:
+        a, b = _ym(it.get("ym_payfrom")), _ym(it.get("ym_payto"))
+        if not a or not b:
+            continue
+        tax = _num(it.get("am_incomrtntax"))
+        book = 0
+        for ln in journal or []:
+            d = ln.get("date")
+            if d is None or _grp(ln.get("account_code")) != "254" or "세무서" not in str(ln.get("vendor") or ""):
+                continue
+            if a <= (d.year, d.month) <= b:
+                book += int(ln.get("credit") or 0)
+        period = "%d-%02d~%d-%02d" % (a + b)
+        kind = str(it.get("mon_gu") or it.get("singo_gu") or "").strip()
+        if not book:
+            verdict, todo = "참고", "장부에 이 기간 세무서 예수금 줄이 없습니다 (계정·거래처를 다르게 넣었을 수 있음)."
+        elif abs(book - tax) <= 1000:
+            verdict, todo = "같음", ""
+        else:
+            verdict, todo = "다름", ("신고한 소득세와 장부 예수금(세무서)이 다릅니다. 급여·사업소득 전표의 원천세 줄이 빠졌거나 "
+                                     "금액이 다른지 확인하세요 (연말정산 환급·추가 납부가 신고서에 섞였을 수도 있음). 원천세 납부 예상은 장부 기준입니다.")
+        rows.append(_row("원천세", "%s 신고%s" % (period, " (%s)" % kind if kind else ""), "원천징수이행상황신고서 소득세",
+                         tax, book or None, "지급 달 기준, 장부 예수금(254) 세무서 대변 합", verdict, todo))
+    return rows
+
+
+def opening_rows(journal, raw):
+    """위하고 거래처별초기이월(올해 첫날로 넘어온 계정 잔액) ↔ 작년 말 장부 잔액."""
+    rows = []
+    got = (raw.get("SABM0109") or [None])[0]
+    if not got:
+        return rows
+    when, year, d = got
+    items = None
+    for r in d.get("응답") or []:
+        if "/sabm0109/bsflist" in str(r.get("path") or "").lower() and isinstance(r.get("data"), list):
+            items = r["data"]
+    if not items:
+        return rows
+    dates = [ln["date"] for ln in journal or [] if ln.get("date") is not None]
+    y = year or (when.year if when != dt.datetime.min else None)
+    if not y or not dates or min(dates) >= dt.date(y, 1, 1):
+        return [_row("초기이월", "거래처별 초기이월 %d개 계정" % len(items), "거래처별초기이월", None, None, "",
+                     "참고", "작년 장부가 없어 맞춰 보지 못했습니다. 작년 분개장도 받아 두면 비교합니다.")]
+    book = book_balances(journal, dt.date(y - 1, 12, 31))
+    other = collections.defaultdict(int)
+    for it in items:
+        g = _grp(it.get("cd_acctit"))
+        if g:
+            other[g] += _num(it.get("mn_amt"))
+    n_diff = 0
+    for g in sorted(other):
+        o, b = other[g], book.get(g, 0) * _sign(g)
+        if o == b or abs(o) == abs(b):
+            continue
+        n_diff += 1
+        rows.append(_row("초기이월", NAMES.get(g, "계정 %s" % g), "거래처별초기이월", o, b, "%d년 말 장부 → %d년 첫날" % (y - 1, y), "다름",
+                         "작년 말 장부 잔액과 올해 위하고에 넘어온 금액이 다릅니다. 이월을 다시 하거나 작년 결산 뒤 고친 전표를 확인하세요."))
+    rows.append(_row("초기이월", "계정 %d개" % len(other), "거래처별초기이월", None, None, "%d년 말 장부 → %d년 첫날" % (y - 1, y),
+                     "같음" if not n_diff else "다름", "" if not n_diff else "다른 계정 %d개" % n_diff))
+    return rows
+
+
+def collect_rows(raw, asof):
+    """위하고 자료수집현황: 은행·카드·홈택스 자료가 언제까지 들어왔는지·오류."""
+    got = (raw.get("SAAC0110") or [None])[0]
+    if not got:
+        return []
+    when, year, d = got
+    items = None
+    for r in d.get("응답") or []:
+        data = r.get("data")
+        if "bottom_select" in str(r.get("path") or "") and isinstance(data, dict) and isinstance(data.get("data"), list):
+            items = data["data"]
+    if not items:
+        return []
+    rows, late, bad = [], 0, 0
+    for it in items:
+        name = " ".join(x for x in (str(it.get("nm_type") or "").strip(), str(it.get("nm_bank") or it.get("nm_card") or "").strip()) if x)
+        end = _day(it.get("da_end"))
+        err = str(it.get("error_yn") or "").upper() == "Y"
+        if err:
+            bad += 1
+            rows.append(_row("위하고 수집", name or "자료", "자료수집현황", None, None, "마지막 %s" % (end.isoformat() if end else "?"), "다름",
+                             "위하고가 이 자료를 받지 못하고 있습니다%s. 위하고에서 연결(인증서·비밀번호)을 다시 해 주세요."
+                             % (" (%s)" % str(it.get("nm_errview")).strip() if it.get("nm_errview") else "")))
+        elif end and asof and (asof - end).days > STALE_DAYS:
+            late += 1
+            rows.append(_row("위하고 수집", name or "자료", "자료수집현황", None, None, "마지막 %s" % end.isoformat(), "참고",
+                             "위하고에 %s까지만 들어와 있습니다. 그 뒤 거래는 자동전표로 아직 안 올라옵니다." % end.isoformat()))
+    rows.append(_row("위하고 수집", "자료 %d곳" % len(items), "자료수집현황", None, None, "%s 받음" % _hm(when),
+                     "다름" if bad else ("참고" if late else "같음"), "오류 %d곳 · 늦음 %d곳" % (bad, late) if bad or late else ""))
+    return rows
+
+
+def vat_notice_rows(raw):
+    """위하고 부가가치세 예정고지세액: 세무서가 고지한 부가세가 있으면 알림 (없으면 줄 없음)."""
+    got = (raw.get("SAVF0119") or [None])[0]
+    items = _resp(got[2], "/savf0119/top") if got else None
+    if not isinstance(items, list) or not items:
+        return []
+    amt = 0
+    for it in items:
+        for k, v in it.items():
+            if k.startswith("mn_") or k.startswith("am_"):
+                amt = max(amt, _num(v))
+    return [_row("부가세", "예정고지 %d건" % len(items), "부가가치세예정고지세액", amt or None, None, "", "참고",
+                 "세무서가 부가세를 미리 고지했습니다. 부가세 납부 예상(장부 기준)과 다르면 고지 금액이 먼저 나갑니다.")]
+
+
 # ───────────── 변환 쪽 ─────────────
 def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     from .convert import Table
@@ -669,6 +801,10 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
         rows += deposit_rows(journal, raw, asof)
         rows += etax_rows(journal, raw)
         rows += ledger_rows(journal, raw)
+        rows += withholding_rows(journal, raw)
+        rows += opening_rows(journal, raw)
+    rows += collect_rows(raw, asof)
+    rows += vat_notice_rows(raw)
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)

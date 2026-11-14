@@ -227,5 +227,66 @@ class RawScreenNameTest(unittest.TestCase):
         self.assertEqual(wehago._kind_of("전자세금계산서(매입)_2026.xlsx")[0], "전자세금계산서(매입)")
 
 
+class TestScreens091(unittest.TestCase):
+    """0.9.1 화면 (2026-11-15 실제 위하고 응답 칸 이름)."""
+    def setUp(self):
+        self.t = tempfile.mkdtemp()
+
+    def test_withholding_report_vs_ledger(self):
+        save(self.t, "261115 대조_원천세신고 자동수집.json", raw("SWTA0101", "2026-11-15 02:00:00", {"/smarta/swta0101/sglist/": [
+            {"ym_rvrsfrom": "202601", "ym_rvrsto": "202606", "ym_payfrom": "202601", "ym_payto": "202606", "am_incomrtntax": 1_000_000,
+             "am_totincom": 9, "mon_gu": "반기", "singo_gu": "정기"}]}))
+        j = [dict(ln(D(2026, m, 25), "25400", 0, 150_000), vendor="강남세무서") for m in range(1, 7)]
+        j += [dict(ln(D(2026, 7, 25), "25400", 0, 999), vendor="강남세무서"), dict(ln(D(2026, 3, 25), "25400", 0, 15_000), vendor="강남구청")]
+        rows = RC.withholding_rows(j, RC.raw_files(self.t))
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual((r["판정"], r["비교값"], r["장부값"], r["차이"]), ("다름", "1000000", "900000", "-100000"))
+        self.assertIn("반기", r["항목"])
+
+    def test_opening_vs_last_year_end(self):
+        save(self.t, "261115 대조_거래처별초기이월 자동수집.json", raw("SABM0109", "2026-11-15 02:00:00", {"/smarta/sabm0109/bsflist_01/": [
+            {"cd_acctit": "10800", "nm_acctit": "외상매출금", "mn_amt": 7_000_000, "gisu": 2},
+            {"cd_acctit": "25300", "nm_acctit": "미지급금", "mn_amt": 3_000_000, "gisu": 2}]}))
+        j = [ln(D(2025, 12, 1), "10800", 7_000_000), ln(D(2025, 12, 1), "41200", 0, 7_000_000),
+             ln(D(2025, 12, 2), "82100", 2_500_000), ln(D(2025, 12, 2), "25300", 0, 2_500_000),
+             ln(D(2026, 1, 5), "25300", 2_500_000), ln(D(2026, 1, 5), "10300", 0, 2_500_000)]
+        rows = RC.opening_rows(j, RC.raw_files(self.t))
+        diff = [r for r in rows if r["항목"] == "미지급금"]
+        self.assertEqual((diff[0]["판정"], diff[0]["비교값"], diff[0]["장부값"]), ("다름", "3000000", "2500000"))
+        self.assertFalse(any(r["항목"] == "외상매출금" for r in rows))
+        self.assertEqual(rows[-1]["판정"], "다름")
+        # 작년 장부가 없으면 참고만
+        only = RC.opening_rows([ln(D(2026, 1, 5), "10300", 1)], RC.raw_files(self.t))
+        self.assertEqual([r["판정"] for r in only], ["참고"])
+
+    def test_collect_status_error_and_late(self):
+        save(self.t, "261115 대조_자료수집현황 자동수집.json", raw("SAAC0110", "2026-11-15 02:00:00", {
+            "/superbook/collectingdata/top_select": {"status": 200, "data": {"da_scrpend": "20261115"}},
+            "/superbook/collectingdata/bottom_select": {"status": 200, "data": [
+                {"nm_type": "카드", "nm_card": "신한카드", "da_end": "20261114", "error_yn": "N"},
+                {"nm_type": "은행", "nm_bank": "기업은행", "da_end": "20261020", "error_yn": "N"},
+                {"nm_type": "홈택스", "nm_bank": "", "nm_card": "", "da_end": "20261001", "error_yn": "Y", "nm_errview": "인증서 만료"}]}}))
+        rows = RC.collect_rows(RC.raw_files(self.t), D(2026, 11, 15))
+        v = {r["항목"]: r["판정"] for r in rows}
+        self.assertEqual(v["은행 기업은행"], "참고")
+        self.assertEqual(v["홈택스"], "다름")
+        self.assertNotIn("카드 신한카드", v)
+        self.assertEqual(rows[-1]["판정"], "다름")
+
+    def test_loan_schedule_adds_rate(self):
+        save(self.t, "261115 대조_차입금현황 자동수집.json", raw("SAFM0109", "2026-11-15 02:00:00", {"/smarta/safm0109/": {"group01": [
+            {"cd_trade": "0000000679", "nm_trade": "하나캐피탈", "da_expire": "20300921", "da_floan": "20250924", "mn_prin": 80_330_000,
+             "mn_janac": 64_750_000, "ty_refund2": "분할(원리금)"}]}}))
+        save(self.t, "261115 대조_차입금스케줄 자동수집.json", raw("SAFM0108", "2026-11-15 02:00:00", {"/smarta/safm0108/1/": [
+            {"cd_trade": "0000000679", "rt_int": "6.5", "da_frefund": "20251024"}]}))
+        loans, _ = RC.loan_rows([], RC.raw_files(self.t), self.t, D(2026, 11, 15))
+        self.assertEqual((loans[0]["이자율"], loans[0]["상환시작일"]), ("6.5", "2025-10-24"))
+
+    def test_vat_notice_empty_is_silent(self):
+        save(self.t, "261115 대조_부가세예정고지 자동수집.json", raw("SAVF0119", "2026-11-15 02:00:00", {"/smarta/savf0119/top/": []}))
+        self.assertEqual(RC.vat_notice_rows(RC.raw_files(self.t)), [])
+
+
 if __name__ == "__main__":
     unittest.main()

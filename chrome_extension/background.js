@@ -375,6 +375,14 @@ const RECON_SCREENS = [
   {prefix: "대조", mod: "account", code: "SAFM0107", name: "예적금현황"},       // 정기예금 만기 (계좌번호는 지움)
   {prefix: "대조", mod: "account", code: "SACL0106", name: "손익계산서"},       // 매출·판관비 합계
   {prefix: "대조", mod: "account", code: "SAAC0103", name: "홈택스매출계산서"},   // 홈택스에서 받은 매출 계산서 (장부 매출전표와 맞춤). 이름에 '전자세금계산서'를 넣지 않는다: 프로그램이 매입 계산서 파일로 잘못 알아봄
+  // 0.9.1 (사용자 2026-11-15 카드 '설정 없이 되는 7개 다 넣기'): 조회만으로 받히는 화면. 현금예금잔액검토(SACL0103)는 금융거래처를 골라야 하고,
+  // 부가가치세신고서(SAVF0101)는 [수집하기](위하고 자료를 새로 만듦)를 눌러야 하고, 임시전표(JYAA0101)는 응답이 읽을 수 있는 자료가 아니라서
+  // 자동으로 받지 않는다 (읽기 전용, 2026-11-15 실제 화면)
+  {prefix: "대조", mod: "account", code: "SAFM0108", name: "차입금스케줄", onOpen: true},    // 이자율·상환 시작일 (열면 바로 옴)
+  {prefix: "대조", mod: "account", code: "SABM0109", name: "거래처별초기이월"},             // 올해 첫날로 넘어온 계정 잔액 (작년 말 장부와 맞춤)
+  {prefix: "대조", mod: "account", code: "SAAC0110", name: "자료수집현황", onOpen: true, match: "/collectingdata/"},   // 은행·카드·홈택스 자료가 언제까지 들어왔나
+  {prefix: "대조", mod: "account", code: "SAVF0119", name: "부가세예정고지"},               // 세무서가 고지한 부가세 (없으면 빈 목록)
+  {prefix: "대조", mod: "humanresource", code: "SWTA0101", name: "원천세신고", tab: "신고리스트", close: true},   // 저장된 원천징수이행상황신고서 목록 (반기·매월, 소득세)
 ];
 let reconRun = false;
 
@@ -393,9 +401,9 @@ async function collectRecon() {
     for (const sc of RECON_SCREENS) {
       await setStatus({progress: `대조 화면: ${sc.name} 받는 중…`});
       let r;
-      try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, year, ms: SCREEN_MS}); }
+      try { r = await chrome.tabs.sendMessage(tab.id, {type: "runScreen", mod: sc.mod, code: sc.code, onOpen: !!sc.onOpen, tab: sc.tab || "", match: sc.match || "", close: !!sc.close, year, ms: SCREEN_MS}); }
       catch (e) { r = null; }
-      if (!r || (r.v || 0) < 7) { fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"); break; }
+      if (!r || (r.v || 0) < 8) { fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"); break; }
       if (!r.ok) { fails.push(`${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : "")); continue; }
       const kind = `${sc.prefix}_${sc.name}`;
       const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
