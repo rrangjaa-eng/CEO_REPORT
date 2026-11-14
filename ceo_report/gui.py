@@ -396,8 +396,10 @@ class Window(object):
         e_amt.pack(side="left", padx=(3, 8))
         self._amount(e_amt, self.s_amt)
         ttk.Label(r, text="거래처").pack(side="left")
-        e_v = ttk.Entry(r, textvariable=self.s_vendor, width=14)
-        e_v.pack(side="left", padx=(3, 0))
+        # 위하고 거래처 목록에서 고르면 거래처코드도 같이 저장 (2026-11-14 사용자 "이름 말고 코드로"). 목록에 없으면 이름만 적어도 됨
+        e_v = self.s_vbox = ttk.Combobox(r, textvariable=self.s_vendor, width=22)
+        e_v.pack(side="left", padx=(3, 0), fill="x", expand=True)
+        e_v.bind("<KeyRelease>", self.filter_sched_vendors)
         r = self._row(f)
         ttk.Label(r, text="내용").pack(side="left")
         e_n = ttk.Entry(r, textvariable=self.s_note, width=22)
@@ -1249,16 +1251,37 @@ class Window(object):
         self.refresh_state()
 
     # ───────────── 가끔 넣는 값 ─────────────
+    def sched_vendor(self):
+        """거래처 칸 글 -> (이름, 코드). 목록의 '이름 [코드] · …' 줄을 골랐으면 그 코드, 아니면 (적은 글, '')."""
+        text = self.s_vendor.get().strip()
+        for label, code, name, _ in getattr(self, "account_rows", None) or []:
+            if text == label:
+                return name, code
+        return text, ""
+
+    def filter_sched_vendors(self, event=None):
+        """글자를 치면 이름·코드에 그 글자가 든 위하고 거래처만 목록에 보인다 (거래처 계좌 칸과 같은 목록)."""
+        if event is not None and event.keysym in ("Return", "Down", "Up"):
+            return
+        if not getattr(self, "account_rows", None):
+            self.refresh_accounts()
+        text = self.s_vendor.get().strip().replace(" ", "")
+        self.s_vbox["values"] = [c[0] for c in self.account_rows
+                                 if text and text in c[0].replace(" ", "")][:200]
+
     def add_schedule(self):
+        vendor, code = self.sched_vendor()
         try:
             row = app.add_schedule(self.paths.input, self.s_day.get(), self.s_io.get(), self.s_amt.get(), self.s_firm.get(),
-                                   self.s_vendor.get(), memo=self.s_note.get())
+                                   vendor, memo=self.s_note.get(), vendor_code=code)
         except (ValueError, OSError) as e:
             self.say("넣지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             self.f_sched.sub.configure(text="넣지 못함 (진행 상황 참고)", foreground=C["red"])
             return
         self.say("자금일정에 넣음: %s %s %s원 (%s) %s — 보고서를 다시 만들면 가용자금에 반영됩니다"
-                 % (row["예정일"], row["입출금"], row["금액"], row["확정여부"], row["거래처"]))
+                 % (row["예정일"], row["입출금"], row["금액"], row["확정여부"],
+                    "%s [%s]" % (row["거래처"], row["거래처코드"]) if row.get("거래처코드")
+                    else row["거래처"] + " (거래처코드 없음: 목록에서 고르면 장부와 코드로 맞춥니다)"))
         for v in (self.s_amt, self.s_vendor, self.s_note):
             v.set("")
         self._flash(self.f_sched, "넣음: %s %s원" % (row["거래처"], row["금액"]), lambda: "가용자금에 바로 반영")
