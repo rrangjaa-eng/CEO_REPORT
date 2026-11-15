@@ -1088,3 +1088,30 @@ class TestJournalNamesKeepPeriods(unittest.TestCase):
                 "261115 분개장_기간20261101-20261115 자동수집.json": D(2026, 11, 15)}
         for name, rank in want.items():
             self.assertEqual((W._kind_of(name), W._rank_date(name)), (("분개장", True), rank), name)
+
+
+# ───────────── P2-13: 머리글이 두 번 있으면 뒤 칸이 앞 칸을 말없이 덮지 않음 ─────────────
+class TestDuplicateHeaders(unittest.TestCase):
+    def read(self, text, required):
+        import shutil
+        import tempfile
+        from ceo_report import util
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        p = os.path.join(d, "자금일정.csv")
+        with open(p, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(text)
+        iss, info = util.Issues(), {}
+        rows, ok = util.read_csv(p, required, iss, info)
+        return rows, ok, [m for _, _, m in iss.items]
+
+    def test_required_column_twice_refuses_the_file(self):
+        rows, ok, notes = self.read("예정일,금액,금액\r\n2026-11-20,1000000,100000\r\n", ["예정일", "금액"])
+        self.assertEqual((rows, ok), ([], False))
+        self.assertIn("머리글이 두 번 있음: 금액", notes[0])
+
+    def test_other_column_twice_uses_the_first(self):
+        rows, ok, notes = self.read("예정일,금액,비고,비고\r\n2026-11-20,1000000,앞,뒤\r\n", ["예정일", "금액"])
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["비고"], "앞")
+        self.assertIn("앞 칸 값을 씀", notes[0])

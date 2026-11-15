@@ -105,11 +105,24 @@ def read_csv(path, required, issues, info=None):
         info["missing"] = missing
     if missing:
         issues.add(name, 1, "필수 열 없음: " + ", ".join(missing))
+    # P2-13 (2026-11-15): 같은 머리글이 두 번이면 예전에는 뒤 칸이 앞 칸 값을 말없이 덮었다 (앞 100만 대신 뒤 10만).
+    # 꼭 필요한 열이 두 번이면 어느 값이 맞는지 몰라 파일을 읽지 않고, 그 밖의 열은 앞 칸을 쓰고 알린다.
+    dups = [h for h in dict.fromkeys(header) if h and header.count(h) > 1]
+    if dups:
+        hard = [h for h in dups if h in required]
+        if hard:
+            issues.add(name, 1, "머리글이 두 번 있음: %s — 어느 칸 값을 쓸지 몰라 이 파일을 읽지 않음 (하나를 지우고 다시 저장)"
+                       % ", ".join(hard))
+            if info is not None:
+                info["missing"] = list(hard)
+            return [], False
+        issues.add(name, 1, "머리글이 두 번 있음: %s — 앞 칸 값을 씀" % ", ".join(dups))
     out = []
     for line, cells in records:
         clean = {}
         for k, v in zip(header, cells):  # 헤더보다 많은 칸은 버린다 (DictReader와 같음)
-            clean[k] = (v or "").strip()
+            if k not in clean:   # 같은 머리글은 앞 칸 (P2-13)
+                clean[k] = (v or "").strip()
         for k in header[len(cells):]:
             clean.setdefault(k, "")
         if not any(clean.values()):
