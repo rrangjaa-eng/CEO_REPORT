@@ -288,7 +288,9 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
     회사분은 장부에 미리 잡지 않고 납부일에 비용(복리후생비·세금과공과·보험료)으로 처리하므로, 직전 납부 전표의
     회사분(비용 차변) ÷ 직원분(예수금 차변) 비율로 추정한다. 지난 납부가 없으면 회사분 = 직원분.
     월말에 회사분을 일반전표(비용 / 미지급비용, 공단 거래처)로 넣었으면 추정 대신 그 금액을 쓰고 '확정(전표)'로 둔다.
-    납부일 전에 그 달분 납부 전표(공단 거래처 예수금 차변)가 기준일까지 있으면 이미 나간 것이라 넣지 않는다."""
+    월말 전표가 직원분 예수금까지 미지급비용으로 옮기면(예수금·비용 차변 / 미지급비용 대변) 그 공단은 옮긴 금액 + 회사분을 낼 돈으로 본다.
+    납부일 전에 그 달분 납부 전표(공단 거래처 예수금 차변, 또는 통장에서 나간 공단 미지급비용·비용 차변)가 기준일까지 있으면
+    이미 나간 것이라 넣지 않는다."""
     codes = set(map(_sq, codes))
     ins = lambda ln: any(v in _sq(ln.get("vendor")) for v in vendors)
 
@@ -302,17 +304,47 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
     for ln in journal:
         if ln["date"] is not None:
             slips.setdefault((ln["date"], ln.get("no")), []).append(ln)
-    pays = []      # 납부 전표: (일자, 직원분, 회사분). 회사분 = 비용 차변 + 미지급비용·미지급금 차변 (월말에 미리 잡은 것을 지움)
-    accrued = {}   # 월말 회사분 전표 (비용 차변, 통장 출금 없음, 예수금 차변 없음): (연, 월) -> 금액
+    pays = []      # 납부 전표: (일자, 직원분, 회사분, 낸 공단). 회사분 = 비용 차변 + 미지급비용·미지급금 차변 (월말에 미리 잡은 것을 지움)
+    # 월말 전표 (통장 출금 없음): (연, 월) -> {"company": {공단: 비용 차변}, "moved": {공단: 예수금 차변}, "day": 전표일}
+    # 2026-11-15 실제 장부: 10월분을 10/30 월말 전표(예수금·비용 차변 / 미지급비용 대변)로 잡고 11/10 미지급비용 차변 / 통장 대변으로 냄.
+    # 예전엔 예수금 차변이 있는 이 월말 전표를 '납부'로, 예수금 차변이 없는 11/10 통장 출금은 아무것도 아닌 것으로 봐서
+    # 이미 낸 10월분(약 696만)을 '안 낸 407만'으로 11/20 출금 목록에 다시 올렸고, 다음 달부터의 예상도 407만으로 작았음
+    accrued = {}
     for (day, _), lines in sorted(slips.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
-        emp = sum((x.get("debit") or 0) for x in lines if ins(x) and _sq(x["account_code"]) in codes)
-        cost = sum((x.get("debit") or 0) for x in lines if ins(x) and _sq(x["account_code"]).startswith("8"))
-        if emp:
-            accr = sum((x.get("debit") or 0) for x in lines if ins(x) and _sq(x["account_code"]).startswith(ACCRUED))
-            pays.append((day, emp, cost + accr,
-                         frozenset(who(x) for x in lines if ins(x) and _sq(x["account_code"]) in codes and (x.get("debit") or 0))))
-        elif cost and not _from_bank(lines):
-            accrued[(day.year, day.month)] = accrued.get((day.year, day.month), 0) + cost
+        own = [x for x in lines if ins(x)]
+
+        def dr(pred):
+            return sum((x.get("debit") or 0) for x in own if pred(_sq(x["account_code"])))
+        emp = dr(lambda c: c in codes)
+        cost = dr(lambda c: c.startswith("8"))
+        accr_dr = dr(lambda c: c.startswith(ACCRUED))
+        accr_cr = sum((x.get("credit") or 0) for x in own if _sq(x["account_code"]).startswith(ACCRUED))
+        bank = _from_bank(lines)
+        if not bank and (cost or accr_cr):
+            # 월말 전표: 회사분 비용(비용 / 미지급비용, 공단). 직원분 예수금을 함께 미지급비용으로 옮겼으면 그 금액도 따로 센다
+            a = accrued.setdefault((day.year, day.month), {"company": {}, "moved": {}, "day": day})
+            a["day"] = max(a["day"], day)
+            for x in own:
+                c, w, v = _sq(x["account_code"]), who(x), (x.get("debit") or 0)
+                if v and c.startswith("8"):
+                    a["company"][w] = a["company"].get(w, 0) + v
+                elif v and c in codes:
+                    a["moved"][w] = a["moved"].get(w, 0) + v
+            continue
+        if emp or (bank and (cost or accr_dr)):
+            # 납부: 예수금 차변(예전 방식) 또는 통장에서 나간 비용·미지급비용 차변(월말에 잡아 둔 것을 내는 방식)
+            pays.append((day, emp, cost + accr_dr,
+                         frozenset(who(x) for x in own if (x.get("debit") or 0) and (
+                             _sq(x["account_code"]) in codes or _sq(x["account_code"]).startswith(ACCRUED + ("8",))))))
+    # 회사분 비율의 근거: 납부일마다 그날 납부 전표를 모두 합친 것(공단마다 전표를 나눠 내도 한 번), 예수금을 옮긴 월말 전표
+    by_day = {}
+    for p in pays:
+        t = by_day.setdefault(p[0], [0, 0])
+        t[0] += p[1]
+        t[1] += p[2]
+    ratio_src = [(d_, e_, c_, "%s 납부 비율" % d_.isoformat()) for d_, (e_, c_) in by_day.items() if e_]
+    ratio_src += [(a["day"], sum(a["moved"].values()), sum(a["company"].values()), "%d-%02d 월말 전표 비율" % k)
+                  for k, a in accrued.items() if sum(a["moved"].values())]
     rows = []
     vcodes = _codes(mine)
     recent = None   # 가장 최근 달 납부액 (직원분 + 회사분): 급여 전표 전 달을 채운다 (F4)
@@ -324,35 +356,61 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
                 and (ln.get("credit") is not None or ln.get("debit") is None)]
         if not vals:
             continue
-        before = [p for p in pays if p[0] <= asof]
-        last = before[-1] if before else None
+        before = [s for s in ratio_src if s[0] <= asof]
+        last = max(before, key=lambda s: s[0]) if before else None
+        paid = [p for p in pays if end < p[0] <= asof]
         # 1차 점검 자금-6 (2026-11-15): 한 공단만 냈으면 나머지 공단분은 아직 나갈 돈 — 예전엔 그 달 줄 전체가 사라졌음
-        paid_who = set().union(*[p[3] for p in pays if end < p[0] <= asof]) if any(end < p[0] <= asof for p in pays) else set()
+        paid_who = set().union(*[p[3] for p in paid]) if paid else set()
         month_lines = [ln for ln in withheld if start <= ln["date"] <= end and (ln.get("credit") is not None or ln.get("debit") is None)]
         owed_who = set(who(ln) for ln in month_lines if ln.get("credit"))
         part = None
-        # 낸 직원분이 그 달 뗀 직원분에 못 미칠 때만 '일부 납부' — 여러 공단분을 한 공단 거래처로 몰아 낸 전표는 다 낸 것
-        paid_emp = sum(p[1] for p in pays if end < p[0] <= asof)
-        month_emp = sum((ln.get("credit") or 0) for ln in month_lines)
-        if paid_who and owed_who and not owed_who <= paid_who and paid_emp < month_emp:
-            part = [ln.get("credit") for ln in month_lines if who(ln) not in paid_who]
-        state = "예상"
-        if accrued.get((y, m)):
-            ratio = None
-            note = "회사분 %s원 (월말 전표)" % "{:,}".format(accrued[(y, m)])
-            state = "확정(전표)"
-        elif last and last[1]:
-            ratio = last[2] / last[1]
-            note = "회사분 = 직원분 × %.2f (%s 납부 비율)" % (ratio, last[0].isoformat())
+        a = accrued.get((y, m))
+        owed = None   # 월말 전표가 있는 달: 공단마다 낼 돈 = (예수금을 옮겼으면 옮긴 금액, 아니면 그 달 뗀 예수금) + 회사분
+        if a:
+            wh_by = {}
+            for ln in month_lines:
+                if ln.get("credit"):
+                    wh_by[who(ln)] = wh_by.get(who(ln), 0) + ln["credit"]
+            owed = {w: (a["moved"].get(w) or wh_by.get(w, 0)) + a["company"].get(w, 0)
+                    for w in set(wh_by) | set(a["company"]) | set(a["moved"])}
+            # 낸 금액이 낼 돈에 못 미치고 안 낸 공단이 있을 때만 '일부 납부'
+            if paid_who and not set(owed) <= paid_who and sum(p[1] + p[2] for p in paid) < sum(owed.values()):
+                part = sorted(w for w in owed if w not in paid_who)
         else:
-            ratio, note = 1.0, "회사분은 직원분과 같게 봄 (지난 납부 없음)"
+            # 낸 직원분이 그 달 뗀 직원분에 못 미칠 때만 '일부 납부' — 여러 공단분을 한 공단 거래처로 몰아 낸 전표는 다 낸 것
+            paid_emp = sum(p[1] for p in paid)
+            month_emp = sum((ln.get("credit") or 0) for ln in month_lines)
+            if paid_who and owed_who and not owed_who <= paid_who and paid_emp < month_emp:
+                part = [ln.get("credit") for ln in month_lines if who(ln) not in paid_who]
+        state = "예상"
         unknown = any(v is None for v in vals)
         emp = sum(v for v in vals if v is not None)
-        company = accrued[(y, m)] if ratio is None else int(round(emp * ratio))
-        amount = None if unknown else emp + company
+        if owed is not None:
+            company = sum(a["company"].values())
+            if sum(a["moved"].values()):
+                note = "월말 전표로 잡은 낼 돈: 직원분 %s원(예수금에서 옮김) + 회사분 %s원" % (
+                    "{:,}".format(sum(owed.values()) - company), "{:,}".format(company))
+            else:
+                note = "회사분 %s원 (월말 전표)" % "{:,}".format(company)
+            state = "확정(전표)"
+            amount = None if unknown else sum(owed.values())
+        else:
+            if last and last[1]:
+                ratio = last[2] / last[1]
+                note = "회사분 = 직원분 × %.2f (%s)" % (ratio, last[3])
+            else:
+                ratio, note = 1.0, "회사분은 직원분과 같게 봄 (지난 납부 없음)"
+            company = int(round(emp * ratio))
+            amount = None if unknown else emp + company
         if emp:
             recent = ((y, m), amount)
         if not _recent(due, asof):
+            continue
+        if part is not None and owed is not None:   # 월말 전표가 있는 달에 일부 공단만 냄: 남은 공단의 낼 돈
+            amt = None if unknown else sum(owed[w] for w in part)
+            rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, amt, state,
+                             "%s 납부 확인 — 남은 %s 낼 돈 (%s)" % ("·".join(sorted(paid_who & set(owed))), "·".join(part), note),
+                             vcodes))
             continue
         if part is not None:   # 일부 공단만 냄: 남은 공단의 직원분 + 그 몫의 회사분
             left = sum(v for v in part if v is not None)
@@ -363,10 +421,13 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
                              % ("·".join(sorted(paid_who & owed_who)), "·".join(sorted(owed_who - paid_who)),
                                 "{:,}".format(left), note), vcodes))
             continue
-        if any(end < p[0] <= asof for p in pays):
+        if paid:
             continue   # 이 달분을 이미 냄 (납부일 뒤 늦게 낸 것 포함)
-        rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, amount, state,
-                         "예수금 중 공단 거래처 대변(직원분) %s원 + %s" % ("{:,}".format(emp), note), vcodes))
+        if owed is not None and sum(a["moved"].values()):
+            basis = note
+        else:
+            basis = "예수금 중 공단 거래처 대변(직원분) %s원 + %s" % ("{:,}".format(emp), note)
+        rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, amount, state, basis, vcodes))
     # 급여 전표가 아직 없는 달: 최근 달 금액으로 예상 (F4: 12/10 4대보험 줄이 없던 것)
     credited = [ln["date"] for ln in withheld if ln.get("credit")]
     first = max(credited) if credited else max(ln["date"] for ln in withheld)
