@@ -885,11 +885,21 @@ class Window(object):
 
     def set_busy(self, busy, text, ok=None):
         self.busy = busy
+        # 2차 P6-7 (2026-11-15): 닫은 보조창(세법 기준 확인 등)의 단추가 목록에 남아 다음 작업에서 오류가 나고 그 뒤 모든 단추가
+        # 안 먹었다 (다시 켜야 함) → 없어진 단추는 목록에서 빼고, 단추 하나가 실패해도 나머지는 바꾼다
+        alive = []
         for b in self.buttons:
-            if isinstance(b, ttk.Widget):
-                b.state(["disabled"] if busy else ["!disabled"])
-            else:
-                b.configure(state="disabled" if busy else "normal", background="#9db7f0" if busy else C["blue"])
+            try:
+                if not b.winfo_exists():
+                    continue
+                if isinstance(b, ttk.Widget):
+                    b.state(["disabled"] if busy else ["!disabled"])
+                else:
+                    b.configure(state="disabled" if busy else "normal", background="#9db7f0" if busy else C["blue"])
+                alive.append(b)
+            except tk.TclError:
+                continue
+        self.buttons[:] = alive
         self.status.set(text)
         self.status_lab.configure(foreground=C["text"] if ok is None else (C["green"] if ok else C["red"]))
         if busy:
