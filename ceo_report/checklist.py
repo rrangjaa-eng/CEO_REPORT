@@ -132,10 +132,19 @@ def read_decisions(input_dir):
     return out
 
 
+_DECISION_LOCK = threading.Lock()   # 2차 C22·P3-5 (2026-11-15): 거의 동시에 두 번 저장하면 먼저 한 결정이 사라졌다
+
+
 def save_decision(input_dir, item_id, choice, memo="", content=""):
-    """결정 한 줄을 넣거나 고친다. choice 를 비우면 결정을 지운다 (다시 '결정할 것'으로)."""
+    """결정 한 줄을 넣거나 고친다. choice 를 비우면 결정을 지운다 (다시 '결정할 것'으로).
+    읽고-고치고-쓰기를 한 번에 하나씩 (확인할 것 화면은 요청마다 따로 돈다)."""
     if not item_id:
         raise ValueError("항목이 없음")
+    with _DECISION_LOCK:
+        return _save_decision(input_dir, item_id, choice, memo, content)
+
+
+def _save_decision(input_dir, item_id, choice, memo, content):
     from .util import guard_save
     guard_save(os.path.join(input_dir, STORE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_decisions(input_dir)

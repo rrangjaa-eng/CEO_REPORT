@@ -2145,3 +2145,29 @@ class TestUnreadableCumulativeKept(unittest.TestCase):
             self.assertEqual(_read(os.path.join(input_dir, n), "utf-8-sig"), "깨진,머리글\n2026-01,1\n", n)
             self.assertTrue([ln for ln in res.lines if ln.startswith("[%s] 만들지 않음" % n) and "읽지 못해 그대로 둠" in ln],
                             (n, res.lines))
+
+
+# ───────────── 2차 C22·P3-5: 확인할 것 결정을 거의 동시에 두 번 저장해도 둘 다 남음 ─────────────
+class TestDecisionsSavedTogether(unittest.TestCase):
+    def test_two_quick_saves_both_stay(self):
+        import shutil
+        import tempfile
+        import threading
+        import time
+        from unittest import mock
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        real = checklist.read_decisions
+
+        def slow(input_dir):
+            got = real(input_dir)
+            time.sleep(0.2)   # 읽고 쓰는 사이에 다른 저장이 끼어들 틈
+            return got
+        with mock.patch.object(checklist, "read_decisions", side_effect=slow):
+            ts = [threading.Thread(target=checklist.save_decision, args=(tmp, "항목%d" % i, "확인함", "", ""))
+                  for i in (1, 2)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(5)
+        self.assertEqual(sorted(real(tmp)), ["항목1", "항목2"])
