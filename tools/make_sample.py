@@ -222,9 +222,18 @@ TEMPLATES = os.path.join(HERE, "입력양식")
 SAMPLE_DIR = os.path.join(TEMPLATES, "샘플")
 
 
+INSTALL_MARKS = ("수집", "출력", "대표보고.exe", "_old")   # 2차 P6-17: 이런 것이 옆에 있으면 설치 폴더의 '입력'
+
+
 def is_real_input(folder):
-    """사용자의 실제 입력 폴더(<프로그램 폴더>/입력)이면 True."""
-    return os.path.normcase(os.path.realpath(folder)) == os.path.normcase(os.path.realpath(REAL_INPUT))
+    """사용자의 실제 입력 폴더(<프로그램 폴더>/입력)이면 True.
+    2차 P6-17 (2026-11-15): 예전엔 이 소스 폴더의 입력만 막아, 다른 설치 폴더(예: F:\\CLAUDE\\CEO_REPORT\\입력)를 주면 실제 CSV 를 샘플로 덮었다.
+    이제 이름이 '입력'이고 옆에 수집·출력·대표보고.exe 가 있는 폴더도 실제 입력으로 본다."""
+    real = os.path.normcase(os.path.realpath(folder))
+    if real == os.path.normcase(os.path.realpath(REAL_INPUT)):
+        return True
+    parent = os.path.dirname(real)
+    return os.path.basename(real) == os.path.normcase("입력") and any(os.path.exists(os.path.join(parent, m)) for m in INSTALL_MARKS)
 
 
 def write_sample(folder, data=None):

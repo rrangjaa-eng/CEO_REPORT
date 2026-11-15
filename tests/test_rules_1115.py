@@ -3394,3 +3394,25 @@ class TestUserInstalledBrowserFound(unittest.TestCase):
         self.assertIn(exe, rep._user_browsers({"LOCALAPPDATA": tmp}))
         with mock.patch.object(rep, "BROWSERS", []), mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
             self.assertEqual(rep.find_browser(), exe)
+
+
+# ───────────── 2차 P6-17: 샘플 도구가 다른 설치 폴더의 실제 입력을 덮지 않음 ─────────────
+class TestSampleToolProtectsOtherInstalls(unittest.TestCase):
+    def test_other_install(self):
+        import importlib
+        import tempfile
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        ms = importlib.import_module("make_sample")
+        tmp = tempfile.mkdtemp()
+        inp = os.path.join(tmp, "설치", "입력")
+        os.makedirs(inp)
+        os.makedirs(os.path.join(tmp, "설치", "수집"))
+        with open(os.path.join(inp, "설정.csv"), "w", encoding="utf-8") as f:
+            f.write("진짜")
+        self.assertTrue(ms.is_real_input(inp))
+        with self.assertRaises(ValueError):
+            ms.write_sample(inp)
+        self.assertEqual(ms.main([inp]), 2)
+        with open(os.path.join(inp, "설정.csv"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "진짜")
+        self.assertFalse(ms.is_real_input(os.path.join(tmp, "아무폴더")))
