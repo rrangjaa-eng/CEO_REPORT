@@ -3469,3 +3469,11 @@ class TestLawVersionInForce(unittest.TestCase):
         op = self.opener(res)
         self.assertEqual(LW.find_admrul("x", "가상 고시", op, ref="20261115")["mst"], "8")
         self.assertEqual(LW.find_admrul("x", "가상 고시", op)["mst"], "9")
+
+
+# ───────────── 2차 P4-9: 대표 보고 PDF가 쪽 수를 넘치면 알림 ─────────────
+class TestPdfOverPagesSaid(unittest.TestCase):
+    def test_source(self):
+        with open(os.path.join(ROOT, "보고서.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("[확인] 대표 보고 PDF가 %d쪽입니다", src)

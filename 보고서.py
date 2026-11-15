@@ -537,6 +537,10 @@ def main(argv=None):
                 pdf_failed = True
             else:
                 made.append(pdf)
+                got = pdf_pages(pdf) if limit else None
+                if got and got > limit:   # 2차 P4-9 (2026-11-15): 글자를 줄여도 쪽 수가 넘치면 알린다 (예전엔 말없이 넘친 PDF)
+                    _say("[확인] 대표 보고 PDF가 %d쪽입니다 (정한 쪽 수 %d쪽 — 글자를 줄여도 넘침): %s — 출금 목록이 길면 '합칠 거래처'로 줄여 보세요"
+                         % (got, limit, os.path.basename(pdf)))
                 for gone in pdfname.prune(base):
                     _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and a.팀장용 == "만듦" and stop:
