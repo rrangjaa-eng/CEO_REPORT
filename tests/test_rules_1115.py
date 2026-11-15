@@ -2670,3 +2670,45 @@ class TestCheckScreenFollowsNewConvert(unittest.TestCase):
         page = s.page()
         self.assertIn("새 항목", page)
         self.assertNotIn("옛 항목", page)
+
+
+# ───────────── 2차 P1-9·P6-6: 다운로드 가져오기는 파일 시각이 아니라 확장의 수집시각으로 새것을 고름 ─────────────
+class TestImportByCollectedAt(unittest.TestCase):
+    def _setup(self):
+        import shutil
+        import tempfile
+        from ceo_report import app
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        paths = app.Paths(tmp)
+        down = os.path.join(tmp, "dl")
+        os.makedirs(os.path.join(down, app.AUTO_DIR))
+        os.makedirs(paths.wehago, exist_ok=True)
+        return app, paths, down
+
+    def _put(self, path, at, mtime):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"종류": "분개장", "수집시각": at, "줄": []}, f, ensure_ascii=False)
+        os.utime(path, (mtime, mtime))
+
+    def test_older_collection_with_newer_mtime_is_not_imported(self):
+        app, paths, down = self._setup()
+        name = "261115 분개장 자동수집.json"
+        self._put(os.path.join(paths.wehago, name), "2026-11-15 10:00:00", 1_763_000_000)
+        self._put(os.path.join(down, app.AUTO_DIR, name), "2026-11-15 08:00:00", 1_763_100_000)   # 늦게 복사된 옛 수집
+        said = []
+        self.assertEqual(app.import_auto(paths, said.append, dirs=[down]), 0)
+        with open(os.path.join(paths.wehago, name), encoding="utf-8") as f:
+            self.assertIn("10:00:00", f.read())
+        self.assertTrue(any("수집시각" in x for x in said), said)
+
+    def test_newer_collection_replaces(self):
+        app, paths, down = self._setup()
+        name = "261115 분개장 자동수집.json"
+        self._put(os.path.join(paths.wehago, name), "2026-11-15 08:00:00", 1_763_100_000)
+        self._put(os.path.join(down, app.AUTO_DIR, name), "2026-11-15 10:00:00", 1_763_000_000)
+        self.assertEqual(app.import_auto(paths, [].append, dirs=[down]), 1)
+        with open(os.path.join(paths.wehago, name), encoding="utf-8") as f:
+            self.assertIn("10:00:00", f.read())
+        self.assertEqual(len(os.listdir(os.path.join(paths.wehago, app.ARCHIVE))), 1)   # 예전 것은 지난자료로

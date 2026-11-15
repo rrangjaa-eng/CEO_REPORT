@@ -223,15 +223,20 @@ def _same_file(a, b):
         return False
 
 
-def _json_ok(path):
-    """자동수집 파일이 끝까지 읽히는 JSON 인가 (받다 끊긴 파일·깨진 파일은 False)."""
+def _json_info(path):
+    """자동수집 파일 -> (끝까지 읽히는 JSON 인가, 확장이 적은 '수집시각' 또는 '')."""
     import json
     try:
         with open(path, encoding="utf-8-sig") as f:
-            json.load(f)
-        return True
+            d = json.load(f)
     except (OSError, ValueError):
-        return False
+        return False, ""
+    return True, (str(d.get("수집시각") or "").strip() if isinstance(d, dict) else "")
+
+
+def _json_ok(path):
+    """자동수집 파일이 끝까지 읽히는 JSON 인가 (받다 끊긴 파일·깨진 파일은 False)."""
+    return _json_info(path)[0]
 
 
 def _in_archive(paths, name, src):
@@ -286,15 +291,19 @@ def import_auto(paths, say, dirs=None):
                     say("다운로드 폴더의 자동수집 파일 정리: %s (이미 %s에 있음 — 다시 가져오지 않음)"
                         % (name, "수집\\위하고\\" + ARCHIVE if kept else "수집\\위하고"))
                     continue
-                if not _json_ok(src):   # 2차 P1-10·P2-3: 깨진 파일이 '가져옴'으로 들어와 멀쩡한 같은 이름 원본을 밀어냈다
+                s_ok, s_at = _json_info(src)
+                if not s_ok:   # 2차 P1-10·P2-3: 깨진 파일이 '가져옴'으로 들어와 멀쩡한 같은 이름 원본을 밀어냈다
                     moved = _to_archive(paths, src, name)
                     say("[확인] 다운로드 폴더의 자동수집 파일이 깨져(받다 끊김 등) 가져오지 않고 지난자료로 옮김: %s — "
                         "지금 쓰는 원본은 그대로 둠, 위하고 확장에서 다시 받으세요" % os.path.basename(moved))
                     continue
-                if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+                d_ok, d_at = _json_info(dst) if os.path.exists(dst) else (False, "")
+                # 2차 P1-9·P6-6: 어느 쪽이 새것인지는 확장이 적은 수집시각으로 (다른 크롬 프로필에서 늦게 복사돼 파일 시각만 새로운
+                # 옛 수집이 새 수집을 밀어냈다). 수집시각이 없을 때만 파일 시각. 지금 것이 깨졌으면 새 파일로 바꾼다
+                if d_ok and ((s_at <= d_at) if (s_at and d_at) else os.path.getmtime(dst) >= os.path.getmtime(src)):
                     moved = _to_archive(paths, src, name)
-                    say("다운로드 폴더의 옛 자동수집 파일을 지난자료로 옮김: %s (같은 이름의 더 새 파일이 이미 있음)"
-                        % os.path.basename(moved))
+                    say("다운로드 폴더의 옛 자동수집 파일을 지난자료로 옮김: %s (같은 이름의 더 새 수집이 이미 있음%s)"
+                        % (os.path.basename(moved), " — 수집시각 %s ≤ %s" % (s_at, d_at) if (s_at and d_at) else ""))
                     continue
                 os.makedirs(paths.wehago, exist_ok=True)
                 tmp = dst + ".가져오는중"
