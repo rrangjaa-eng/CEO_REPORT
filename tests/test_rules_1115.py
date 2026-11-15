@@ -2265,3 +2265,28 @@ class TestReportPickingAgrees(unittest.TestCase):
             with open(os.path.join(folder, "할일_%s_2026-11-15.json" % kind), "w", encoding="utf-8") as f:
                 json.dump({"items": {k: {"text": k, "topic": "cash", "owner": "경영관리", "n": 1}}}, f, ensure_ascii=False)
         self.assertEqual(sorted(i["id"] for i in mgmt_topics.check_items(out)), ["월간할일", "주간할일"])
+
+
+# ───────────── 2차 P2-1: 새 CSV 를 놓은 뒤 예상 못 한 오류가 나면 모두 되돌림 ─────────────
+class TestConvertRollsBackOnLateError(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import test_convert
+        test_convert.setUpModule()
+
+    def test_late_error_restores_csvs_and_says_so(self):
+        from unittest import mock
+        from ceo_report import hometax
+        from test_convert_review_fixes import company, result_text, run_convert_core
+        tmp, input_dir, collect, wehago_dir = company(self)
+        self.assertEqual(run_convert_core(input_dir, collect, wehago_dir).code, 0)
+        marker = "예정일,세목\n2026-01-01,지난 변환\n"
+        with open(os.path.join(input_dir, "세금예상.csv"), "w", encoding="utf-8-sig") as f:
+            f.write(marker)
+        with mock.patch.object(hometax, "compare", side_effect=RuntimeError("가상 오류")):
+            res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 7)
+        self.assertIn("되돌림", res.lines[0])
+        self.assertIn("RuntimeError", res.lines[0])
+        self.assertEqual(_read(os.path.join(input_dir, "세금예상.csv"), "utf-8-sig"), marker)
+        self.assertIn("변환 실패", result_text(input_dir))

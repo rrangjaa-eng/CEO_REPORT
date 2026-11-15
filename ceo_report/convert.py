@@ -1309,77 +1309,92 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         return res
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
     side_kept = _keep_side(input_dir)   # 2단계에서 바뀌는 파일: 변환결과.txt 를 못 쓰면 CSV 와 함께 되돌린다 (K4)
-    listings, summary = [], []
-    if snap is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05): 최근 스냅숏 것을 입력 폴더로
-        from . import payreq
-        if os.path.exists(os.path.join(snap.path, payreq.FILE)):
-            reqs, why = payreq.read_checked(snap.path)
-            if reqs is None:   # P5-22: 못 읽은 파일을 0건으로 써서 있던 상세를 지우지 않는다
-                summary.append("경고: 최근 수집의 지급 요청서(%s)를 읽지 못함 (%s) — 입력 폴더의 예전 상세 내역을 그대로 둠, "
-                               "인트라넷 수집을 다시 하세요" % (payreq.FILE, why))
-            else:
+    try:   # 2차 P2-1 (2026-11-15): 새 CSV 를 놓은 뒤 예상하지 못한 오류가 나면 CSV·함께 바뀐 파일을 모두 되돌린다
+        listings, summary = [], []
+        if snap is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05): 최근 스냅숏 것을 입력 폴더로
+            from . import payreq
+            if os.path.exists(os.path.join(snap.path, payreq.FILE)):
+                reqs, why = payreq.read_checked(snap.path)
+                if reqs is None:   # P5-22: 못 읽은 파일을 0건으로 써서 있던 상세를 지우지 않는다
+                    summary.append("경고: 최근 수집의 지급 요청서(%s)를 읽지 못함 (%s) — 입력 폴더의 예전 상세 내역을 그대로 둠, "
+                                   "인트라넷 수집을 다시 하세요" % (payreq.FILE, why))
+                else:
+                    try:
+                        payreq.write(input_dir, reqs)
+                        summary.append("지급 요청서(관리팀 승인·사장님 승인 전) %d건 · 세부사항 있음 %d건 → 주간 출금 목록 상세 내역에 맞춰 붙임"
+                                       % (len(reqs), sum(1 for r in reqs if r["note"])))
+                    except OSError:
+                        summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
+            elif os.path.exists(os.path.join(input_dir, payreq.FILE)):
+                # 최근 수집에 지급 요청서가 없으면 예전 것을 남기지 않는다 (지난 세부사항이 새 출금에 붙지 않게) — 지웠다고 알린다
                 try:
-                    payreq.write(input_dir, reqs)
-                    summary.append("지급 요청서(관리팀 승인·사장님 승인 전) %d건 · 세부사항 있음 %d건 → 주간 출금 목록 상세 내역에 맞춰 붙임"
-                                   % (len(reqs), sum(1 for r in reqs if r["note"])))
+                    os.remove(os.path.join(input_dir, payreq.FILE))
+                    summary.append("최근 인트라넷 수집에 지급 요청서 세부사항이 없어 예전 상세를 지움 — 주간 출금 목록 상세 내역이 비어 있을 수 "
+                                   "있음 (수집을 다시 하면 채워짐)")
                 except OSError:
-                    summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
-        elif os.path.exists(os.path.join(input_dir, payreq.FILE)):
-            # 최근 수집에 지급 요청서가 없으면 예전 것을 남기지 않는다 (지난 세부사항이 새 출금에 붙지 않게) — 지웠다고 알린다
-            try:
-                os.remove(os.path.join(input_dir, payreq.FILE))
-                summary.append("최근 인트라넷 수집에 지급 요청서 세부사항이 없어 예전 상세를 지움 — 주간 출금 목록 상세 내역이 비어 있을 수 "
-                               "있음 (수집을 다시 하면 채워짐)")
-            except OSError:
-                pass
-    if books.state == "ok":
-        from . import review_checks
-        tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
-        from . import insights   # 자동 분석용 장부 풀이: 고정비·매달 있어야 할 전표 (사용자 2026-11-12)
-        facts = insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"])
-        # P1-1·P2-4: 받은 장부·자금계획서의 회사 이름 — 확인(gate)이 설정 회사명·서로와 맞춰 본다 (다른 회사 자료로 보고하지 않게)
-        fp_table = next((t for t in tables if t.name == "자금계획.csv" and t.written), None)
-        facts["book_company"] = books.company or ""
-        facts["plan_companies"] = sorted(set(v for v in ((fp_table.extra or {}).get("companies") or {}).values() if v)) if fp_table else []
-        side_fail = []   # 2차 P2-14·P3-10 (2026-11-15): 자동분석·확인할것 저장 실패가 '변환 완료'에 묻혔다
-        if not insights.write_facts(input_dir, facts):
-            side_fail.append("경고: %s(장부 기준일·회사 이름·고정비)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
-                             % (insights.FILE, "예전 것은 지워 보고가 자료기준일.csv 로 장부 날짜를 봄"
-                                if _drop_stale(input_dir, insights.FILE) else "예전 것이 남아 보고가 지난 장부 날짜·회사 이름을 볼 수 있음"))
-        dups = review_checks.duplicate_lines(books.journal)
-        overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
-        from . import checklist, hometax
-        ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
-        listings = tidy + overlap + dups + ht["notes"] + checks
-        summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
-        items = (review_checks.duplicate_items(books.journal) + ht["items"]
-                 + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
-        trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
-                 if v["text"]}
-        if not checklist.save_convert_items(input_dir, items, ran_at, trace):
-            side_fail.append("경고: %s(변환에서 찾은 확인할 것 %d건)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
-                             % (checklist.CONVERT_FILE, len(items), "예전 항목은 지움" if _drop_stale(input_dir, checklist.CONVERT_FILE)
-                                else "확인할 것 화면에 예전 항목이 보일 수 있음"))
-        if side_fail:
+                    pass
+        if books.state == "ok":
+            from . import review_checks
+            tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
+            from . import insights   # 자동 분석용 장부 풀이: 고정비·매달 있어야 할 전표 (사용자 2026-11-12)
+            facts = insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"])
+            # P1-1·P2-4: 받은 장부·자금계획서의 회사 이름 — 확인(gate)이 설정 회사명·서로와 맞춰 본다 (다른 회사 자료로 보고하지 않게)
+            fp_table = next((t for t in tables if t.name == "자금계획.csv" and t.written), None)
+            facts["book_company"] = books.company or ""
+            facts["plan_companies"] = sorted(set(v for v in ((fp_table.extra or {}).get("companies") or {}).values() if v)) if fp_table else []
+            side_fail = []   # 2차 P2-14·P3-10 (2026-11-15): 자동분석·확인할것 저장 실패가 '변환 완료'에 묻혔다
+            if not insights.write_facts(input_dir, facts):
+                side_fail.append("경고: %s(장부 기준일·회사 이름·고정비)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
+                                 % (insights.FILE, "예전 것은 지워 보고가 자료기준일.csv 로 장부 날짜를 봄"
+                                    if _drop_stale(input_dir, insights.FILE) else "예전 것이 남아 보고가 지난 장부 날짜·회사 이름을 볼 수 있음"))
+            dups = review_checks.duplicate_lines(books.journal)
+            overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
+            from . import checklist, hometax
+            ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
+            listings = tidy + overlap + dups + ht["notes"] + checks
+            summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
+            items = (review_checks.duplicate_items(books.journal) + ht["items"]
+                     + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
+            trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
+                     if v["text"]}
+            if not checklist.save_convert_items(input_dir, items, ran_at, trace):
+                side_fail.append("경고: %s(변환에서 찾은 확인할 것 %d건)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
+                                 % (checklist.CONVERT_FILE, len(items), "예전 항목은 지움" if _drop_stale(input_dir, checklist.CONVERT_FILE)
+                                    else "확인할 것 화면에 예전 항목이 보일 수 있음"))
+            if side_fail:
+                res.code = 7
+                listings = listings + side_fail
+                summary = summary + side_fail
+        snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
+        lines = result_lines(ran_at, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
+                             snap_warning)
+        try:
+            write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)
+        except WriteFailed as e:
             res.code = 7
-            listings = listings + side_fail
-            summary = summary + side_fail
-    snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
-    lines = result_lines(ran_at, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
-                         snap_warning)
-    try:
-        write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)
-    except WriteFailed as e:
+            # 새 CSV 와 맞는 변환결과.txt 를 쓰지 못했다: CSV 도 되돌려 폴더가 한 실행의 결과만 담게 한다 (WR-01)
+            restored, lost = roll_back(input_dir, [n for n, _ in csv_payloads], set(moved), backup)
+            side_done, side_lost = _put_back_side(input_dir, side_kept)
+            e.replaced, e.restored, e.lost, e.backup = [n for n, _ in csv_payloads], restored, lost, backup
+            res.lines = _write_failed_lines(e)
+            if side_done:
+                res.lines.append("함께 바뀐 파일도 변환 전으로 되돌림: " + ", ".join(side_done))
+            if side_lost:
+                res.lines.append("되돌리지 못한 파일 (새 내용 그대로): %s — 자료 변환을 다시 실행하세요" % ", ".join(side_lost))
+            return res
+    except Exception as e:   # noqa: BLE001  (WriteFailed 는 위에서 처리하고 돌아감)
         res.code = 7
-        # 새 CSV 와 맞는 변환결과.txt 를 쓰지 못했다: CSV 도 되돌려 폴더가 한 실행의 결과만 담게 한다 (WR-01)
         restored, lost = roll_back(input_dir, [n for n, _ in csv_payloads], set(moved), backup)
         side_done, side_lost = _put_back_side(input_dir, side_kept)
-        e.replaced, e.restored, e.lost, e.backup = [n for n, _ in csv_payloads], restored, lost, backup
-        res.lines = _write_failed_lines(e)
-        if side_done:
-            res.lines.append("함께 바뀐 파일도 변환 전으로 되돌림: " + ", ".join(side_done))
-        if side_lost:
-            res.lines.append("되돌리지 못한 파일 (새 내용 그대로): %s — 자료 변환을 다시 실행하세요" % ", ".join(side_lost))
+        why = "%s: %s" % (type(e).__name__, str(e)[:200])
+        res.lines = ["변환 실패 — 새 CSV 를 놓은 뒤 예상하지 못한 오류 (%s) — 바꾼 파일을 변환 전으로 되돌림 (종료 코드 7)" % why]
+        if lost or side_lost:
+            res.lines.append("되돌리지 못한 파일 (새 내용 그대로): %s — 자료 변환을 다시 실행하세요" % ", ".join(list(lost) + list(side_lost)))
+        text = ["변환 시각 %s · 기준일 %s" % ((ran_at or now).strftime("%Y-%m-%d %H:%M:%S"), asof.isoformat())] + res.lines
+        try:
+            write_files(input_dir, [("변환결과.txt", _text_bytes(text))], stamp, backup)
+        except WriteFailed:
+            res.lines.append("변환결과.txt도 쓰지 못함 (이전 변환의 결과가 남아 있음)")
         return res
     res.backup = os.path.join(input_dir, "이전", backup) if backup else None
     out = []
