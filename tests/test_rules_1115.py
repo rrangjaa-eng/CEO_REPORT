@@ -856,3 +856,68 @@ class TestSafety01TransferGate(unittest.TestCase):
             self.assertTrue(gate._test_off())
             with mock.patch.object(_sys, "frozen", True, create=True):
                 self.assertFalse(gate._test_off())
+
+
+# ───────────── P2-12: 엑셀에서 CP949 로 저장한 자금일정 지난기록도 읽고, 머리줄이 달라도 칸이 밀리지 않게 ─────────────
+class TestSafetyArchiveEncoding(unittest.TestCase):
+    HEAD = ["예정일", "입출금", "금액", "확정여부", "분류", "프로젝트번호", "거래처", "근거", "비고"]
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def write(self, name, head, rows, enc="utf-8-sig"):
+        import csv
+        with open(os.path.join(self.dir, name), "w", encoding=enc, newline="") as f:
+            w = csv.writer(f)
+            w.writerow(head)
+            w.writerows(rows)
+
+    def read(self, name):
+        import csv
+        with open(os.path.join(self.dir, name), encoding="utf-8-sig") as f:
+            return list(csv.DictReader(f))
+
+    def bank(self, no, amount, vendor):
+        return [{"date": D(2026, 11, 7), "no": no, "account_code": "10300", "debit": None, "credit": amount,
+                 "vendor": vendor, "vendor_norm": vendor, "type": "일반"}]
+
+    def test_cp949_archive_still_blocks_reusing_a_bank_line(self):
+        from ceo_report import review_checks as RC
+        # 지난번에 전표 1(50만)을 '가상' 일정에 이미 썼다 — 사용자가 엑셀로 열어 CP949 로 저장
+        self.write(RC.ARCHIVE, self.HEAD + ["정리일", "정리 근거"],
+                   [["2026-11-06", "출금", "500000", "확정", "급한 지급", "", "가상", "첫 지급", "", "2026-11-08",
+                     "분개장 2026-11-07 전표 1 보통예금 출금과 맞음"]], enc="cp949")
+        self.write(RC.SCHEDULE, self.HEAD, [["2026-11-07", "출금", "500000", "확정", "급한 지급", "", "가상", "아직 안 나감", ""]])
+        out = RC.archive_paid_schedule(self.dir, self.bank("1", 500000, "가상"), D(2026, 11, 10))
+        self.assertIn("없음", out[0])   # 같은 통장 줄을 또 쓰지 않음 → 아직 안 나간 일정이 남는다
+        self.assertEqual([r["근거"] for r in self.read(RC.SCHEDULE)], ["아직 안 나감"])
+
+    def test_header_union_keeps_columns_aligned(self):
+        from ceo_report import review_checks as RC
+        self.write(RC.ARCHIVE, self.HEAD + ["정리일", "정리 근거"],
+                   [["2026-10-01", "출금", "100000", "확정", "예정", "", "옛곳", "옛 줄", "", "2026-10-02",
+                     "분개장 2026-10-01 전표 9 보통예금 출금과 맞음"]], enc="cp949")
+        self.write(RC.SCHEDULE, self.HEAD + ["거래처코드"],
+                   [["2026-11-07", "출금", "500000", "확정", "급한 지급", "", "가상", "새 줄", "", "00123"]])
+        J = self.bank("1", 500000, "가상")
+        J[0]["vendor_code"] = "123"
+        out = RC.archive_paid_schedule(self.dir, J, D(2026, 11, 10))
+        self.assertIn("1줄", out[0])
+        arc = self.read(RC.ARCHIVE)   # 통째로 UTF-8 로 다시 씀 — 옛 줄 글자도 그대로
+        self.assertEqual([(r["근거"], r["거래처코드"], r["정리 근거"][:14]) for r in arc],
+                         [("옛 줄", "", "분개장 2026-10-01"), ("새 줄", "00123", "분개장 2026-11-07")])
+
+    def test_unreadable_archive_changes_nothing(self):
+        from ceo_report import review_checks as RC
+        with open(os.path.join(self.dir, RC.ARCHIVE), "wb") as f:
+            f.write(b"\xff\xfe\x00\xd8broken\x80\x81")
+        self.write(RC.SCHEDULE, self.HEAD, [["2026-11-07", "출금", "500000", "확정", "급한 지급", "", "가상", "그대로", ""]])
+        with open(os.path.join(self.dir, RC.SCHEDULE), "rb") as f:
+            before = f.read()
+        out = RC.archive_paid_schedule(self.dir, self.bank("1", 500000, "가상"), D(2026, 11, 10))
+        self.assertIn("읽지 못해 그대로 둠", out[0])
+        with open(os.path.join(self.dir, RC.SCHEDULE), "rb") as f:
+            self.assertEqual(f.read(), before)

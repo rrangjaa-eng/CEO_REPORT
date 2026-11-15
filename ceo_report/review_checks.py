@@ -170,19 +170,58 @@ EARLY_DAYS = {"지급": 14, "입금": 45}   # 예정일보다 이만큼 먼저 �
 _USED_RE = re.compile(r"분개장 (\d{4}-\d{2}-\d{2}) 전표 (\S+) 보통예금")
 
 
-def _used_before(arc_path):
-    """지난기록에 이미 쓴 통장 줄 {(날짜 글자, 전표번호, 금액)} — 다시 돌릴 때 같은 출금·입금을 다른 줄에 또 쓰지 않게."""
-    used = set()
+def _read_archive(arc_path):
+    """자금일정_지난기록.csv -> (머리줄, 줄 목록[칸 목록]). 없으면 ([], []), 읽지 못하면 None.
+
+    2026-11-15 P2-12: 엑셀에서 저장해 CP949 가 된 지난기록도 읽는다. 예전에는 UTF-8 로만 읽고 실패하면 '쓴 통장 줄 없음'으로
+    여겨, 이미 다른 일정에 쓴 통장 줄을 또 써서 아직 안 나간 일정까지 옮길 수 있었다.
+    """
     if not os.path.exists(arc_path):
-        return used
+        return [], []
     try:
-        with open(arc_path, encoding="utf-8-sig") as f:
-            for r in csv.DictReader(f):
-                m = _USED_RE.search(r.get("정리 근거") or "")
-                if m:
-                    used.add((m.group(1), m.group(2), abs(util.num(r.get("금액")) or 0)))
-    except (OSError, UnicodeDecodeError, csv.Error):
-        pass
+        with open(arc_path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    text = None
+    for enc in ("utf-8-sig", "cp949"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return None
+    try:
+        rows = list(csv.reader(io.StringIO(text)))
+    except csv.Error:
+        return None
+    if not rows:
+        return [], []
+    return [h.strip() for h in rows[0]], [r for r in rows[1:] if any((c or "").strip() for c in r)]
+
+
+def _used_before(arc):
+    """지난기록에 이미 쓴 통장 줄 {(날짜 글자, 전표번호, 금액 또는 None)} — 다시 돌릴 때 같은 출금·입금을 다른 줄에 또 쓰지 않게.
+
+    arc 는 _read_archive 결과(또는 파일 경로). 칸이 밀려도 놓치지 않게 모든 칸에서 '분개장 … 전표 … 보통예금'을 찾고,
+    금액을 못 읽으면 그 전표의 통장 줄은 모두 쓴 것으로 본다 (모자라게 옮기는 쪽이 안전).
+    """
+    if isinstance(arc, str):
+        arc = _read_archive(arc)
+    used = set()
+    if not arc:
+        return used
+    header, rows = arc
+    i_amt = header.index("금액") if "금액" in header else None
+    for cells in rows:
+        for c in cells:
+            m = _USED_RE.search(c or "")
+            if not m:
+                continue
+            amt = util.num(cells[i_amt]) if i_amt is not None and i_amt < len(cells) else None
+            used.add((m.group(1), m.group(2), abs(amt) if amt else None))
+            break
     return used
 
 
@@ -205,9 +244,12 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
     from .wehago import norm_code
     has_code = any("거래처코드" in r for r in rows)   # 2026-11-14 선택 칸: 있으면 다시 쓸 때도 남긴다
     arc_path = os.path.join(input_dir, ARCHIVE)
-    before = _used_before(arc_path)
+    arc = _read_archive(arc_path)
+    if arc is None:
+        return ["자금일정 정리: %s 을 읽지 못해 그대로 둠 — 엑셀에서 열려 있으면 닫고, 깨졌으면 파일을 다른 이름으로 옮긴 뒤 다시 변환하세요" % ARCHIVE]
+    before = _used_before(arc)
     bank = [b for b in _bank_lines(journal, cash_codes) if b[0] <= book_date
-            and (b[0].isoformat(), b[3], b[1]) not in before]
+            and (b[0].isoformat(), b[3], b[1]) not in before and (b[0].isoformat(), b[3], None) not in before]
     used = set()
     hits = {}
     order = sorted(range(len(rows)), key=lambda i: (util.date(rows[i].get("예정일"), util.Issues(), rows[i], "예정일") or dt.date.max, i))
@@ -259,24 +301,29 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
     cols = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
+    # 지난기록은 머리줄을 합쳐 통째로 다시 쓴다 (P2-12: 옛 머리줄에 없는 칸을 덧붙이면 칸이 밀리고, CP949 파일 뒤에 UTF-8 을 붙이면 깨짐)
+    old_head, old_rows = arc
+    head = list(old_head) if old_head else []
+    for c in cols + ["정리일", "정리 근거"]:
+        if c not in head:
+            head.append(c)
     # 두 파일을 임시 파일로 다 만든 뒤 바꾼다: 한쪽만 바뀌어 줄이 사라지거나 두 번 옮겨지지 않게 (코덱스 검토 2026-11-14)
     tmp, arc_tmp = path + ".tmp", arc_path + ".tmp"
     try:
         with open(path, "rb") as f:
             before = f.read()
-        old_arc = b""
-        if os.path.exists(arc_path):
-            with open(arc_path, "rb") as f:
-                old_arc = f.read()
         buf = io.StringIO()
         w = csv.writer(buf)
-        if not old_arc:
-            w.writerow(cols + ["정리일", "정리 근거"])
+        w.writerow(head)
+        for cells in old_rows:
+            w.writerow(list(cells) + [""] * (len(head) - len(cells)))
+        today = dt.date.today().isoformat()
         for r, why in moved:
-            w.writerow([r.get(c, "") for c in cols] + [dt.date.today().isoformat(), why])
-        with open(arc_tmp, "wb") as f:
-            f.write(old_arc or b"\xef\xbb\xbf")
-            f.write(buf.getvalue().encode("utf-8"))
+            val = dict((c, r.get(c, "")) for c in cols)
+            val["정리일"], val["정리 근거"] = today, why
+            w.writerow([val.get(c, "") for c in head])
+        with open(arc_tmp, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(buf.getvalue())
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(cols)
