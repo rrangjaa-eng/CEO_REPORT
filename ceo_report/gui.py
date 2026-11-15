@@ -1129,7 +1129,8 @@ class Window(object):
         if not self.remember.get():
             self.pw.set("")   # 비밀번호는 쓰고 바로 비운다
             return
-        if rc == 3:   # 로그인 실패·화면 구조 변경: 틀린 계정을 기억하지 않는다
+        if rc not in (0, 7):   # 2차 P1-18: 로그인에 성공한 것이 확인될 때만 (0 완료 · 7 받은 뒤 저장 실패). 통신 실패(5) 등은 기억하지 않는다
+            self.say("로그인 성공을 확인하지 못해 이번 계정은 기억하지 않았습니다 (예전에 기억한 계정은 그대로)")
             return
         try:
             credstore.save(self.paths.input, self.uid.get(), self.pw.get())

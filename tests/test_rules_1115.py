@@ -2933,3 +2933,36 @@ class TestIntranetPagingNotSilentlyPartial(unittest.TestCase):
         res = intranet().collect(opener, USER, PASSWORD, diag=diag)
         self.assertEqual(len(res.payments), 2)
         self.assertTrue(any(x.startswith("[확인]") and "다음" in x for x in diag), diag)
+
+
+# ───────────── 2차 P1-18: 로그인 성공이 확인된 계정만 기억 ─────────────
+class TestRememberOnlyVerifiedLogin(unittest.TestCase):
+    def test_codes(self):
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        from unittest import mock
+        from ceo_report import credstore
+
+        class V(object):
+            def __init__(self, v):
+                self.v = v
+
+            def get(self):
+                return self.v
+
+            def set(self, v):
+                self.v = v
+
+        class Fake(object):
+            remember, uid, pw = V(True), V("가상"), V("비번")
+            paths = type("P", (), {"input": "/없는곳"})()
+            said = []
+
+            def say(self, t):
+                self.said.append(t)
+        for rc, saved in ((5, False), (3, False), (6, False), (0, True), (7, True)):
+            with mock.patch.object(credstore, "save") as sv:
+                gui.Window.after_collect(Fake(), rc)
+                self.assertEqual(sv.called, saved, rc)
