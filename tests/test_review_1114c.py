@@ -630,3 +630,41 @@ class TeamLeaderPeriodEnd(TeamReportCase):
         last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)).day
         T2 = dict(T, asof=dt.date(y + (m == 12), m % 12 + 1, 3))
         self.assertIn("~ %02d.%02d" % (m, last), teamreport.render(T2))
+
+
+class MidYearCutsEverything(MidYearAnnual):
+    """1차 C7 (2026-11-15): 연중 연간 보고에 기준일 뒤 현금흐름·선납세금·연말 잉여금이 들어갔다."""
+
+    def test_prepaid_and_cashflow_stop_at_asof(self):
+        import csv as _csv
+        path = os.path.join(self.inp, annual.FILE)
+        with open(path, encoding="utf-8-sig") as f:
+            rows = list(_csv.DictReader(f))
+        extra = [{"연도": "2026", "구분": "선납세금일", "항목": "2026-03-31", "코드": "", "금액": "100000"},
+                 {"연도": "2026", "구분": "선납세금일", "항목": "2026-08-31", "코드": "", "금액": "4000000"}]
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            w = _csv.DictWriter(f, annual.KEYS)
+            w.writeheader()
+            for r in rows + extra:
+                w.writerow(dict((k, r.get(k, "")) for k in annual.KEYS))
+        self.addCleanup(self._restore, path, rows)
+        A = annual.compute(self.inp, 2026, {}, None, dt.date(2026, 6, 30))
+        self.assertEqual(A["prepaid"], 100000)
+        if A.get("cfs"):
+            self.assertLessEqual(A["cfs"].get("p1") or dt.date(2026, 6, 30), dt.date(2026, 6, 30))
+
+    def _restore(self, path, rows):
+        import csv as _csv
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            w = _csv.DictWriter(f, annual.KEYS)
+            w.writeheader()
+            for r in rows:
+                w.writerow(dict((k, r.get(k, "")) for k in annual.KEYS))
+
+    def test_surplus_never_after_report_year(self):
+        from ceo_report import surplus
+        S = surplus.load(self.inp)
+        if not S:
+            self.skipTest("샘플에 잉여금 자료 없음")
+        first = min(S)
+        self.assertIsNone(surplus.for_report(self.inp, first - 1, strict=True))

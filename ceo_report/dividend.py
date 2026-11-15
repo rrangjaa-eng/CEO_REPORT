@@ -216,6 +216,31 @@ def taxes_at(P, total):
     return out
 
 
+LAW_KEYS = (("금융소득기준", "FIN_LIMIT"), ("배당원천세율", "WITHHOLD"), ("건강보험료율", "HEALTH_RATE"))
+
+
+def _with_law(fn):
+    """1차 C19 (2026-11-15): '세법 기준 확인'에서 바꾼 금융소득 기준·배당 원천세율·건강보험료율이 배당 계산에 가지 않았다
+    (10%로 저장해도 추가 보험료가 그대로). 계산하는 동안만 그해 기준표 값(확인했거나 자료확인 기본값)을 쓴다."""
+    def run(input_dir, asof, *a, **k):
+        from . import taxlaw
+        saved = dict((name, globals()[name]) for _, name in LAW_KEYS)
+        try:
+            for key, name in LAW_KEYS:
+                try:
+                    v, usable, _ = taxlaw.value(input_dir, asof.year, key)
+                except Exception:
+                    continue
+                if usable and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                    globals()[name] = v
+            return fn(input_dir, asof, *a, **k)
+        finally:
+            globals().update(saved)
+    run.__doc__, run.__name__ = fn.__doc__, fn.__name__
+    return run
+
+
+@_with_law
 def plan(input_dir, asof, limit, interim=0):
     """배당 권장 -> dict 또는 None (주주 없음). limit = 배당 한도(미처분이익잉여금 ÷ 1.1, 이익준비금 10% 몫) 또는 None."""
     P = people(input_dir, asof, interim)

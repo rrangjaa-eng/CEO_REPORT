@@ -1831,3 +1831,21 @@ class TestIntegrityFailsOnMismatch(unittest.TestCase):
         src = _read(os.path.join(ROOT, "ceo_report", "integrity.py"))
         self.assertIn("if not _report_checks(tmp, temp_input, asof, out):", src)
         self.assertIsInstance(ok, bool)
+
+
+class TestDividendUsesTaxStandards(unittest.TestCase):
+    """1차 C19: '세법 기준 확인'에서 바꾼 건강보험료율이 배당 계산에 가지 않았다."""
+
+    def test_confirmed_health_rate_changes_extra_premium(self):
+        import tempfile, shutil
+        from ceo_report import dividend, taxlaw
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        dividend.save(tmp, "가상주주", "100", False, True, "15,000,000", "0")
+        asof = D(2026, 11, 15)
+        before = dividend.plan(tmp, asof, 100000000)
+        taxlaw.confirm(tmp, 2026, {"건강보험료율": "10%"}, source="시험")
+        after = dividend.plan(tmp, asof, 100000000)
+        tax = lambda r: [t["tax"] for t in r["table"]]
+        self.assertNotEqual(tax(before), tax(after))
+        self.assertEqual(dividend.HEALTH_RATE, 0.0719)   # 계산이 끝나면 원래 값으로

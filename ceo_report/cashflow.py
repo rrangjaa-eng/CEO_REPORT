@@ -396,11 +396,11 @@ def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
     return CF
 
 
-def annual(rows, year, end_balance, start_balance=None):
-    """연간: 1~12월 (또는 자료 있는 마지막 날까지)."""
+def annual(rows, year, end_balance, start_balance=None, upto=None):
+    """연간: 1~12월 (또는 자료 있는 마지막 날까지). upto = 연중 보고 기준일 (1차 C7, 2026-11-15: 6/30 보고에 12월 흐름까지 들어갔다)."""
     if not rows:
         return None
-    mine = [d for d in _flow_days(rows) if d.year == year]
+    mine = [d for d in _flow_days(rows) if d.year == year and (upto is None or d <= upto)]
     if not mine:
         return None
     last = max(mine)

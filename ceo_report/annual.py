@@ -114,6 +114,7 @@ def build_table(books, cfg, sales, prev_rows=()):
                 add(y, "현금흐름", item, "", items[item])
     prepaid = set(_sq(c) for c in cfg.get("prepaid_tax_codes", ("13600",)))
     tax, pre = collections.defaultdict(int), collections.defaultdict(int)
+    pre_day = collections.defaultdict(int)   # 1차 C7 (2026-11-15): 연중 보고가 기준일까지 낸 선납세금만 쓰게 날짜별로도 남긴다
     for ln in journal:
         if ln.get("date") is None:
             continue
@@ -122,11 +123,15 @@ def build_table(books, cfg, sales, prev_rows=()):
             tax[y] += (ln["debit"] or 0) - (ln["credit"] or 0)
         elif code in prepaid:
             pre[y] += ln["debit"] or 0
+            if ln["debit"]:
+                pre_day[(y, ln["date"].isoformat())] += ln["debit"]
     for y in sorted(set(tax) | set(pre)):
         if tax.get(y):
             add(y, "결산", "법인세등", "", tax[y])
         if pre.get(y):
             add(y, "결산", "선납세금", "", pre[y])
+    for (y, day), v in sorted(pre_day.items()):
+        add(y, "선납세금일", day, "", v)
     keep = [r for r in prev_rows if r.get("연도") not in years]
     rows = keep + rows
     rows.sort(key=lambda r: (r["연도"], KEYS.index("구분"), r["구분"]))
@@ -268,6 +273,9 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["tax_est"] = n_est + c_est // 10
     booked = ann_y
     A["prepaid"] = booked.get("선납세금", 0)
+    days = get(Y, "선납세금일")
+    if cut < 12 and days:   # 1차 C7: 연중 보고는 기준일까지 낸 선납세금만 (예전엔 8월 중간예납이 6/30 보고에도 빠졌다)
+        A["prepaid"] = sum(v for d, _, v in days if d <= asof.isoformat())
     if booked.get("법인세등"):
         A["tax"], A["tax_fixed"] = booked["법인세등"], True
         # 지방소득세 = 산출세액 × 10% (감면 없음). 법인세 = 장부 법인세등 − 지방소득세
@@ -315,13 +323,13 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["bal0"] = ends.get((year - 1, 12), 0 if first and first.year >= year else None)
     A["bal_end"] = next((v for v in reversed(A["bal_m"]) if v is not None), None)
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12): 1월 1일 잔액은 장부(작년 분개장 있을 때)
-    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"])
+    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"], upto=asof if cut < 12 else None)
     if A["cfs"]:
         A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 기준
     A["credit"] = credit.compute(input_dir, asof, annual=True)
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
-    A["re"] = surplus.for_report(input_dir, year)
+    A["re"] = surplus.for_report(input_dir, year - 1 if cut < 12 else year, strict=True)   # 1차 C7: 연중이면 지난해 결산 것
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
