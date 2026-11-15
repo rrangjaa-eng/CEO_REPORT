@@ -3019,3 +3019,33 @@ class TestDataDuringConvertIsNew(unittest.TestCase):
         self.assertEqual(winstate.steps(P, dirs=[])["new_since"], [])
         put("261115 자금계획 자동수집.json", dt.datetime(2026, 11, 15, 10, 0, 55))   # 변환 도중 받음
         self.assertEqual(winstate.steps(P, dirs=[])["new_since"], ["자금계획서"])
+
+
+# ───────────── 2차 P2-2·P6-5: 다른 곳에서 변환 중이면 손으로 저장하지 않음 ─────────────
+class TestManualSaveWaitsForConvert(unittest.TestCase):
+    def test_locked(self):
+        import shutil
+        import tempfile
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        from ceo_report import convert
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        said, ran = [], []
+
+        class Fake(object):
+            paths = type("P", (), {"input": tmp})()
+
+            def say(self, t):
+                said.append(t)
+        f = Fake()
+        save = gui._while_converting_wait(lambda self: ran.append(1))
+        save(f)
+        self.assertEqual(ran, [1])
+        open(os.path.join(tmp, convert.LOCK_FILE), "w").close()
+        save(f)
+        self.assertEqual(ran, [1])
+        self.assertIn("변환이 아직 끝나지 않았습니다", said[-1])
+        self.assertIs(gui.Window.save_bank.__wrapped__.__name__, "save_bank")

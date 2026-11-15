@@ -1903,6 +1903,33 @@ def self_check(log_path):
     return app.self_check(log_path)
 
 
+
+# 2차 P2-2·P6-5 (2026-11-15): 다른 창·창 없는 실행이 자료 변환 중이면(입력\변환중 잠금) 손으로 저장·정리하지 않는다 — 반쯤 바뀐 자료와 섞였다
+_SAVE_METHODS = ("save_bank", "archive", "add_schedule", "save_card", "save_account", "save_target", "save_budget_team",
+                 "save_budget_co", "save_questions", "save_holder", "save_dep", "make_transfer")
+
+
+def _while_converting_wait(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        try:
+            from .convert import LOCK_FILE, lock_age
+            age = lock_age(self.paths.input)
+        except Exception:
+            age = None
+        if age is not None:
+            self.say("자료 변환이 아직 끝나지 않았습니다 (입력\\%s, %d분 전부터) — 변환이 끝난 뒤 다시 저장하세요" % (LOCK_FILE, int(age // 60)))
+            return None
+        return fn(self, *a, **k)
+    return wrapper
+
+
+for _name in _SAVE_METHODS:
+    if hasattr(Window, _name):
+        setattr(Window, _name, _while_converting_wait(getattr(Window, _name)))
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if sys.stdout is None:   # 창 프로그램(exe)은 콘솔이 없다
