@@ -560,6 +560,9 @@ def self_check(log_path, base=None):
         if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
             lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
             rc = 10
+        # 2차 P6-13 (2026-11-15): PDF 를 못 만들어도 점검이 통과로만 끝났다 — 결과에 한 줄 남긴다 (CI 처럼 화면 없는 곳에선 못 만들 수 있어 실패로는 보지 않음)
+        pdfs = [os.path.basename(f) for f in files if f.lower().endswith(".pdf")]
+        lines.append("PDF: %s" % (", ".join(pdfs) if pdfs else "못 만듦 (보고 HTML 은 있음 — 이 PC 에서 PDF 만들기를 확인하세요)"))
     except Exception as e:
         lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
         rc = 8
