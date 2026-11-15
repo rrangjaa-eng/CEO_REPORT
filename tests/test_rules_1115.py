@@ -3416,3 +3416,24 @@ class TestSampleToolProtectsOtherInstalls(unittest.TestCase):
         with open(os.path.join(inp, "설정.csv"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "진짜")
         self.assertFalse(ms.is_real_input(os.path.join(tmp, "아무폴더")))
+
+
+# ───────────── 2차 P2-19: 창에서 넣은 '예상' 일정을 입력 오류로 다시 지적하지 않음 ─────────────
+class TestExpectedScheduleNotAnError(unittest.TestCase):
+    def test_add_then_load(self):
+        import csv as _csv
+        import tempfile
+        from ceo_report import app, data
+        tmp = tempfile.mkdtemp()
+        app.add_schedule(tmp, "2026-11-30", "지급", "1,000", "예상", "가상거래처")
+        with open(os.path.join(tmp, "자금일정.csv"), encoding="utf-8-sig") as f:
+            rows = list(_csv.DictReader(f))
+        self.assertEqual(rows[0]["확정여부"], "예상")
+        iss = data.Issues() if hasattr(data, "Issues") else None
+        from ceo_report.util import Issues
+        iss = Issues()
+        r = dict(rows[0], _file="자금일정.csv", _line=2)
+        data._check(iss, r, "확정여부", r["확정여부"], ["확정", "추정", "예상"])
+        self.assertFalse(iss.items)
+        with open(os.path.join(ROOT, "ceo_report", "data.py"), encoding="utf-8") as f:
+            self.assertIn('["확정", "추정", "예상"]', f.read())

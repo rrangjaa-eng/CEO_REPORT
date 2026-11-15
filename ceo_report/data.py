@@ -223,7 +223,7 @@ def load(folder):
             continue
         if s["io"] == "지급":
             s["amount"] = _outflow(iss, r, "금액", s["amount"])
-        _check(iss, r, "확정여부", r.get("확정여부", ""), ["확정", "추정"])
+        _check(iss, r, "확정여부", r.get("확정여부", ""), ["확정", "추정", "예상"])   # 2차 P2-19: 창은 예상으로 저장 — 추정과 같이 확정 아님
         if s["amount"] is None:
             iss.add(r["_file"], r["_line"], "금액 미확인 → 일정 합계에서 제외, 건수만 표시")
         d.schedule.append(s)
