@@ -1072,3 +1072,19 @@ class TestSafetyCp949Inputs(unittest.TestCase):
         self.assertIn("그대로 둠", str(cm.exception))
         with open(os.path.join(self.d, targets.TARGET_FILE), "rb") as f:
             self.assertEqual(f.read(), b"\xff\xfe\x00\xd8broken\x80")
+
+
+# ───────────── P1-3: 같은 날 다른 해·기간 분개장을 받아도 앞 원본을 덮지 않음 (확장 파일 이름에 기간) ─────────────
+class TestJournalNamesKeepPeriods(unittest.TestCase):
+    def test_extension_names_by_period_and_program_ranks_them(self):
+        from ceo_report import wehago as W
+        src = open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8").read()
+        self.assertIn("periodTag(msg.kind, msg.params)", src)
+        self.assertIn("_기간${s}-${e}", src)
+        # 확장이 만드는 이름 (올해 전체 · 지난해 전체 · 지난해 일부 · 올해 일부) — 모두 분개장으로 읽고 받은 날이 맞아야 함
+        want = {"261115 분개장 자동수집.json": D(2026, 11, 15),
+                "261115 분개장_2025 자동수집.json": D(2025, 12, 31),
+                "261115 분개장_2025_기간20251201-20251231 자동수집.json": D(2025, 12, 31),
+                "261115 분개장_기간20261101-20261115 자동수집.json": D(2026, 11, 15)}
+        for name, rank in want.items():
+            self.assertEqual((W._kind_of(name), W._rank_date(name)), (("분개장", True), rank), name)

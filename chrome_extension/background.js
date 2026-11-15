@@ -15,6 +15,18 @@ function stamp(d = new Date()) {
           iso: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`};
 }
 
+// 분개장 기간이 올해 1월 1일부터가 아니면 파일 이름에 기간을 붙인다 (2026-11-15 P1-3: 같은 날 다른 해·기간을 받으면
+// 같은 이름이라 앞서 받은 원본을 덮었다). 지난해는 '_2025'(프로그램이 그 해 파일로 알아봄), 일부 기간은 '_기간YYYYMMDD-YYYYMMDD'
+// ('_' 바로 뒤 8자리 숫자는 프로그램이 받은 날로 읽으므로 '기간'을 앞에 둔다).
+function periodTag(kind, params, d = new Date()) {
+  if (kind !== "분개장" || !params) return "";
+  const s = String(params.start_date || ""), e = String(params.end_date || "");
+  if (!/^\d{8}$/.test(s) || !/^\d{8}$/.test(e)) return "";
+  const y = d.getFullYear(), ey = e.slice(0, 4);
+  if (+ey < y) return `_${ey}` + (s === `${ey}0101` && e === `${ey}1231` ? "" : `_기간${s}-${e}`);
+  return s === `${y}0101` ? "" : `_기간${s}-${e}`;
+}
+
 async function sha(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -60,7 +72,7 @@ async function writeOut(fname, text) {
 // 내용(hashSource)이 지난번과 같고, 오늘 이미 지금 저장 폴더에 저장했으면 다시 저장하지 않는다.
 // 날이 바뀌면 같은 내용이라도 하루 한 번은 새로 저장한다 (2026-11-14 코덱스 검토: 자금계획 내용이 7일 동안 안 바뀌면
 // 프로그램은 파일의 받은 날짜만 보고 '오래된 자료'로 보고를 막았다). 저장 폴더를 바꿨으면 같은 내용도 새 폴더에 저장한다.
-async function saveFile(kind, file, hashSource, summary) {
+async function saveFile(kind, file, hashSource, summary, tag = "") {
   const s = stamp();
   const hash = await sha(hashSource);
   const key = "last_" + kind;
@@ -77,7 +89,7 @@ async function saveFile(kind, file, hashSource, summary) {
     return {saved: false, same: true};
   }
   file["수집시각"] = s.iso;
-  const fname = `${s.ymd6} ${kind} 자동수집.json`;
+  const fname = `${s.ymd6} ${kind}${tag} 자동수집.json`;
   const where = await writeOut(fname, JSON.stringify(file));
   const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, dirName, changed: !!prev && prev.hash !== hash}, summary);
   await chrome.storage.local.set({[key]: info});
@@ -88,7 +100,8 @@ async function saveFile(kind, file, hashSource, summary) {
 async function saveJournal(msg) {
   const file = {"종류": msg.kind, "형식": 1, "수집시각": "", "회사": msg.company, "기간": msg.params,
                 "전표수": msg.tot, "줄수": msg.rows.length, "열": msg.columns, "줄": msg.rows};
-  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot});
+  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot},
+                  periodTag(msg.kind, msg.params));
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
