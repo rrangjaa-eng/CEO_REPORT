@@ -1441,12 +1441,14 @@ class TestGateNeedsTaxEstimates(unittest.TestCase):
     """1차 자금-20: 세금예상.csv 가 없거나 읽지 못해도 대표 보고가 통과해 정기 지출이 빠진 큰 숫자가 나왔다."""
 
     def test_missing_tax_file_blocks(self):
+        from unittest import mock
         from ceo_report import gate
         R = {"asof": dt.date(2026, 11, 15), "fundplan": {"used": True}, "auto_facts": {"book_date": "2026-11-15"},
              "settings_num": {}, "tax_missing": True}
-        self.assertTrue(any("세금예상.csv" in p for p in gate.problems(R)))
-        R["tax_missing"] = False
-        self.assertEqual(gate.problems(R), [])
+        with mock.patch.dict(os.environ, {"CEO_REPORT_TEST_GATE_OFF": "0"}):   # 다른 시험 파일이 켜 둔 끄개와 상관없이
+            self.assertTrue(any("세금예상.csv" in p for p in gate.problems(R)))
+            R["tax_missing"] = False
+            self.assertEqual(gate.problems(R), [])
 
     def test_compute_marks_missing_tax_file(self):
         import shutil
