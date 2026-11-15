@@ -2648,3 +2648,25 @@ class TestOtherWehagoDataAsksReconvert(unittest.TestCase):
         self.assertEqual((S["now"], S["new_since"]), (2, [winstate.OTHER_WEHAGO]))
         touch("261106 메모.txt", dt.datetime(2026, 11, 7, 9, 0))   # 자료 아닌 파일은 세지 않음
         self.assertEqual(winstate.steps(P)["collect"], dt.datetime(2026, 11, 6, 9, 0))
+
+
+# ───────────── 2차 P3-11: 열어 둔 확인 화면도 새 변환 뒤 새로고침하면 새 항목 ─────────────
+class TestCheckScreenFollowsNewConvert(unittest.TestCase):
+    def test_plain_reload_regathers(self):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        it = lambda i, t: {"id": i, "kind": "카드 전표", "date": "", "amount": None, "vendor": "", "title": t, "detail": "",
+                           "choices": ["확인함"]}
+        checklist.save_convert_items(tmp, [it("x1", "옛 항목")], now=dt.datetime(2026, 11, 14, 9, 0))
+        s = checklist.Session(tmp, tmp, D(2026, 11, 14))
+        self.assertIn("옛 항목", s.page())
+        checklist.save_decision(tmp, "x1", "확인함")
+        self.assertIn("옛 항목", s.page())   # 결정만 바뀌면 그대로 (다시 계산하지 않음)
+        checklist.save_convert_items(tmp, [it("x2", "새 항목")], now=dt.datetime(2026, 11, 15, 9, 0))
+        st = os.stat(os.path.join(tmp, checklist.CONVERT_FILE))
+        os.utime(os.path.join(tmp, checklist.CONVERT_FILE), ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+        page = s.page()
+        self.assertIn("새 항목", page)
+        self.assertNotIn("옛 항목", page)

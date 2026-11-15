@@ -518,6 +518,28 @@ def render(G, key="", mask=False):
     return "".join(h)
 
 
+def _sources_sig(app_dir, input_dir):
+    """확인할 것을 모으는 자료 파일들의 (이름·바뀐 시각·크기) — 결정 파일은 뺀다 (이 화면이 쓰므로).
+    2차 P3-11 (2026-11-15): 열어 둔 화면은 새 변환 뒤에도 옛 항목을 보였다 → 자료가 바뀌었으면 일반 새로고침에도 다시 모은다."""
+    import stat as _st
+    sig = []
+    for folder in (input_dir, os.path.join(app_dir, "출력"), app_dir):
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            continue
+        for n in names:
+            if n == STORE or n.endswith(".tmp"):
+                continue
+            try:
+                st = os.stat(os.path.join(folder, n))
+            except OSError:
+                continue
+            if _st.S_ISREG(st.st_mode):
+                sig.append((folder, n, st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
 class Session(object):
     """확인할 것 화면 한 번. start() -> 주소. 결정을 저장할 때마다 on_saved(글)."""
 
@@ -528,6 +550,7 @@ class Session(object):
         self.server = None
         self.lock = threading.Lock()
         self.G = None
+        self.G_sig = None
 
     @property
     def url(self):
@@ -535,8 +558,10 @@ class Session(object):
 
     def page(self, fresh=False):
         with self.lock:
-            if self.G is None or fresh:
+            sig = _sources_sig(self.app_dir, self.input_dir)
+            if self.G is None or fresh or sig != self.G_sig:   # P3-11: 새 변환 등으로 자료가 바뀌었으면 다시 모은다
                 self.G = gather(self.app_dir, self.input_dir, self.asof)
+                self.G_sig = sig
             else:   # 결정만 다시 붙인다 (계산은 다시 안 함)
                 dec = read_decisions(self.input_dir)
                 for it in self.G["items"]:
