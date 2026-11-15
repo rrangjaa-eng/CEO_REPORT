@@ -1435,3 +1435,72 @@ class TestDividendNeedsCashAndLimit(unittest.TestCase):
         D = dv.plan(d, dt.date(2026, 11, 30), 0)
         self.assertEqual((D["best"], D["table"]), (0, []))
         self.assertIn("배당 한도가 0원", dv.render(D, lambda x: x))
+
+
+class TestGateNeedsTaxEstimates(unittest.TestCase):
+    """1차 자금-20: 세금예상.csv 가 없거나 읽지 못해도 대표 보고가 통과해 정기 지출이 빠진 큰 숫자가 나왔다."""
+
+    def test_missing_tax_file_blocks(self):
+        from ceo_report import gate
+        R = {"asof": dt.date(2026, 11, 15), "fundplan": {"used": True}, "auto_facts": {"book_date": "2026-11-15"},
+             "settings_num": {}, "tax_missing": True}
+        self.assertTrue(any("세금예상.csv" in p for p in gate.problems(R)))
+        R["tax_missing"] = False
+        self.assertEqual(gate.problems(R), [])
+
+    def test_compute_marks_missing_tax_file(self):
+        import shutil
+        import tempfile
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        from test_review_1114b import SAMPLE_DIR
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(SAMPLE_DIR, os.path.join(t, "in"))
+        self.assertFalse(compute(load(os.path.join(t, "in")), "weekly", dt.date(2026, 11, 6))["tax_missing"])
+        os.remove(os.path.join(t, "in", "세금예상.csv"))
+        self.assertTrue(compute(load(os.path.join(t, "in")), "weekly", dt.date(2026, 11, 6))["tax_missing"])
+
+
+class TestSourcesLineShowsLastBankDay(unittest.TestCase):
+    """1차 N13: 분개장 날짜 = 위하고에서 받은 날 → 회계 입력이 밀려도 머리글엔 '분개장 11/14'만 보였다."""
+
+    def test_last_bank_day_in_header(self):
+        from ceo_report import gate
+        R = {"asof": dt.date(2026, 11, 15), "auto_facts": {"book_date": "2026-11-14", "last_bank": "2026-11-03"}, "fundplan": None}
+        self.assertIn("분개장 2026-11-14 (통장 거래 2026-11-03까지 입력)", gate.sources_line(R))
+        R["auto_facts"]["last_bank"] = "2026-11-14"
+        self.assertIn("분개장 2026-11-14 ·", gate.sources_line(R))
+
+
+class TestRecognizedRevenueCutAtAsof(unittest.TestCase):
+    """1차 N12·E2·B12: 월말 며칠 뒤 만든 월간은 매출반영누계에 기준일 뒤 달 매출이 섞여 '올해 매출 예상'이 그만큼 작아졌다."""
+
+    def test_later_month_revenue_is_taken_out(self):
+        import shutil
+        import tempfile
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        from test_review_1114b import SAMPLE_DIR
+        from test_teamreport import _append
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        f = os.path.join(t, "in")
+        shutil.copytree(SAMPLE_DIR, f)
+        before = compute(load(f), "monthly", dt.date(2026, 10, 31))
+        P0 = [p for p in before["s3"]["projects"] if p["id"] == "P26203"][0]
+        _append(os.path.join(f, "손익.csv"), [{"출처": "WEHAGO", "연월": "2026-11", "단위": "프로젝트", "대상": "P26203 C사 전시 부스",
+                                              "매출": "30,000,000", "직접비": "0"}])
+        import csv
+        rows = list(csv.DictReader(open(os.path.join(f, "프로젝트.csv"), encoding="utf-8-sig")))
+        for r in rows:
+            if r["프로젝트번호"] == "P26203":
+                r["매출반영누계"] = str(int((r["매출반영누계"] or "0").replace(",", "")) + 30000000)
+        with open(os.path.join(f, "프로젝트.csv"), "w", encoding="utf-8-sig", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+        after = compute(load(f), "monthly", dt.date(2026, 10, 31))
+        P1 = [p for p in after["s3"]["projects"] if p["id"] == "P26203"][0]
+        self.assertEqual(P1["recognized"], P0["recognized"])         # 10/31 기준으로는 11월 매출이 없던 것과 같다
+        self.assertEqual(P1["recognized_after"], 30000000)

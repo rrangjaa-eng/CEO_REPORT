@@ -33,6 +33,9 @@ def problems(R):
         out.append("분개장 자료일을 모름 (자료 변환을 다시 하세요)")
     elif (R["asof"] - bd).days > days:
         out.append("분개장 자료일 %s — 기준일보다 %d일 전 (허용 %d일)" % (bd.isoformat(), (R["asof"] - bd).days, days))
+    if R.get("tax_missing"):
+        out.append("세금예상.csv 가 없거나 읽지 못함 — 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠져 여유 자금이 크게 보임 "
+                   "(자료 변환을 다시 하세요)")
     out.extend(company_problems(R))
     return out
 
@@ -196,7 +199,10 @@ def sources_line(R):
     """보고에 쓴 자료와 날짜 한 줄."""
     parts = []
     bd = book_date(R)
-    parts.append("분개장 %s" % bd.isoformat() if bd else "분개장 날짜 모름")
+    lb = last_bank_date(R)
+    # 1차 점검 N13 (2026-11-15): 분개장 날짜는 위하고에서 받은 날이라 입력이 밀려도 최신처럼 보였다 — 마지막 통장 거래일도 함께
+    parts.append(("분개장 %s" % bd.isoformat() + (" (통장 거래 %s까지 입력)" % lb.isoformat() if lb and lb < bd else ""))
+                 if bd else "분개장 날짜 모름")
     fp = R.get("fundplan")
     if fp and fp.get("used"):
         months = fp.get("months") or []

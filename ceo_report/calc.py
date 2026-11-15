@@ -290,6 +290,18 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for pid in d.project_order:
         proj[pid] = _blank_proj(d.projects[pid], _cost_rate_of(d.projects[pid], R["settings_num"]["예산_원가율"],
                                                              getattr(d, "team_targets", None) or {}, asof))
+    # 1차 점검 N12·E2·B12 (2026-11-15): 월말 며칠 뒤 만든 보고는 매출반영누계(장부 받은 날까지)에 기준일 뒤 달 매출이 섞여
+    # '올해 매출 예상'(= 기준일까지 누계 + 사전견적 − 매출반영누계)이 그만큼 작아졌다 (합성 3,000만). 손익.csv 프로젝트 줄의
+    # 기준일 뒤 달 매출을 빼 기준일 달까지로 맞춘다 (매출반영누계 = 손익 프로젝트 줄 합, 실제 302개 모두 같음). 같은 달 안은 못 나눔
+    ym_asof = "%d-%02d" % (asof.year, asof.month)
+    later = defaultdict(int)
+    for p in getattr(d, "pl", None) or []:
+        if p.get("unit") == "프로젝트" and p.get("source") == "WEHAGO" and (p.get("ym") or "") > ym_asof and p.get("revenue"):
+            later[str(p.get("target") or "").split(" ")[0]] += p["revenue"]
+    for P in proj.values():
+        if P.get("recognized") is not None and later.get(str(P.get("id"))):
+            P["recognized_after"] = later[str(P["id"])]
+            P["recognized"] -= P["recognized_after"]
     unlinked_exec = []
     prior_exec = []
     for e in d.execs:
@@ -606,6 +618,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     from .tax import merge as merge_tax
     # 2026-11-14 F3: 납부일 지난 세금·급여 줄은 장부 기준일·통장 잔액 기준일을 보고 다음 금요일로 (자금계획서 줄과 같은 규칙)
     events, R["tax"] = merge_tax(events, getattr(d, "tax", None), asof, cash_date=min(known) if known else None)
+    # 1차 점검 자금-20 (2026-11-15): 세금예상.csv 가 없거나 못 읽으면 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠진 큰 숫자 —
+    # 자료 확인(gate)이 막는다
+    R["tax_missing"] = getattr(d, "tax", None) is None
     mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
