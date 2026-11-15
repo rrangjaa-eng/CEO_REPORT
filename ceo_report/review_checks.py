@@ -252,6 +252,7 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             and (b[0].isoformat(), b[3], b[1]) not in before and (b[0].isoformat(), b[3], None) not in before]
     used = set()
     hits = {}
+    pairs = []   # 2차 P2-11 (2026-11-15): 맞을 수 있는 (일정 줄, 통장 줄)을 모두 모은 뒤 가장 가까운 짝부터 정한다
     order = sorted(range(len(rows)), key=lambda i: (util.date(rows[i].get("예정일"), util.Issues(), rows[i], "예정일") or dt.date.max, i))
     for i in order:
         r = rows[i]
@@ -263,7 +264,6 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             continue
         vn = norm_vendor(r.get("거래처") or "")
         vc = norm_code(r.get("거래처코드")) if str(r.get("거래처코드") or "").strip() else ""
-        best = None
         for k, (bday, bamt, bvn, bno, bio, bnames, bcodes) in enumerate(bank):
             if k in used or bio != io_kind or bamt != abs(amount):
                 continue
@@ -282,11 +282,14 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
                 elif not same:
                     continue
             rank = (0 if same else 1, abs(gap))
-            if best is None or rank < best[0]:
-                best = (rank, k)
-        if best is not None:
-            used.add(best[1])
-            hits[i] = best[1]
+            pairs.append((rank, i, k))
+    # 예전엔 예정일 순으로 한 줄씩 가장 가까운 통장 줄을 가져가서, 같은 거래처·같은 금액이 반복되면(매주·매달) 아직 안 나간 앞 일정이
+    # 뒤 일정의 통장 줄을 가져가 '나감'으로 옮겨졌다 → 거래처가 같은 짝, 날짜 차이가 작은 짝부터 정한다
+    for rank, i, k in sorted(pairs):
+        if i in hits or k in used:
+            continue
+        used.add(k)
+        hits[i] = k
     keep, moved = [], []
     for i, r in enumerate(rows):
         if i not in hits:

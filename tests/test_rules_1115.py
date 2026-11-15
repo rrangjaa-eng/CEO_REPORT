@@ -2966,3 +2966,28 @@ class TestRememberOnlyVerifiedLogin(unittest.TestCase):
             with mock.patch.object(credstore, "save") as sv:
                 gui.Window.after_collect(Fake(), rc)
                 self.assertEqual(sv.called, saved, rc)
+
+
+# ───────────── 2차 P2-11: 반복 지급은 날짜가 가장 가까운 일정 줄과 짝지음 ─────────────
+class TestRecurringScheduleNearestPair(unittest.TestCase):
+    def test_unpaid_earlier_week_stays(self):
+        import csv
+        import shutil
+        import tempfile
+        from ceo_report import review_checks as RC
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, RC.SCHEDULE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["예정일", "입출금", "금액", "확정여부", "분류", "프로젝트번호", "거래처", "근거", "비고"])
+            w.writerow(["2026-11-05", "출금", "200000", "확정", "기타지급", "", "가상렌탈", "매주", "첫 주"])
+            w.writerow(["2026-11-12", "출금", "200000", "확정", "기타지급", "", "가상렌탈", "매주", "둘째 주"])
+        J = [{"date": D(2026, 11, 12), "no": "7", "account_code": "10300", "debit": None, "credit": 200000, "vendor": "가상렌탈",
+              "vendor_norm": "가상렌탈", "type": "일반"}]
+        RC.archive_paid_schedule(tmp, J, D(2026, 11, 13))
+
+        def notes(name):
+            with open(os.path.join(tmp, name), encoding="utf-8-sig") as f:
+                return [r["비고"] for r in csv.DictReader(f)]
+        self.assertEqual(notes(RC.SCHEDULE), ["첫 주"])     # 아직 안 나간 첫 주는 남는다 (예전엔 첫 주가 둘째 주 출금을 가져갔음)
+        self.assertEqual(notes(RC.ARCHIVE), ["둘째 주"])
