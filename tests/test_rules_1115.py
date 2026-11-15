@@ -2870,3 +2870,31 @@ class TestXlsHugeGridRefused(unittest.TestCase):
             xls.read_xls(p)
         p = X.write_xls(os.path.join(d, "c.xls"), [X.number(0, 0, 1.0), X.number(3, 2, 2.0)], [])
         self.assertEqual(len(xls.read_xls(p)), 4)
+
+
+# ───────────── 2차 P5-10: 작업 중에는 Enter 로 저장하지 않음 ─────────────
+class TestEnterBlockedWhileBusy(unittest.TestCase):
+    def test_enter(self):
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        said, ran, bound = [], [], {}
+
+        class W(object):
+            def bind(self, ev, fn):
+                bound[ev] = fn
+
+        class Fake(object):
+            busy = True
+
+            def say(self, t):
+                said.append(t)
+        f = Fake()
+        gui.Window._enter(f, [W()], lambda: ran.append(1))
+        self.assertEqual(bound["<Return>"](None), "break")
+        self.assertEqual(ran, [])
+        self.assertTrue(said)
+        f.busy = False
+        bound["<Return>"](None)
+        self.assertEqual(ran, [1])

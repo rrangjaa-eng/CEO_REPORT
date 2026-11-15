@@ -249,9 +249,16 @@ class Window(object):
         entry.bind("<KeyRelease>", fix)
 
     def _enter(self, widgets, cmd):
-        """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7)."""
+        """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7).
+        2차 P5-10 (2026-11-15): 작업 중에는 단추가 꺼져도 Enter 로는 저장·이체 파일 만들기가 됐다 → 작업 중엔 막고 알린다."""
+        def go(e):
+            if self.busy:
+                self.say("작업이 끝난 뒤 다시 Enter 를 누르세요 (작업 중에는 저장하지 않음)")
+                return "break"
+            cmd()
+            return "break"
         for w in widgets:
-            w.bind("<Return>", lambda e: cmd())
+            w.bind("<Return>", go)
 
     def _flash(self, card, text, keep=None):
         """카드 오른쪽 위에 '저장됨'을 잠깐 보이고 원래 글(keep 함수가 돌려주는 글)로 돌아간다."""
@@ -1705,6 +1712,9 @@ class Window(object):
 
     def make_transfer(self, override=None):
         from . import transfer
+        if self.busy:   # P5-10: 열어 둔 보조창에서도 작업 중엔 만들지 않는다 (반쯤 바뀐 자료로 이체 파일이 나가지 않게)
+            self.say("작업이 끝난 뒤 이체 파일을 만드세요")
+            return
         start, end, asof = self._day(self.t_from), self._day(self.t_to), self.asof_date()
         if None in (start, end, asof):
             self.say("날짜 형식 오류 (예: 2026-11-30)")
