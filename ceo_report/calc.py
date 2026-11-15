@@ -1169,7 +1169,11 @@ def revenue_left(P):
 
 
 def year_revenue_left(projects, year, team=None):
-    """그 해 행사 프로젝트별 '아직 매출로 안 잡힌 금액' -> [{P, event, left}] (left None = 모름). 예전 인트라넷 끝난 행사는 뺀다."""
+    """그 해 장부에 잡힐 프로젝트별 '아직 매출로 안 잡힌 금액' -> [{P, event, left, prior}] (left None = 모름).
+
+    그 해 행사 + 그 전 해 행사(prior=True): 사용자 결정 ③ (2026-11-16 카드) — 작년 행사라도 아직 장부에 안 잡힌 매출은
+    올해 장부에 잡히므로 올해 예상에 넣는다 (대표 월간 '앞으로 잡힐 매출'은 예전부터 넣음, 팀장용·예산도 같게).
+    예전 인트라넷 끝난 행사는 뺀다."""
     out = []
     for P in projects:
         if (P.get("state") or "").strip() == OLD_STATE:
@@ -1177,11 +1181,11 @@ def year_revenue_left(projects, year, team=None):
         if team is not None and (P.get("team") or "").strip() != team:
             continue
         ev = _event_date(P.get("event_date"))
-        if ev is None or ev.year != int(year):
+        if ev is None or ev.year > int(year):
             continue
         if left_basis(P) is None:
             continue
-        out.append({"P": P, "event": ev, "left": revenue_left(P)})
+        out.append({"P": P, "event": ev, "left": revenue_left(P), "prior": ev.year < int(year)})
     return out
 
 

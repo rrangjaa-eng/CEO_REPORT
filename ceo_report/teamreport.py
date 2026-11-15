@@ -183,17 +183,36 @@ def build(d, R, team):
     #   먼저 잡힌 계약금·대관료가 누계 원가와 추정 예산 양쪽에서 두 번 빠짐). 끝난 프로젝트(대표 승인)는 남은 원가 0
     # · 진행·예정 표: 끝나지 않은 올해 행사. 잔여 = 추정 예산 − 집행액 (11/9 정의 그대로), 쓸 수 있는 남은 예산 = 추정 예산 −
     #   (쓴 돈 + 요청 + 카드 미결제 + 계획) (T5, 사용자 승인)
-    from .calc import revenue_left
+    from .calc import revenue_left, left_basis
     booked = {pid: _sum(c[1] for c in per[pid].values()) for pid in per}
     up, add_rev, add_gp, miss_rev, miss_gp, closed_left = [], 0, 0, 0, 0, 0
+    prior_rev, prior_n = 0, 0
     for P_ in R["s3"]["projects"]:
         if (P_.get("team") or "").strip() != team or (P_.get("state") or "").strip() == "완료(예전 인트라넷)":
             continue
         e = _event_date(P_.get("event_date"))
-        if e is None or str(e.year) != year:
+        if e is None or e.year > int(year):
             continue
         closed = is_closed(P_)
         left_rev = revenue_left(P_)
+        if e.year < int(year):
+            # 사용자 결정 ③ (2026-11-16 카드): 작년 이전 행사라도 아직 장부 매출로 안 잡힌 금액은 올해 장부에 잡힐 매출 →
+            # 올해 매출 예상에 넣는다 (대표 월간 '앞으로 잡힐 매출'·예산과 같은 계산). 진행·예정 표(올해 행사)엔 넣지 않는다.
+            # 이익: 끝난 프로젝트는 남은 원가 0이라 남은 매출 그대로, 안 끝난 것은 작년 원가를 이 표가 몰라 '미확인'
+            if left_rev == 0 or (left_rev is None and left_basis(P_) is None):
+                continue
+            if left_rev is None:
+                miss_rev += 1
+                miss_gp += 1
+                continue
+            add_rev += left_rev
+            prior_rev += left_rev
+            prior_n += 1
+            if closed and not P_.get("unknown_cost"):
+                add_gp += left_rev
+            else:
+                miss_gp += 1
+            continue
         cost_done = booked.get(P_["id"], 0)
         if closed:
             # 1차 B13 (2026-11-15): 끝난 프로젝트라도 금액 미확인 원가가 있으면 이익을 모른다 — 예전엔 0으로 보고 '이익 미확인 0건'
@@ -264,6 +283,7 @@ def build(d, R, team):
             "company_rate": company_rate, "cur": cur, "ytd": ytd, "cur_gap": cur_gap, "ytd_gap": ytd_gap,
             "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_avail_unknown": up_avail_unknown,
             "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp, "add_rev": add_rev, "miss_rev": miss_rev, "miss_gp": miss_gp, "closed_left": closed_left,
+            "prior_rev": prior_rev, "prior_n": prior_n,
             "acc": acc, "show_net": show_net, "company": (d.settings or {}).get("회사명", "")}
 
 
@@ -497,8 +517,9 @@ def render(T, today=None):
            _td(esc("목표 대비 %s" % P(T["exp_gp"], tg_)) if tg_ else "-", "c")]))
     a("</tbody></table>")
     a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
-      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
+      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s%s</p>"
       % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
+         " · 작년 이전 행사 %d건의 아직 안 잡힌 매출 %s 포함" % (T["prior_n"], W(T["prior_rev"])) if T.get("prior_n") else "",
          " · 금액을 몰라 뺀 프로젝트 %d건" % max(T["miss_rev"], T["miss_gp"]) if (T.get("miss_rev") or T.get("miss_gp")) else ""))
     a("</div>")
 
