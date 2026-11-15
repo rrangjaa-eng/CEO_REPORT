@@ -95,6 +95,18 @@ def blank_funds(R):
             for k in ("bal", "low", "low_date", "avail"):
                 if k in r:
                     r[k] = None
+    # 1차 점검 자금-1·E6 (2026-11-15): 구간별 계산 잔액 표·위험표의 '최저 계산 잔액 …원' 줄에도 숫자가 남았다 (예시 5.43억·5,175만)
+    for b in s2.get("buckets") or []:
+        if isinstance(b, dict):
+            for k in ("bal_firm", "bal_all"):
+                if k in b:
+                    b[k] = None
+    rs = R.get("risks")
+    if isinstance(rs, list):
+        kept = [r for r in rs if not (isinstance(r, dict) and r.get("area") == "자금" and "최저 계산 잔액" in str(r.get("fact") or ""))]
+        kept.insert(0, {"level": "높음", "area": "자금", "fact": "자료 확인에서 막혀 앞으로의 잔액·여유 자금을 판단하지 않음: %s" % probs[0],
+                        "action": "맨 위 경고의 자료를 받아 넣고 다시 만드세요."})
+        R["risks"] = kept
     R["_gate_hidden"] = hidden
     R["_gate_probs"] = probs
     return probs

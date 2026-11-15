@@ -1390,3 +1390,27 @@ class TestTeamProfitCountsOverBudget(TeamReportCase):
         self.assertGreater(P["committed"], P["budget"])                         # 예시 A사: 등록 지출이 예산을 넘음
         self.assertEqual(a["rem_cost"], max(P["committed"] - a["cost_done"], 0))   # 예산이 아니라 등록 지출까지 뺌
         self.assertIn("남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액)", page)
+
+
+class TestBlockedMgmtShowsNoBalances(unittest.TestCase):
+    """1차 자금-1·E6: 자료가 막혀 대표 보고를 안 만들 때도 경영관리에 구간별 계산 잔액·'최저 계산 잔액 …원'이 남았다."""
+
+    def test_buckets_and_low_balance_risks_are_blank(self):
+        import re
+        from unittest import mock
+        from ceo_report import gate
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        from ceo_report.render import render
+        from test_review_1114b import SAMPLE_DIR
+        with mock.patch.dict(os.environ, {"CEO_REPORT_TEST_GATE_OFF": "0"}):
+            R = compute(load(SAMPLE_DIR), "monthly", dt.date(2026, 10, 31))   # 예시 자료엔 자금계획서가 없어 막힘
+            vals = [v for b in R["s2"]["buckets"] for v in (b["bal_firm"], b["bal_all"]) if isinstance(v, int) and abs(v) > 10 ** 6]
+            low = R["s2"]["min"]["firm"][0]
+            self.assertTrue(vals and low)
+            self.assertTrue(gate.blank_funds(R))
+        txt = re.sub(r"<[^>]+>", " ", render(R, "mgmt"))
+        for v in vals + [low]:
+            self.assertNotIn("{:,}".format(v), txt)
+        self.assertFalse([r for r in R["risks"] if "최저 계산 잔액" in r["fact"]])
+        self.assertTrue(R["risks"][0]["fact"].startswith("자료 확인에서 막혀"))
