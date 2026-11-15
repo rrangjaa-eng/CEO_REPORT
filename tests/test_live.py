@@ -73,13 +73,25 @@ class TestAutoSignature(unittest.TestCase):
     def test_waits_until_file_settles_then_once_per_convert(self):
         got = dt.datetime(2026, 11, 12, 10, 0, 0)
         touch(os.path.join(self.P.wehago, "261112 분개장 자동수집.json"), got)
-        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=5)))    # 아직 쓰는 중일 수 있음
-        sig = app.auto_signature(self.P, got + dt.timedelta(seconds=60))
+        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=5), dirs=[]))    # 아직 쓰는 중일 수 있음
+        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=60), dirs=[]))   # C13: '모두 받기'가 끝나길 기다림
+        sig = app.auto_signature(self.P, got + dt.timedelta(seconds=120), dirs=[])
         self.assertIn("분개장", sig)
         # 변환한 뒤에는 같은 자료로 다시 돌리지 않는다 (같은 분에 받은 자료도)
         from ceo_report import checklist
         touch(os.path.join(self.P.input, checklist.CONVERT_FILE), got + dt.timedelta(seconds=30))
-        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=90)))
+        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=150), dirs=[]))
+
+    def test_waits_while_more_files_arrive_and_sees_downloads(self):
+        """2차 C13·P1-11: 분개장 뒤 자금계획서가 아직 들어오는 중이면 기다리고, 다운로드 폴더에 받아만 둔 자료도 새 자료로 본다."""
+        got = dt.datetime(2026, 11, 12, 10, 0, 0)
+        touch(os.path.join(self.P.wehago, "261112 분개장 자동수집.json"), got)
+        dl = os.path.join(self.root, "dl")
+        touch(os.path.join(dl, app.AUTO_DIR, "261112 자금계획 자동수집.json"), got + dt.timedelta(seconds=70))
+        self.assertIsNone(app.auto_signature(self.P, got + dt.timedelta(seconds=120), dirs=[dl]))   # 마지막 파일 뒤 50초
+        sig = app.auto_signature(self.P, got + dt.timedelta(seconds=200), dirs=[dl])
+        self.assertIn("자금계획서(다운로드 폴더)", sig)
+        self.assertIn("분개장", sig)
 
 
 class TestLive(unittest.TestCase):

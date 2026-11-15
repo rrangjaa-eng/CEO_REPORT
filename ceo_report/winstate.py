@@ -274,10 +274,15 @@ def other_wehago_time(paths):
     return _newest(out)
 
 
-def steps(paths):
+PENDING = "다운로드 폴더에 받아 둔 위하고 자료"
+
+
+def steps(paths, dirs=None):
     """세 단계 상태. -> {'collect': 시각, 'convert': 시각, 'new_since': 변환 뒤 새로 받은 자료 이름들, 'report': latest_reports,
-    'now': 지금 할 차례 단계 번호 (1~3)}."""
-    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), "")]
+    'now': 지금 할 차례 단계 번호 (1~3)}. dirs: 크롬 다운로드 폴더 (시험용, 없으면 이 PC 크롬에서 찾음)."""
+    from . import app as _app   # 2차 P1-11: 다운로드 폴더에 받아만 둔 자동수집 파일도 (변환 때 가져온다)
+    pend = [w for _, w in _app.pending_downloads(dirs)]
+    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
     collected = [w for n, w, _ in src if isinstance(w, dt.datetime)]
     last_collect = max(collected) if collected else None
     conv = convert_time(paths.input)

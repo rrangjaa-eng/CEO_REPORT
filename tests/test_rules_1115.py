@@ -2712,3 +2712,25 @@ class TestImportByCollectedAt(unittest.TestCase):
         with open(os.path.join(paths.wehago, name), encoding="utf-8") as f:
             self.assertIn("10:00:00", f.read())
         self.assertEqual(len(os.listdir(os.path.join(paths.wehago, app.ARCHIVE))), 1)   # 예전 것은 지난자료로
+
+
+# ───────────── 2차 P1-11: 다운로드 폴더에 받아 둔 자료도 '새 자료'로 ─────────────
+class TestPendingDownloadsAreNew(unittest.TestCase):
+    def test_steps_lists_pending(self):
+        import shutil
+        import tempfile
+        from ceo_report import app, checklist, winstate
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.input, exist_ok=True)
+        checklist.save_convert_items(P.input, [], now=dt.datetime(2026, 11, 5, 18, 0))
+        dl = os.path.join(tmp, "dl")
+        os.makedirs(os.path.join(dl, app.AUTO_DIR))
+        self.assertEqual(winstate.steps(P, dirs=[dl])["new_since"], [])
+        p = os.path.join(dl, app.AUTO_DIR, "261106 결산_합계잔액시산표(2기) 자동수집.json")
+        open(p, "w").close()
+        t = dt.datetime(2026, 11, 6, 9, 0).timestamp()
+        os.utime(p, (t, t))
+        S = winstate.steps(P, dirs=[dl])
+        self.assertEqual((S["now"], S["new_since"]), (2, [winstate.PENDING]))

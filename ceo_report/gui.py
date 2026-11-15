@@ -917,7 +917,10 @@ class Window(object):
         """보고 만들기. 변환 뒤 새 자료가 있으면 변환부터 할지 묻는다 (사용자 2026-11-05 개선 9)."""
         if self.busy:
             return
-        S = getattr(self, "state", None) or winstate.steps(self.paths)
+        try:   # 2차 P5-11 (2026-11-15): 누르는 순간의 상태로 묻는다 — 예전엔 화면을 새로 그린 때의 상태라 막 들어온 새 분개장을 놓쳤다
+            S = winstate.steps(self.paths)
+        except Exception:
+            S = getattr(self, "state", None) or {"convert": None, "new_since": []}
         if S["convert"] is None or S["new_since"]:
             what = ", ".join(S["new_since"]) if S["new_since"] else "변환한 자료 없음"
             ans = messagebox.askyesnocancel(

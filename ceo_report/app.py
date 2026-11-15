@@ -388,18 +388,55 @@ def build_live(paths, say, asof=""):
 
 AUTO_KINDS = ("분개장", "자금계획서")   # 이 자료가 새로 들어오면 자동으로 변환·보고 (사용자 2026-11-12)
 AUTO_SETTLE_SEC = 20                    # 파일을 다 쓴 뒤 이만큼 지나야 읽는다 (쓰는 중인 파일을 읽지 않게)
+AUTO_QUIET_SEC = 90                     # 2차 C13: 마지막으로 어떤 위하고 자료든 들어온 뒤 이만큼 조용해야 자동으로 돈다
 
 
-def auto_signature(paths, now=None):
+def pending_downloads(dirs=None):
+    """크롬 다운로드 폴더(위하고자동수집)에 아직 가져오지 않은 자동수집 파일 -> [(경로, 받은 시각)].
+    2차 P1-11·P5-13·P6-9 (2026-11-15): 예전엔 수집\위하고 만 봐서, 확장이 다운로드 폴더에 받은 새 자료를 자동 실행·새 자료 목록이 놓쳤다."""
+    out = []
+    for base in (chrome_download_dirs() if dirs is None else dirs):
+        folder = os.path.join(base, AUTO_DIR)
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for n in names:
+            if not n.endswith(AUTO_SUFFIX):
+                continue
+            try:
+                out.append((os.path.join(folder, n), dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(folder, n)))))
+            except OSError:
+                continue
+    return out
+
+
+def auto_signature(paths, now=None, dirs=None):
     """새 분개장·자금계획서가 들어와 자동으로 돌릴 차례면 그 자료의 표시(받은 시각 글자), 아니면 None.
 
-    마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다."""
+    마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다.
+    2차 C13 (2026-11-15): '모두 받기'는 분개장을 먼저, 자금계획서를 나중에 받는다. 예전엔 분개장만 들어온 20초 뒤에 자동 보고가
+    끼어들어 새 분개장 + 옛 자금계획서로 PDF 가 먼저 나왔다 → 수집\위하고·다운로드 폴더 어디든 마지막 자료가 들어온 뒤
+    AUTO_QUIET_SEC 초 동안 새 파일이 없을 때만 돈다. 다운로드 폴더에 받아만 둔 분개장·자금계획서도 새 자료로 본다 (P1-11)."""
     from . import winstate
     now = now or dt.datetime.now()
     src = dict((n, w) for n, w, _ in winstate.sources(paths) if n in AUTO_KINDS)
     conv = winstate.convert_time(paths.input)
     new = dict((n, w) for n, w in src.items() if isinstance(w, dt.datetime) and (conv is None or w > conv))
-    if not new or any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()):
+    pend = pending_downloads(dirs)
+    for p, w in pend:
+        kind = "분개장" if "분개장" in os.path.basename(p) else ("자금계획서" if "자금계획" in os.path.basename(p) else None)
+        if kind and (conv is None or w > conv):
+            k = "%s(다운로드 폴더)" % kind
+            new[k] = max(new.get(k, w), w)
+    if not new:
+        return None
+    latest = [w for w in new.values()] + [w for _, w in pend]
+    other = winstate.other_wehago_time(paths)
+    if other:
+        latest.append(other)
+    if any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()) or \
+            (now - max(latest)).total_seconds() < AUTO_QUIET_SEC:
         return None
     return "|".join("%s %s" % (n, w.strftime("%Y-%m-%d %H:%M:%S")) for n, w in sorted(new.items()))
 
