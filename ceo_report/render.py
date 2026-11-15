@@ -582,7 +582,7 @@ table.pt th:first-child,table.pt td:first-child{text-align:left}table.pt td{text
 table.pt td small{display:block;color:var(--sub);font-size:11px}table.pt td.av,table.pt th.av{background:#eef3fb}
 table.pt td.av b{font-size:16px;color:var(--accent)}table.pt td.av b.neg{color:var(--out)}
 table.pt.wo td{white-space:normal}table.pt.wo th{text-align:left}table.pt.wo th:nth-child(5){text-align:right}table.pt.wo td:nth-child(2){text-align:left}table.pt.wo td:nth-child(3),table.pt.wo td:nth-child(4),table.pt.wo td:last-child{text-align:left}table.pt.wo tr.od td{color:var(--warn)}.wchg{margin-top:6px;font-weight:700}.frimain{border:2px solid var(--out)!important;background:#fffaf8!important}.fri{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px}.fri span{font-weight:700}.fri b{font-size:26px;font-weight:800;color:var(--out);font-variant-numeric:tabular-nums}.fri small{color:var(--sub)}table.pt.wn td:nth-child(2),table.pt.wn td:nth-child(3),table.pt.wn td:last-child{text-align:left}table.pt.wn th{text-align:left}table.pt.wn th:nth-child(4){text-align:right}table.pt.xr td{text-align:right}table.pt.xr td:first-child,table.pt.xr td:nth-child(2){text-align:left;white-space:normal}.card+.xbox{margin-top:6px}.evid{margin-top:10px;padding:6px 10px;border-top:1.5px solid var(--line);font-size:11.5px;color:var(--sub)}table.pt.xr td,table.pt.xr th{padding:2px 4px}table.pt.wn tr.tot td{font-weight:700;border-top:1.5px solid var(--ink)}.frimain{margin-bottom:8px}.wnc .wsub{margin:0 0 2px}table.pt.wn{font-size:12px;margin-top:2px}.wsub{margin:10px 0 4px;font-weight:800;font-size:12.5px;color:var(--ink)}table.pt.wo td:last-child{font-size:11px;color:var(--sub)}table.pt.tg{font-size:11.5px}table.pt.tg td{text-align:right}table.pt.tg td:first-child,table.pt.tg td:last-child{text-align:left}.tbar{position:relative;display:inline-block;width:60px;height:8px;background:#eef0f3;border-radius:4px;margin-right:6px;vertical-align:0}.tbar i{display:block;height:100%;background:var(--accent);border-radius:4px}.tbar s{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}table.pt.wo b.vn{font-weight:700}table.pt.wo small.dt{display:block;font-size:11px;color:var(--ink);white-space:normal}table.pt.wo small.dt.na{color:var(--est)}table.pt.wo td:nth-child(4){white-space:nowrap}table.pt.wo td:nth-child(7),table.pt.wo th:nth-child(7){text-align:right}table.pt.wo td:last-child,table.pt.wo th:last-child{text-align:right;white-space:nowrap;font-size:inherit;color:inherit}table.pt.wo td:last-child.vout{color:var(--out)}table.pt.wo .dt.na{color:var(--est);font-size:11px}table.pt.wo small.est{display:block;font-size:10.5px;color:var(--est)}.four.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.four.c2{grid-template-columns:repeat(2,minmax(0,1fr))}.four.top{clear:both;margin:10px 0 2px}.four.top .card{border:1.5px solid var(--line)}.four.top .card:first-child{border-color:var(--out)}.four.top .big{font-size:19px}.four.top .foot{font-size:11px}ul.nl{margin:6px 0 0;padding-left:16px;font-size:11px;color:var(--sub)}ul.nl li{margin:1px 0}.card table.pt.tm{font-size:10px}table.pt.tx{font-size:11px}table.pt.tx td,table.pt.tx th{padding:2px 4px}table.pt.tx td{text-align:right}table.pt.tx td:first-child{text-align:left}.card table.pt.tm td,.card table.pt.tm th{padding:3px 3px}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
+.four.fx{display:flex}.four.fx>*{flex:1 1 0;min-width:0}.four.fx>.mgonly{display:flex}.four.fx>.mgonly>.card{flex:1}.four.top{clear:both;margin:10px 0 2px}.four.top .card{border:1.5px solid var(--line)}.four.top .card:first-child{border-color:var(--out)}.four.top .big{font-size:19px}.four.top .foot{font-size:11px}ul.nl{margin:6px 0 0;padding-left:16px;font-size:11px;color:var(--sub)}ul.nl li{margin:1px 0}.card table.pt.tm{font-size:10px}table.pt.tx{font-size:11px}table.pt.tx td,table.pt.tx th{padding:2px 4px}table.pt.tx td{text-align:right}table.pt.tx td:first-child{text-align:left}.card table.pt.tm td,.card table.pt.tm th{padding:3px 3px}.q .ev{display:inline-block;font-size:10px;font-weight:700;color:#6b3fa0;border:1px solid #c9b6e4;border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px;letter-spacing:0}.evb{margin-top:10px}.evh{font-size:13px;font-weight:800;color:#6b3fa0;border-bottom:1.5px solid #6b3fa0;padding:2px 0;margin:10px 0 4px}table.pt.evt{font-size:11px}table.pt.evt td,table.pt.evt th{text-align:left;white-space:normal;padding:3px 5px}table.pt.evt td:last-child,table.pt.evt th:last-child{text-align:right;white-space:nowrap}.dec{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;margin:8px 0}.dech{font-weight:800;font-size:13.5px;margin-bottom:4px}.dec ol{margin:0;padding-left:20px}.dec li{margin:2px 0;font-size:12.5px}.warnbar{background:#fbe9e7;border:1.5px solid var(--out);color:var(--out);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;margin:8px 0}.overl{margin-top:8px;padding:7px 12px;border:1px solid var(--line);border-left:4px solid var(--out);border-radius:8px;font-size:12.5px}.overl small{color:var(--sub);font-size:11px}
 table.pt.tm{font-size:11px;margin-top:2px}table.pt.tm td{padding:3px 4px}table.pt.tm th{padding:3px 4px}table.pt.tm tr.tot td{border-top:1.5px solid var(--ink);font-weight:700}table.pt.tm tr.hq td{font-weight:700;border-top:1px solid var(--line)}table.pt.tm tr.mut td{color:var(--sub)}table.pt.tm td:first-child{text-align:left;white-space:nowrap}table.pt.tm td:first-child small{display:block;font-size:9.5px;color:var(--sub);font-weight:400}
 table.pt td.av small.firm{color:var(--sub);font-size:11px}table.pt td.av small.firm.neg{color:var(--out)}table.pt tr.pick td{border-top:1.5px dashed var(--line)}
 .prow{display:grid;grid-template-columns:220px minmax(0,1fr) 170px;column-gap:14px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
@@ -1032,7 +1032,7 @@ def _results(R, cum=True, mode=None):
     대표 주간(cum=True, mode='ceo')엔 영업이익 칸이 없다 (사용자 2026-11-16 결정: 마감 전 이번 달 영업이익은 8달 중 5달
     이익·손실이 반대로 보였고, 달 초에 대신 보이던 지난달 영업이익도 다음 달 5일엔 평균 1억 넘게 틀림) — 경영관리용엔 그대로."""
     s4, s5 = R["s4"], R["s5"]
-    no_np = cum and mode == "ceo"
+    mg_np = cum   # 주간 영업이익 칸은 경영관리용 묶음(mgonly)으로 — 대표용엔 없고 두 판의 다른 숫자는 같게 (시험 check_editions)
     cards = []
     src = s4["sources"].get("WEHAGO")
     co = [r for r in src["table"] if r["unit"] == "회사"] if src else []
@@ -1043,19 +1043,18 @@ def _results(R, cum=True, mode=None):
         if cum:
             cards.append(("%s 매출" % ym, W(c["revenue"]), "올해 누적 %s" % (W(y["revenue"]) if y else _na("자료 없음"))))
             prev = _prev_month_pl(R, src) if R["asof"].day <= EARLY_MONTH_DAYS else None
-            if no_np:
-                pass
-            elif prev is not None:
+            if prev is not None:
                 # 달 초에는 이번 달 비용만 먼저 잡혀 이익이 크게 마이너스로 보인다 → 지난달 영업이익 (2026-11-04 이해도 점검 U4)
                 pm, pc = prev
                 ptag = " <span class='chip c-q'>마감 전</span>" if pc["provisional"] else ""
                 cards.append(("%s 영업이익 (지난달)%s" % (esc(_ym_text(pm)), ptag), W(pc["np"], "확인 필요"),
                               "영업이익률 %s · 올해 누적 %s · %s은 %d일 지나 이익은 다음 보고부터" % (
                                   esc(pct(pc["np"], pc["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"),
-                                  esc(ym), R["asof"].day)))
+                                  esc(ym), R["asof"].day), mg_np))
             else:
                 cards.append(("%s 영업이익%s" % (esc(ym), tag), W(c["np"], "확인 필요"),
-                              "영업이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음"))))
+                              "영업이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음")),
+                              mg_np))
         else:
             cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
             np_, foot = c["np"], ""
@@ -1068,8 +1067,7 @@ def _results(R, cum=True, mode=None):
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
         cards.append(("%s 매출" % ym, _na(why), ""))
-        if not no_np:
-            cards.append(("%s 영업이익" % ym, _na(why), ""))
+        cards.append(("%s 영업이익" % ym, _na(why), "", mg_np))
     na = s5["in_missing"]
     if cum:
         pass   # 주간에는 미수금을 싣지 않는다 (사용자 2026-11-03: 미수금·예정 지난 미지급은 월간에만)
@@ -1091,11 +1089,14 @@ def _results(R, cum=True, mode=None):
             foot += " · 가장 오래된 것 %s (행사 후 %d일)" % (_short(o["P"]["name"], 14), o["days"])
         foot = esc(foot) + (_na(" · 확인 필요 %d건" % len(E["unknown"])) if E["unknown"] else "")
         cards.append(("행사 후 세금계산서 미발행", W(unissued_due(E)), foot))
-    h = ["<div class='four%s'>" % {3: " c3", 2: " c2"}.get(len(cards), "")]
-    for lab, v, foot in cards:
+    # 주간은 칸 수가 판마다 달라(대표용 2칸 · 경영관리용 3칸) 같은 줄을 나눠 쓰는 flex 줄 (fx)
+    h = ["<div class='four fx'>" if cum else "<div class='four%s'>" % (" c3" if len(cards) == 3 else "")]
+    for card in cards:
+        lab, v, foot = card[:3]
         lab_html = lab if "<span" in lab else esc(lab)
-        h.append("<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
-                 % (lab_html, v, foot))
+        x = ("<div class='card'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>"
+             % (lab_html, v, foot))
+        h.append(_mg(mode, x) if len(card) > 3 and card[3] else x)
     h.append("</div>")
     return "".join(h)
 
@@ -1142,16 +1143,21 @@ def _check_items(R):
         items.append("사용제한금액 빈칸 %d계좌 (0으로 계산 · 담보·전용 자금이면 계좌잔액.csv에 금액 적기): %s"
                      % (s1["restr_unknown"], ", ".join(names)))
     inv_na = " (계산서 자료 없음: %s)" % _inv_files(s2) if s2["in_missing"] else ""
-    items.append("예정일 지난 미처리 입금 %s%s / 지급 %s (일정에 넣지 않음)" % (
-        side(s2["past_in_n"], s2["past_in"], s2["past_in_unknown"]), inv_na,
-        side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"])))
+    if s2["late_in_n"]:   # 사용자 결정 ② (2026-11-16)
+        items.append("예정일 지난 입금 %s%s → %s 예상 입금으로 넣음 (확정 잔액엔 안 넣음 · 들어왔으면 장부·자금계획서 정리)" % (
+            side(s2["late_in_n"], s2["late_in_sum"], 0), inv_na, _md(R["payday"])))
+    elif inv_na:
+        items.append("예정일 지난 입금: 계산서 쪽은 확인 못 함" + inv_na)
+    items.append("예정일 지난 미처리 지급 %s (일정에 넣지 않음)%s" % (
+        side(s2["past_out_n"], s2["past_out"], s2["past_out_unknown"]),
+        " / 금액 모르는 지난 입금 %d건 (일정에 넣지 않음)" % s2["past_in_n"] if s2["past_in_n"] else ""))
     items.append("날짜 없는 입금 예정 %s%s / 지급 예정 %s" % (
         side(s2["undated_in_n"], s2["undated_in"], s2["undated_in_unknown"]), inv_na,
         side(s2["undated_out_n"], s2["undated_out"], s2["undated_out_unknown"])))
     if s5["in_missing"]:
         items.append("입금예정일 지난 미수금: 계산서 자료 없음 (%s)" % _inv_files(s5))
     else:
-        items.append("입금예정일 지난 미수금 %d건 %s%s (일정에 넣지 않음)" % (
+        items.append("입금예정일 지난 미수금 %d건 %s%s (계산서 기준)" % (
             len(s5["overdue"]), won(s5["overdue_total"]),
             " + 금액 미확인 %d건" % s5["overdue_unknown_n"] if s5.get("overdue_unknown_n") else ""))
     for t in R.get("tax") or []:   # 세금 납부 예상: 날짜 있는 것은 위 정기 지출 표에 (사용자 2026-11-03)
@@ -2986,7 +2992,7 @@ def _s2(R):
     s2 = R["s2"]
     h = [_h2(2, "앞으로의 입금·지급 일정과 계산 잔액")]
     h.append("<div class='note'>%s</div>" % esc(
-        "시작값은 보고 기준일 사용 가능액 %s%s. 확정·추정을 나누어 표시. 날짜 없는 금액과 입금예정일이 지난 미수는 아래 표로 따로 둠.%s"
+        "시작값은 보고 기준일 사용 가능액 %s%s. 확정·추정을 나누어 표시. 날짜 없는 금액은 아래 표로 따로 두고, 예정일이 지난 입금은 이번 주 예상 입금(추정)으로 넣음.%s"
         % (_won_or_unknown(s2["start"]), _bal_note(R["s1"]),
            " 부가세 미확인 %d건은 공급가액만 반영." % s2["vat_unknown_n"] if s2["vat_unknown_n"] else "")))
     h.extend(_fundplan_notes(R.get("fundplan")))
@@ -3024,6 +3030,11 @@ def _s2(R):
     head = ["예정일", "구분", "금액", "확정", "분류", "프로젝트", "거래처·내용", "근거", "원천"]
     h.append("<h3>날짜 없는 예정금액 (일정·그래프 미포함, %d건)</h3>" % len(s2["undated"]))
     h.append(table(head, ev_rows(s2["undated"]), num_cols=(2,)))
+    if s2["late_in"]:   # 사용자 결정 ② (2026-11-16): 예정일 지난 입금은 이번 주 예상 입금으로 — 원래 예정일을 보인다
+        h.append("<h3>예정일이 지난 입금 → %s 예상 입금으로 넣음 (확정 잔액엔 안 넣음, %d건 %s원)</h3>"
+                 % (esc(d2s(R["payday"])), s2["late_in_n"], esc(won(s2["late_in_sum"]))))
+        h.append(table(head, ev_rows([dict(e, date=e["orig_date"]) for e in sorted(s2["late_in"], key=lambda e: e["orig_date"])]),
+                       num_cols=(2,)))
     h.append("<h3>예정일이 이미 지난 미처리 예정금액 (일정 미포함, %d건)</h3>" % len(s2["past"]))
     h.append(table(head, ev_rows(sorted(s2["past"], key=lambda e: e["date"])), num_cols=(2,)))
     if s2["amount_unknown"]:
@@ -3032,8 +3043,7 @@ def _s2(R):
     if s2["beyond"]:
         h.append("<h3>6개월 이후 예정 (%d건)</h3>" % len(s2["beyond"]))
         h.append(table(head, ev_rows(sorted(s2["beyond"], key=lambda e: e["date"])), num_cols=(2,)))
-    dated = sorted([e for e in R["events"] if e["amount"] is not None and e["date"] and R["asof"] < e["date"] <= s2["horizon"]],
-                   key=lambda e: (e["date"], e["io"]))
+    dated = sorted(s2["dated"], key=lambda e: (e["date"], e["io"]))   # 이번 주로 옮긴 지난 입금 포함 (계산에 쓴 목록 그대로)
     h.append("<h3>기간 내 예정 전체 (%d건)</h3>" % len(dated))
     h.append(table(head, ev_rows(dated), num_cols=(2,)))
     h.append("<div class='note'>프로젝트 카드 미결제는 카드대금 일정(자금일정)에 포함되므로 여기서 따로 더하지 않음. "
@@ -3074,7 +3084,7 @@ def _fundplan_notes(F):
     out = ["<div class='note'>%s</div>" % esc(
         "일정 기준: WEHAGO 자금계획서 (자료일 %s, %s). 기존 일정과 같은 건 %d건은 자금계획서 날짜·금액으로 바꿈, "
         "새로 넣은 줄 %d건, 이미 지급·입금되어 뺀 줄 %d건, 예정일 지난 미지급 %d건은 다음 금요일로 옮김, "
-        "입금 지연 %d건은 추정(지난 날짜, 잔액 계산 미포함). 자금계획서가 없는 달은 기존 일정으로 계산."
+        "입금 지연 %d건은 이번 주 예상 입금으로 (확정 잔액엔 안 넣음). 자금계획서가 없는 달은 기존 일정으로 계산."
         % (d2s(F["stamp"]), ", ".join(F["months"]), len(F["matched"]), len(F["added"]), len(F["done"]),
            len(F["moved"]), len(F["late_in"])))]
     if F["missing"]:

@@ -647,7 +647,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     for b in buckets:
         for k in ("in_firm", "in_est", "out_firm", "out_est"):
             b[k] = 0
-    undated, past, beyond, amount_unknown = [], [], [], []
+    undated, past, beyond, amount_unknown, late_in = [], [], [], [], []
     for ev in events:
         if ev["amount"] is None:
             amount_unknown.append(ev)
@@ -656,8 +656,16 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             undated.append(ev)
             continue
         if ev["date"] <= asof:
-            past.append(ev)
-            continue
+            if ev["io"] != "in":
+                past.append(ev)
+                continue
+            # 사용자 결정 ② (2026-11-16 카드): 기준일 당일이거나 예정일이 지났는데 아직 안 들어온 입금은 확정 잔액엔 넣지 않고
+            # '예상 입금까지 넣은 잔액'에 이번 주(첫 주 끝 출금일) 예상 입금으로 넣는다 (11/16 기준일 당일 입금 6,325만이
+            # 대표 보고 어디에도 없던 것). R["events"] 의 원래 줄은 그대로 두고 일정에는 날짜를 옮긴 사본만 쓴다
+            # (지급 승인 화면·이체 파일은 자기 규칙대로).
+            ev = dict(ev, orig_date=ev["date"], date=R["payday"], firm=False, must=False, late_in=True,
+                      basis=(ev.get("basis") or "") + ", 예정일 %s 지난 입금 → 이번 주 예상 입금" % ev["date"].isoformat())
+            late_in.append(ev)
         if ev["date"] > horizon:
             beyond.append(ev)
             continue
@@ -678,7 +686,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         bal_a += b["in_firm"] + b["in_est"] - b["out_firm"] - b["out_est"]
         b["bal_firm"], b["bal_all"] = bal_f, bal_a
     # 날짜 단위 최저 잔액
-    dated = sorted([ev for ev in events if ev["amount"] is not None and ev["date"] and asof < ev["date"] <= horizon],
+    dated = sorted([ev for ev in events if ev["amount"] is not None and ev["date"] and asof < ev["date"] <= horizon] + late_in,
                    key=lambda x: x["date"])
     mins = {}
     for mode in ("firm", "all"):
@@ -704,7 +712,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     periods = available_periods(start_cash, dated, ends, min_cash, asof)
     if pick is not None:
         periods[-1]["pick"] = True
-    # 예정일이 지난 미처리: 확인된 금액만 합산하고, 건수는 금액 미확인 건도 센다. 일정·최저 잔액에는 넣지 않는다.
+    # 예정일이 지난 미처리 지급 (입금은 금액을 모르는 것만 — 금액 있는 입금은 위에서 이번 주 예상 입금으로 옮김):
+    # 확인된 금액만 합산하고, 건수는 금액 미확인 건도 센다. 일정·최저 잔액에는 넣지 않는다.
     past_all = past + [ev for ev in amount_unknown if ev["date"] is not None and ev["date"] <= asof]
     past_sum = {}
     for io in ("in", "out"):
@@ -732,6 +741,7 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         "undated_out": undated_sum["out"][0], "undated_out_n": undated_sum["out"][1],
         "undated_out_unknown": undated_sum["out"][2],
         "past_in": past_sum["in"][0], "past_in_n": past_sum["in"][1], "past_in_unknown": past_sum["in"][2],
+        "late_in": late_in, "late_in_sum": sum(ev["amount"] for ev in late_in), "late_in_n": len(late_in),
         "past_out": past_sum["out"][0], "past_out_n": past_sum["out"][1], "past_out_unknown": past_sum["out"][2],
         "vat_unknown_n": len(sched_vat),
         "vat_unknown_n4": sum(1 for ev in sched_vat if ev["date"] <= four[-1]["to"]),

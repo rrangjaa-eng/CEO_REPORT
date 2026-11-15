@@ -451,10 +451,39 @@ class TestUnknownAmountsAndPastDue(Base):
 
     def test_past_due_on_first_screen(self):
         s2 = self.R["s2"]
-        self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
+        # 사용자 결정 ② (2026-11-16): 예정일 지난 입금(B사 계산서 9/30 예정 1.1억)은 이번 주(11/6) 예상 입금으로 — 확정 잔액엔 안 넣음
+        self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (0, 0, 0))
+        self.assertEqual((s2["late_in_sum"], s2["late_in_n"]), (110_000_000, 1))
+        late = s2["late_in"][0]
+        self.assertEqual((late["orig_date"], late["date"], late["firm"]), (dt.date(2026, 9, 30), dt.date(2026, 11, 6), False))
+        self.assertEqual((s2["buckets"][0]["in_est"], s2["buckets"][0]["in_firm"]), (110_000_000, 0))
         self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (0, 0, 0))
         fs = first_screen(render(self.R, "mgmt"))
-        self.assertEqual(box_item(fs, "예정일 지난 미처리"), "예정일 지난 미처리 입금 1건 110,000,000 / 지급 0건 0 (일정에 넣지 않음)")
+        self.assertEqual(box_item(fs, "예정일 지난 입금"),
+                         "예정일 지난 입금 1건 110,000,000 → 11/06 예상 입금으로 넣음 (확정 잔액엔 안 넣음 · 들어왔으면 장부·자금계획서 정리)")
+        self.assertEqual(box_item(fs, "예정일 지난 미처리"), "예정일 지난 미처리 지급 0건 0 (일정에 넣지 않음)")
+        for c in self.R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+
+    def test_same_day_inflow_is_this_week_estimate_not_firm(self):
+        # 사용자 결정 ② (2026-11-16 카드): 기준일 당일 입금 예정(아직 안 들어옴)도 확정 잔액엔 안 넣고 이번 주 예상 입금으로.
+        # 예전엔 기준일 당일 입금이 '지난 날짜' 묶음으로 빠져 대표 보고 어디에도 없었다 (실제 11/16 6,325만)
+        R, html = self.probe(self.add_schedule_rows(
+            ["2026-11-02", "입금", "7,000,000", "확정", "수금(미발행분)", "", "가상고객", "계약서", "오늘 입금 예정"]))
+        s2, b0 = R["s2"], self.R["s2"]
+        late = [e for e in s2["late_in"] if e["desc"] == "가상고객"]
+        self.assertEqual([(e["orig_date"], e["date"], e["amount"], e["firm"]) for e in late],
+                         [(dt.date(2026, 11, 2), dt.date(2026, 11, 6), 7_000_000, False)])
+        self.assertEqual(s2["buckets"][0]["in_est"] - b0["buckets"][0]["in_est"], 7_000_000)
+        self.assertEqual(s2["buckets"][0]["in_firm"], b0["buckets"][0]["in_firm"])   # 확정(큰 숫자)엔 안 넣음
+        self.assertEqual(s2["min"]["firm"], b0["min"]["firm"])
+        self.assertEqual(s2["min"]["all"][0] - b0["min"]["all"][0], 7_000_000)
+        self.assertEqual([p["firm"]["avail"] for p in s2["periods"]], [p["firm"]["avail"] for p in b0["periods"]])
+        # R["events"] 원래 줄은 그대로 (지급 승인 화면·이체 파일은 자기 규칙)
+        self.assertTrue(any(e["desc"] == "가상고객" and e["date"] == dt.date(2026, 11, 2) for e in R["events"]))
+        for c in R["s7"]["checks"]:
+            self.assertTrue(c[3], c[0])
+        self.assertIn("예정일 지난 입금 2건 117,000,000 → 11/06 예상 입금으로 넣음", first_screen(html))
 
     def test_past_due_payment_not_in_schedule(self):
         R, html = self.probe(self.add_schedule_rows(self.PAST_ROW))
@@ -464,7 +493,7 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual(s2["min"], self.R["s2"]["min"])
         for c in R["s7"]["checks"]:
             self.assertTrue(c[3], c[0])
-        self.assertIn("/ 지급 1건 5,000,000 (일정에", first_screen(html))
+        self.assertIn("예정일 지난 미처리 지급 1건 5,000,000 (일정에", first_screen(html))
 
     def test_nonproject_scope_and_undated_on_first_screen(self):
         s6 = self.R["s6"]
@@ -478,9 +507,9 @@ class TestUnknownAmountsAndPastDue(Base):
             R, html = self.probe(self.add_schedule_rows(self.PAST_ROW, self.BLANK_PAST_ROW))
             s2 = R["s2"]
             self.assertEqual((s2["past_out"], s2["past_out_n"], s2["past_out_unknown"]), (5_000_000, 2, 1))
-            self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (110_000_000, 1, 0))
+            self.assertEqual((s2["past_in"], s2["past_in_n"], s2["past_in_unknown"]), (0, 0, 0))   # 결정 ②: 금액 있는 지난 입금은 이번 주 예상으로
             val = box_item(first_screen(html), label)
-            self.assertIn("입금 1건 110,000,000 / 지급 2건 5,000,000 (금액 미확인 1건)", val)
+            self.assertIn("지급 2건 5,000,000 (금액 미확인 1건)", val)
             self.assertIn("금액 미확인 1건", val)
             self.assertEqual([b["out_firm"] for b in s2["buckets"]], [b["out_firm"] for b in self.R["s2"]["buckets"]])
             self.assertEqual(s2["min"], self.R["s2"]["min"])
@@ -505,7 +534,7 @@ class TestUnknownAmountsAndPastDue(Base):
         self.assertEqual((s2["vat_unknown_n"], s2["vat_unknown_n4"], s2["vat_unknown_firm_n"]), (1, 1, 1))
         self.assertEqual(s2["out4_firm"], 170_100_000)
         self.assertEqual(s2["min"]["firm"], (-29_100_000, dt.date(2027, 4, 25)))  # 2026-11-14 D1: 정기 지출 예상 5,290만(카드 1,500만·부가세 3,500만·원천세 차액 290만)도 큰 숫자 기준에 넣음
-        self.assertEqual(s2["min"]["all"], (126_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (A5)
+        self.assertEqual(s2["min"]["all"], (236_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (A5) + 결정 ② 지난 입금 1.1억
         fs = first_screen(html)
         self.assertIn("부가세 미확인 1건 (공급가액만 반영)", fs)  # 가용자금 표 아래
         self.assertEqual(box_item(fs, "부가세 미확인"), "부가세 미확인 지급 예정 1건 (공급가액만 반영)")
@@ -888,7 +917,8 @@ class TestUserRulesLocked(Base):
     def test_min_balance_firm_and_estimate(self):
         mn = self.R["s2"]["min"]
         self.assertEqual(mn["firm"], (-33_100_000, dt.date(2027, 4, 25)))  # 2026-11-14 D1: 정기 지출 예상 5,290만(카드 1,500만·부가세 3,500만·원천세 차액 290만)도 큰 숫자 기준에 넣음
-        self.assertEqual(mn["all"], (122_685_000, dt.date(2027, 4, 25)))  # D-54 + 원천세 장부 계산 차액 2,900,000 (2026-11-04 A5)
+        # D-54 + 원천세 장부 계산 차액 2,900,000 (2026-11-04 A5) + 결정 ② (2026-11-16) 예정일 지난 입금 1.1억을 이번 주 예상 입금으로
+        self.assertEqual(mn["all"], (232_685_000, dt.date(2027, 4, 25)))
         fs = first_screen(render(self.R, "mgmt"))
         self.assertIn("오늘부터 가장 적을 때 잔액", fs)
         self.assertIn("확정분과 정기 지출 예상", fs)
@@ -916,7 +946,7 @@ class TestUserRulesLocked(Base):
         # 사용자 2026-11-16 결정 ①: 대표 주간엔 마감 전 영업이익·이익률 칸이 없다 (달 초 '지난달 영업이익'도). 경영관리용엔 그대로
         ceo = first_screen(render(self.R, "ceo"))
         tiles = re.search(r"<div class='four[^']*'><div class='card'><div class='lab'>11월 매출.*?</div></div></div>", ceo, re.S).group(0)
-        self.assertTrue(tiles.startswith("<div class='four c2'>"))
+        self.assertTrue(tiles.startswith("<div class='four fx'>"))
         self.assertIn("올해 누적", tiles)
         self.assertNotIn("영업이익", tiles)
         self.assertNotIn("영업이익", re.sub(r"<[^>]+>", " ", ceo))
@@ -1320,7 +1350,7 @@ class TestFirstScreenCountsD04(unittest.TestCase):
 
     def test_overdue_receivable_line_has_count(self):
         fs = first_screen(render(sample_result(), "mgmt"))
-        self.assertEqual(box_item(fs, self.OVERDUE), "입금예정일 지난 미수금 1건 110,000,000 (일정에 넣지 않음)")
+        self.assertEqual(box_item(fs, self.OVERDUE), "입금예정일 지난 미수금 1건 110,000,000 (계산서 기준)")
 
     def add_rows(self, *new_rows):
         return probe_folder(self, "자금일정.csv", lambda rows: rows.extend([list(r) for r in new_rows]))
