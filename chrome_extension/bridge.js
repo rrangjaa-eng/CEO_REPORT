@@ -14,6 +14,10 @@ let autoCap = null;   // 결산·인사급여 자동 받기: 이 화면 코드�
 // 0.9: 계좌·카드번호(no_acnum·no_bnkacct·js_number·no_ftnumber·자료수집현황 cb_no)와 거래처 담당자·대표자 이름(nm_damname·nm_ceo 등)도 버린다 (차입금·예적금·카드·거래처원장 화면)
 const DROP_KEY = /(^pw_|passw|^cel_|^tel_|^em_|email|^zip|^add_|addr|bank|deposit|card_no|no_card|account_no|account_holder|profile_url|^ip_|token|secret|^no_acnum|^no_bnkacct|^js_number|^no_ftnumber|^nm_damname|^cb_no|ceo)/i;
 const ID_KEY = /(social|no_res|jumin)/i;
+// 0.9.4 (2026-11-15, 2차 P1-8): 주민번호 모양 글자는 어느 칸에 있든(적요·비고 등) 생년월일-성별 자리만 남긴다.
+// 예전에는 주민번호 전용 칸의 글자만 가렸고 적요·숫자로 온 값은 그대로 저장됐다.
+const RRN_RE = /(?<!\d)(\d{6})\s*[-‐‑‒–—―−﹣－.．/／]?\s*([1-8])\d{6}(?!\d)/g;
+const maskText = (s) => s.replace(RRN_RE, "$1-$2******");
 function scrub(v, key = "") {
   if (Array.isArray(v)) return v.map((x) => scrub(x));
   if (v && typeof v === "object") {
@@ -21,10 +25,12 @@ function scrub(v, key = "") {
     for (const [k, x] of Object.entries(v)) if (!DROP_KEY.test(k)) o[k] = scrub(x, k);
     return o;
   }
-  if (typeof v === "string" && ID_KEY.test(key)) {
-    const d = v.replace(/\D/g, "");
+  if ((typeof v === "string" || typeof v === "number") && ID_KEY.test(key)) {
+    const d = String(v).replace(/\D/g, "");
     return d.length >= 7 ? `${d.slice(0, 6)}-${d[6]}` : d.slice(0, 6);
   }
+  if (typeof v === "string") return maskText(v);
+  if (typeof v === "number" && Number.isInteger(v) && /^\d{6}[1-8]\d{6}$/.test(String(v))) return maskText(String(v));
   return v;
 }
 const screenCode = () => (location.hash.match(/\/(?:account|humanresource)\/([A-Z0-9]+)/) || [])[1] || "";
@@ -42,11 +48,11 @@ window.addEventListener("message", (e) => {
     return;
   }
   if (m.kind === "자금계획목록" || m.kind === "자금계획상세") {
-    if (Array.isArray(j)) planCap.push({kind: m.kind, date: m.params.date || "", cd_fitem: m.params.cd_fitem || "", rows: j});
+    if (Array.isArray(j)) planCap.push({kind: m.kind, date: m.params.date || "", cd_fitem: m.params.cd_fitem || "", rows: scrub(j)});
     return;
   }
   if (!j || !Array.isArray(j.data)) return;
-  const rows = j.data.map((r) => KEEP.map((k) => (r[k] === undefined || r[k] === null ? "" : r[k])));
+  const rows = j.data.map((r) => KEEP.map((k) => (r[k] === undefined || r[k] === null ? "" : scrub(r[k], k))));
   const title = document.title || "";
   chrome.runtime.sendMessage({type: "captured", kind: m.kind, params: m.params, columns: KEEP, rows, tot: j.tot,
     company: (title.split(" - ")[1] || "").trim(), screen: title.split(" - ")[0]});

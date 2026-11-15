@@ -2290,3 +2290,31 @@ class TestConvertRollsBackOnLateError(unittest.TestCase):
         self.assertIn("RuntimeError", res.lines[0])
         self.assertEqual(_read(os.path.join(input_dir, "세금예상.csv"), "utf-8-sig"), marker)
         self.assertIn("변환 실패", result_text(input_dir))
+
+
+# ───────────── 2차 P1-8: 확장이 저장하는 위하고 원본의 주민번호는 어느 칸에 있든 가림 ─────────────
+class TestExtensionMasksIdNumbersEverywhere(unittest.TestCase):
+    def test_scrub_masks_free_text_and_numbers(self):
+        import json
+        import shutil
+        import subprocess
+        if shutil.which("node") is None:
+            self.skipTest("node 없음")
+        js = (
+            'const src=require("fs").readFileSync(process.argv[1],"utf8");'
+            'const m=src.match(/const DROP_KEY[\\s\\S]*?\\nfunction scrub[\\s\\S]*?\\n}\\n/);'
+            'eval(m[0].replace(/const /g,"var ").replace("function scrub","global.scrub=function"));'
+            'console.log(JSON.stringify(scrub(JSON.parse(process.argv[2]))));')
+        fake = {"nm_remark": "급여 가상인 900101-1234567 지급", "no_res": "9001011234567", "x": 9001011234567,
+                "mn_bungae1": 1500000, "rows": [{"note": "주민 9001012345678"}], "slip": "20261115-0000123"}
+        out = subprocess.run(["node", "-e", js, os.path.join(ROOT, "chrome_extension", "bridge.js"), json.dumps(fake)],
+                             check=True, stdout=subprocess.PIPE).stdout.decode("utf-8")
+        got = json.loads(out)
+        self.assertEqual(got["nm_remark"], "급여 가상인 900101-1****** 지급")
+        self.assertEqual(got["no_res"], "900101-1")
+        self.assertEqual(got["x"], "900101-1******")
+        self.assertEqual(got["rows"][0]["note"], "주민 900101-2******")
+        self.assertEqual((got["mn_bungae1"], got["slip"]), (1500000, "20261115-0000123"))
+        src = _read(os.path.join(ROOT, "chrome_extension", "bridge.js"))
+        self.assertIn("scrub(r[k], k)", src)      # 분개장 줄
+        self.assertIn("rows: scrub(j)", src)      # 자금계획 줄
