@@ -3120,7 +3120,11 @@ class TestLiveFailureNotStale(unittest.TestCase):
         import tempfile
         import time
         from unittest import mock
-        from ceo_report import app, gui, live, winstate
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        from ceo_report import app, live, winstate
         tmp = tempfile.mkdtemp()
         out, inp = os.path.join(tmp, "out"), os.path.join(tmp, "in")
         os.makedirs(out)
@@ -3190,3 +3194,29 @@ class TestSameNameDifferentCodeWarned(unittest.TestCase):
         self.assertIn("코드 1·2", hit[0])
         t = build_inv(a, sales)   # 코드가 하나면 알림 없음
         self.assertFalse([n for n in t.notes if "거래처코드가 다른" in n])
+
+
+# ───────────── 1차 D17: 수집 때 건너뛴 프로젝트 줄 수가 변환·확인할 것까지 감 ─────────────
+class TestSkippedProjectsCarried(unittest.TestCase):
+    def test_snapshot_keeps_count_and_convert_warns(self):
+        import shutil
+        import tempfile
+        from ceo_report import snapshot
+        root = tempfile.mkdtemp()
+        try:
+            at = dt.datetime(2026, 11, 10, 9, 0, 0)
+            path = snapshot.write_snapshot(root, at, [], [], skipped=2)
+            snap = snapshot.read_snapshot(path)
+            self.assertEqual(snapshot.skipped_projects(snap), 2)
+            cfg = convert.Config(convert.DEFAULT_CONFIG)
+            _, warn = convert.snapshot_lines(snap, "", dt.date(2026, 11, 10), cfg)
+            self.assertIn("읽지 못한 줄 2건", warn or "")
+            items = checklist.convert_items([], [], [snapshot.SKIP_NOTE % 2])
+            self.assertEqual(len(items), 1)
+            self.assertIn("읽지 못한 줄 2건", items[0]["detail"])
+            path2 = snapshot.write_snapshot(root, at + dt.timedelta(seconds=1), [], [])   # 건너뛴 줄이 없으면 그대로
+            snap2 = snapshot.read_snapshot(path2)
+            self.assertEqual(snapshot.skipped_projects(snap2), 0)
+            self.assertIsNone(convert.snapshot_lines(snap2, "", dt.date(2026, 11, 10), cfg)[1])
+        finally:
+            shutil.rmtree(root)

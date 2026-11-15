@@ -385,7 +385,7 @@ def run_collect(a, asof, now):
             put_requests = lambda folder: payreq.write(folder, result.requests)   # noqa: E731 — 완성 표시 전에 함께 씀 (C20·P1-16)
         snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
                                    pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages},
-                                   extra=put_requests)
+                                   extra=put_requests, skipped=result.project_skipped)
         if result.requests is not None:
             _say("지급 요청서(관리팀 승인·사장님 승인 전) %d건 읽음 · 세부사항 있음 %d건"
                  % (len(result.requests), sum(1 for r in result.requests if r["note"])))

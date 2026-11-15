@@ -414,6 +414,14 @@ def snapshot_lines(snap, snap_line, asof, cfg):
     """
     if snap is None:
         return snap_line, None
+    line, warn = _snapshot_age(snap, asof, cfg)
+    skip = snapshot.skipped_projects(snap)
+    if skip:   # 1차 D17: 수집 때 건너뛴 프로젝트 줄을 변환 결과에도
+        warn = ((warn + " / ") if warn else "") + "경고: " + (snapshot.SKIP_NOTE % skip).replace("[확인] ", "")
+    return line, warn
+
+
+def _snapshot_age(snap, asof, cfg):
     taken = snap.collected_at
     stamp = taken.strftime(snapshot.TIME_FORMAT)
     days = (asof - taken.date()).days
@@ -1355,7 +1363,9 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
             summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
             items = (review_checks.duplicate_items(books.journal) + ht["items"]
                      + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]
-                                                     + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]))
+                                                     + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]
+                                                     + ([snapshot.SKIP_NOTE % snapshot.skipped_projects(snap)]
+                                                        if snapshot.skipped_projects(snap) else [])))
             trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
                      if v["text"]}
             if not checklist.save_convert_items(input_dir, items, ran_at, trace):

@@ -55,7 +55,7 @@ def _page_counts(pages):
     return str(pay), str(proj)
 
 
-def write_snapshot(root, collected_at, payments, projects, pages=None, extra=None):
+def write_snapshot(root, collected_at, payments, projects, pages=None, extra=None, skipped=0):
     """스냅숏 폴더를 쓰고 최종 폴더 경로를 돌려준다. 실패하면 이 함수가 만든 '.작성중' 폴더만 지우고 오류를 다시 낸다.
 
     extra(폴더): 함께 넣을 파일(지급 요청서 등)을 쓰는 함수. 2차 C20·P1-16 (2026-11-15): 예전엔 스냅숏을 완성으로 만든 뒤
@@ -82,13 +82,24 @@ def write_snapshot(root, collected_at, payments, projects, pages=None, extra=Non
         pp, jp = _page_counts(pages)
         _write_csv(os.path.join(work, INFO_FILE), ["항목", "값"],
                    [["형식", FORMAT], ["수집시각", stamp], ["지급요청_건수", len(payments)], ["프로젝트_건수", len(projects)],
-                    ["지급요청_페이지수", pp], ["프로젝트_페이지수", jp]])
+                    ["지급요청_페이지수", pp], ["프로젝트_페이지수", jp]]
+                   + ([["프로젝트_건너뜀", int(skipped)]] if skipped else []))   # 1차 D17: 읽지 못한 프로젝트 줄 수를 변환·보고까지
         os.rename(work, final)
     except OSError:
         if created:
             shutil.rmtree(work, ignore_errors=True)
         raise
     return final
+
+
+def skipped_projects(snap):
+    """1차 D17 (2026-11-15): 수집 때 칸 모양이 달라 읽지 못한 프로젝트 줄 수 (없으면 0)."""
+    v = str(((getattr(snap, "info", None) or {}).get("프로젝트_건너뜀")) or "").strip()
+    return int(v) if v.isdigit() else 0
+
+
+SKIP_NOTE = ("[확인] 인트라넷 프로젝트 목록에서 칸 모양이 달라 읽지 못한 줄 %d건 — 그 프로젝트의 사전견적·예상 매출·추정 예산이 보고에서 빠져 있음"
+             " (인트라넷 수집을 다시 하고, 계속되면 출력\\인트라넷_구조점검.txt 확인)")
 
 
 def latest_snapshot(root):
