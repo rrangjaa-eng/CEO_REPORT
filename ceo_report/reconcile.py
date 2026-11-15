@@ -267,14 +267,37 @@ def _compare_balances(rows, src, other, book, same_time, basis):
 
 
 # ───────────── 제안 1·9 시산표·재무상태표·손익 ─────────────
-def balances_rows(journal, raw, jstamp):
+def _insert_times(jfile):
+    """분개장 원본 한 파일 -> 전표 입력 시각(dt_insert) 목록."""
+    if not jfile:
+        return []
+    cols, lines = jfile[2], jfile[3]
+    ix = {c: i for i, c in enumerate(cols)}
+    if "dt_insert" not in ix:
+        return []
+    k = ix["dt_insert"]
+    return [t for t in (_stamp(r[k]) for r in lines if len(r) > k) if t]
+
+
+def _same_time(when, jstamp, ins=()):
+    """분개장과 비교 화면을 '같은 때' 받았는가: 30분 안이고, 2차 P3-13 (2026-11-15) 그 사이에 장부에 들어온 전표가 없을 때.
+    예전엔 30분 안이면 그 사이 전표를 넣었어도 같은 때로 보아 거짓 '다름'이 났다 (분개장이 나중에 받은 쪽일 때 보임)."""
+    if not (jstamp and when and when != dt.datetime.min):
+        return False
+    if abs((when - jstamp).total_seconds()) > SAME_TIME_MIN * 60:
+        return False
+    lo, hi = min(when, jstamp), max(when, jstamp)
+    return not any(lo < t <= hi for t in ins or ())
+
+
+def balances_rows(journal, raw, jstamp, ins=()):
     rows = []
     tb = (raw.get("SACL0104") or [None])[0]
     if tb:
         when, year, d = tb
         other, _ = trial_balances(d)
         if other:
-            same = bool(jstamp and when and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+            same = _same_time(when, jstamp, ins)
             upto = when.date() if when != dt.datetime.min else None
             basis = "시산표 %s · 분개장 %s 받음%s" % (_hm(when), _hm(jstamp), "" if same else " (받은 시각 다름)")
             _compare_balances(rows, "합계잔액시산표", other, book_balances(journal, upto), same, basis)
@@ -285,7 +308,7 @@ def balances_rows(journal, raw, jstamp):
         if not other:
             continue
         this_year = year >= (jstamp.year if jstamp else dt.date.today().year)
-        same = (not this_year) or bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+        same = (not this_year) or _same_time(when, jstamp, ins)
         upto = dt.date(year, 12, 31) if not this_year else (when.date() if when != dt.datetime.min else None)
         basis = ("%d년 말 (결산 끝난 해)" % year) if not this_year else ("재무상태표 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)))
         _compare_balances(rows, "재무상태표 %d" % year, other, book_balances(journal, upto), same, basis)
@@ -296,7 +319,7 @@ def balances_rows(journal, raw, jstamp):
         if y in seen_years:
             continue
         seen_years.add(y)
-        rows.extend(pl_rows(journal, d, when, jstamp, year=y))
+        rows.extend(pl_rows(journal, d, when, jstamp, year=y, ins=ins))
     return rows
 
 
@@ -307,7 +330,7 @@ def _hm(t):
 PL_GROUPS = {"61000": ("매출액", "4"), "65000": ("판매비와 관리비", "8")}
 
 
-def pl_rows(journal, d, when, jstamp, year=None):
+def pl_rows(journal, d, when, jstamp, year=None, ins=()):
     """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…).
     year: 자료의 회계연도(없으면 받은 해). 지난 해(결산 끝난 해)는 그해 12월 31일까지 장부와 맞추고 받은 시각을 따지지 않는다."""
     rows = []
@@ -321,7 +344,7 @@ def pl_rows(journal, d, when, jstamp, year=None):
     year = year or when.year
     this_year = year >= (jstamp.year if jstamp else when.year)
     upto = when.date() if this_year else dt.date(year, 12, 31)
-    same = (not this_year) or bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+    same = (not this_year) or _same_time(when, jstamp, ins)
     if not any(j.get("date") is not None and j["date"].year == year for j in journal or []):
         return [_row("손익", "%d년 손익계산서" % year, "손익계산서", None, None, "손익계산서 %s 받음" % _hm(when), "참고",
                      "읽은 장부에 %d년 전표가 없어 맞춰 보지 않았습니다." % year)]
@@ -844,7 +867,7 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     if not os.path.exists(os.path.join(input_dir or "", MATURITY_FILE)):
         notes.append("대출만기.csv 없음 — 기본값(신한 기술보증기금 2건 매년 연장, 2억은 새 만기 2027-04-17, 2026-11-14 사용자)으로 계산")
     if journal:
-        rows += balances_rows(journal, raw, jstamp)
+        rows += balances_rows(journal, raw, jstamp, _insert_times(jfiles[0] if jfiles else None))
         rows += journal_rows(jfiles, asof)
         rows += intranet_rows(journal, getattr(snap, "projects", None))
         rows += asset_rows(journal, raw)

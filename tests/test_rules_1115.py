@@ -3316,3 +3316,22 @@ class TestInvoiceReconcileAdvanceAndSplit(unittest.TestCase):
              dict(ln(D(2026, 1, 7), "25900", 0, 3_000_000, "00102"), no="9", account="선수금")]
         rows = RC.etax_rows(j, RC.raw_files(t))
         self.assertEqual(rows[0]["판정"], "같음", rows)
+
+
+# ───────────── 2차 P3-13: 30분 안이라도 그 사이 전표가 들어왔으면 '같은 때'가 아님 ─────────────
+class TestSameTimeNeedsNoSlipsBetween(unittest.TestCase):
+    def test_rule(self):
+        from ceo_report import reconcile as RC
+        t0 = dt.datetime(2026, 11, 13, 10, 0)
+        j = dt.datetime(2026, 11, 13, 10, 20)
+        self.assertTrue(RC._same_time(t0, j, [dt.datetime(2026, 11, 13, 9, 0)]))
+        self.assertFalse(RC._same_time(t0, j, [dt.datetime(2026, 11, 13, 10, 10)]))   # 그 사이 입력
+        self.assertFalse(RC._same_time(t0, dt.datetime(2026, 11, 13, 10, 31), []))      # 30분 넘음
+        self.assertFalse(RC._same_time(dt.datetime.min, j, []))
+
+    def test_insert_times_from_file(self):
+        from ceo_report import reconcile as RC
+        from test_reconcile import JCOLS, jline
+        f = (dt.datetime(2026, 11, 13, 10, 20), 2026, JCOLS,
+             [jline("20261113", "10300", 1, 0, 1, ins="20261113101000"), jline("20261113", "10300", 0, 1, 2, ins="")])
+        self.assertEqual(RC._insert_times(f), [dt.datetime(2026, 11, 13, 10, 10)])
