@@ -1349,3 +1349,44 @@ class TestOneSlipSeveralLinesOneVendor(unittest.TestCase):
                            [("8", D(2026, 11, 10), "25300", "미지급금", 10000000, None, "가상음향"),
                             ("8", D(2026, 11, 10), "25300", "미지급금", 5000000, None, "나무조명")])
         self.assertEqual(rows[0]["상태"], "예정일 지남")
+
+
+class TestProjectProfitOneBasis(unittest.TestCase):
+    """1차 E1·B5·B6: 경영관리 '종료 시점 예상이익'·예산 초과·위험표가 장부 전 지급요청과 남은 예산을 안 봐
+    팀장 '지금 예상 이익'과 달랐다 (예시 A사 4,000만·C사 4,500만, A사 113% 초과를 놓침)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from test_review_1114b import SAMPLE_DIR
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        cls.R = compute(load(SAMPLE_DIR), "weekly", dt.date(2026, 11, 6))
+
+    def test_end_profit_equals_profit_now(self):
+        for P in self.R["s3"]["projects"]:
+            if P["profit_now"] is not None:
+                self.assertEqual(P["profit_end"], P["profit_now"], P["id"])
+
+    def test_requests_before_books_count_for_over_budget(self):
+        from ceo_report import render
+        a = [P for P in self.R["s3"]["projects"] if P["id"] == "P26201"][0]
+        self.assertLess(a["remain_all"], 0)          # 장부 전 요청까지 넣으면 예산 초과
+        self.assertGreater(a["remain"], 0)           # 자금 일정의 남은 예산(장부 전 요청 뺀 것)은 그대로
+        self.assertIn("A사 연례 컨퍼런스", render._over_line(self.R))
+        self.assertTrue(any("P26201" in str(r) and "등록 지출(장부 전 지급요청 포함)" in str(r) for r in self.R["risks"]))
+
+
+
+from test_teamreport import TeamReportCase  # noqa: E402
+
+
+class TestTeamProfitCountsOverBudget(TeamReportCase):
+    """1차 N1·B2: 팀장 '올해 매출총이익 예상'이 예산을 넘은 요청·계획을 빼지 않아 예시 A사 이익을 2,820만 크게 보였다."""
+
+    def test_over_budget_spending_is_subtracted(self):
+        _, R, T, page = self.make()
+        a = [r for r in T["up"] if r["id"] == "P26201"][0]
+        P = [p for p in R["s3"]["projects"] if p["id"] == "P26201"][0]
+        self.assertGreater(P["committed"], P["budget"])                         # 예시 A사: 등록 지출이 예산을 넘음
+        self.assertEqual(a["rem_cost"], max(P["committed"] - a["cost_done"], 0))   # 예산이 아니라 등록 지출까지 뺌
+        self.assertIn("남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액)", page)

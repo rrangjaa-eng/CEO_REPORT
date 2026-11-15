@@ -179,7 +179,7 @@ def build(d, R, team):
     # 진행·예정 프로젝트와 올해 매출·이익 예상 (2026-11-14 오후 점검 T2·T3·T5, P2·K1)
     # · 올해 매출 예상 = 누계 매출 + 프로젝트별 '아직 매출로 안 잡힌 금액'(사전견적 − 매출반영누계, calc.revenue_left —
     #   대표 월간·예산과 같은 계산). 예전엔 매출이 조금이라도 잡힌 프로젝트의 남은 매출이 통째로 빠짐 (T3)
-    # · 이익 예상에 더하는 몫 = 남은 매출 − 남은 원가. 남은 원가 = 추정 예산 − 올해 이미 장부에 잡힌 원가 (0 밑은 0, T2: 예전엔
+    # · 이익 예상에 더하는 몫 = 남은 매출 − 남은 원가. 남은 원가 = 추정 예산(등록 지출이 넘으면 그 금액, 1차 N1) − 올해 이미 장부에 잡힌 원가 (0 밑은 0, T2: 예전엔
     #   먼저 잡힌 계약금·대관료가 누계 원가와 추정 예산 양쪽에서 두 번 빠짐). 끝난 프로젝트(대표 승인)는 남은 원가 0
     # · 진행·예정 표: 끝나지 않은 올해 행사. 잔여 = 추정 예산 − 집행액 (11/9 정의 그대로), 쓸 수 있는 남은 예산 = 추정 예산 −
     #   (쓴 돈 + 요청 + 카드 미결제 + 계획) (T5, 사용자 승인)
@@ -200,7 +200,13 @@ def build(d, R, team):
         elif P_.get("budget") is None or cost_done is None:
             rem_cost = None
         else:
-            rem_cost = max(P_["budget"] - cost_done, 0)
+            # 1차 점검 N1·B2 (2026-11-15): 예산을 넘은 등록 지출(장부 전 지급요청·카드·계획)도 나갈 원가다 — 지금 예상 이익
+            # (profit_now)과 같은 식 '추정 예산과 등록 지출 중 큰 쪽'. 예전엔 예산까지만 빼 예시 A사 이익을 2,820만 크게 보였음.
+            # 금액 미확인 줄이 있으면 아는 금액까지만 더한다 (T4: 미확인 한 줄로 이익 예상이 빠지거나 커지지 않게)
+            com = P_.get("committed")
+            if com is None:
+                com = (P_.get("expected") or 0) + (P_.get("intranet_req") or 0)
+            rem_cost = max(max(P_["budget"], com) - cost_done, 0)
         if left_rev is None:
             miss_rev += 1
         else:
@@ -490,7 +496,7 @@ def render(T, today=None):
            _td(esc("목표 대비 %s" % P(T["exp_gp"], tg_)) if tg_ else "-", "c")]))
     a("</tbody></table>")
     a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
-      "남은 원가 = 추정 예산 − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
+      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
       % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
          " · 금액을 몰라 뺀 프로젝트 %d건" % max(T["miss_rev"], T["miss_gp"]) if (T.get("miss_rev") or T.get("miss_gp")) else ""))
     a("</div>")
