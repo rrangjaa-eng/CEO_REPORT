@@ -3220,3 +3220,19 @@ class TestSkippedProjectsCarried(unittest.TestCase):
             self.assertIsNone(convert.snapshot_lines(snap2, "", dt.date(2026, 11, 10), cfg)[1])
         finally:
             shutil.rmtree(root)
+
+
+# ───────────── 1차 B11: 급여 부서 정정(+·−)으로 0이 된 부서엔 사람을 세지 않음 ─────────────
+class TestHeadsIgnoreCorrectedDept(unittest.TestCase):
+    def test_correction(self):
+        from ceo_report import convert_pl
+        from test_dept import CFG, OCT, Books, line
+        books = Books([
+            line(OCT, "80200", "직원급여(판)", 3_000_000, dept="기획1팀", emp="가"),
+            line(OCT, "80200", "직원급여(판)", -3_000_000, dept="기획1팀", emp="가"),   # 정정
+            line(OCT, "80200", "직원급여(판)", 3_000_000, dept="기획2팀", emp="가"),
+            line(OCT, "80200", "직원급여(판)", 2_000_000, dept="기획1팀", emp="나"),
+        ])
+        rows = dict((r["부서"], r) for r in convert_pl.build_dept(books, CFG).rows)
+        self.assertEqual((rows["기획1팀"]["인원"], rows["기획2팀"]["인원"]), ("1", "1"))
+        self.assertEqual(rows["기획1팀"]["급여"], "2000000")
