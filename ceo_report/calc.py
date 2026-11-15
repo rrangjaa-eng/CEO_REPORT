@@ -584,7 +584,12 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
                                            min(int(R["settings_num"].get("위험_자료경과일") or 7), 7), getattr(d, "fundplan_problem", ""),
                                            cash_date=min(known) if known else None, txns=d.txns)
     if isinstance(R["fundplan"], dict):
-        R["fundplan"]["received"] = list(getattr(d, "fundplan_received", None) or [])
+        # P3-2 (2026-11-15): 자료일이 기준일보다 자료경과일(최대 7일) 넘게 오래된 '받은 빈 달'은 받은 달로 치지 않는다
+        # (10월에 받은 빈 12월이 12월 공백 경고를 지우지 않게). 자료일이 없는 예전 파일 줄은 그대로 받은 달.
+        lim = min(int(R["settings_num"].get("위험_자료경과일") or 7), 7)
+        at = getattr(d, "fundplan_received_at", None) or {}
+        R["fundplan"]["received"] = [m for m in (getattr(d, "fundplan_received", None) or [])
+                                     if at.get(m) is None or (asof - at[m]).days <= lim]
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax

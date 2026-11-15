@@ -1144,3 +1144,29 @@ class TestNoReportDuringConversion(unittest.TestCase):
         body = src[src.index("    def close(self):"):src.index("    def ask_splits(self, multi):")]
         self.assertLess(body.index("if self.busy:"), body.index("self.root.destroy()"))
         self.assertIn("close_when_done", src[src.index("    def set_busy("):src.index("    def report(self, kind):")])
+
+
+# ───────────── P3-2: 오래전에 받은 '빈 달'을 지금 받은 달로 보지 않음 ─────────────
+class TestStaleEmptyPlanMonth(unittest.TestCase):
+    def test_old_empty_month_is_still_a_gap(self):
+        import shutil
+        import tempfile
+        from ceo_report import gate
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        sample = os.path.join(ROOT, "입력양식", "샘플")
+        with tempfile.TemporaryDirectory() as t:
+            shutil.copytree(sample, t, dirs_exist_ok=True)
+            with open(os.path.join(t, "자금계획.csv"), "w", encoding="utf-8-sig") as f:
+                f.write("예정일,입출금,분류,거래처,거래처코드,금액,대상월,자료일,파일,상태,근거,원전표,프로젝트\n"
+                        "2026-11-20,지급,미지급금 지급,가상상사,000001,990000,2026-11,2026-10-30,a.json,예정,,,\n")
+            with open(os.path.join(t, "자금계획받은달.csv"), "w", encoding="utf-8-sig") as f:
+                # 12월은 10월 1일에 받은 옛 파일에서만 (줄 없음) — 지금 자료가 아님
+                f.write("대상월,자료일,파일\n2026-11,2026-10-30,a.json\n2026-12,2026-10-01,old.json\n")
+            d = load(t)
+            self.assertEqual(d.fundplan_received_at["2026-12"], D(2026, 10, 1))
+            R = compute(d, "weekly", D(2026, 10, 31))
+            self.assertEqual(R["fundplan"]["received"], ["2026-11"])
+            R["fundplan"]["used"] = True
+            R["s2"]["periods"] = [{"label": "12월", "end": D(2026, 12, 31), "firm": {"avail": 1}, "all": {"avail": 1}}]
+            self.assertIn("2026-12", gate.blank_plan_gaps(R))

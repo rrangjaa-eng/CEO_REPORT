@@ -253,10 +253,19 @@ def load(folder):
                 d.fundplan, d.fundplan_problem = None, "확인 못한 줄 %d개" % bad
 
     d.fundplan_received = []
+    d.fundplan_received_at = {}   # 대상월 -> 그 달을 받은 파일의 자료일 (P3-2: 오래전에 받은 빈 달을 지금 받은 달로 보지 않게)
     path = os.path.join(folder, FUNDPLAN_RECEIVED_FILE)
     if d.fundplan is not None and os.path.exists(path):
-        d.fundplan_received = sorted(set((r.get("대상월") or "").strip() for r in read_csv(path, ["대상월"], iss, {})[0]
-                                         if re.match(r"^\d{4}-\d{2}$", (r.get("대상월") or "").strip())))
+        got = set()
+        for r in read_csv(path, ["대상월"], iss, {})[0]:
+            ym = (r.get("대상월") or "").strip()
+            if not re.match(r"^\d{4}-\d{2}$", ym):
+                continue
+            got.add(ym)
+            stamp = date(r.get("자료일"))
+            if stamp is not None and (d.fundplan_received_at.get(ym) is None or stamp > d.fundplan_received_at[ym]):
+                d.fundplan_received_at[ym] = stamp
+        d.fundplan_received = sorted(got)
 
     # 부서비용 (선택, 사용자 2026-11-03): 읽지 못하면 통째로 쓰지 않는다. 금액·인원 빈칸은 None (모름)
     d.dept, d.dept_problem = None, ""
