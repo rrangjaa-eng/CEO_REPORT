@@ -156,7 +156,8 @@ class ConfirmAndMonthly(Base):
         self.assertEqual(r1["ytd_b"], 700_000_000)
         self.assertEqual(B["tot"]["ytd_b"], 1_300_000_000)
         ceo, mg = render(R, "ceo"), render(R, "mgmt")
-        self.assertIn("예산 대비 (2025-12-20 확정 예산)", ceo)
+        self.assertNotIn("예산 대비", ceo)   # 결정 M1 (2026-11-15): 대표 월간에는 예산 대비 표 없음, 경영관리용에만
+        self.assertIn("예산 대비 (2025-12-20 확정 예산)", mg)
         self.assertNotIn("1~10월 누적 (회사)", ceo)
         self.assertIn("1~10월 누적 (회사)", mg)
 

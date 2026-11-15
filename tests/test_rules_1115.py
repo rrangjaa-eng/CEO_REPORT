@@ -596,3 +596,31 @@ class TestCalc05FixedCosts(unittest.TestCase):
         self.assertEqual(events, [plan])   # 자금계획서에 있으면 두 번 빼지 않음
         calc.mark_must(events, info)
         self.assertTrue(plan["must"])
+
+
+# ───────────── 보고-05 (결정 M1): 대표 월간에는 '예산 대비' 표가 없고 경영관리용에만 ─────────────
+class TestReport05BudgetTableMgmtOnly(unittest.TestCase):
+    def test_budget_table_only_in_mgmt(self):
+        import csv as _csv
+        import shutil
+        import tempfile
+        from ceo_report import budget
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        from ceo_report.render import render
+        tmp = tempfile.mkdtemp()
+        try:
+            inp = os.path.join(tmp, "입력")
+            shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), inp)
+            with open(os.path.join(inp, budget.CONFIRM_FILE), "w", encoding="utf-8-sig", newline="") as f:
+                w = _csv.writer(f)
+                w.writerow(budget.CONFIRM_COLUMNS)
+                for m in range(1, 13):
+                    w.writerow([2026, m, "기획1팀", 70000000, 21000000, "", "", "", "", "", "2025-12-20"])
+                    w.writerow([2026, m, budget.COMPANY, 70000000, 21000000, 2000000, 1000000, 0, 0, 0, "2025-12-20"])
+            R = compute(load(inp), "monthly", D(2026, 10, 31))
+            self.assertIsNotNone(R["budget_cmp"])
+            self.assertNotIn("예산 대비", render(R, "ceo"))
+            self.assertIn("예산 대비 (2025-12-20 확정 예산)", render(R, "mgmt"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)

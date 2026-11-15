@@ -1410,7 +1410,7 @@ class Window(object):
         if self.busy:
             return
         y = self.b_year.get().strip()
-        if not messagebox.askyesno("예산 확정", "%s년 예산을 지금 값으로 확정할까요?\n\n확정한 숫자는 월간 보고 '예산 대비'에 쓰입니다.\n"
+        if not messagebox.askyesno("예산 확정", "%s년 예산을 지금 값으로 확정할까요?\n\n확정한 숫자는 월간 경영관리 보고 '예산 대비'에 쓰입니다.\n"
                                    "나중에 값을 바꾸고 다시 확정하면 새 숫자로 바뀝니다." % y, parent=self.root):
             return
         self.start("예산확정")

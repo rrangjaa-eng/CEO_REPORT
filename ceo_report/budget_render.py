@@ -352,7 +352,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
             h.append("<div class='note' style='color:#9a5a00'>· %s</div>" % esc(x))
         h.append("</div></div>")
     h.append("<div class='evid'>%s<span class='doc-end'>끝.</span></div></div></div></body></html>"
-             % ("확정 %s — 월간 보고 '예산 대비'에 쓰입니다." % confirmed if confirmed else "초안 — 창에서 '예산 확정'을 누르면 월간 보고 '예산 대비'에 쓰입니다."))
+             % ("확정 %s — 월간 경영관리 보고 '예산 대비'에 쓰입니다." % confirmed if confirmed else "초안 — 창에서 '예산 확정'을 누르면 월간 경영관리 보고 '예산 대비'에 쓰입니다."))
     page = "".join(h)
     return _areas(page) if mg else page
 

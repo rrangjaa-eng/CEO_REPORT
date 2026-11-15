@@ -69,7 +69,7 @@ def main(argv=None):
             _say("예산확정.csv 를 쓰지 못했습니다: %s" % (e.strerror or type(e).__name__))
             return 7
         confirmed = asof.isoformat()
-        _say("%d년 예산 확정: 입력/%s 에 %d줄 저장 — 다음 월간 보고부터 '예산 대비'가 붙습니다." % (year, budget.CONFIRM_FILE, n))
+        _say("%d년 예산 확정: 입력/%s 에 %d줄 저장 — 다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다 (대표 보고에는 싣지 않음)." % (year, budget.CONFIRM_FILE, n))
     else:
         old = budget.read_confirmed(a.입력).get(str(year))
         if old:
