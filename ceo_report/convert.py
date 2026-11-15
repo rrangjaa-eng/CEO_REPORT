@@ -802,7 +802,7 @@ def drop_closing_pl(books, cfg):
     return dropped
 
 
-def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
+def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_at=None):
     """모든 표를 한 번에 만든다: 같은 장부·스냅숏·연결·요청 대조에서. -> (표 목록, 이전 줄 읽기 상태)."""
     from . import convert_invoices, convert_pl, convert_projects, convert_xchk
     prev, states = {}, {}
@@ -827,7 +827,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
         execs = convert_projects.build_execs(books, links["costs"], links["requests"], match, prev["프로젝트집행.csv"], cfg,
                                              links["projects"])
         xchk = convert_xchk.build_xchk(books, links["costs"], links["revenue"], links["projects"], links["requests"], match,
-                                       project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir),
+                                       project_table.rows, xchk_meta(books, snap, ran_at or now), cfg, read_bank(input_dir),
                                        card_vat=(execs.extra or {}).get("card_vat"))
         tables.extend([project_table, execs, xchk])
     fp_table = build_fundplan(books, cfg, wehago_dir, asof)
@@ -1138,9 +1138,12 @@ def _take_lock(input_dir):
     return None, None
 
 
-def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
+def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None):
     """변환 한 번. 장부·스냅숏·파일 문제로 예외를 내지 않고 Result.code 로 알린다.
-    다른 변환이 같은 입력 폴더를 쓰는 중이면 아무것도 바꾸지 않고 코드 7 (K4)."""
+    다른 변환이 같은 입력 폴더를 쓰는 중이면 아무것도 바꾸지 않고 코드 7 (K4).
+
+    now = 계산에 쓰는 '지금' (창은 기준일 0시를 넘김), ran_at = 실제로 돌린 시각: 변환 시각·이전 폴더 이름·확인할 것 저장 시각에 쓴다
+    (안전 N4·R5 2026-11-15: 예전엔 늘 기준일 00:00:00 으로 남아 실제 변환 시각을 알 수 없었음). 없으면 now."""
     try:
         os.makedirs(input_dir, exist_ok=True)
     except OSError:
@@ -1154,7 +1157,7 @@ def run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
                      % (LOCK_FILE, max(0, int(busy // 60)))]
         return res
     try:
-        return _run(input_dir, collect_dir, wehago_dir, asof, now, stamp)
+        return _run(input_dir, collect_dir, wehago_dir, asof, now, stamp, ran_at)
     finally:
         if held:
             try:
@@ -1214,9 +1217,10 @@ def _put_back_side(input_dir, kept):
     return done, lost
 
 
-def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
+def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None):
     res = Result()
-    stamp = stamp or now.strftime("%Y%m%d_%H%M%S")
+    ran_at = ran_at or now
+    stamp = stamp or ran_at.strftime("%Y%m%d_%H%M%S")
     try:
         os.makedirs(input_dir, exist_ok=True)
     except OSError:
@@ -1232,7 +1236,7 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
         tables = _unwritten("WEHAGO 장부를 쓸 수 없음")
     else:
         drop_closing_pl(books, cfg)
-        tables, states = _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res)
+        tables, states = _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_at)
         tables.append(book_note_table(books))
         cross = cross_checks(tables)
     res.tables = tables
@@ -1255,7 +1259,7 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
     except WriteFailed as e:
         res.code = 7
         # 바꾸는 중 실패: 이미 바꾼 CSV 는 되돌렸다. 변환결과.txt 를 실패로 다시 써서 이전 결과가 새 실행을 말하지 않게 한다 (WR-01)
-        res.lines = _failure_result(input_dir, now, asof, e, stamp, backup) if e.stage == "replace" else _write_failed_lines(e)
+        res.lines = _failure_result(input_dir, ran_at, asof, e, stamp, backup) if e.stage == "replace" else _write_failed_lines(e)
         return res
     # 2단계: 새 CSV 가 놓인 폴더를 읽기만 해서 목록을 만들고 변환결과.txt 를 쓴다
     side_kept = _keep_side(input_dir)   # 2단계에서 바뀌는 파일: 변환결과.txt 를 못 쓰면 CSV 와 함께 되돌린다 (K4)
@@ -1290,9 +1294,9 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None):
                  + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
         trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
                  if v["text"]}
-        checklist.save_convert_items(input_dir, items, now, trace)
+        checklist.save_convert_items(input_dir, items, ran_at, trace)
     snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
-    lines = result_lines(now, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
+    lines = result_lines(ran_at, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
                          snap_warning)
     try:
         write_files(input_dir, [("변환결과.txt", _text_bytes(lines))], stamp, backup)

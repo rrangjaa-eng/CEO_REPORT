@@ -204,9 +204,51 @@ def chrome_download_dirs(env=None):
     return out
 
 
+def _same_file(a, b):
+    """두 파일 내용이 같은가 (크기가 같을 때만 바이트 비교)."""
+    import filecmp
+    try:
+        return os.path.getsize(a) == os.path.getsize(b) and filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
+def _in_archive(paths, name, src):
+    """수집/위하고/지난자료 에 src 와 내용이 같은 같은 이름(또는 이름_2 꼴) 파일이 있으면 그 경로."""
+    arch = os.path.join(paths.wehago, ARCHIVE)
+    base, ext = os.path.splitext(name)
+    try:
+        cands = [n for n in os.listdir(arch) if n == name or (n.startswith(base + "_") and n.endswith(ext))]
+    except OSError:
+        return None
+    for n in sorted(cands):
+        if _same_file(src, os.path.join(arch, n)):
+            return os.path.join(arch, n)
+    return None
+
+
+def _to_archive(paths, src, name):
+    """src 를 수집/위하고/지난자료 로 옮긴다 (같은 이름이 있으면 이름_2 …). -> 옮긴 경로."""
+    dest = os.path.join(paths.wehago, ARCHIVE)
+    os.makedirs(dest, exist_ok=True)
+    target = os.path.join(dest, name)
+    base, ext = os.path.splitext(name)
+    k = 2
+    while os.path.exists(target):
+        target = os.path.join(dest, "%s_%d%s" % (base, k, ext))
+        k += 1
+    shutil.move(src, target)
+    return target
+
+
 def import_auto(paths, say, dirs=None):
-    """크롬 다운로드 폴더의 위하고자동수집/*자동수집.json 을 수집/위하고 로 복사한다 (원본은 그대로). -> 복사한 파일 수.
-    같은 이름 파일이 이미 있으면 더 새로 받은 것만 덮어쓴다."""
+    """크롬 다운로드 폴더의 위하고자동수집/*자동수집.json 을 수집/위하고 로 옮긴다. -> 새로 가져온 파일 수.
+
+    안전-05 (2026-11-15, R4·C10): 장부에는 급여 같은 개인정보가 있어 PC 다운로드 폴더에 남기지 않는다. 외장하드로 복사해
+    내용이 같은 것을 확인한 뒤에만 다운로드 쪽을 지운다. 예전엔 복사만 해서, 지난자료로 옮긴 옛 파일이 다음 변환 때 다시
+    들어왔다 — 이제 지난자료에 같은 내용이 있으면 다시 가져오지 않는다. 지우는 것은 외장하드에 같은 내용이 있을 때뿐이고,
+    그 밖의 옛 파일(같은 이름의 더 새 파일이 이미 있음)은 지난자료로 옮긴다. 같은 이름의 예전 파일을 새 파일로 바꿀 때는
+    예전 파일을 지난자료로 먼저 옮긴다 (덮어써 잃지 않게)."""
     n = 0
     for base in (chrome_download_dirs() if dirs is None else dirs):
         src_dir = os.path.join(base, AUTO_DIR)
@@ -217,15 +259,33 @@ def import_auto(paths, say, dirs=None):
         for name in names:
             src, dst = os.path.join(src_dir, name), os.path.join(paths.wehago, name)
             try:
+                kept = _in_archive(paths, name, src)
+                if kept or (os.path.exists(dst) and _same_file(src, dst)):
+                    os.remove(src)   # 외장하드에 같은 내용이 이미 있음 → 다운로드 쪽만 지움
+                    say("다운로드 폴더의 자동수집 파일 정리: %s (이미 %s에 있음 — 다시 가져오지 않음)"
+                        % (name, "수집\\위하고\\" + ARCHIVE if kept else "수집\\위하고"))
+                    continue
                 if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+                    moved = _to_archive(paths, src, name)
+                    say("다운로드 폴더의 옛 자동수집 파일을 지난자료로 옮김: %s (같은 이름의 더 새 파일이 이미 있음)"
+                        % os.path.basename(moved))
                     continue
                 os.makedirs(paths.wehago, exist_ok=True)
-                shutil.copy2(src, dst)
+                tmp = dst + ".가져오는중"
+                shutil.copy2(src, tmp)
+                if not _same_file(src, tmp):
+                    os.remove(tmp)
+                    raise OSError(0, "복사한 내용이 원본과 다름")
+                if os.path.exists(dst):
+                    old = _to_archive(paths, dst, name)   # 같은 이름의 예전 파일은 잃지 않게 지난자료로
+                    say("같은 이름의 예전 파일을 지난자료로 옮김: %s" % os.path.basename(old))
+                os.replace(tmp, dst)
+                os.remove(src)
             except OSError as e:
                 say("자동수집 파일을 가져오지 못함: %s (%s)" % (name, e.strerror or type(e).__name__))
                 continue
             n += 1
-            say("크롬 자동수집 파일 가져옴: %s" % name)
+            say("크롬 자동수집 파일 가져옴: %s (다운로드 폴더에서 옮김)" % name)
     return n
 
 

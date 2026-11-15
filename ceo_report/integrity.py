@@ -301,7 +301,7 @@ def run(app_dir, out_path, asof=None):
         if os.path.isdir(input_dir):
             shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns("이전"))
         os.makedirs(os.path.join(tmp, "출력"), exist_ok=True)
-        res = convert.run(temp_input, collect, wehago_dir, asof, now)
+        res = convert.run(temp_input, collect, wehago_dir, asof, now, ran_at=dt.datetime.now())
         if getattr(res, "code", 0):
             rc = rc or 3
         _convert_checks(res, temp_input, out)

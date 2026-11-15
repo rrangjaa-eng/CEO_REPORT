@@ -328,5 +328,85 @@ class TestDecisionCMissingContract(unittest.TestCase):
         self.assertEqual(insights_render.team_section(I, self.R(), "기획2팀"), "")
 
 
+class TestSafety05DownloadMove(unittest.TestCase):
+    """안전-05 (R4·C10): 다운로드 폴더 자동수집 파일은 외장하드로 옮긴 뒤 지우고, 지난자료에 있는 것은 다시 가져오지 않음."""
+
+    def setUp(self):
+        import tempfile
+        from ceo_report import app
+        self.app = app
+        self.dir = tempfile.mkdtemp()
+        self.dl = os.path.join(self.dir, "dl")
+        os.makedirs(os.path.join(self.dl, app.AUTO_DIR))
+        self.paths = app.Paths(os.path.join(self.dir, "prog"))
+        self.said = []
+
+    def put(self, folder, name, text, mtime=None):
+        os.makedirs(folder, exist_ok=True)
+        p = os.path.join(folder, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        if mtime:
+            os.utime(p, (mtime, mtime))
+        return p
+
+    def run_import(self):
+        return self.app.import_auto(self.paths, self.said.append, dirs=[self.dl])
+
+    def test_moved_not_copied(self):
+        src = self.put(os.path.join(self.dl, self.app.AUTO_DIR), "261105 분개장 자동수집.json", '{"a": 1}')
+        self.assertEqual(self.run_import(), 1)
+        self.assertFalse(os.path.exists(src))                      # 다운로드 폴더에 남지 않음
+        with open(os.path.join(self.paths.wehago, "261105 분개장 자동수집.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"a": 1}')
+
+    def test_archived_file_is_not_imported_again(self):
+        arch = os.path.join(self.paths.wehago, self.app.ARCHIVE)
+        self.put(arch, "261105 분개장 자동수집.json", '{"old": 1}')
+        src = self.put(os.path.join(self.dl, self.app.AUTO_DIR), "261105 분개장 자동수집.json", '{"old": 1}')
+        self.assertEqual(self.run_import(), 0)
+        self.assertFalse(os.path.exists(os.path.join(self.paths.wehago, "261105 분개장 자동수집.json")))
+        self.assertFalse(os.path.exists(src))                      # 같은 내용이 지난자료에 있어 다운로드 쪽만 지움
+        self.assertIn("다시 가져오지 않음", " ".join(self.said))
+
+    def test_older_download_goes_to_archive_not_deleted(self):
+        self.put(self.paths.wehago, "261105 분개장 자동수집.json", '{"new": 2}', mtime=2_000_000_000)
+        src = self.put(os.path.join(self.dl, self.app.AUTO_DIR), "261105 분개장 자동수집.json", '{"old": 1}', mtime=1_900_000_000)
+        self.assertEqual(self.run_import(), 0)
+        self.assertFalse(os.path.exists(src))
+        arch = os.path.join(self.paths.wehago, self.app.ARCHIVE)
+        self.assertEqual(os.listdir(arch), ["261105 분개장 자동수집.json"])
+        with open(os.path.join(self.paths.wehago, "261105 분개장 자동수집.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"new": 2}')
+
+    def test_newer_download_keeps_the_old_file_in_archive(self):
+        self.put(self.paths.wehago, "261105 분개장 자동수집.json", '{"old": 1}', mtime=1_900_000_000)
+        self.put(os.path.join(self.dl, self.app.AUTO_DIR), "261105 분개장 자동수집.json", '{"new": 2}', mtime=2_000_000_000)
+        self.assertEqual(self.run_import(), 1)
+        with open(os.path.join(self.paths.wehago, "261105 분개장 자동수집.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"new": 2}')
+        with open(os.path.join(self.paths.wehago, self.app.ARCHIVE, "261105 분개장 자동수집.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"old": 1}')                # 덮어써 잃지 않음
+
+
+class TestN4ConversionTime(unittest.TestCase):
+    """N4 (R5): 변환 시각은 실제 시각으로 (창은 기준일을 넘겨 예전엔 늘 기준일 00:00:00)."""
+
+    def test_conversion_time_is_the_real_time(self):
+        import tempfile
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+        import 변환
+        t = tempfile.mkdtemp()
+        before = dt.datetime.now().replace(microsecond=0)
+        변환.main(["--기준일", "2026-01-02", "--입력", os.path.join(t, "입력"), "--수집폴더", os.path.join(t, "수집")])
+        with open(os.path.join(t, "입력", "변환결과.txt"), encoding="utf-8-sig") as f:
+            first = f.readline()
+        m = re.match(r"변환 시각 (\S+ \S+) · 기준일 2026-01-02", first)
+        self.assertIsNotNone(m, first)
+        when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+        self.assertGreaterEqual(when, before)
+        self.assertLessEqual(when, dt.datetime.now())
+
+
 if __name__ == "__main__":
     unittest.main()
