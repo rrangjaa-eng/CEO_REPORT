@@ -180,13 +180,17 @@ def attach(events, reqs):
         cands = [i for i, r in enumerate(pool) if i not in used and pid_of(r["project"]) == pid]
         if not cands:
             continue
-        pick = [i for i in cands if pool[i]["amount"] == e["amount"]]
+        # 2차 P5-21 (2026-11-15): 두 이름이 다 있으면 같은 거래처여야 붙인다 — 같은 프로젝트·같은 금액이라는 것만으로
+        # 음향 요청 상세가 조명 지급에 붙었다. 틀린 상세보다 빈 상세가 낫다 (이름을 모르는 쪽이 있으면 예전처럼 금액으로).
+        named = bool(_vn(e.get("desc")))
+        fits = [i for i in cands if not (named and _vn(pool[i]["vendor"])) or _same_vendor(pool[i]["vendor"], e.get("desc"))]
+        pick = [i for i in fits if pool[i]["amount"] == e["amount"]]
         if len(pick) > 1:
             pick = [i for i in pick if _same_vendor(pool[i]["vendor"], e.get("desc"))]
         if len(pick) != 1:
             pick = []
             same_v = [i for i in cands if _same_vendor(pool[i]["vendor"], e.get("desc"))]
-            for group in (same_v, cands):
+            for group in ((same_v,) if named else (same_v, cands)):
                 if len(group) > 1 and sum(pool[i]["amount"] for i in group) == e["amount"]:
                     pick = group
                     break

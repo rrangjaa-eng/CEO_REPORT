@@ -1993,3 +1993,23 @@ class TestTransferRangeMatchesReportList(unittest.TestCase):
         from ceo_report import winstate
         self.assertEqual(winstate.transfer_range(D(2026, 11, 13), D(2026, 11, 10)), (D(2026, 11, 11), D(2026, 11, 13)))
         self.assertEqual(winstate.transfer_range(D(2026, 11, 13)), (D(2026, 11, 7), D(2026, 11, 13)))
+
+
+# ───────────── 2차 P5-21: 상세 내역은 한 지급에만, 다른 거래처 요청 상세는 붙이지 않음 ─────────────
+class TestPayDetailsAttachOnce(unittest.TestCase):
+    def test_manual_detail_goes_to_the_earliest_line_only(self):
+        from ceo_report import paydetail
+        a = {"io": "out", "date": D(2026, 12, 4), "amount": 500_000, "desc": "가상음향"}
+        b = {"io": "out", "date": D(2026, 11, 6), "amount": 500_000, "desc": "(주)가상음향"}
+        n = paydetail.attach([a, b], [{"vendor": "가상음향", "amount": 500_000, "text": "11월 장비", "source": "수기"}])
+        self.assertEqual(n, 1)
+        self.assertEqual(b["detail"], "11월 장비")
+        self.assertNotIn("detail", a)
+
+    def test_request_detail_of_another_vendor_in_the_same_project_is_not_used(self):
+        light = {"io": "out", "date": D(2026, 11, 6), "amount": 2_200_000, "project": "[26201] 가상 행사", "desc": "가상조명"}
+        sound = {"key": "1", "project": "26201", "vendor": "가상음향", "amount": 2_200_000, "note": "음향 장비 잔금"}
+        self.assertEqual(payreq.attach([light], [sound]), 0)
+        self.assertNotIn("detail", light)
+        two = [dict(sound, key="2", amount=1_100_000), dict(sound, key="3", vendor="가상무대", amount=1_100_000)]
+        self.assertEqual(payreq.attach([light], two), 0)   # 다른 거래처 둘의 합이 같아도 붙이지 않음

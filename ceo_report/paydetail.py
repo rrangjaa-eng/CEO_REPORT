@@ -76,18 +76,21 @@ def save(input_dir, vendor, amount, text, source=MANUAL):
 
 
 def attach(events, details):
-    """지급 일정 줄에 e['detail'] 을 붙인다 (같은 거래처·같은 금액, 수기 먼저). 붙인 줄 수."""
+    """지급 일정 줄에 e['detail'] 을 붙인다 (같은 거래처·같은 금액, 수기 먼저). 붙인 줄 수.
+    2차 P5-21 (2026-11-15): 상세 한 줄은 일정 한 줄에만 — 같은 거래처·금액이 여러 달 있으면 가장 이른 줄에만 붙인다
+    (같은 상세가 두 달에 붙었음)."""
     by = {}
     for d in details:
         k = (_norm(d["vendor"]), d["amount"])
         if k not in by or (d["source"] == MANUAL and by[k]["source"] != MANUAL):
             by[k] = d
-    n = 0
-    for e in events:
-        if e.get("io") != "out" or e.get("amount") is None:
-            continue
-        d = by.get((_norm(e.get("desc") or ""), e["amount"]))
-        if d:
+    n, used = 0, set()
+    outs = [e for e in events if e.get("io") == "out" and e.get("amount") is not None]
+    for e in sorted(outs, key=lambda e: (e.get("date") is None, e.get("date") or 0)):
+        k = (_norm(e.get("desc") or ""), e["amount"])
+        d = by.get(k)
+        if d and k not in used:
+            used.add(k)
             e["detail"], e["detail_source"] = d["text"], d["source"]
             n += 1
     return n
