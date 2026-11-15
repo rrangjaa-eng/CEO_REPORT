@@ -251,8 +251,17 @@ def _evidence(a, kind, asof):
         return 2
     with open(src, encoding="utf-8") as f:
         mg = f.read()
+    # 2차 P4-1 (2026-11-15): 같은 기준일 보고를 다시 만들면 경영관리 HTML 은 마지막 판으로 바뀐다 — 대표에게 낸 판과 다를 수 있음을 알린다
+    notes = []
+    ceo_pdfs = sorted(pdfname.same_report(os.path.join(a.출력, "%s_%s_대표보고" % (asof.isoformat(), label))), key=pdfname._made_at)
+    if len(ceo_pdfs) > 1:
+        notes.append("이 기준일 %s 대표 보고를 %d번 만들었습니다 (%s) — 이 근거자료는 마지막으로 만든 판(보고 작성 %s)의 숫자입니다. "
+                     "대표에게 낸 보고의 작성 시각이 이와 다르면 숫자가 다를 수 있으니, 그 시각에 만든 경영관리 보고 PDF 에서 근거를 찾으세요"
+                     % (label, len(ceo_pdfs), ", ".join(dt.datetime.fromtimestamp(pdfname._made_at(p)).strftime("%m-%d %H:%M") for p in ceo_pdfs),
+                        evidence.made_at(mg) or "알 수 없음"))
+        _say("[확인] " + notes[0])
     try:
-        doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label))
+        doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label), notes=notes)
     except ValueError as e:
         _say(str(e))
         return 2

@@ -2505,3 +2505,41 @@ class TestBrokenDownloadNotImported(unittest.TestCase):
         self.assertTrue(any("깨져" in x for x in said), said)
         self.assertEqual(os.listdir(os.path.join(down, app.AUTO_DIR)), [])   # 개인정보가 다운로드 폴더에 남지 않음
         self.assertEqual(os.listdir(os.path.join(paths.wehago, app.ARCHIVE)), [name])
+
+
+# ───────────── 2차 P4-1: 같은 기준일 보고를 여러 번 만들면 근거자료가 어느 판인지 알림 ─────────────
+class TestEvidenceSaysWhichVersion(unittest.TestCase):
+    def test_versions_named(self):
+        import shutil
+        import tempfile
+        from ceo_report import app
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.output, exist_ok=True)
+        page = ("<html><head><title>주간 경영관리 보고</title></head><body><table class='dinfo'><tr><th>작성</th><td>2026-11-15 10:05</td></tr></table>"
+                "<table><tr><td><b>근거 1-1</b></td><td>여유 자금</td><td><a href='#ev-1-1'>보기</a></td></tr></table>"
+                "<div class='evb' id='ev-1-1'>근거 표</div><!-- /ev-1-1 --></body></html>")
+        with open(os.path.join(P.output, "2026-11-13_주간_경영관리보고.html"), "w", encoding="utf-8") as f:
+            f.write(page)
+        for i, stamp in enumerate(("11-15 09시00분", "11-15 10시05분")):
+            p = os.path.join(P.output, "2026-11-13_주간_대표보고 (%s 만듦).pdf" % stamp)
+            open(p, "wb").close()
+            os.utime(p, (1_763_000_000 + i * 3900, 1_763_000_000 + i * 3900))
+        lines = []
+        rc, files = app.run_task("근거주간", P, lines.append, asof="2026-11-13", nums="1-1")
+        self.assertEqual(rc, 0, lines)
+        with open([f for f in files if f.endswith("_근거자료_1-1.html")][0], encoding="utf-8") as f:
+            doc = f.read()
+        self.assertIn("보고 작성 2026-11-15 10:05", doc)
+        self.assertIn("2번 만들었습니다", doc)
+        self.assertTrue(any("2번 만들었습니다" in x for x in lines), lines)
+
+    def test_single_version_has_no_note(self):
+        from ceo_report import evidence
+        page = ("<html><head><title>t</title></head><body><table><tr><td><b>근거 1-1</b></td><td>x</td><td><a href='#ev-1-1'>보기</a></td></tr></table>"
+                "<div class='evb' id='ev-1-1'>근거 표</div><!-- /ev-1-1 --></body></html>")
+        doc = evidence.build(page, ["1-1"])
+        self.assertNotIn("번 만들었습니다", doc)
+        self.assertNotIn("보고 작성", doc)
