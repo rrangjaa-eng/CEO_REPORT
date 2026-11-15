@@ -583,6 +583,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     events, R["fundplan"] = fundplan.apply(events, getattr(d, "fundplan", None), asof,
                                            min(int(R["settings_num"].get("위험_자료경과일") or 7), 7), getattr(d, "fundplan_problem", ""),
                                            cash_date=min(known) if known else None, txns=d.txns)
+    if isinstance(R["fundplan"], dict):
+        R["fundplan"]["received"] = list(getattr(d, "fundplan_received", None) or [])
     fundplan.fill_projects(events, getattr(d, "execs", None))
     # 세금 납부 예상 (사용자 2026-11-03): 자금계획서·자금일정에 이미 있으면 넣지 않고 비교만
     from .tax import merge as merge_tax

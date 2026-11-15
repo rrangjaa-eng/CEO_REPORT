@@ -1,6 +1,7 @@
 import datetime as dt
 """입력 폴더의 CSV를 읽어 정리된 자료로 만든다."""
 import os
+import re
 
 from .util import Issues, read_csv, num, date
 
@@ -25,6 +26,8 @@ SCHEMA = {
 # 변환.py 가 자금계획서(지출입금현황)에서 만드는 선택 파일 (D-55). 없으면 기존 일정만 쓴다. SCHEMA 에 넣지 않는다 (빈 양식 없음).
 FUNDPLAN_FILE = "자금계획.csv"
 FUNDPLAN_KEYS = ["예정일", "입출금", "거래처", "금액", "대상월", "자료일", "상태"]
+FUNDPLAN_RECEIVED_FILE = "자금계획받은달.csv"   # 변환이 자금계획서로 받은 달 (줄 없는 달 포함, 2026-11-15)
+FUNDPLAN_RECEIVED_KEYS = ["대상월", "자료일", "파일"]
 
 # 변환.py 가 분개장 관리항목(부서명·사원명)에서 만드는 선택 파일 (사용자 2026-11-03). 없으면 팀 순수익은 '미확인'.
 DEPT_FILE = "부서비용.csv"
@@ -248,6 +251,12 @@ def load(folder):
                 d.fundplan.append(f)
             if bad:
                 d.fundplan, d.fundplan_problem = None, "확인 못한 줄 %d개" % bad
+
+    d.fundplan_received = []
+    path = os.path.join(folder, FUNDPLAN_RECEIVED_FILE)
+    if d.fundplan is not None and os.path.exists(path):
+        d.fundplan_received = sorted(set((r.get("대상월") or "").strip() for r in read_csv(path, ["대상월"], iss, {})[0]
+                                         if re.match(r"^\d{4}-\d{2}$", (r.get("대상월") or "").strip())))
 
     # 부서비용 (선택, 사용자 2026-11-03): 읽지 못하면 통째로 쓰지 않는다. 금액·인원 빈칸은 None (모름)
     d.dept, d.dept_problem = None, ""

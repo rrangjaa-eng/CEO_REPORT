@@ -77,7 +77,7 @@ def plan_gaps(R):
     fp = R.get("fundplan")
     if not fp or not fp.get("used"):
         return []
-    have = set(fp.get("months") or [])
+    have = set(fp.get("months") or []) | set(fp.get("received") or [])   # 받았지만 줄 없는 달도 받은 달 (2026-11-15)
     out = []
     for p in (R.get("s2") or {}).get("periods") or []:
         end = p.get("end")

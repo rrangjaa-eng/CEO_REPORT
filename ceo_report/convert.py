@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "자금계획받은달.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -830,7 +830,8 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res):
                                        project_table.rows, xchk_meta(books, snap, now), cfg, read_bank(input_dir),
                                        card_vat=(execs.extra or {}).get("card_vat"))
         tables.extend([project_table, execs, xchk])
-    tables.append(build_fundplan(books, cfg, wehago_dir, asof))
+    fp_table = build_fundplan(books, cfg, wehago_dir, asof)
+    tables.extend([fp_table, fundplan_received_table(fp_table)])
     tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
     tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
     tables.append(convert_pl.build_dept_accounts(books, cfg, _read_prev_rows(input_dir, data.DEPT_ACCOUNT_FILE,
@@ -1084,7 +1085,17 @@ def build_fundplan(books, cfg, wehago_dir, asof):
         if r["상태"] != "예정":
             notes.append("  %s %s %s %s %s원 — %s" % (r["상태"], r["예정일"], r["입출금"], r["거래처"],
                                                    "{:,}".format(r["금액"]), r["근거"]))
-    return Table("자금계획.csv", fundplan.COLUMNS, res["rows"], notes=notes)
+    return Table("자금계획.csv", fundplan.COLUMNS, res["rows"], notes=notes,
+                 extra={"received": [{"대상월": ym, "자료일": stamp.isoformat(), "파일": n} for ym, n, stamp in res["months"]]})
+
+
+def fundplan_received_table(fp_table):
+    """자금계획서로 받은 달 (줄 없는 달 포함) -> 자금계획받은달.csv (2026-11-15: 지급 예정이 없는 달을 '받지 못한 달'로 보아
+    그 기간 여유 자금을 비우던 것). 자금계획.csv 를 쓸 때만 같이 쓴다 (안 쓰면 둘 다 예전 것 그대로)."""
+    if not fp_table.written:
+        return Table(data.FUNDPLAN_RECEIVED_FILE, data.FUNDPLAN_RECEIVED_KEYS, [], written=False,
+                     reason="자금계획.csv 를 만들지 않아 그대로 둠")
+    return Table(data.FUNDPLAN_RECEIVED_FILE, data.FUNDPLAN_RECEIVED_KEYS, fp_table.extra.get("received") or [])
 
 
 def book_note_table(books):

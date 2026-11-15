@@ -68,5 +68,61 @@ class TestMidMonthCorpTax(unittest.TestCase):
         self.assertIn("세무조정 미반영", _text(render(M, "mgmt")))
 
 
+class TestEmptyPlanMonth(unittest.TestCase):
+    """②: 자금계획서를 받았지만 줄이 없는 달 — '받지 못한 달'이 아니다."""
+
+    def R(self, months, received):
+        def per(label, end):
+            return {"label": label, "end": end, "firm": {"bal": 1, "low": 1, "low_date": end, "avail": 1},
+                    "all": {"bal": 1, "low": 1, "low_date": end, "avail": 1}}
+        return {"asof": D(2026, 10, 31), "fundplan": {"used": True, "months": months, "received": received},
+                "s2": {"periods": [per("11월", D(2026, 11, 30)), per("12월", D(2026, 12, 31))]}}
+
+    def test_received_empty_month_is_not_a_gap(self):
+        from ceo_report import gate
+        R = self.R(["2026-10", "2026-11"], ["2026-10", "2026-11", "2026-12"])
+        self.assertEqual(gate.blank_plan_gaps(R), "")
+        self.assertEqual([p["firm"]["avail"] for p in R["s2"]["periods"]], [1, 1])
+        self.assertIn("2026-12", gate.blank_plan_gaps(self.R(["2026-10", "2026-11"], ["2026-10", "2026-11"])))
+
+    def test_load_and_compute_carry_received_months(self):
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            shutil.copytree(SAMPLE_DIR, t, dirs_exist_ok=True)
+            with open(os.path.join(t, "자금계획.csv"), "w", encoding="utf-8-sig") as f:
+                f.write("예정일,입출금,분류,거래처,거래처코드,금액,대상월,자료일,파일,상태,근거,원전표,프로젝트\n"
+                        "2026-11-20,지급,미지급금 지급,가상상사,000001,990000,2026-11,2026-10-30,a.json,예정,,,\n")
+            with open(os.path.join(t, "자금계획받은달.csv"), "w", encoding="utf-8-sig") as f:
+                f.write("대상월,자료일,파일\n2026-11,2026-10-30,a.json\n2026-12,2026-10-30,a.json\n")
+            d = load(t)
+            self.assertEqual(d.fundplan_received, ["2026-11", "2026-12"])
+            R = compute(d, "weekly", D(2026, 10, 31))
+            self.assertEqual(R["fundplan"]["received"], ["2026-11", "2026-12"])
+
+
+class TestConvertWritesReceivedMonths(unittest.TestCase):
+    """②: 변환이 자금계획서로 받은 달(줄 없는 달 포함)을 자금계획받은달.csv 에 적는다."""
+
+    def test_empty_collected_month_listed(self):
+        import json
+        from test_convert import cli_argv, run_convert
+        from test_convert import setUpModule as conv_setup
+        from test_convert_e2e import full_company, read_csv_rows
+        from test_fundplan_auto import COLS
+        conv_setup()
+        tmp, input_dir, collect, wehago_dir = full_company(self)
+        rows = [["20261120", "지급", "102", "미지급금 지급", "0000000001", "가상상사", 990000, "매입", "매입매출", "20"]]
+        doc = {"종류": "자금계획", "형식": 1, "수집시각": "2026-11-01 10:00:00", "회사": "가상회사",
+               "기간": {"from": "20261101", "to": "20261231", "months": 2}, "조회한달": ["202611", "202612"],
+               "오류": [], "줄수": len(rows), "열": COLS, "줄": rows}
+        with open(os.path.join(wehago_dir, "261101 자금계획 자동수집.json"), "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False)
+        run_convert(cli_argv(input_dir, collect, wehago_dir))
+        got = read_csv_rows(os.path.join(input_dir, "자금계획받은달.csv"))
+        self.assertEqual(got[0], ["대상월", "자료일", "파일"])
+        self.assertEqual([r[0] for r in got[1:]], ["2026-11", "2026-12"])
+
+
 if __name__ == "__main__":
     unittest.main()
