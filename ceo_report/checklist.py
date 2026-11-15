@@ -71,6 +71,10 @@ def convert_items(tables, cross, notes):
             out.append({"id": "원천대조|%s" % _h(n), "kind": "세금 대조", "date": "", "amount": None, "vendor": "",
                         "title": "장부 %s가 위하고 화면과 다름" % ("원천세" if "원천세" in n[:12] else "4대보험 직원분"),
                         "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "차이 원인 확인함"]})
+        if n.startswith("[확인] 지급요청 짝짓기"):   # 계산-01·계산-15 (2026-11-15): 후보가 둘 이상이면 확인할 것에
+            out.append({"id": "요청짝|%s" % _h(n), "kind": "변환 대조", "date": "", "amount": None, "vendor": "",
+                        "title": "지급요청을 장부 원가 줄과 짝지을 때 후보가 둘 이상이던 요청이 있음 (합계는 같음)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["확인함", "고칠 것"]})
         if n.startswith("[확인] 통장 줄만 있는 전표"):   # 2026-11-14: 적요 대신 계정으로 판단하려면 상대 계정 줄이 필요
             out.append({"id": "통장만|%s" % _h(n), "kind": "전표 입력", "date": "", "amount": None, "vendor": "",
                         "title": "통장 줄만 있는 전표가 있음 (상대 계정 줄을 넣어 주세요)",

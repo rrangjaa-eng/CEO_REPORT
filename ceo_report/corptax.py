@@ -220,6 +220,24 @@ def bad_debt(journal, cfg, ym, input_dir=None):
     return {"receivable": rec, "allowance": allow, "amount": amount, "partial": partial, "note": note}
 
 
+def bad_debt_saving(base, amount, year, input_dir=None):
+    """대손충당금 amount 를 결산에 넣으면 줄어드는 법인세·지방소득세 (과세표준 base 기준) -> 원. 모르면 None."""
+    nat, corp, _ = national(base, year, input_dir)
+    nat2, corp2, _ = national(base - amount, year, input_dir)
+    if None in (nat, corp, nat2, corp2):
+        return None
+    return (nat + int(corp * LOCAL_RATE)) - (nat2 + int(corp2 * LOCAL_RATE))
+
+
+BAD_DEBT_HINT = "대손충당금 예상 %s원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −%s원)"
+BAD_DEBT_HINT_RE = r"대손충당금 예상 ([\d,]+)원은 세무사 확인 전이라 빼지 않음 \(쌓으면 세금 −([\d,]+|모름)원\)"
+
+
+def bad_debt_hint(amount, saving):
+    """세금예상.csv 법인세 줄 근거에 붙이는 글 (보고서가 BAD_DEBT_HINT_RE 로 다시 읽는다)."""
+    return BAD_DEBT_HINT % ("{:,}".format(amount), "모름" if saving is None else "{:,}".format(saving))
+
+
 # ───────────── 변환 쪽: 분개장으로 법인세 납부 예상 (사용자 2026-11-04: 지급 예상에 넣고, 중간예납 등 선납세금은 뺀다) ─────────────
 PREPAID_CODES = ("13600",)   # 선납세금: 8월 중간예납 + 이자 원천징수 법인세
 
@@ -298,20 +316,24 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     dep = depreciation(dep_lines, manual or {}, ym, ledger=read_ledger(input_dir, wehago_dir))
     bd = bad_debt(journal, cfg, ym, input_dir)
     adj = adjust_for(journal, cfg, asof, input_dir, wehago_dir)
-    base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
+    # 규칙 계산-08 (사용자 결정 d, 2026-11-15): 법인세 예상에서는 장부에 실제로 넣은 비용만 뺀다. 대손충당금은 결산 때 넣을지
+    # 세무사 답이 오기 전이라 빼지 않고, 쌓으면 세금이 얼마 줄어드는지만 따로 적는다 (예전: 빼서 세금이 약 103만 작게 잡힘, R10)
+    base = pretax - (dep["extra"] or 0) + adj["total"]
     nat, corp, C = national(base, year, input_dir)
     local = int(corp * LOCAL_RATE)
     pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
-    basis = ("세전 이익 %s − 감가상각비 예상 %s − 대손충당금 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
-             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
+    basis = ("세전 이익 %s − 감가상각비 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
+             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(base),
                 "{:,}".format(corp), "{:,}".format(prepaid)))
     if C:
         basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
                               % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
     if adj["total"]:
         basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
+    if bd["amount"]:
+        basis += " · " + bad_debt_hint(bd["amount"], bad_debt_saving(base, bd["amount"], year, input_dir))
     basis += " · 대손충당금 = " + bd["note"]
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown

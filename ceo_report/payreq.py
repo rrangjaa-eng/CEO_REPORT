@@ -22,8 +22,7 @@ _PID = re.compile(r"(?<![0-9])([0-9]{5})(?![0-9])")
 # 목록의 승인 칸 글자는 상태가 아니라 버튼 글자다 (2026-11-05 실제 화면 100건 확인, 관리팀 계정으로 볼 때):
 #   관리팀승인 '승인'(승인 버튼) = 관리팀 아직 안 함 · '반려'(반려 버튼) = 관리팀 승인 끝, 사장님 전 · '수락완료' = 모두 끝
 #   사장님승인 '미승인' 또는 '수락완료'
-ADMIN_DONE_WAITING = ("반려",)
-CEO_DONE = ("수락완료", "승인")
+from .screen_values import ADMIN_DONE_WAITING, CEO_APPROVED as CEO_DONE  # noqa: E402  글자 목록은 한 곳 (안전-07)
 
 
 def wanted(p):

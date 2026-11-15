@@ -15,6 +15,7 @@ import re
 from collections import OrderedDict
 
 from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code
+from .screen_values import PROJECT_STAGE_ALL_DONE, PROJECT_STAGE_DONE
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
 from .wehago import norm_vendor
@@ -71,7 +72,7 @@ def projects_of(snap, old=None):
 
 
 APPROVAL_STAGES = ("담당자", "팀장", "관리팀", "대표이사")   # 인트라넷 프로젝트 목록의 승인 네 칸, 이 순서로 진행
-APPROVAL_DONE = ("완료", "수락완료", "승인완료", "반려")
+APPROVAL_DONE = PROJECT_STAGE_DONE   # 글자 목록은 screen_values 한 곳 (규칙 안전-07)
 # 승인 칸 글자 (사용자 2026-11-11: 대표 승인까지 끝난 프로젝트 = 종결, 팀장 승인부터는 실행가 검토 대상).
 # 지급요청 목록에서 실제로 본 규칙(2026-11-05)과 같게 읽는다: '수락완료'·'완료' = 끝남, '반려'(반려 버튼) = 그 단계 승인이 끝남,
 # '승인'(승인 버튼)·'미승인'·빈칸 = 아직. 모르는 글자는 '아직'으로 본다 (끝나지 않은 프로젝트를 종결로 잘못 보지 않게).
@@ -83,7 +84,7 @@ def approval_stage(p):
 
     네 칸을 합친 한 칸 '완료'(뒤 칸은 빈칸)는 모두 끝난 것."""
     cells = [(p.get("승인_" + s) or "").strip() for s in APPROVAL_STAGES]
-    if cells[0] in ("완료", "수락완료", "승인완료") and not any(cells[1:]):
+    if cells[0] in PROJECT_STAGE_ALL_DONE and not any(cells[1:]):
         return APPROVAL_STAGES[-1]
     stage = ""
     for name, text in zip(APPROVAL_STAGES, cells):

@@ -20,8 +20,10 @@ from ceo_report.data import load
 
 D = dt.date
 SAMPLE_DIR = os.path.join(ROOT, "입력양식", "샘플")
-BASIS = ("세전 이익 147,000,000 − 감가상각비 예상 12,000,000 − 대손충당금 예상 5,000,000 + 세무조정 예상 3,000,000"
-         " = 과세표준 133,000,000 → 법인세 13,300,000 − 중간예납 등 선납세금 4,000,000 · 대손충당금 = 외상 매출 1%")
+# 규칙 계산-08 (결정 d, 2026-11-15): 대손충당금은 과세표준에서 빼지 않고 '쌓으면 세금 −X'만 근거에 적는다
+BASIS = ("세전 이익 147,000,000 − 감가상각비 예상 12,000,000 + 세무조정 예상 3,000,000"
+         " = 과세표준 138,000,000 → 법인세 13,800,000 − 중간예납 등 선납세금 4,000,000"
+         " · 대손충당금 예상 5,000,000원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −550,000원) · 대손충당금 = 외상 매출 1%")
 
 
 def _text(h):
@@ -37,7 +39,7 @@ class TestMidMonthCorpTax(unittest.TestCase):
         M = compute(load(SAMPLE_DIR), "monthly", D(2026, 11, 14))
         row = [t for t in M["tax"] if t["kind"] == "법인세"][0]
         assert row["period"].startswith("2026년 (1월~10월"), row["period"]
-        row["basis"], row["base"] = BASIS, 133_000_000
+        row["basis"], row["base"] = BASIS, 138_000_000
         cls.M = M
 
     def _render(self, mode):
@@ -45,9 +47,12 @@ class TestMidMonthCorpTax(unittest.TestCase):
         R = copy.deepcopy(self.M)
         return _text(render(R, mode))
 
-    def test_bad_debt_row_in_both(self):
+    def test_bad_debt_hint_in_both_and_not_subtracted(self):
+        # 예전(11/12~11/15): '− 대손충당금 (예상…)' 줄로 세전 이익에서 뺐음. 계산-08: 빼지 않고 두 판 모두 한 줄로 알림
         for mode in ("ceo", "mgmt"):
-            self.assertIn("대손충당금 (예상", self._render(mode), mode)
+            t = self._render(mode)
+            self.assertIn("대손충당금 예상 5,000,000원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −550,000원)", t, mode)
+            self.assertNotIn("− 대손충당금", t, mode)
 
     def test_mgmt_uses_tax_adjustment_and_says_basis_month(self):
         t = self._render("mgmt")

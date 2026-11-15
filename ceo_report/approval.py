@@ -7,6 +7,7 @@ import datetime as dt
 import re
 
 from .calc import compute
+from .screen_values import ceo_status
 from .util import Issues, is_blank, mask_rrn, num, setting_num, ssum, ssum_or_none, won
 from .util import date as parse_date
 
@@ -136,11 +137,9 @@ def _day_index(date, monday):
 
 
 def _status(text):
-    if text == "승인":
-        return "approved"
-    if text in ("미승인", "수락요청중"):
-        return "pending"
-    return "status_unknown"
+    """'사장님승인' 글자 -> approved | pending | status_unknown. 글자 목록은 screen_values 한 곳 (규칙 안전-07, 2026-11-15:
+    '수락완료' = 대표 승인 끝)."""
+    return ceo_status(text)
 
 
 def _read_settings(d, issues):
@@ -250,7 +249,7 @@ def _regular_missing(events, regular, cutoff, horizon):
 def _projects(projects, req_all):
     """A-6: 프로젝트별 실행가와 요청 누계 (P-4, P-5). 미요청 실행가는 참고용이며 일정에 넣지 않는다 (D-04, D-06).
 
-    프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·미승인·수락요청중인 것.
+    프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·수락완료·미승인·수락요청중인 것 (screen_values, 안전-07).
     실행가가 비었거나 누계에 금액 미확인이 있거나 키가 겹치면 판단 불가이고, 0으로 두지 않는다.
     """
     keyed = [(project_code(p.get("행사명", "")) or norm_project(p.get("번호", "")), p) for p in projects]

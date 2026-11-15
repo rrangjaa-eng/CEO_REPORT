@@ -12,6 +12,7 @@ import os
 import re
 
 from . import util
+from .screen_values import is_new_ceo_value
 from .convert import Check, Table, cell_amount
 from .convert_pl import _classify, _net
 from .convert_projects import out_of_period, period_text
@@ -107,10 +108,17 @@ def _status_check_rows(requests):
     """요청상태확인필요 (D-52): 사장님승인이 빈칸이거나 알 수 없는 값인 요청의 합계 줄과 요청마다 한 줄 (번호 순)."""
     bad = sorted((r for r in requests if _is_unknown(r)), key=lambda r: _no_key(r["번호"]))
     total, unknown = _known_sum([r["amount"] for r in bad])
+    new = sum(1 for r in bad if is_new_ceo_value(r.get("status_text")))
+    where = "요청 누계·프로젝트밖요청·프로젝트집행(요청미지급 추정)에 넣음"
+    if new:   # 안전-07 (2026-11-15): 처음 보는 글자는 프로젝트집행(팀장·대표 숫자)에 넣지 않는다. 빈칸만 D-52대로 넣음
+        where = "빈칸 %d건은 %s · 처음 보는 글자 %d건은 프로젝트집행에 넣지 않음(화면 확인 필요)" % (len(bad) - new, where, new)
     rows = [_row(STATUS_CHECK, "합계", "", "인트라넷 요청", total, len(bad),
-                 " · ".join(x for x in (_unknown_note(unknown, "건"), "요청 누계·프로젝트밖요청·프로젝트집행(요청미지급 추정)에 넣음") if x))]
+                 " · ".join(x for x in (_unknown_note(unknown, "건"), where) if x))]
     for r in bad:
-        rows.append(_row(STATUS_CHECK + "줄", r["번호"], r["vendor"], "사장님승인 '%s'" % (r.get("status_text") or ""), r["amount"], 1,
+        label = "사장님승인 '%s'" % (r.get("status_text") or "")
+        if is_new_ceo_value(r.get("status_text")):
+            label += " 처음 보는 글자"
+        rows.append(_row(STATUS_CHECK + "줄", r["번호"], r["vendor"], label, r["amount"], 1,
                          " ".join(x for x in (r["code"] or "", r["name"]) if x)))
     return rows
 

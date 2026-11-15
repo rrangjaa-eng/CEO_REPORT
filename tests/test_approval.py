@@ -1061,7 +1061,7 @@ class TestApprovalProjects(unittest.TestCase):
         b = T(self.page, "basis")
         for k in range(1, 7):
             self.assertIn("가정 %d " % k, b)
-        for line in ("가정 1 대기 요청 = 사장님승인이 '승인'이 아닌 요청(팀장·관리팀 단계 포함) · 상태 확인 필요 1건",
+        for line in ("가정 1 대기 요청 = 사장님승인이 '승인'·'수락완료'가 아닌 요청(팀장·관리팀 단계 포함) · 상태 확인 필요 1건",
                      "지급요청일 없음 2건", "지급요청일 지남·대기 중 1건",
                      "확정 지급 2건", "잔액 반영 1건",
                      "금액 미확인 1건은 0이 아니라 일정에서 제외",

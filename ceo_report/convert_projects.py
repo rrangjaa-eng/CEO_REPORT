@@ -15,6 +15,7 @@ from .old_intranet import OLD_LAST_DAY, OLD_STATE
 from .wehago import journal_from_start, norm_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
+from .screen_values import is_new_ceo_value
 
 PROJECT_EXTRA = ["실행가", "견적금액", "승인단계"]   # 견적금액·승인단계: 인트라넷 프로젝트 목록 (사용자 2026-11-11)
 CARRIED = ("상태", "예산수정일", "계약금액", "완료일")   # 이전 프로젝트.csv 에서 옮기는 칸 (D-49)
@@ -541,9 +542,23 @@ def _tag(rq):
     return " " + status_label(rq) if rq["status"] not in ("approved", "pending") else ""
 
 
+def split_vat(amount):
+    """부가세 포함 금액 -> (공급가액, 부가세). 공급가액 = 금액 ÷ 1.1 을 원 단위 반올림(정수 계산), 부가세 = 나머지.
+
+    인트라넷 지급요청 금액은 부가세 포함이다 (사용자 결정 b, 2026-11-15, 규칙 계산-12: 장부와 맞은 388건 모두
+    공급가액+부가세). 예산과 견줄 때는 공급가액을 쓰고, 나갈 돈은 둘을 더한 원래 금액 그대로다. 모르면 (None, None)."""
+    if amount is None:
+        return None, None
+    q, r = divmod(abs(int(amount)) * 10, 11)
+    supply = q + (1 if r * 2 >= 11 else 0)
+    supply = supply if amount >= 0 else -supply
+    return supply, int(amount) - supply
+
+
 def _request_row(rq, amount, basis):
+    supply, vat = split_vat(amount)
     return {"프로젝트번호": rq["code"] or "", "항목": rq["name"], "거래처": rq["vendor"], "상태": "요청미지급",
-            "공급가액": cell_amount(amount), "부가세": "", "일자": cell_date(rq["date"]),
+            "공급가액": cell_amount(supply), "부가세": cell_amount(vat), "일자": cell_date(rq["date"]),
             "확정여부": "확정" if rq["status"] == "approved" else "추정", "근거": basis}
 
 
@@ -557,8 +572,15 @@ def _requests_part(groups, requests, match):
     notes = []
     # D-52: 사장님승인이 빈칸이거나 모르는 값인 요청도 버리지 않는다. 승인·대기와 같은 갈래로 넣되 확정여부는 늘 '추정',
     # 근거에 '상태 확인 필요 (<값>)'을 붙인다 (지출을 적게 잡지 않음; 사람이 확인해 지운다)
-    active = list(requests)
-    unknown = [rq for rq in requests if rq["status"] not in ("approved", "pending")]
+    # 안전-07 (2026-11-15): '사장님승인'에 처음 보는 글자는 숫자에 넣지 않는다 (빈칸은 위 D-52대로 넣음). 경영관리 대조표
+    # '요청상태확인필요'와 변환결과에 그대로 보인다
+    new_values = [rq for rq in requests if is_new_ceo_value(rq.get("status_text"))]
+    if new_values:
+        notes.append("처음 보는 사장님승인 글자 %d건 → 프로젝트집행에 넣지 않음 (규칙 안전-07, 화면 확인 필요): %s" % (
+            len(new_values), ", ".join("%s '%s'" % (rq["번호"], rq.get("status_text")) for rq in
+                                       sorted(new_values, key=lambda r: _no_key(r["번호"])))))
+    active = [rq for rq in requests if not is_new_ceo_value(rq.get("status_text"))]
+    unknown = [rq for rq in active if rq["status"] not in ("approved", "pending")]
     if unknown:
         notes.append("상태 확인 필요 %d건 → 요청미지급(추정)으로 넣음 (D-52: 사장님승인이 빈칸이거나 알 수 없는 값)" % len(unknown))
         notes.append("상태 확인 필요 지급요청: " + ", ".join(
@@ -592,6 +614,7 @@ def _requests_part(groups, requests, match):
     # covered: 번호 -> 원가 줄이 맡은 요청 금액 (min(요청, WEHAGO)), excess: 번호 -> 요청이 더 커서 넣은 차액 줄 금액
     state = {"annotated": 0, "added": 0, "paid": 0, "skipped": 0, "naming": {}, "paid_nos": [], "skipped_nos": [],
              "invoice": {}, "covered": {}, "excess": {}}
+    taken, to_add = set(), []   # taken: 요청 번호를 이미 붙인(또는 두 요청이 다퉈 비워 둔) 원가 줄 · to_add: 아직 정하지 못한 요청
     for rq in sorted(active, key=lambda r: _no_key(r["번호"])):
         no = rq["번호"]
         m = rows_of.get(no, fallback)
@@ -609,6 +632,7 @@ def _requests_part(groups, requests, match):
         if (has_invoice or via_link.get(no)) and len(found) == 1 and claims[id(found[0])] == 1:
             g = found[0]
             invoice = _group_total(g)   # 계산서 대조로 찾은 묶음은 합계가 계산서 합계와 같다
+            taken.add(id(g))
             if g["state"] == "요청미지급":
                 g["basis"] += " · 지급요청 %s%s" % (no, _tag(rq))
                 g["paid_day"] = rq["date"]
@@ -643,6 +667,32 @@ def _requests_part(groups, requests, match):
                 else:
                     notes.append("지급요청 %s: 계산서의 원가 줄이 이미 지급완료 → 요청 줄 넣지 않음 (원가 줄에 번호 표시)" % no)
                 continue
+        if (has_invoice or via_link.get(no)) and len(found) == 1:
+            taken.add(id(found[0]))   # 두 요청이 같은 줄을 가리켜 아무도 쓰지 못한 줄: 짝짓기에서도 쓰지 않는다
+        to_add.append((rq, has_invoice, invoice))
+    # 계산-15·결정 a (2026-11-15): 위에서 정하지 못한 요청은 장부 원가 줄과 프로젝트·금액으로 하나씩 짝짓는다.
+    # 실제 자료(11/15): 대표 승인 끝난 요청 중 거래처 이름이 장부와 다르거나 같은 금액 지급이 여러 번이라 정하지 못한 것이
+    # 이미 지급된 원가 줄과 함께 두 번 세어져 팀장 '예산 넘음' 경보가 거짓으로 나왔다 (R1)
+    paired, ambiguous = _pair_with_books(to_add, groups, taken, linked)
+    for rq, has_invoice, invoice in to_add:
+        no = rq["번호"]
+        g = paired.get(no)
+        if g is not None:
+            total = _group_total(g)
+            how = "프로젝트·금액" if total == rq["amount"] else "프로젝트·원천세 뗀 금액"
+            g["basis"] += " · 지급요청 %s%s (%s으로 짝지음)" % (no, _tag(rq), how)
+            state["invoice"][no] = total
+            state["covered"][no] = min(rq["amount"], total)
+            if g["state"] == "요청미지급":
+                g["paid_day"] = rq["date"]
+                g["firm"] = rq["status"] == "approved"
+                state["annotated"] += 1
+                state["naming"][no] = "annotated"
+            else:
+                state["skipped"] += 1
+                state["skipped_nos"].append(no)
+                state["naming"][no] = "skipped"
+            continue
         # 요청 줄로 넣는다
         state["added"] += 1
         state["naming"][no] = "added"
@@ -650,7 +700,7 @@ def _requests_part(groups, requests, match):
             invoice = _linked_total(linked.get(no, []))
         if rq["amount"] is not None and invoice is not None:
             state["invoice"][no] = invoice
-        entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s%s (인트라넷 금액, 부가세 포함 여부 미확인)"
+        entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s%s (인트라넷 금액, 부가세 포함으로 나눔)"
                                                      % (no, _tag(rq)))))
         if rq["amount"] is not None and invoice is not None and invoice > rq["amount"]:
             entries.append((_no_key(no), 1, _request_row(
@@ -662,9 +712,74 @@ def _requests_part(groups, requests, match):
             notes.append("지급요청 %s: 자동 연결된 원가 줄을 하나로 정하지 못하거나 합계를 몰라 요청으로 넣음 (중복 가능)" % no)
         elif unpaid_by_vendor.get(norm_vendor(rq["vendor"])):
             notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[norm_vendor(rq["vendor"])]))
+    if paired:
+        kinds = collections.Counter("지급 끝난 줄" if g["state"] in ("지급완료", "카드결제완료") else "미지급 줄" for g in paired.values())
+        notes.append("장부 원가 줄과 프로젝트·금액으로 짝지은 지급요청 %d건 → 요청 줄 넣지 않음 (%s, 원가 줄 근거에 번호 표시)"
+                     % (len(paired), " · ".join("%s %d건" % kv for kv in sorted(kinds.items()))))
+    if ambiguous:
+        notes.append("[확인] 지급요청 짝짓기: 같은 프로젝트·금액 원가 줄이 둘 이상이라 등록 순서로 짝지은 요청 %d건 (합계는 같음, 어느 줄인지만 확인): %s"
+                     % (len(ambiguous), ", ".join(sorted(ambiguous, key=_no_key))))
     entries.sort(key=lambda e: (e[0], e[1]))
-    state.update(entries=entries, notes=notes, active=active, groups=groups)
+    state.update(entries=entries, notes=notes, active=active, groups=groups, new_values=new_values)
     return state
+
+
+WITHHOLDING = (0.033, 0.088)   # 원천세 뗀 뒤 보내는 돈: 사업소득 3.3%·기타소득 8.8% (지방세 포함). 장부 원가는 떼기 전 금액, 부가세 없음
+PAID_STATES = ("지급완료", "카드결제완료")
+
+
+def _book_match(rq, g):
+    """요청 금액과 원가 줄 금액이 같은 돈인가: 합계(공급가액+부가세)가 같거나, 부가세 없는 줄의 원천세 뗀 금액이 같다(10원 안)."""
+    total, amount = _group_total(g), rq["amount"]
+    if total is None or amount is None:
+        return False
+    if total == amount:
+        return True
+    return g["vat"] == 0 and any(abs(int(round(g["supply"] * (1 - r))) - amount) <= 10 for r in WITHHOLDING)
+
+
+def _pair_with_books(to_add, groups, taken, linked):
+    """정하지 못한 요청을 장부 원가 줄과 하나씩 짝짓는다 (계산-15, 2026-11-15) -> {번호: 묶음}.
+
+    같은 프로젝트 번호이고 금액이 같은 돈(_book_match)이며 다른 요청이 쓰지 않은 줄만. 대표 승인 전 요청은 아직 안 나간 줄
+    (요청미지급·카드사용미결제)하고만 (D-17: 승인 전에는 지급하지 않음). 이미 나간 줄은 요청 등록일 이후에 나간 줄만
+    (D-30b: 등록 전에 나간 같은 금액은 다른 지급). 요청은 등록 순서로, 줄은 같은 거래처 먼저·지급일이 등록일에 가까운 것 먼저.
+    결과는 요청·장부 순서와 관계없이 같다 (정렬 기준이 번호까지 정해져 있음)."""
+    out, ambiguous = {}, []   # ambiguous: 후보가 둘 이상이던 요청 (계산-01: 확인할 것에 올림. 후보끼리 금액이 같아 숫자는 같음)
+    by_project = collections.defaultdict(list)
+    for g in groups:
+        if id(g) in taken or not g["project"] or g.get("request") or "지급요청" in (g.get("basis") or ""):
+            continue
+        by_project[g["project"]].append(g)
+    used = set()
+
+    def order(rq):
+        reg = rq.get("registered")
+        return (reg is None, reg or dt.datetime.min, _no_key(rq["번호"]))
+    for rq, _, _ in sorted(to_add, key=lambda t: order(t[0])):
+        if rq["amount"] is None or not rq["code"] or linked.get(rq["번호"]):
+            continue
+        reg = rq["registered"].date() if rq.get("registered") else None
+        cands = []
+        for g in by_project.get(rq["code"], []):
+            if id(g) in used or not _book_match(rq, g):
+                continue
+            if g["state"] in PAID_STATES:
+                day = g.get("paid_day") or g.get("day")
+                if rq["status"] != "approved" or reg is None or day is None or day < reg:
+                    continue
+            elif g["state"] not in ("요청미지급", "카드사용미결제"):
+                continue
+            day = g.get("paid_day") or g.get("day") or dt.date.max
+            cands.append((g["vendor_norm"] != norm_vendor(rq["vendor"]), abs((day - reg).days) if reg and day != dt.date.max else 0,
+                          _row_order(g), g))
+        if cands:
+            g = min(cands, key=lambda c: c[:3])[3]
+            used.add(id(g))
+            out[rq["번호"]] = g
+            if len(cands) > 1:
+                ambiguous.append(rq["번호"])
+    return out, ambiguous
 
 
 _REQUEST_ROW = re.compile(r"^지급요청 (\d+)(?!\d| 차액)")
@@ -684,10 +799,9 @@ def amount_check(known, part, rows):
     for r in rows:
         text = r.get("근거") or ""
         excess, request = _EXCESS_ROW.match(text), _REQUEST_ROW.match(text)
-        if excess and excess.group(1) in by_no:
+        if (excess and excess.group(1) in by_no) or (request and request.group(1) in by_no):
+            # 요청 줄도 부가세 포함 금액을 공급가액·부가세로 나눠 쓴다 (계산-12, 2026-11-15): 둘을 더하면 요청 금액
             row_amount += (num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0)
-        elif request and request.group(1) in by_no:
-            row_amount += num(r["공급가액"]) or 0
     kinds = "승인·대기·상태 확인 필요" if any(rq["status"] not in ("approved", "pending") for rq in known) else "승인·대기"
     return Check("지급요청 금액 (금액 있는 %s %d건) = 원가 줄 표시 + 요청 줄 + 이미 지급" % (kinds, len(known)),
                  sum(rq["amount"] for rq in known), covered + row_amount + paid_amount)
@@ -704,6 +818,8 @@ def _request_checks(part, rows, requests, match):
         len(active) - unknown, " + 상태 확인 필요 %d" % unknown if unknown else "", part["annotated"], part["added"], part["paid"])
     if part["skipped"]:
         label += " + 이미 지급된 원가 줄 %d" % part["skipped"]
+    if part.get("new_values"):
+        label += " (처음 보는 사장님승인 글자 %d건은 넣지 않음, 안전-07)" % len(part["new_values"])
     checks = [
         Check(label, len(active), csv_count),
         amount_check(known, part, rows),
