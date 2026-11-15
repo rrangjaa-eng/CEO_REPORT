@@ -2375,3 +2375,40 @@ class TestCheckNotesReachProgress(unittest.TestCase):
         got = [ln for ln in res.lines if ln.startswith("[확인] 분개장이")]
         self.assertEqual(len(got), 1, res.lines)
         self.assertEqual(result_text(input_dir).count("  알림 " + got[0]), 1)   # 변환결과.txt 에는 예전처럼 한 번
+
+
+# ───────────── 2차 P5-24·P6-15: 창 없는 실행의 결과 파일은 늘 이번 실행 것 ─────────────
+class TestHeadlessResultIsThisRun(unittest.TestCase):
+    def test_setup_failure_replaces_an_old_success(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import app, winstate
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "입력"))
+        log = os.path.join(tmp, "자동결과.txt")
+        with open(log, "w", encoding="utf-8") as f:
+            f.write("판: 예전\n만든 파일: 예전.pdf\nrc=0\n")
+        with mock.patch.object(winstate, "start_values", side_effect=RuntimeError("창 상태 깨짐")):
+            rc = app.headless(app.Paths(tmp), log, asof="2026-10-31")
+        self.assertEqual(rc, 7)
+        text = _read(log)
+        self.assertIn("예상하지 못한 오류 (RuntimeError)", text)
+        self.assertNotIn("예전.pdf", text)
+        self.assertTrue(text.rstrip().endswith("rc=7"))
+
+    def test_unwritable_result_is_printed_and_fails(self):
+        import contextlib
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import app
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        buf = io.StringIO()
+        with mock.patch.object(app, "_write_log", side_effect=OSError(28, "No space")), contextlib.redirect_stdout(buf):
+            rc = app.headless(app.Paths(tmp), os.path.join(tmp, "없는폴더", "r.txt"), asof="2026-13-40")
+        self.assertEqual(rc, 2)
+        self.assertIn("결과 파일을 쓰지 못함", buf.getvalue())
+        self.assertIn("rc=2", buf.getvalue())

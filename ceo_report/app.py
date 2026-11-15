@@ -407,10 +407,20 @@ def headless(paths, log_path, asof="", today=None):
     from . import winstate
     from .version import build
     lines = ["판: %s" % build()]
-    day = parse_date(asof) if asof else (today or dt.date.today())
-    vals = winstate.start_values(paths.input, day) if day else {"payday": "", "pick": ""}
-    group, only = load_merge(paths)
+    # 2차 P5-24·P6-15 (2026-11-15): 지난번 결과 파일이 이번 결과처럼 남지 않게 먼저 '돌고 있음'으로 바꾸고, 준비 단계 오류도 결과에 남긴다
     try:
+        _write_log(log_path, lines + ["돌고 있음 (이 줄이 남아 있으면 끝나지 못한 것)"], "진행 중")
+    except OSError:
+        pass
+    day, rc = None, 7
+    try:
+        day = parse_date(asof) if asof else (today or dt.date.today())
+        if day is None:   # 창에서처럼 날짜 오류(2)로 끝낸다
+            lines.append("기준일 형식 오류: %s (예: 2026-11-13)" % asof)
+            rc = 2
+            raise _Stop()
+        vals = winstate.start_values(paths.input, day)
+        group, only = load_merge(paths)
         rc, files = run_auto(paths, lines.append, asof=asof or day.isoformat(), pick=vals["pick"], payday=vals["payday"],
                              group=group, only=only)
         if files:
@@ -418,14 +428,33 @@ def headless(paths, log_path, asof="", today=None):
         stops = winstate.blocked_reports(files)
         if stops:   # 2차 C12 (2026-11-15): 막혀도 '자동 완료'처럼 보였다 → 결과 글에 남긴다
             lines.append("대표 보고: 자료 확인에서 막혀 만들지 않음 (%s)" % ", ".join(os.path.basename(f) for f in stops))
+    except _Stop:
+        pass
     except Exception as e:   # 트레이스백 대신 한 줄
         lines.append("예상하지 못한 오류 (%s): %s" % (type(e).__name__, str(e)[:200]))
         rc = 7
     if day:   # 창도 날짜가 틀리면 돌리지 않아 기록을 남기지 않는다
-        winstate.remember_run(paths.input, "자동", rc == 0)
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+        try:
+            winstate.remember_run(paths.input, "자동", rc == 0)
+        except OSError:
+            lines.append("창 상태(마지막 자동 실행)를 남기지 못함")
+    try:
+        _write_log(log_path, lines, rc)
+    except OSError as e:   # 결과 파일을 못 쓰면 표준 출력으로라도 (원격 실행이 받아 봄)
+        print("\n".join(lines + ["결과 파일을 쓰지 못함 (%s): %s" % (type(e).__name__, log_path), "rc=%s" % rc]))
+        return rc or 7
     return rc
+
+
+class _Stop(Exception):
+    """headless 를 더 돌리지 않고 결과만 남긴다."""
+
+
+def _write_log(log_path, lines, rc):
+    tmp = log_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+    os.replace(tmp, log_path)
 
 
 CHECK_ASOF = "2026-10-31"   # 점검 기준일 (샘플 자료일)
