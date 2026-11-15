@@ -223,6 +223,17 @@ def _same_file(a, b):
         return False
 
 
+def _json_ok(path):
+    """자동수집 파일이 끝까지 읽히는 JSON 인가 (받다 끊긴 파일·깨진 파일은 False)."""
+    import json
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            json.load(f)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _in_archive(paths, name, src):
     """수집/위하고/지난자료 에 src 와 내용이 같은 같은 이름(또는 이름_2 꼴) 파일이 있으면 그 경로."""
     arch = os.path.join(paths.wehago, ARCHIVE)
@@ -274,6 +285,11 @@ def import_auto(paths, say, dirs=None):
                     os.remove(src)   # 외장하드에 같은 내용이 이미 있음 → 다운로드 쪽만 지움
                     say("다운로드 폴더의 자동수집 파일 정리: %s (이미 %s에 있음 — 다시 가져오지 않음)"
                         % (name, "수집\\위하고\\" + ARCHIVE if kept else "수집\\위하고"))
+                    continue
+                if not _json_ok(src):   # 2차 P1-10·P2-3: 깨진 파일이 '가져옴'으로 들어와 멀쩡한 같은 이름 원본을 밀어냈다
+                    moved = _to_archive(paths, src, name)
+                    say("[확인] 다운로드 폴더의 자동수집 파일이 깨져(받다 끊김 등) 가져오지 않고 지난자료로 옮김: %s — "
+                        "지금 쓰는 원본은 그대로 둠, 위하고 확장에서 다시 받으세요" % os.path.basename(moved))
                     continue
                 if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
                     moved = _to_archive(paths, src, name)

@@ -2478,3 +2478,30 @@ class TestSnapshotWithRequestsAllOrNothing(unittest.TestCase):
                 snapshot.write_snapshot(root, dt.datetime(2026, 11, 15, 9), [], [], extra=lambda f: payreq.write(f, rows))
         self.assertEqual(snapshot.latest_snapshot(root), old)   # 요청서 없는 '완성' 스냅숏이 생기지 않는다
         self.assertEqual(sorted(os.listdir(root)), [os.path.basename(old)])   # 작성중 폴더도 남지 않음
+
+
+# ───────────── 2차 P1-10·P2-3: 깨진 자동수집 파일은 가져오지 않음 ─────────────
+class TestBrokenDownloadNotImported(unittest.TestCase):
+    def test_good_file_stays(self):
+        import shutil
+        import tempfile
+        from ceo_report import app
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        paths = app.Paths(tmp)
+        down = os.path.join(tmp, "dl")
+        os.makedirs(os.path.join(down, app.AUTO_DIR))
+        os.makedirs(paths.wehago, exist_ok=True)
+        name = "261115 분개장_2026 자동수집.json"
+        with open(os.path.join(paths.wehago, name), "w", encoding="utf-8") as f:
+            f.write('{"rows": [1, 2, 3]}')
+        with open(os.path.join(down, app.AUTO_DIR, name), "w", encoding="utf-8") as f:
+            f.write('{"rows": [1, 2')   # 받다 끊김
+        said = []
+        n = app.import_auto(paths, said.append, dirs=[down])
+        self.assertEqual(n, 0)
+        with open(os.path.join(paths.wehago, name), encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"rows": [1, 2, 3]}')
+        self.assertTrue(any("깨져" in x for x in said), said)
+        self.assertEqual(os.listdir(os.path.join(down, app.AUTO_DIR)), [])   # 개인정보가 다운로드 폴더에 남지 않음
+        self.assertEqual(os.listdir(os.path.join(paths.wehago, app.ARCHIVE)), [name])
