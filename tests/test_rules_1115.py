@@ -2412,3 +2412,22 @@ class TestHeadlessResultIsThisRun(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("결과 파일을 쓰지 못함", buf.getvalue())
         self.assertIn("rc=2", buf.getvalue())
+
+
+# ───────────── 2차 P3-14: 깨진 대조 원본도 '쓰지 않음'으로 자료 대조에 남김 ─────────────
+class TestBrokenReconcileRawIsListed(unittest.TestCase):
+    def test_broken_file_is_in_skipped(self):
+        import shutil
+        import tempfile
+        from ceo_report import reconcile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "261113 결산_합계잔액시산표(2기) 자동수집.json"), "w", encoding="utf-8") as f:
+            f.write("{깨진")
+        skipped = []
+        reconcile.raw_files(d, skipped)
+        self.assertEqual(skipped, ["261113 결산_합계잔액시산표(2기) 자동수집.json"])
+        rows = reconcile.build_tables(type("B", (), {"journal": [], "state": "없음"})(), d, d, D(2026, 11, 13))[0].rows
+        hit = [r for r in rows if r.get("항목") == "261113 결산_합계잔액시산표(2기) 자동수집.json"]
+        self.assertEqual(len(hit), 1, rows)
+        self.assertIn("깨졌거나", hit[0]["할일"])

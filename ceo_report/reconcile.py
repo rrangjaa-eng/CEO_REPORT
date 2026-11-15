@@ -122,6 +122,8 @@ def raw_files(wehago_dir, skipped=None):
             with open(os.path.join(wehago_dir, n), encoding="utf-8") as f:
                 d = json.load(f)
         except (OSError, ValueError):
+            if skipped is not None and n.endswith("자동수집.json"):   # 2차 P3-14: 깨진 원본도 '쓰지 않음'으로 남긴다
+                skipped.append(n)
             continue
         if not isinstance(d, dict) or "응답" not in d:
             continue
@@ -814,7 +816,7 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     rows += vat_notice_rows(raw)
     for n in sorted(skipped):   # P1-4: 화면 자료가 없는 원본 — 쓰지 않았다고 경영관리 '자료 대조'에 남긴다
         rows.append(_row("수집", n, "위하고 원본", None, None, "", "참고",
-                         "이 파일에는 화면 자료 응답이 없어(조건·오류 응답만) 쓰지 않고 그 전에 받은 파일을 씀 — 확장에서 다시 받으세요"))
+                         "이 파일은 깨졌거나 화면 자료 응답이 없어(조건·오류 응답만) 쓰지 않고 그 전에 받은 파일을 씀 — 확장에서 다시 받으세요"))
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)
