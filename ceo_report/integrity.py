@@ -286,6 +286,49 @@ def compare_keys(app_dir, keys, out):
         out.append("- 핵심 숫자를 저장하지 못함 (%s)" % type(e).__name__)
 
 
+def _csv_rows(path):
+    """CSV -> 줄 묶음(시각 칸·'…시각' 줄은 뺌). 없거나 못 읽으면 None."""
+    import csv
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    if not rows:
+        return collections.Counter()
+    keep = [i for i, h in enumerate(rows[0]) if "시각" not in h]
+    out = collections.Counter()
+    for r in rows:
+        if r and "시각" in r[0]:
+            continue
+        out[tuple(r[i] if i < len(r) else "" for i in keep)] += 1
+    return out
+
+
+def _input_drift(input_dir, temp_input, res, out):
+    """2차 P3-20 (2026-11-15): 보고가 실제로 읽는 입력 파일 ↔ 지금 자료로 새로 변환한 사본을 직접 비교한다.
+    예전엔 사본만 점검해서, 입력 폴더의 파일이 손으로 고쳐졌거나 깨졌어도 점검은 문제 없음으로 끝났다. -> 같으면 True."""
+    out.append("## 보고가 쓰는 입력 파일 ↔ 지금 자료로 새로 변환한 결과")
+    diff = []
+    for t in getattr(res, "tables", None) or []:
+        if not getattr(t, "written", False):
+            continue
+        a, b = _csv_rows(os.path.join(input_dir, t.name)), _csv_rows(os.path.join(temp_input, t.name))
+        if a == b:
+            continue
+        n = sum(((a or collections.Counter()) - (b or collections.Counter())).values()) + \
+            sum(((b or collections.Counter()) - (a or collections.Counter())).values())
+        diff.append("%s — %s" % (t.name, "입력 폴더에 없음" if a is None else "다른 줄 %d개" % n))
+    if not diff:
+        out.append("- 같음 (변환 뒤 바뀌거나 손댄 입력 파일 없음)")
+        return True
+    for d in diff:
+        out.append("- 확인 필요: " + d)
+    out.append("- 확인 필요: 보고는 입력 폴더의 파일을 씁니다. 위하고·인트라넷 자료가 새로 들어왔으면 '자료 변환'을 다시 하고, "
+               "손으로 고친 파일이면 고친 까닭을 확인하세요 (지난 변환과 기준일이 다르면 그 때문에 다를 수도 있음)")
+    return False
+
+
 WORK_DIR = "_점검임시"
 
 
@@ -331,6 +374,7 @@ def run(app_dir, out_path, asof=None):
         if getattr(res, "code", 0):
             rc = rc or 3
         _convert_checks(res, temp_input, out)
+        _input_drift(input_dir, temp_input, res, out)
         _cross_checks(temp_input, out)
         if os.path.isdir(os.path.join(tmp, "수집")) is False:
             os.makedirs(os.path.join(tmp, "수집"), exist_ok=True)

@@ -3335,3 +3335,33 @@ class TestSameTimeNeedsNoSlipsBetween(unittest.TestCase):
         f = (dt.datetime(2026, 11, 13, 10, 20), 2026, JCOLS,
              [jline("20261113", "10300", 1, 0, 1, ins="20261113101000"), jline("20261113", "10300", 0, 1, 2, ins="")])
         self.assertEqual(RC._insert_times(f), [dt.datetime(2026, 11, 13, 10, 10)])
+
+
+# ───────────── 2차 P3-20: 정합성 점검이 보고가 쓰는 입력 파일과 새로 변환한 결과를 직접 비교 ─────────────
+class TestIntegrityComparesLiveInputs(unittest.TestCase):
+    def test_drift(self):
+        import tempfile
+        from ceo_report import integrity
+
+        def put(folder, name, text):
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, name), "w", encoding="utf-8-sig") as f:
+                f.write(text)
+        tmp = tempfile.mkdtemp()
+        live, fresh = os.path.join(tmp, "입력"), os.path.join(tmp, "사본")
+        put(live, "a.csv", "항목,값\n변환 시각,2026-11-14 09:00:00\n잔액,100\n")
+        put(fresh, "a.csv", "항목,값\n변환 시각,2026-11-15 09:00:00\n잔액,100\n")
+        put(live, "b.csv", "날짜,금액,수집시각\n2026-11-01,5,x\n")
+        put(fresh, "b.csv", "날짜,금액,수집시각\n2026-11-01,5,y\n")
+        res = type("R", (), {"tables": [convert.Table("a.csv", ["항목", "값"], []), convert.Table("b.csv", [], []),
+                                        convert.Table("c.csv", [], [], written=False)]})()
+        out = []
+        self.assertTrue(integrity._input_drift(live, fresh, res, out), out)   # 시각만 다르면 같음
+        put(live, "a.csv", "항목,값\n변환 시각,2026-11-14 09:00:00\n잔액,999\n")   # 손으로 고침
+        out = []
+        self.assertFalse(integrity._input_drift(live, fresh, res, out))
+        self.assertIn("- 확인 필요: a.csv — 다른 줄 2개", out)
+        os.remove(os.path.join(live, "b.csv"))
+        out = []
+        integrity._input_drift(live, fresh, res, out)
+        self.assertIn("- 확인 필요: b.csv — 입력 폴더에 없음", out)
