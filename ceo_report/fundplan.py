@@ -662,6 +662,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
 # ───────────── 보고서 계산에 반영 (calc) ─────────────
 MATCH_DAYS = 7               # 거래처가 달라도 같은 금액·이 날수 안이면 같은 건으로 본다
 DONE_DAYS = 31               # 이미 지급·입금 줄이 지우는 기존 일정은 예정일이 이 날수 안인 것만 (F18 ②, 2026-11-14)
+DONE_AHEAD_DAYS = 15         # 1차 자금-3 (2026-11-15): 그중 이미 낸 날보다 뒤 일정은 이 날수 안만 — 다음 달 같은 금액 반복(급여 등)을 지우지 않게
 CENTS = 100                 # 같은 거래처 계산서 미수와 자금계획서 입금이 이만큼(원) 안에서 다르면 같은 입금 (끝전)
 FLAG_SOURCES = ("자금일정", "계산서", "프로젝트집행")   # 자금계획서에 없으면 알리는 기존 일정 (남은 예산은 원래 추정이라 알리지 않음)
 
@@ -696,6 +697,14 @@ def _in_balance(p, cash_date, txns):
     if hit:
         return "통장 %s %s 같은 금액 → 이미 %s (분개장 미반영)" % (min(t["date"] for t in hit).isoformat(), io, "지급" if io == "출금" else "입금")
     return "예정일이 통장 잔액 기준일 %s 이전 → 잔액에 이미 반영된 것으로 봄 (분개장은 그 전까지만 있음)" % cash_date.isoformat()
+
+
+def _done_window(ev_day, done_day):
+    """이미 지급·입금 줄(done_day)이 지울 수 있는 기존 일정(ev_day): 31일 앞(늦게 냄)부터 15일 뒤(일찍 냄)까지."""
+    if ev_day is None:
+        return False
+    gap = (ev_day - done_day).days
+    return -DONE_DAYS <= gap <= DONE_AHEAD_DAYS
 
 
 def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
@@ -752,8 +761,8 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
             if not (same or (near and not done)):
                 continue
-            if done and (ev["date"] is None or abs((ev["date"] - p["date"]).days) > DONE_DAYS):
-                continue   # F18 ②: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 몇 달 뒤 일정(다음 달 급여 등)을 지우지 않게
+            if done and not _done_window(ev["date"], p["date"]):
+                continue   # F18 ②·자금-3: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 다음 달 일정(급여 등)을 지우지 않게
             rank = (0 if same else 1, ev["amount"] != p["amount"], abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, i)
@@ -777,8 +786,11 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             first = events[idx[0]]
             same = bool(key) and norm_vendor(first.get("desc") or "") == key
             near = first["date"] is not None and abs((first["date"] - p["date"]).days) <= MATCH_DAYS
-            if not (same or (near and p["state"] not in ("이미 지급", "이미 입금"))):
+            done = p["state"] in ("이미 지급", "이미 입금")
+            if not (same or (near and not done)):
                 continue
+            if done and not _done_window(first["date"], p["date"]):
+                continue   # 1차 자금-3: 나눈 계산서 합으로 맞출 때도 이미 들어온 돈이 몇 달 뒤 계산서 일정을 지우지 않게
             taken.update(idx)
             p["_by_name"] = True
             p["_split"] = [events[i] for i in idx]

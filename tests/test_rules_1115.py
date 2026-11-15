@@ -3562,3 +3562,26 @@ class TestSameBankLoansSplit(unittest.TestCase):
         self.assertEqual(mv, 200_000_000)
         with open(os.path.join(ROOT, "ceo_report", "credit.py"), encoding="utf-8") as f:
             self.assertIn("min(cur, max(long_bal.get(v, 0), 0))", f.read())
+
+
+# ───────────── 1차 자금-3: 이미 낸 지난달 지급이 다음 달 같은 금액 반복 일정을 지우지 않음 ─────────────
+class TestDoneLineKeepsNextMonth(unittest.TestCase):
+    def test_salary_next_month_kept(self):
+        from ceo_report import fundplan
+        from test_code_match_1114 import ev, plan_ev
+        D = dt.date
+        nxt = ev(D(2026, 11, 5), 30_000_000, "가상직원", source="자금일정")
+        new, _ = fundplan.apply([nxt], [plan_ev("2026-10-05", 30_000_000, "가상직원", "이미 지급", "지급")], D(2026, 10, 20), 7)
+        self.assertEqual(new, [nxt])   # 31일 뒤 다음 달 급여는 남는다 (예전엔 지워짐)
+        late = ev(D(2026, 10, 1), 30_000_000, "가상직원", source="자금일정")   # 10/1 예정을 10/20에 늦게 냄 → 지움
+        new, _ = fundplan.apply([late], [plan_ev("2026-10-20", 30_000_000, "가상직원", "이미 지급", "지급")], D(2026, 10, 25), 7)
+        self.assertEqual(new, [])
+
+    def test_split_invoice_far_later_kept(self):
+        from ceo_report import fundplan
+        from test_code_match_1114 import ev, plan_ev
+        D = dt.date
+        inv = [dict(ev(D(2027, 1, 20), 55_000_000, "가상고객", source="계산서", io="in"), inv_key=("가상고객", D(2026, 11, 21)),
+                    project=p) for p in ("P1", "P2")]
+        new, _ = fundplan.apply(inv, [plan_ev("2026-10-05", 110_000_000, "가상고객", "이미 입금")], D(2026, 10, 20), 7)
+        self.assertEqual(len(new), 2)   # 107일 뒤 계산서 두 줄은 남는다
