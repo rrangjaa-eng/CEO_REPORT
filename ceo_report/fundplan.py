@@ -556,6 +556,29 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             if best is not None:
                 take([best[1]], r)
                 found[n] = [best[1]]
+        # ①-2 한 전표에 같은 거래처 채무(채권) 줄이 여럿이고 자금계획서는 그 합 한 줄 (1차 점검 자금-4, 2026-11-15:
+        #      계산서 여러 장을 한 번에 지급하면 줄마다는 금액이 달라 못 찾고 '예정일 지남'으로 남아 다음 금요일 출금 목록에
+        #      다시 올라갔음 — 실제 장부에 이런 전표 12개). 그 전표의 안 쓴 같은 거래처 채무 줄 합이 원 단위로 같으면 모두 쓴다
+        for n, r in enumerate(rows):
+            if n in found:
+                continue
+            due, lo = window(r)
+            groups = collections.defaultdict(list)
+            for i, line in enumerate(journal):
+                if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+                    continue
+                amount, named = kind(line, r["입출금"])
+                if amount and named and same_vendor(r, line):
+                    groups[(line["date"], str(line.get("no") or i))].append((i, amount))
+            best = None
+            for k, g in groups.items():
+                if len(g) >= 2 and sum(a for _, a in g) == r["금액"]:
+                    rank = (abs((k[0] - due).days), k)
+                    if best is None or rank < best[0]:
+                        best = (rank, [i for i, _ in g])
+            if best is not None:
+                take(best[1], r)
+                found[n] = best[1]
         # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
         for n, r in enumerate(rows):
             if n in found:
@@ -612,6 +635,10 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                     lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"], "지급" if r["입출금"] == "지급" else "입금")
             elif len(lines) == 1:
                 r["근거"] = "분개장 %s 전표 %s %s" % (lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"])
+            elif len(set((x["date"], str(x.get("no") or "")) for x in lines)) == 1:   # ①-2: 한 전표의 같은 거래처 여러 줄
+                r["근거"] = "분개장 %s 전표 %s %s %d줄 합계 (같은 거래처 여러 건을 한 전표로 %s)" % (
+                    lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"], len(lines),
+                    "지급" if r["입출금"] == "지급" else "입금")
             else:
                 r["근거"] = "분개장 %d건 합계로 나눠 %s: %s" % (len(lines), "지급" if r["입출금"] == "지급" else "입금", ", ".join(
                     "%s 전표 %s" % (x["date"].isoformat(), x["no"]) for x in lines))

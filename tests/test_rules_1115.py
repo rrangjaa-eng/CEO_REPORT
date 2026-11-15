@@ -1310,3 +1310,42 @@ class TestOtherCompanyTabs(unittest.TestCase):
         self.assertIn("active: true, lastFocusedWindow: true", body)   # 지금 보고 있는 탭 먼저
         self.assertIn("여러 회사", body)                                 # 회사가 섞여 있으면 받지 않음
         self.assertNotIn("tabs.find((t) => /[?&]cno=/.test(t.url)) || null", src)
+
+
+class TestOneSlipSeveralLinesOneVendor(unittest.TestCase):
+    """1차 자금-4: 한 전표에 같은 거래처 채무 줄이 여럿(계산서 여러 장을 한 번에 지급)이고 자금계획서는 합계 한 줄이면
+    '예정일 지남'으로 남아 다음 금요일 출금 목록에 다시 올라갔다 (실제 장부에 이런 전표 12개)."""
+
+    def settle(self, rows, lines):
+        from test_review_1114b import _books
+        from ceo_report import fundplan
+        fundplan.settle(rows, _books(lines), dt.date(2026, 11, 12))
+        return rows
+
+    def test_two_payable_lines_one_plan_line(self):
+        from test_fundplan import plan_row
+        D = dt.date
+        for bank_vendor in ("가상음향", "신한은행"):
+            rows = self.settle([plan_row("2026-11-10", "지급", "가상음향", 15000000), plan_row("2026-11-20", "지급", "가상음향", 15000000)],
+                               [("8", D(2026, 11, 10), "25300", "미지급금", 10000000, None, "가상음향"),
+                                ("8", D(2026, 11, 10), "25300", "미지급금", 5000000, None, "가상음향"),
+                                ("8", D(2026, 11, 10), "10300", "보통예금", None, 15000000, bank_vendor)])
+            self.assertEqual([r["상태"] for r in rows], ["이미 지급", "예정"])   # 같은 돈을 다음 줄에 또 쓰지 않음
+            self.assertIn("2줄 합계", rows[0]["근거"])
+
+    def test_receipts_too(self):
+        from test_fundplan import plan_row
+        D = dt.date
+        rows = self.settle([plan_row("2026-11-10", "입금", "가상기획", 33000000)],
+                           [("9", D(2026, 11, 10), "10300", "보통예금", 33000000, None, ""),
+                            ("9", D(2026, 11, 10), "10800", "외상매출금", None, 11000000, "가상기획"),
+                            ("9", D(2026, 11, 10), "10800", "외상매출금", None, 22000000, "가상기획")])
+        self.assertEqual(rows[0]["상태"], "이미 입금")
+
+    def test_other_vendor_lines_do_not_add_up(self):
+        from test_fundplan import plan_row
+        D = dt.date
+        rows = self.settle([plan_row("2026-11-10", "지급", "가상음향", 15000000)],
+                           [("8", D(2026, 11, 10), "25300", "미지급금", 10000000, None, "가상음향"),
+                            ("8", D(2026, 11, 10), "25300", "미지급금", 5000000, None, "나무조명")])
+        self.assertEqual(rows[0]["상태"], "예정일 지남")
