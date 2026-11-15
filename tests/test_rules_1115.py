@@ -1414,3 +1414,24 @@ class TestBlockedMgmtShowsNoBalances(unittest.TestCase):
             self.assertNotIn("{:,}".format(v), txt)
         self.assertFalse([r for r in R["risks"] if "최저 계산 잔액" in r["fact"]])
         self.assertTrue(R["risks"][0]["fact"].startswith("자료 확인에서 막혀"))
+
+
+class TestDividendNeedsCashAndLimit(unittest.TestCase):
+    """1차 C18·C17: 여유 자금을 몰라도 배당을 권했고('한도·현금·회사 상태 모두 괜찮습니다'), 한도 0원이어도 권장 배당 칸에 금액이 나왔다."""
+
+    def test_unknown_cash_holds(self):
+        from test_dividend import R, S, ready
+        from ceo_report import dividend as dv
+        A = dv.advise(R(None), S, {"best": 33_000_000}, ready())
+        self.assertEqual(A["verdict"], "보류")
+        self.assertEqual(A["amount"], 0)
+        self.assertIn("여유 자금을 계산하지 못해", A["reasons"][0])
+        self.assertNotIn("모두 괜찮습니다", " ".join(A["reasons"]))
+
+    def test_zero_limit_has_no_recommended_amount(self):
+        from test_dividend import folder
+        from ceo_report import dividend as dv
+        d = folder([("대표", "100", False, False, "", "")])
+        D = dv.plan(d, dt.date(2026, 11, 30), 0)
+        self.assertEqual((D["best"], D["table"]), (0, []))
+        self.assertIn("배당 한도가 0원", dv.render(D, lambda x: x))

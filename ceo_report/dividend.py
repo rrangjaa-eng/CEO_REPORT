@@ -212,7 +212,9 @@ def plan(input_dir, asof, limit, interim=0):
     P = people(input_dir, asof, interim)
     if not P:
         return None
-    cap = limit if limit and limit > 0 else 300_000_000
+    if limit is not None and limit <= 0:   # 1차 점검 C17: 한도 0원이면 3억 범위로 '권장 배당'을 셈하지 않는다
+        return {"people": P, "best": 0, "limit": limit, "table": [], "share_sum": sum(p["share"] for p in P), "best_rows": []}
+    cap = limit if limit else 300_000_000
     best, steps = 0, []
     t = STEP
     while t <= cap:
@@ -249,6 +251,8 @@ def render(D, esc):
         h.append("<div class='say'>배당에 붙는 세금이 15.4%%를 넘지 않는 가장 큰 배당 총액은 <b>%s원</b>입니다. "
                  "이보다 많이 배당하면 한 사람 이상이 금융소득 2천만 원을 넘어 세금·건강보험료가 더 붙거나%s.</div>"
                  % (W(D["best"]), ", 미성년 주주가 2천만 원 기준을 넘습니다" if any(p["minor"] for p in D["people"]) else " 높은 세율이 적용됩니다"))
+    elif D["limit"] is not None and D["limit"] <= 0:
+        h.append("<div class='say'>배당 한도가 0원이라 배당할 수 있는 금액이 없습니다.</div>")
     else:
         h.append("<div class='say'>지금 조건으로는 15.4%를 넘지 않는 배당 금액이 없습니다 (아래 표 참고).</div>")
     if D["limit"] is not None:
@@ -609,6 +613,12 @@ def advise(R, S, D, input_dir=None):
     elif cash is not None and cash < 1_000_000:
         reasons.insert(0, "배당 지급일까지 나갈 큰돈(법인세·큰 지출 등)을 빼면 배당에 쓸 현금이 남지 않습니다.")
         verdict = "이월"
+    elif cash is None:
+        # 1차 점검 C18 (2026-11-15): 여유 자금을 모르면(자료 확인에서 막힘·잔액 미확인) 한도만으로 권하지 않는다 — 예전엔
+        # '한도·현금·회사 상태 모두 괜찮습니다'로 배당을 권했음
+        reasons.insert(0, "여유 자금을 계산하지 못해 배당할 현금이 있는지 모릅니다 — 판단 보류 (한도만으로는 권하지 않음). "
+                          "통장 잔액·자금계획서가 들어온 뒤 다시 보세요.")
+        verdict = "보류"
     elif amount >= 1_000_000:
         verdict = "배당"
         why = "세금이 15.4%로 끝나는 선" if D and amount == best else ("배당에 쓸 수 있는 현금" if cash is not None and amount == cash // 1_000_000 * 1_000_000 else "배당 한도")
