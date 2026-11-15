@@ -69,6 +69,25 @@ async function writeOut(fname, text) {
   return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
 }
 
+// 2차 P1-6 (2026-11-15): 저장 기록만 보고 건너뛰지 않는다 — 지난번 파일이 실제로 있는지 본다 (지웠거나 옮겼으면 다시 저장).
+// 폴더 허용이 없어 확인할 수 없으면 예전처럼 기록을 믿는다 (같은 내용 때문에 저장 창을 띄우지 않게).
+async function fileThere(prev, dir) {
+  try {
+    if (prev.where === "위하고 폴더" && dir) {
+      if ((await dir.queryPermission({mode: "readwrite"})) !== "granted") return true;
+      await dir.getFileHandle(prev.file);
+      return true;
+    }
+    if (String(prev.where || "").startsWith("다운로드")) {
+      const items = await chrome.downloads.search({query: [prev.file], exists: true});
+      return items.some((d) => String(d.filename || "").endsWith(prev.file));
+    }
+  } catch (e) {
+    return false;
+  }
+  return true;
+}
+
 // 내용(hashSource)이 지난번과 같고, 오늘 이미 지금 저장 폴더에 저장했으면 다시 저장하지 않는다.
 // 날이 바뀌면 같은 내용이라도 하루 한 번은 새로 저장한다 (2026-11-14 코덱스 검토: 자금계획 내용이 7일 동안 안 바뀌면
 // 프로그램은 파일의 받은 날짜만 보고 '오래된 자료'로 보고를 막았다). 저장 폴더를 바꿨으면 같은 내용도 새 폴더에 저장한다.
@@ -82,10 +101,10 @@ async function saveFile(kind, file, hashSource, summary, tag = "") {
   const dirName = dir ? (dir.name || "") : "";
   const placed = prev && (dir ? prev.where === "위하고 폴더" && (prev.dirName || "") === dirName : !!prev.where && prev.where !== "허용 기다림");
   const sameDay = prev && String(prev.saved || "").slice(0, 10) === s.iso.slice(0, 10);
-  if (prev && prev.hash === hash && placed && sameDay) {
+  if (prev && prev.hash === hash && placed && sameDay && await fileThere(prev, dir)) {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
-    await setStatus({[kind]: info, error: ""});
+    await setStatus({[kind]: info});
     return {saved: false, same: true};
   }
   file["수집시각"] = s.iso;
@@ -93,7 +112,7 @@ async function saveFile(kind, file, hashSource, summary, tag = "") {
   const where = await writeOut(fname, JSON.stringify(file));
   const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, dirName, changed: !!prev && prev.hash !== hash}, summary);
   await chrome.storage.local.set({[key]: info});
-  await setStatus({[kind]: info, error: ""});
+  await setStatus({[kind]: info});
   return {saved: true, file: fname, where};
 }
 
@@ -149,6 +168,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (closingRun && sender.tab && closingRun.tabId === sender.tab.id) closingRun.got.push({path: msg.path, data: msg.data});
     return;
   }
+  // 2차 P1-5: 사용자가 받기를 새로 누르면 지난 오류 표시를 비운다 (저장 성공이 오류를 지우지 않으므로 여기서)
+  if (/^collect(Closing|Hr|YearEnd|Recon|Books|Now|All|Plan)$/.test(String(msg.type || ""))) setStatus({error: ""});
   if (msg.type === "collectClosing" || msg.type === "collectHr" || msg.type === "collectYearEnd") {
     const prefix = {collectHr: "인사", collectYearEnd: "연말정산"}[msg.type] || "결산";
     collectClosing(prefix).then(reply, (e) => reply({error: String(e.message || e)}));
@@ -329,11 +350,15 @@ async function collectPlan(months) {
 // 대조 화면(합계잔액시산표 등)은 분개장 바로 뒤에 받는다: 같은 때 받은 것끼리 맞춰 봐야 그 사이 들어간 전표 때문에 다르게 보이지 않는다
 // (2026-11-13 실제: 재무상태표를 받은 7분 뒤 지급 전표 11건이 들어가 통장·미지급금이 3,561만 달라 보였음)
 async function collectAll(months) {
+  // 2차 P1-5 (2026-11-15): 오류 표시는 받기를 시작할 때 비우고, 끝나면 단계 중 하나라도 실패했으면 다시 적는다
+  // (예전엔 뒤 단계 저장 성공이 앞 단계 실패를 지워, 팝업을 다시 열면 실패가 안 보였음)
+  await setStatus({error: ""});
   const out = {};
   for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
+  if (errs.length) await setStatus({error: errs.join(" / "), badge: "!"});
   return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
 }
 

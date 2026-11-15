@@ -17,15 +17,18 @@ async function show(extra = "") {
 
 async function flush(ask) {
   const list = await pending();
-  const left = [];
-  let saved = 0;
+  const done = [];
   for (const p of list) {
     const r = await writeToFolder(p.name, p.text, ask);
-    if (r === "ok") saved++; else left.push(p);
+    if (r === "ok") done.push(p);
   }
+  // 2차 P1-7 (2026-11-15): 쓰는 동안 배경이 새로 넣은 파일을 잃지 않게, 대기열을 다시 읽어 방금 쓴 것만 뺀다
+  // (예전엔 처음 읽은 목록으로 대기열을 통째로 다시 써서 새 파일이 사라졌음)
+  const now = await pending();
+  const left = now.filter((q) => !done.some((p) => p.name === q.name && p.text === q.text));
   await chrome.storage.local.set({pendingSaves: left});
-  if (saved) chrome.runtime.sendMessage({type: "folderSaved", names: list.filter((p) => !left.includes(p)).map((p) => p.name)});
-  return {saved, left: left.length};
+  if (done.length) chrome.runtime.sendMessage({type: "folderSaved", names: done.map((p) => p.name)});
+  return {saved: done.length, left: left.length};
 }
 
 $("pick").onclick = async () => {

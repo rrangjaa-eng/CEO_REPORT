@@ -3049,3 +3049,37 @@ class TestManualSaveWaitsForConvert(unittest.TestCase):
         self.assertEqual(ran, [1])
         self.assertIn("변환이 아직 끝나지 않았습니다", said[-1])
         self.assertIs(gui.Window.save_bank.__wrapped__.__name__, "save_bank")
+
+
+# ───────────── 2차 P1-7: 저장 창이 쓰는 동안 들어온 파일을 대기열에서 잃지 않음 ─────────────
+class TestSaverQueueKeepsNewFiles(unittest.TestCase):
+    def test_flush_race(self):
+        import json
+        import shutil
+        import subprocess
+        if shutil.which("node") is None:
+            self.skipTest("node 없음")
+        js = r'''
+const src = require("fs").readFileSync(process.argv[1], "utf8");
+const m = src.match(/async function pending\(\)[\s\S]*?\n}\n/);
+const f = src.match(/async function flush\(ask\)[\s\S]*?\n}\n/);
+let store = {pendingSaves: [{name: "a.json", text: "A"}]};
+global.chrome = {storage: {local: {get: async (k) => ({[k]: JSON.parse(JSON.stringify(store[k] || []))}),
+                                   set: async (o) => { Object.assign(store, JSON.parse(JSON.stringify(o))); }}},
+                 runtime: {sendMessage: () => {}}};
+global.writeToFolder = async (name) => {   // 앞 파일을 쓰는 동안 배경이 새 파일을 대기열에 넣는다
+  store.pendingSaves = store.pendingSaves.concat([{name: "b.json", text: "B"}]);
+  return "ok";
+};
+eval(m[0].replace("async function pending", "global.pending = async function") + f[0].replace("async function flush", "global.flush = async function"));
+flush(false).then((r) => console.log(JSON.stringify({r, left: store.pendingSaves})));
+'''
+        out = subprocess.run(["node", "-e", js, os.path.join(ROOT, "chrome_extension", "saver.js")],
+                             check=True, stdout=subprocess.PIPE).stdout.decode("utf-8")
+        got = json.loads(out)
+        self.assertEqual(got["r"], {"saved": 1, "left": 1})
+        self.assertEqual([p["name"] for p in got["left"]], ["b.json"])
+
+    def test_manifest_version(self):
+        with open(os.path.join(ROOT, "chrome_extension", "manifest.json"), encoding="utf-8") as f:
+            self.assertIn('"version": "0.9.5"', f.read())
