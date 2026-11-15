@@ -912,6 +912,18 @@ class TestUserRulesLocked(Base):
         self.assertIn("11월 실적", fs)
         self.assertIn("10월 영업이익 (지난달)", fs)   # 달 초(11/2)는 지난달 영업이익 (2026-11-04 이해도 점검 U4)
 
+    def test_ceo_weekly_has_revenue_but_no_operating_profit(self):
+        # 사용자 2026-11-16 결정 ①: 대표 주간엔 마감 전 영업이익·이익률 칸이 없다 (달 초 '지난달 영업이익'도). 경영관리용엔 그대로
+        ceo = first_screen(render(self.R, "ceo"))
+        tiles = re.search(r"<div class='four[^']*'><div class='card'><div class='lab'>11월 매출.*?</div></div></div>", ceo, re.S).group(0)
+        self.assertTrue(tiles.startswith("<div class='four c2'>"))
+        self.assertIn("올해 누적", tiles)
+        self.assertNotIn("영업이익", tiles)
+        self.assertNotIn("영업이익", re.sub(r"<[^>]+>", " ", ceo))
+        late = compute(self.d, "weekly", dt.date(2026, 11, 20))   # 달 초가 지난 날도 (이번 달 영업이익 칸)
+        self.assertNotIn("영업이익", re.sub(r"<[^>]+>", " ", first_screen(render(late, "ceo"))))
+        self.assertIn("11월 영업이익", first_screen(render(late, "mgmt")))
+
     def test_pl_sources_separate(self):
         self.assertEqual(list(self.R["s4"]["sources"]), ["WEHAGO", "인트라넷완료보고"])
         s4 = section(render(self.R, "mgmt"), 4)
