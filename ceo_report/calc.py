@@ -1114,6 +1114,9 @@ def event_unissued(inv_proj, asof, in_missing):
         if in_missing or x["issued"] is None:
             unknown.append({"P": P, "why": "발행금액 미확인"})
             continue
+        if x.get("issued_unknown"):   # 1차 B7 (2026-11-15): 일부 계산서 금액을 모르면 미발행도 모른다 — 예전엔 아는 것만 빼 확정처럼 보였다
+            unknown.append({"P": P, "why": "발행금액 일부 미확인 (%d장)" % x["issued_unknown"]})
+            continue
         left = base - x["issued"]
         if left > 0:
             rows.append({"P": P, "event": ev, "days": (asof - ev).days, "estimate": base, "quoted": base != P.get("estimate"),

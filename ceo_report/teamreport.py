@@ -196,7 +196,8 @@ def build(d, R, team):
         left_rev = revenue_left(P_)
         cost_done = booked.get(P_["id"], 0)
         if closed:
-            rem_cost = 0
+            # 1차 B13 (2026-11-15): 끝난 프로젝트라도 금액 미확인 원가가 있으면 이익을 모른다 — 예전엔 0으로 보고 '이익 미확인 0건'
+            rem_cost = None if P_.get("unknown_cost") else 0
         elif P_.get("budget") is None or cost_done is None:
             rem_cost = None
         else:

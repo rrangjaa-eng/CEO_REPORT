@@ -1793,3 +1793,21 @@ class TestForecastTrackHonest(unittest.TestCase):
         self.assertTrue(insights._frozen(path))
         os.utime(path, None)
         self.assertFalse(insights._frozen(path))
+
+
+class TestUnknownAmountsStayUnknown(unittest.TestCase):
+    """1차 B7·B13: 계산서 일부 금액을 몰라도 미발행을 확정처럼, 끝난 프로젝트 원가를 몰라도 팀 이익을 확정처럼 보였다."""
+
+    def test_partly_unknown_invoices_make_unissued_unknown(self):
+        from ceo_report import calc
+        P = {"id": "26101", "event_date": "2026-10-01", "estimate": 100000000, "contract": 100000000}
+        x = {"P": P, "issued": 40000000, "issued_unknown": 1}
+        E = calc.event_unissued([x], D(2026, 11, 15), False)
+        self.assertEqual(E["rows"], [])
+        self.assertIn("일부 미확인", E["unknown"][0]["why"])
+        E = calc.event_unissued([dict(x, issued_unknown=0)], D(2026, 11, 15), False)
+        self.assertEqual(E["rows"][0]["unissued"], 60000000)
+
+    def test_closed_project_with_unknown_cost_counts_as_unknown_profit(self):
+        src = _read(os.path.join(ROOT, "ceo_report", "teamreport.py"))
+        self.assertIn('rem_cost = None if P_.get("unknown_cost") else 0', src)
