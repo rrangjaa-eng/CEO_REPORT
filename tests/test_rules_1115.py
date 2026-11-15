@@ -2013,3 +2013,34 @@ class TestPayDetailsAttachOnce(unittest.TestCase):
         self.assertNotIn("detail", light)
         two = [dict(sound, key="2", amount=1_100_000), dict(sound, key="3", vendor="가상무대", amount=1_100_000)]
         self.assertEqual(payreq.attach([light], two), 0)   # 다른 거래처 둘의 합이 같아도 붙이지 않음
+
+
+# ───────────── 2차 P6-10: 반쯤 만든 백업이 보관 개수에 끼어 멀쩡한 백업을 지우지 않음 ─────────────
+class TestPartialBackupNotCounted(unittest.TestCase):
+    def test_failed_copy_is_removed_and_good_backups_stay(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import app
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        inp = os.path.join(tmp, "입력")
+        os.makedirs(inp)
+        with open(os.path.join(inp, "설정.csv"), "w", encoding="utf-8") as f:
+            f.write("항목,값\n")
+        paths = mock.Mock(input=inp, root=tmp)
+        for i in range(3):
+            self.assertTrue(app.backup_input(paths, keep=3, now=dt.datetime(2026, 11, 1 + i, 9, 0, 0)))
+        real = shutil.copytree
+
+        def half(src, dst, **kw):
+            os.makedirs(dst)
+            raise OSError(28, "No space left on device")
+        lines = []
+        with mock.patch.object(app.shutil, "copytree", side_effect=half):
+            self.assertIsNone(app.backup_input(paths, lines.append, keep=3, now=dt.datetime(2026, 11, 5, 9, 0, 0)))
+        base = os.path.join(tmp, app.BACKUP_DIR)
+        self.assertEqual(sorted(os.listdir(base)), ["20261101_090000", "20261102_090000", "20261103_090000"])
+        self.assertTrue(app.backup_input(paths, keep=3, now=dt.datetime(2026, 11, 6, 9, 0, 0)))
+        self.assertEqual(sorted(os.listdir(base)), ["20261102_090000", "20261103_090000", "20261106_090000"])
+        self.assertIs(shutil.copytree, real)

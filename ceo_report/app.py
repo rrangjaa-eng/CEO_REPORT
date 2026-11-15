@@ -10,6 +10,7 @@ import csv
 import datetime as dt
 import io
 import os
+import re
 import shutil
 import sys
 import time
@@ -119,6 +120,7 @@ def _module(name):
 
 BACKUP_DIR = "입력_백업"
 BACKUP_KEEP = 10
+_BACKUP_NAME = re.compile(r"^\d{8}_\d{6}(_\d+)?$")   # 다 만든 백업만 (반쯤 만든 '_실패'는 세지도 지우지도 않음)
 
 
 def backup_input(paths, say=None, keep=BACKUP_KEEP, now=None):
@@ -138,10 +140,17 @@ def backup_input(paths, say=None, keep=BACKUP_KEEP, now=None):
         os.makedirs(base, exist_ok=True)
         shutil.copytree(paths.input, dest, ignore=shutil.ignore_patterns("이전", credstore.CRED_FILE, "*.tmp", "~$*"))
     except OSError as e:
+        # 2차 P6-10 (2026-11-15): 반쯤 만든 백업이 남아 다음 번 '최근 10개'에 끼면 멀쩡한 옛 백업이 지워졌다 — 치우거나 '_실패'로
+        shutil.rmtree(dest, ignore_errors=True)
+        if os.path.exists(dest):
+            try:
+                os.replace(dest, dest + "_실패")
+            except OSError:
+                pass
         if say:
             say("입력 폴더 백업을 못 함 (%s) — 변환은 계속합니다" % (e.strerror or type(e).__name__))
         return None
-    olds = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)) and n[:8].isdigit())
+    olds = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)) and _BACKUP_NAME.match(n))
     for n in olds[:-keep] if keep and len(olds) > keep else []:
         shutil.rmtree(os.path.join(base, n), ignore_errors=True)
     if say:
