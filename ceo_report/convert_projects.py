@@ -555,8 +555,36 @@ def split_vat(amount):
     return supply, int(amount) - supply
 
 
-def _request_row(rq, amount, basis):
-    supply, vat = split_vat(amount)
+# 원천세를 떼고 보내는 지급요청(강사·디자이너 등): 금액이 원천세 뗀 금액으로 딱 떨어지고 부가세 포함으로는 안 떨어지면 부가세를
+# 나누지 않고 떼기 전 금액(추정)으로 예산과 견준다 (계산-12, 사용자 카드 2026-11-15). 실제: 요청 683건 중 52건
+WITHHOLDING_GROSS_UP = True
+_ROUND = 1000
+
+
+def _net_of(gross, rate):
+    """떼기 전 금액 gross 에서 원천세(국세 10원 미만 버림 + 지방세 10%)를 뗀 금액."""
+    national = int(gross * (0.03 if rate == 0.033 else 0.08)) // 10 * 10
+    return gross - national - national // 10 // 10 * 10
+
+
+def withholding_gross(amount):
+    """원천세 뗀 금액이면 (떼기 전 금액, 세율) 아니면 None. 떼기 전 금액이 천 원 단위로 딱 떨어지고, 부가세 포함으로 보면
+    공급가액이 천 원 단위로 안 떨어질 때만 (둘 다 떨어지거나 둘 다 아니면 부가세 포함으로 본다: 계산-12)."""
+    if amount is None or amount <= 0:
+        return None
+    if amount % 11 == 0 and (amount // 11 * 10) % _ROUND == 0:
+        return None
+    found = []
+    for rate in WITHHOLDING:
+        gross = int(round(amount / (1 - rate) / _ROUND)) * _ROUND
+        # 소액부징수(소득세법 86조): 국세 원천세가 1,000원 미만이면 떼지 않으므로 그런 금액은 원천세 뗀 금액일 수 없다
+        if gross > 0 and int(gross * (0.03 if rate == 0.033 else 0.08)) >= 1000 and abs(_net_of(gross, rate) - amount) <= 10:
+            found.append((gross, rate))
+    return found[0] if len(found) == 1 else None
+
+
+def _request_row(rq, amount, basis, gross=None):
+    supply, vat = split_vat(amount) if gross is None else (gross, 0)
     return {"프로젝트번호": rq["code"] or "", "항목": rq["name"], "거래처": rq["vendor"], "상태": "요청미지급",
             "공급가액": cell_amount(supply), "부가세": cell_amount(vat), "일자": cell_date(rq["date"]),
             "확정여부": "확정" if rq["status"] == "approved" else "추정", "근거": basis}
@@ -613,7 +641,7 @@ def _requests_part(groups, requests, match):
     # invoice: 번호 -> 큰 쪽(D-50)을 따질 WEHAGO 금액 (계산서 합계 또는 자동 연결된 줄의 합계)
     # covered: 번호 -> 원가 줄이 맡은 요청 금액 (min(요청, WEHAGO)), excess: 번호 -> 요청이 더 커서 넣은 차액 줄 금액
     state = {"annotated": 0, "added": 0, "paid": 0, "skipped": 0, "naming": {}, "paid_nos": [], "skipped_nos": [],
-             "invoice": {}, "covered": {}, "excess": {}}
+             "invoice": {}, "covered": {}, "excess": {}, "grossed": {}}
     taken, to_add = set(), []   # taken: 요청 번호를 이미 붙인(또는 두 요청이 다퉈 비워 둔) 원가 줄 · to_add: 아직 정하지 못한 요청
     for rq in sorted(active, key=lambda r: _no_key(r["번호"])):
         no = rq["번호"]
@@ -700,8 +728,15 @@ def _requests_part(groups, requests, match):
             invoice = _linked_total(linked.get(no, []))
         if rq["amount"] is not None and invoice is not None:
             state["invoice"][no] = invoice
-        entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s%s (인트라넷 금액, 부가세 포함으로 나눔)"
-                                                     % (no, _tag(rq)))))
+        wh = withholding_gross(rq["amount"]) if WITHHOLDING_GROSS_UP and invoice is None else None
+        if wh:
+            state["grossed"][no] = wh[0] - rq["amount"]
+            entries.append((_no_key(no), 0, _request_row(
+                rq, rq["amount"], "지급요청 %s%s (인트라넷 금액 %s은 원천세 %g%% 뗀 금액으로 보아 떼기 전 금액 추정, 부가세 없음)"
+                % (no, _tag(rq), won(rq["amount"]), wh[1] * 100), gross=wh[0])))
+        else:
+            entries.append((_no_key(no), 0, _request_row(rq, rq["amount"], "지급요청 %s%s (인트라넷 금액, 부가세 포함으로 나눔)"
+                                                         % (no, _tag(rq)))))
         if rq["amount"] is not None and invoice is not None and invoice > rq["amount"]:
             entries.append((_no_key(no), 1, _request_row(
                 rq, invoice - rq["amount"],
@@ -800,8 +835,11 @@ def amount_check(known, part, rows):
         text = r.get("근거") or ""
         excess, request = _EXCESS_ROW.match(text), _REQUEST_ROW.match(text)
         if (excess and excess.group(1) in by_no) or (request and request.group(1) in by_no):
-            # 요청 줄도 부가세 포함 금액을 공급가액·부가세로 나눠 쓴다 (계산-12, 2026-11-15): 둘을 더하면 요청 금액
+            # 요청 줄도 부가세 포함 금액을 공급가액·부가세로 나눠 쓴다 (계산-12, 2026-11-15): 둘을 더하면 요청 금액.
+            # 원천세 뗀 금액으로 본 요청 줄은 떼기 전 금액이므로 더한 원천세만큼 뺀다
             row_amount += (num(r["공급가액"]) or 0) + (num(r["부가세"]) or 0)
+            if request and not excess:
+                row_amount -= part.get("grossed", {}).get(request.group(1), 0)
     kinds = "승인·대기·상태 확인 필요" if any(rq["status"] not in ("approved", "pending") for rq in known) else "승인·대기"
     return Check("지급요청 금액 (금액 있는 %s %d건) = 원가 줄 표시 + 요청 줄 + 이미 지급" % (kinds, len(known)),
                  sum(rq["amount"] for rq in known), covered + row_amount + paid_amount)

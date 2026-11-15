@@ -2192,7 +2192,8 @@ def _month_series(R):
 
 def _month_chart(R, H=250):
     """월별 매출·매입(막대 두 개)·영업이익(선) 흐름 (사용자 2026-11-04: 2쪽 빈 곳에, 매입 추가).
-    매출·매입 = 증빙 작성일자 기준 공급가액, 영업이익 = 월별 실적 기준. 같은 원 단위라 축 하나."""
+    매출·매입 = 증빙 작성일자 기준 공급가액, 영업이익 = 월별 실적 기준. 같은 원 단위라 축 하나.
+    막대는 계산서 기준 그대로 두고 범례에 '계산서 기준'을 적는다 (사용자 카드 2026-11-15: 표의 손익 기준 매출과 다른 달이 있어 섞여 보이지 않게)."""
     ser = _month_series(R)
     if len(ser) < 2:
         return ""
@@ -2260,7 +2261,7 @@ def _month_chart(R, H=250):
     ev = R.get("evid_month") is not None
     leg = ("<div class='legend'><span><i style='background:#6b98dc'></i>%s</span>%s"
            "<span><i style='background:#1f4e8c;height:2px;margin-bottom:4px'></i>영업이익 (빨간 점 = 손실 달)</span></div>"
-           % ("매출" if ev else "매출 (손익 기준)", "<span><i style='background:#d8964a'></i>매입</span>" if ev else ""))
+           % ("매출 (계산서 기준)" if ev else "매출 (손익 기준)", "<span><i style='background:#d8964a'></i>매입 (계산서 기준)</span>" if ev else ""))
     foot = ("매출·매입 = 세금계산서 등 증빙 작성일자 기준 공급가액 · 영업이익 = 월별 실적과 같은 기준 (공통비까지 뺀 값)" if ev else
             "증빙월별.csv 없음: 매입 막대 없이 손익 기준 매출만 (대표보고 창의 '자료 변환'이 분개장으로 만듦)")
     return ("<div class='card mchart'><div class='lab'>월별 매출·매입·영업이익 흐름 (%s~%s)</div>%s%s<div class='note%s'>%s</div></div>"

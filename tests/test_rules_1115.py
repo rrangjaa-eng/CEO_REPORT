@@ -16,7 +16,7 @@ for _p in (ROOT, HERE):
         sys.path.insert(0, _p)
 
 from ceo_report import approval, checklist, convert, corptax, linking, payreq, screen_values  # noqa: E402
-from ceo_report.convert_projects import split_vat  # noqa: E402
+from ceo_report.convert_projects import split_vat, withholding_gross  # noqa: E402
 from test_convert_review_fixes import (AUTO_PROJECTS, Run, jl, money, naming, pay, results,  # noqa: E402
                                        unpaid_total)
 
@@ -88,6 +88,27 @@ class TestCalc12VatSplit(unittest.TestCase):
         self.assertEqual([(x["공급가액"], x["부가세"]) for x in row], [("3000000", "300000")])
         self.assertIn("부가세 포함으로 나눔", row[0]["근거"])
         for label, res in results(r.execs).items():
+            self.assertEqual(res, "일치", label)
+
+
+    def test_calc12_withholding_amounts_are_not_split(self):
+        # 11/15 카드: 원천세(사업소득 3.3%·기타소득 8.8%) 뗀 금액으로 딱 떨어지고 부가세로는 안 떨어지면 떼기 전 금액(추정)
+        for amount, want in ((290100, (300000, 0.033)), (67690, (70000, 0.033)), (967000, (1000000, 0.033)),
+                             (456000, (500000, 0.088)), (912000, (1000000, 0.088)),
+                             (1100000, None), (264000, None), (3300000, None), (87700, None), (1000000, None),
+                             (0, None), (None, None), (-967000, None),
+                             # 소액부징수: 국세 원천세 1,000원 미만이면 떼지 않으므로 원천세 뗀 금액으로 보지 않음 (실제 14,500원 요청)
+                             (14500, None), (19340, None), (32880, (34000, 0.033)), (31920, (35000, 0.088))):
+            self.assertEqual(withholding_gross(amount), want, amount)
+
+    def test_calc12_withholding_request_row_is_the_amount_before_withholding(self):
+        r = Run([], [pay(6302, "[26220] 가상 전시", "디자이너_가상", "2026-10-20 09:00:00", 967000),
+                     pay(6303, "[26220] 가상 전시", "가상새거래처", "2026-10-20 09:00:00", 1100000)], AUTO_PROJECTS)
+        one, two = naming(r.execs, "6302"), naming(r.execs, "6303")
+        self.assertEqual([(x["공급가액"], x["부가세"]) for x in one], [("1000000", "0")])
+        self.assertIn("원천세 3.3% 뗀 금액으로 보아 떼기 전 금액 추정", one[0]["근거"])
+        self.assertEqual([(x["공급가액"], x["부가세"]) for x in two], [("1000000", "100000")])
+        for label, res in results(r.execs).items():   # 금액 대조는 더한 원천세만큼 빼고 맞춘다
             self.assertEqual(res, "일치", label)
 
 
@@ -234,6 +255,49 @@ class TestCalc08BadDebt(unittest.TestCase):
         rows, _ = corptax.from_journal([line(D(2026, 3, 5), "41200", "용역매출", credit=300_000_000)],
                                        dict(convert.DEFAULT_CONFIG), D(2026, 11, 4), {})
         self.assertNotIn("세무사 확인 전이라 빼지 않음", rows[0]["근거"])
+
+
+class TestReportChartBasis(unittest.TestCase):
+    """대표 월간 월별 그림 막대는 계산서 기준 그대로, 범례에 '계산서 기준' (사용자 카드 2026-11-15)."""
+
+    def test_bars_are_labelled_invoice_basis(self):
+        from test_month_chart import R as month_report
+        from ceo_report import render as rd
+        h = rd._month_chart(month_report())
+        self.assertIn("매출 (계산서 기준)", h)
+        self.assertIn("매입 (계산서 기준)", h)
+        h = rd._month_chart(month_report(ev=None))          # 증빙월별.csv 없으면 손익 기준 매출만
+        self.assertIn("매출 (손익 기준)", h)
+        self.assertNotIn("계산서 기준", h)
+
+
+class TestArticlesInterimDividend(unittest.TestCase):
+    """정관 42조 중간배당: 영업연도 중 1회 (괄호의 '주총 결의로 분기별'은 상장회사 특례, 정관 원문 확인 2026-11-15)."""
+
+    def test_interim_dividend_once_a_year(self):
+        from ceo_report import articles
+        rules = {a: (b, c) for a, b, c in articles.RULES}
+        law, plain = rules["중간배당"]
+        self.assertIn("1회", law)
+        self.assertNotIn("분기마다", law + plain)
+        self.assertIn("1년에 한 번", plain)
+        self.assertIn("주주총회 결의 또는 대표권 있는 이사(대표이사)의 결정", rules["누가 결정하나"][0])
+
+
+class TestAssumptionMinorDividend(unittest.TestCase):
+    """미성년 주주 배당은 이자·배당을 합쳐 연 2천만 원 이하로 권함 (사용자 카드 2026-11-15)."""
+
+    def plan(self, interest):
+        import tempfile
+        from ceo_report import dividend as dv
+        d = tempfile.mkdtemp()
+        dv.save(d, "부모", "50", False, False, "", "")
+        dv.save(d, "자녀", "50", True, False, interest, "")
+        return dv.plan(d, D(2026, 11, 12), 500_000_000)
+
+    def test_minor_interest_counts_toward_the_20m(self):
+        self.assertEqual(self.plan("")["best"], 40_000_000)            # 자녀 배당 2천만
+        self.assertEqual(self.plan("15000000")["best"], 10_000_000)    # 자녀 이자 1,500만 + 배당 500만 = 2천만
 
 
 if __name__ == "__main__":
