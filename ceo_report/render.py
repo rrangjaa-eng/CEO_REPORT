@@ -1803,13 +1803,32 @@ def _corp_row(R, ym, kind="법인세"):
     return next((t for t in (R.get("tax") or []) if t.get("kind") == kind and (t.get("period") or "").startswith(want)), None)
 
 
+def _corp_row_mid(R, ym, kind="법인세"):
+    """-> (줄, 장부 끝 달 'M월' 또는 None). 이 기간 줄이 없고 월 중간 보고(기준일이 ym 달 안, 그 달 말일 아님)이면
+    변환이 다 끝난 지난달까지 장부로 만든 그해 줄을 쓴다 (2026-11-15 실제 자료 비교: 11/14 월간에서 대손충당금 줄이 빠졌음)."""
+    row = _corp_row(R, ym, kind)
+    if row is not None:
+        return row, None
+    a = R.get("asof")
+    y, m = int(ym[:4]), int(ym[5:])
+    if not a or (a.year, a.month) != (y, m) or (a + dt.timedelta(days=1)).month != m or m == 1:
+        return None, None
+    return _corp_row(R, "%d-%02d" % (y, m - 1), kind), "%d월" % (m - 1)
+
+
 def _corp_est(R, Y, ym):
     """법인세 예상 한 계산 (2026-11-14 P3·K1): 자금 일정의 법인세 줄과 같은 과세표준(감가상각·대손·세무조정 반영).
     그 줄이 이 보고 기간과 다르거나 없으면 이 표의 세전 이익으로 (세무조정 미반영). -> dict 또는 None (세전 이익 모름)."""
     from .corptax import LOCAL_RATE, national
     from .tax import _workday
-    row, lrow = _corp_row(R, ym), _corp_row(R, ym, "법인지방소득세")
-    base = row["base"] if row and row.get("base") is not None else Y["nonop"]["pretax"]
+    import re
+    row, upto = _corp_row_mid(R, ym)
+    lrow = _corp_row_mid(R, ym, "법인지방소득세")[0]
+    if row is not None and upto:   # 월 중간: 이 표의 세전 이익(감가상각·대손 뺀 값) + 지난달까지 장부로 낸 세무조정 예상
+        m = re.search(r"세무조정 예상 (-?[\d,]+)", row.get("basis") or "")
+        base = Y["nonop"]["pretax"] + (int(m.group(1).replace(",", "")) if m else 0)
+    else:
+        base = row["base"] if row and row.get("base") is not None else Y["nonop"]["pretax"]
     nat, corp, C = national(base, ym[:4], R.get("taxret_dir"))
     if corp is None:
         return None
@@ -1818,7 +1837,7 @@ def _corp_est(R, Y, ym):
                       and (t.get("period") or "").startswith("%s년 (1월~" % ym[:4])), None)
     prepaid = yr.get("prepaid") if yr else None
     nxt = int(ym[:4]) + 1
-    return {"base": base, "same": bool(row and row.get("base") is not None), "nat": nat, "corp": corp, "C": C,
+    return {"base": base, "same": bool(row and (upto or row.get("base") is not None)), "upto": upto, "nat": nat, "corp": corp, "C": C,
             "local": int(corp * LOCAL_RATE), "prepaid": prepaid, "pay": None if prepaid is None else max(nat - prepaid, 0),
             "due": row["due"] if row and row.get("due") else _workday(dt.date(nxt, 3, 31)),
             "local_due": lrow["due"] if lrow and lrow.get("due") else _workday(dt.date(nxt, 4, 30))}
@@ -1838,7 +1857,7 @@ def _tax_into(R, Y, ym):
 def _bad_into(R, T, ym):
     """대손충당금 예상 (사용자 2026-11-12): 누적 결산 줄에 넣고 세전 이익에서 뺀다. 변환이 세금예상.csv 법인세 줄에 적은 금액."""
     import re
-    row = _corp_row(R, ym)
+    row = _corp_row_mid(R, ym)[0]
     m = re.search(r"대손충당금 예상 ([\d,]+)", (row or {}).get("basis") or "")   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
     amount = int(m.group(1).replace(",", "")) if m else None
     if not amount or T["nonop"].get("pretax") is None:
@@ -1879,7 +1898,7 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
         return ""
     base, nat, corp, C, local, prepaid, pay = E["base"], E["nat"], E["corp"], E["C"], E["local"], E["prepaid"], E["pay"]
     total = None if pay is None else pay + local
-    row = _corp_row(R, ym)
+    row = _corp_row_mid(R, ym)[0]
     due = row["due"] if row and row.get("due") else None
     h = ["<div class='wsub'>법인세 예상 (1월~%s 이익 기준 · 연말 이익에 따라 바뀜)</div>" % esc(_ym_text(ym)),
          "<table class='pt tx'><thead><tr><th>세전 이익</th><th>과세표준</th><th>%s</th><th>− 중간예납 등 기납부</th><th>법인세 납부 (%s)</th>"
@@ -1892,6 +1911,9 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
         d_txt += ", 대손충당금 예상 뺌"
     d_txt += (" + 세무조정 예상 (자금 일정과 같은 계산)" if base != N["pretax"] else " (자금 일정과 같은 계산)") if E["same"] \
         else " · 세무조정 미반영 (자금 일정의 법인세 줄이 이 기간 것이 아님 — 자료 변환 필요)"
+    if E.get("upto"):   # 월 중간: 세전 이익은 오늘까지, 세무조정·대손은 지난달까지 (자금 일정 금액과는 조금 다를 수 있음)
+        d_txt = d_txt.replace(" (자금 일정과 같은 계산)", "") + \
+            " · 세무조정·대손충당금은 %s까지 장부로 계산 (이번 달은 아직 끝나지 않음)" % E["upto"]
     rate = "·".join("%g%%" % (r * 100) for _, r in brackets(ym[:4])[:2])
     pay_txt = "자금 일정에 %s 납부 예상으로 넣음" % d2s(due) if due else "자금 일정에 넣지 못함 (자료 변환 필요)"
     h.append("<div class='note'>%s</div>" % esc(
