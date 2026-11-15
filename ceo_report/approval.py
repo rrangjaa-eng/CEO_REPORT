@@ -474,7 +474,8 @@ def _link_costs(books, req_all, snap, input_dir, issues, asof=None, now=None):
     if input_dir:
         from . import convert
         overrides, notes = linking.read_links(input_dir)
-        _link_notes(notes, issues)
+        overrides, more = linking.check_links(books.journal, overrides)   # P2-10
+        _link_notes(list(notes) + more, issues)
         cfg, cfg_notes = convert.read_config(input_dir)
         for note in cfg_notes:
             if note.startswith("설정 "):   # '설정.csv 없음 / 읽지 못함'은 화면이 따로 알린다 (01.1 건수를 바꾸지 않음)

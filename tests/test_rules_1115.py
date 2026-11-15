@@ -921,3 +921,44 @@ class TestSafetyArchiveEncoding(unittest.TestCase):
         self.assertIn("읽지 못해 그대로 둠", out[0])
         with open(os.path.join(self.dir, RC.SCHEDULE), "rb") as f:
             self.assertEqual(f.read(), before)
+
+
+# ───────────── P2-10: 수동 프로젝트 연결은 다시 받은 장부에서 다른 줄에 붙지 않음 ─────────────
+class TestLinkFollowsTheSameLine(unittest.TestCase):
+    def J(self, *lines):
+        return [{"date": D(2026, 10, 20), "no": "7", "vendor_code": c, "debit": a, "credit": None} for c, a in lines]
+
+    def links(self, rows):
+        import csv
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, linking.LINK_FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(linking.LINK_TEMPLATE)
+            w.writerows(rows)
+        return linking.read_links(d)
+
+    def test_same_line_is_kept(self):
+        ov, notes = self.links([["2026-10-20", "7", "2", "00200", "300000", "26201"]])
+        out, more = linking.check_links(self.J(("00100", 500000), ("00200", 300000)), ov)
+        self.assertEqual((dict(out), more, notes), ({("2026-10-20", "7", 2): "26201"}, [], []))
+
+    def test_reordered_slip_moves_to_the_one_matching_line(self):
+        ov, _ = self.links([["2026-10-20", "7", "2", "00200", "300000", "26201"]])
+        # 다시 받은 장부: 같은 전표 안 줄 순서가 바뀜 (예전 2번째 줄 = 지금 1번째 줄)
+        out, more = linking.check_links(self.J(("00200", 300000), ("00100", 500000)), ov)
+        self.assertEqual(dict(out), {("2026-10-20", "7", 1): "26201"})
+        self.assertIn("1번째로 옮겨져", more[0])
+
+    def test_other_vendor_on_that_line_is_not_linked(self):
+        ov, _ = self.links([["2026-10-20", "7", "2", "00200", "300000", "26201"]])
+        out, more = linking.check_links(self.J(("00100", 500000), ("00300", 300000)), ov)
+        self.assertEqual(dict(out), {})   # 업체 B 원가가 그 프로젝트로 들어가지 않는다
+        self.assertIn("연결하지 않음", more[0])
+
+    def test_rows_without_check_columns_work_as_before_with_a_hint(self):
+        ov, notes = self.links([["2026-10-20", "7", "2", "", "", "26201"]])
+        out, more = linking.check_links(self.J(("00100", 500000), ("00300", 300000)), ov)
+        self.assertEqual((dict(out), more, notes, out.unchecked), ({("2026-10-20", "7", 2): "26201"}, [], [], 1))

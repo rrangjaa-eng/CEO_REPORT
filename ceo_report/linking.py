@@ -18,10 +18,12 @@ from .approval import _expected_date, _masked, _status, norm_project, parse_regi
 from .screen_values import PROJECT_STAGE_ALL_DONE, PROJECT_STAGE_DONE
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
-from .wehago import norm_vendor
+from .wehago import norm_code, norm_vendor
 
 LINK_FILE = "프로젝트연결.csv"
 LINK_COLUMNS = ["전표일자", "전표번호", "줄", "프로젝트번호"]
+LINK_CHECK = ("거래처코드", "금액")   # 선택 칸 (P2-10): 적으면 다시 받은 장부에서도 그 줄이 맞는지 확인한다
+LINK_TEMPLATE = ["전표일자", "전표번호", "줄", "거래처코드", "금액", "프로젝트번호"]   # 입력양식 머리줄
 BASES = ("수동", "코드", "자동", "미연결")
 MANUAL_LABEL = "수동 (프로젝트연결.csv)"
 MANUAL_UNKNOWN_LABEL = "수동 (프로젝트연결.csv · 프로젝트 목록에 없는 번호)"
@@ -146,6 +148,12 @@ def line_keys(journal):
 
 
 # ───────────── 수동 지정 파일 ─────────────
+class Links(dict):
+    """열쇠 -> 프로젝트번호. checks: 열쇠 -> (거래처코드, 금액) — 적은 줄만 (P2-10)."""
+    checks = None
+    unchecked = 0
+
+
 def _issue_notes(issues):
     out = []
     for _, line, msg in issues.items:
@@ -168,6 +176,8 @@ def read_links(input_dir):
         return {}, notes + ["%s 수동 지정 0건" % LINK_FILE]
     notes = _issue_notes(issues)
     picked = OrderedDict()   # 열쇠 -> 프로젝트번호 집합 (들어온 순서)
+    checks = {}
+    unchecked = 0
     for row in rows:
         line = row["_line"]
         day = parse_date(row.get("전표일자"))
@@ -177,6 +187,8 @@ def read_links(input_dir):
         m = re.match(r"^\[(.*)\]$", project)
         if m:
             project = m.group(1).strip()
+        code = (row.get("거래처코드") or "").strip()
+        amount = num(row.get("금액")) if (row.get("금액") or "").strip() else None
         why = None
         if day is None:
             why = "전표일자를 날짜로 읽지 못함"
@@ -186,17 +198,73 @@ def read_links(input_dir):
             why = "줄 값이 1 이상 정수가 아님"
         elif not project:
             why = "프로젝트번호가 비어 있음"
+        elif (row.get("금액") or "").strip() and amount is None:
+            why = "금액을 숫자로 읽지 못함"
         if why:
             notes.append("%s %s번째 줄: %s → 무시" % (LINK_FILE, line, why))
             continue
-        picked.setdefault((day.isoformat(), no, int(float(nth))), []).append(project)
-    overrides = {}
+        key = (day.isoformat(), no, int(float(nth)))
+        picked.setdefault(key, []).append(project)
+        if code or amount is not None:
+            checks[key] = (code, amount)
+        else:
+            unchecked += 1
+    overrides = Links()
     for key, projects in picked.items():
         if len(set(projects)) > 1:
             notes.append("%s 같은 줄(%s %s-%d)에 다른 프로젝트 지정 → 둘 다 무시" % (LINK_FILE, key[0], key[1], key[2]))
         else:
             overrides[key] = projects[0]
+    overrides.checks = dict((k, v) for k, v in checks.items() if k in overrides)
+    overrides.unchecked = unchecked   # 변환결과.txt 에 한 줄 (convert.link_lines)
     return overrides, notes
+
+
+def _same_line(row, code, amount):
+    if code and norm_code(row.get("vendor_code")) != norm_code(code):
+        return False
+    if amount is not None and abs(amount) not in (abs(row.get("debit") or 0), abs(row.get("credit") or 0)):
+        return False
+    return True
+
+
+def check_links(journal, overrides):
+    """P2-10: 거래처코드·금액을 적은 수동 지정이 지금 장부의 그 줄과 맞는지 본다 -> (쓸 지정, 알림 목록).
+
+    맞지 않으면 같은 전표 안에서 거래처코드·금액이 같은 줄이 하나뿐일 때만 그 줄로 옮기고, 아니면 쓰지 않는다 (다시 받은 장부에서
+    줄 순서가 바뀌어 다른 업체 원가가 그 프로젝트로 들어가지 않게). 확인 칸이 없는 지정은 예전처럼 그대로 쓴다.
+    """
+    checks = getattr(overrides, "checks", None) or {}
+    if not checks:
+        return overrides, []
+    keys = line_keys(journal)
+    by_key = dict(zip(keys, journal))
+    by_slip = {}
+    for k, row in zip(keys, journal):
+        by_slip.setdefault(k[:2], []).append((k, row))
+    out = Links(overrides)
+    out.unchecked = getattr(overrides, "unchecked", 0)
+    out.checks = {}
+    notes = []
+    for key in list(overrides):
+        if key not in checks:
+            continue
+        code, amount = checks[key]
+        row = by_key.get(key)
+        if row is not None and _same_line(row, code, amount):
+            out.checks[key] = checks[key]
+            continue
+        project = out.pop(key)
+        cands = [k for k, r in by_slip.get(key[:2], []) if _same_line(r, code, amount)]
+        if len(cands) == 1 and cands[0] not in out and cands[0] not in overrides:
+            out[cands[0]] = project
+            out.checks[cands[0]] = checks[key]
+            notes.append("%s %s %s-%d → %s: 거래처코드·금액이 같은 줄이 %d번째로 옮겨져 그 줄에 연결함 (파일의 줄 번호를 %d로 고치세요)"
+                         % (LINK_FILE, key[0], key[1], key[2], project, cands[0][2], cands[0][2]))
+        else:
+            notes.append("%s %s %s-%d → %s: 그 줄의 거래처코드·금액이 적은 것과 달라 연결하지 않음 (장부를 다시 받으며 줄이 바뀌었을 수 있음 "
+                         "— 전표를 보고 줄 번호를 다시 적으세요)" % (LINK_FILE, key[0], key[1], key[2], project))
+    return out, notes
 
 
 def unused_links(books, overrides, used):

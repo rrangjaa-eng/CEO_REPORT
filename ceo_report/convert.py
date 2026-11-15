@@ -434,6 +434,8 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     requests = linking.requests_of(snap, asof, now)
     projects = linking.projects_of(snap)
     overrides, notes = linking.read_links(input_dir)
+    overrides, more = linking.check_links(books.journal, overrides)   # P2-10: 다시 받은 장부에서 다른 줄에 붙지 않게
+    notes = list(notes) + more
     old = getattr(snap, "old", None)
     if old is not None:
         notes = list(notes) + old.notes
@@ -446,7 +448,8 @@ def build_links(books, cfg, snap, input_dir, asof, now):
             "requests": requests, "overrides": overrides, "notes": notes, "unused": unused}
 
 
-LINK_HINT = "프로젝트연결.csv에 전표일자·전표번호·줄·프로젝트번호를 적으면 다음 변환부터 그 프로젝트로 연결됩니다"
+LINK_HINT = ("프로젝트연결.csv에 전표일자·전표번호·줄·프로젝트번호를 적으면 다음 변환부터 그 프로젝트로 연결됩니다 "
+             "(거래처코드·금액도 적으면 장부를 다시 받아 줄이 바뀌어도 다른 줄에 붙지 않음)")
 
 
 def _basis_text(summary):
@@ -489,6 +492,10 @@ def link_lines(links):
             out.append("  알림 " + note)
     for key, project, why in links["unused"]:
         out.append("  알림 %s %s %s-%d → %s: %s" % (linking.LINK_FILE, key[0], key[1], key[2], project, why))
+    unchecked = getattr(links.get("overrides"), "unchecked", 0)
+    if unchecked:
+        out.append("  알림 %s 거래처코드·금액을 적지 않은 지정 %d줄: 장부를 다시 받아 전표 안 줄 순서가 바뀌면 다른 줄에 붙어도 "
+                   "알아채지 못함 — 두 칸을 채우면 매번 확인함" % (linking.LINK_FILE, unchecked))
     return out
 
 
