@@ -103,6 +103,7 @@ def read_csv(path, required, issues, info=None):
     missing = [c for c in required if c not in header]
     if info is not None:
         info["missing"] = missing
+        info["header"] = list(header)   # 다시 쓸 때 사용자가 더한 열도 남기게 (2차 C8)
     if missing:
         issues.add(name, 1, "필수 열 없음: " + ", ".join(missing))
     # P2-13 (2026-11-15): 같은 머리글이 두 번이면 예전에는 뒤 칸이 앞 칸 값을 말없이 덮었다 (앞 100만 대신 뒤 10만).

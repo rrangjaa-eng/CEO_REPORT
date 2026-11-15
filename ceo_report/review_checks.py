@@ -300,7 +300,9 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "")))
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
-    cols = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
+    base = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
+    # 2차 C8 (2026-11-15): 사용자가 더한 열(메모 등)도 남은 줄·옮긴 줄 모두 그대로 — 파일의 열 순서를 지킨다
+    cols = list(dict.fromkeys([h for h in info.get("header") or [] if h] + [c for c in base]))
     # 지난기록은 머리줄을 합쳐 통째로 다시 쓴다 (P2-12: 옛 머리줄에 없는 칸을 덧붙이면 칸이 밀리고, CP949 파일 뒤에 UTF-8 을 붙이면 깨짐)
     old_head, old_rows = arc
     head = list(old_head) if old_head else []

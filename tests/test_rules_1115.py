@@ -2093,3 +2093,29 @@ class TestReportFilesSwappedWhenComplete(unittest.TestCase):
         with open(pdf, "rb") as f:
             self.assertEqual(f.read(), b"%PDF-old\n%%EOF\n")
         self.assertEqual(sorted(os.listdir(tmp)), ["a_수정.html", "a_수정.pdf"])
+
+
+# ───────────── 2차 C8: 자금일정 자동 정리 때 사용자가 더한 열을 지우지 않음 ─────────────
+class TestScheduleTidyKeepsUserColumns(unittest.TestCase):
+    def test_extra_column_stays_on_kept_and_moved_lines(self):
+        import csv
+        import shutil
+        import tempfile
+        from ceo_report import review_checks as RC
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, RC.SCHEDULE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["예정일", "입출금", "금액", "확정여부", "분류", "프로젝트번호", "거래처", "근거", "비고", "담당자 메모"])
+            w.writerow(["2026-11-06", "출금", "500000", "확정", "급한 지급", "", "가상", "금요일 급한 출금", "", "김 대리 확인"])
+            w.writerow(["2026-11-20", "출금", "300000", "확정", "예정", "", "", "앞으로", "", "다음 주 다시 볼 것"])
+        J = [{"date": D(2026, 11, 7), "no": "1", "account_code": "10300", "debit": None, "credit": 500000, "vendor": "가상",
+              "vendor_norm": "가상", "type": "일반"}]
+        out = RC.archive_paid_schedule(tmp, J, D(2026, 11, 10))
+        self.assertIn("1줄", out[0])
+
+        def rows(name):
+            with open(os.path.join(tmp, name), encoding="utf-8-sig") as f:
+                return list(csv.DictReader(f))
+        self.assertEqual([r["담당자 메모"] for r in rows(RC.SCHEDULE)], ["다음 주 다시 볼 것"])
+        self.assertEqual([r["담당자 메모"] for r in rows(RC.ARCHIVE)], ["김 대리 확인"])
