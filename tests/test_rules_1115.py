@@ -684,3 +684,76 @@ class TestAssumptionMinCashMonths(unittest.TestCase):
         self.assertAlmostEqual(mc / float(fixed), n, places=1)
         self.assertIn("다시 정하세요", mg)
         self.assertNotIn("다시 정하세요", render_budget(B, mode="ceo"))
+
+
+# ───────────── 계산-06 (N1): 장부의 마지막 통장 거래일이 기준일보다 7일 넘게 앞서면 대표·팀장 보고에 한 줄 ─────────────
+class TestCalc06BankLag(unittest.TestCase):
+    def test_last_bank_day_from_journal(self):
+        from ceo_report import insights
+        J = bank_slip(D(2026, 11, 3), 1, [("81900", "임차료", "500", "창고", 100000, "")]) + \
+            [{"date": D(2026, 11, 12), "no": "2", "account_code": "41200", "account": "매출", "vendor_code": "", "vendor": "",
+              "debit": None, "credit": 500000, "memo": ""}]   # 통장 아닌 줄은 보지 않음
+        self.assertEqual(insights.last_bank_day(J, D(2026, 11, 15)), D(2026, 11, 3))
+        self.assertEqual(insights.book_facts(J, D(2026, 11, 15), D(2026, 11, 15))["last_bank"], "2026-11-03")
+
+    def test_note_only_when_more_than_7_days(self):
+        from ceo_report import gate
+        R = {"asof": D(2026, 11, 15), "auto_facts": {"last_bank": "2026-11-08"}}
+        self.assertEqual(gate.bank_lag_note(R), "")
+        R["auto_facts"]["last_bank"] = "2026-11-07"
+        self.assertIn("마지막 통장 거래가 2026-11-07 (기준일보다 8일 전)", gate.bank_lag_note(R))
+        self.assertEqual(gate.bank_lag_note({"asof": D(2026, 11, 15), "auto_facts": None}), "")
+
+    def test_ceo_report_shows_the_line(self):
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        from ceo_report.render import render
+        R = compute(load(os.path.join(ROOT, "입력양식", "샘플")), "weekly", D(2026, 10, 31))
+        R["auto_facts"] = {"last_bank": "2026-10-20"}
+        for mode in ("ceo", "mgmt"):
+            self.assertIn("마지막 통장 거래가 2026-10-20 (기준일보다 11일 전)", render(R, mode))
+
+
+# ───────────── 안전-08 (N3): 위하고가 알려 준 전표 수와 받은 전표 수가 다르면 막음 ─────────────
+class TestSafety08SlipCount(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def doc(self):
+        from test_journal_json import auto_json
+        return auto_json()
+
+    def write(self, name, doc):
+        from test_journal_json import write_json
+        write_json(self.tmp, name, doc)
+        return os.path.join(self.tmp, name)
+
+    def test_matching_counts_read(self):
+        from ceo_report import wehago
+        rows = wehago.read_journal_json(self.write("261105 분개장 자동수집.json", self.doc()))
+        self.assertGreater(len(rows), 1)
+
+    def test_fewer_slips_than_wehago_said_is_refused(self):
+        from ceo_report import wehago
+        d = self.doc()
+        d["전표수"] += 1
+        with self.assertRaises(wehago.WehagoError) as e:
+            wehago.read_journal_json(self.write("261105 분개장 자동수집.json", d))
+        self.assertIn("위하고가 알려 준 전표는", str(e.exception))
+        d = self.doc()
+        d["줄"] = d["줄"][:-1]   # 줄 수가 적힌 것보다 적음
+        with self.assertRaises(wehago.WehagoError):
+            wehago.read_journal_json(self.write("261105 분개장 자동수집.json", d))
+
+    def test_newest_partial_file_blocks_instead_of_using_older(self):
+        from ceo_report import wehago
+        self.write("261101 분개장 자동수집.json", self.doc())
+        d = self.doc()
+        d["전표수"] += 3
+        self.write("261105 분개장 자동수집.json", d)
+        B = wehago.load_books(self.tmp, D(2026, 11, 5), None)
+        self.assertEqual(B.state, "읽기 실패")
+        self.assertIn("261105 분개장 자동수집.json", B.reason)

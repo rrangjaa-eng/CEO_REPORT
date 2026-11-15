@@ -425,6 +425,16 @@ def read_journal_json(path):
         out.period = (start, end) if end >= start else None
     except (TypeError, ValueError):
         out.period = None
+    # 안전-08 (N3, 2026-11-15): 위하고가 알려 준 전표 수(조회 응답 tot)·줄 수와 받은 것이 다르면 일부만 받은 것 — 쓰지 않고 막는다 (P1-2)
+    tot, n_lines = doc.get("전표수"), doc.get("줄수")
+    if isinstance(n_lines, int) and not isinstance(n_lines, bool) and n_lines != len(doc["줄"]):
+        raise WehagoError("%s: 줄 %d개를 받는다고 적혔는데 %d개만 있음 — 일부만 저장된 파일이라 쓰지 않음. 확장에서 분개장을 다시 받으세요"
+                          % (name, n_lines, len(doc["줄"])))
+    if isinstance(tot, int) and not isinstance(tot, bool):
+        got = len(set((str(r[ix["da_date"]]), str(r[ix["no_acct"]]).strip()) for r in doc["줄"] if isinstance(r, list) and len(r) >= len(cols)))
+        if got != tot:
+            raise WehagoError("%s: 위하고가 알려 준 전표는 %d개인데 받은 전표는 %d개 — 일부만 받았을 수 있어 쓰지 않음. 확장에서 분개장을 다시 받으세요"
+                              % (name, tot, got))
     for r in doc["줄"]:
         if not isinstance(r, list) or len(r) < len(cols):
             continue

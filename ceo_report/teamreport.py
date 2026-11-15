@@ -554,8 +554,10 @@ def write_all(d, R, out_dir, today=None):
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
         page = render(T, today)
         from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-14)
-        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div><div class='excl'>"
-                            % esc(gate.sources_line(R)), 1)
+        lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 한 줄
+        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div>%s<div class='excl'>"
+                            % (esc(gate.sources_line(R)), "<div class='lag' style='font-size:12px;color:#7a4f00;background:#fff8e1;"
+                               "border:1px solid #e0a000;border-radius:6px;padding:4px 8px;margin:4px 0;font-weight:700'>%s</div>" % esc(lag) if lag else ""), 1)
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)

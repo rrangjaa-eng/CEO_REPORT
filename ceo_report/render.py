@@ -441,6 +441,10 @@ def render(R, mode):
         _ins("<br>" + esc(gate.sources_line(R)))))
     h.append("</div>")
     h.append(_ins(gate.banner(gate.problems(R))))
+    lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 두 판 모두 한 줄
+    if lag:
+        h.append("<div class='gate-lag' style='border:2px solid #e0a000;background:#fff8e1;color:#7a4f00;border-radius:8px;"
+                 "padding:8px 12px;margin:8px 0;font-weight:700'>%s</div>" % esc(lag))
     gap_note = gate.blank_plan_gaps(R)   # F8: 자금계획서 빠진 달이 있으면 대표용에도 경고 한 줄 (그 기간 숫자는 비움)
     if gap_note:
         h.append("<style>%s</style><div class='gate'>%s</div>" % (gate.BANNER_CSS, esc(gap_note)))

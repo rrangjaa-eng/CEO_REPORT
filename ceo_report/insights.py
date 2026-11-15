@@ -144,8 +144,18 @@ def monthly_presence(journal, asof, cash_codes=("10300",)):
     return out
 
 
+def last_bank_day(journal, asof, cash_codes=("10300",)):
+    """장부에 들어간 마지막 통장(보통예금 등 cash_codes) 거래일, 기준일까지 (계산-06·N1). 없으면 None."""
+    cash = set(_sq(c) for c in cash_codes)
+    days = [ln["date"] for ln in journal if ln.get("date") is not None and ln["date"] <= asof and _sq(ln.get("account_code")) in cash
+            and ((ln.get("debit") or 0) or (ln.get("credit") or 0))]
+    return max(days) if days else None
+
+
 def book_facts(journal, asof, book_date, cash_codes=("10300",)):
+    lb = last_bank_day(journal, asof, cash_codes)
     return {"asof": asof.isoformat(), "book_date": book_date.isoformat() if book_date else "",
+            "last_bank": lb.isoformat() if lb else "",
             "recurring": recurring(journal, asof, cash_codes),
             "presence": monthly_presence(journal, asof, cash_codes)}
 

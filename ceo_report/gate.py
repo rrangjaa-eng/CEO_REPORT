@@ -126,6 +126,31 @@ def book_date(R):
     return book[0]["date"] if book and book[0].get("date") else None
 
 
+BANK_LAG_DAYS = 7   # 계산-06 (N1): 장부의 마지막 통장 거래일이 기준일보다 이만큼 넘게 앞서면 경고 (실제: 통장→장부 중간 3일, 90%는 17일 안)
+
+
+def last_bank_date(R):
+    """장부에 들어간 마지막 통장 거래일 (변환이 입력\\자동분석.json 에 적은 것). 모르면 None."""
+    v = (R.get("auto_facts") or {}).get("last_bank")
+    try:
+        return dt.date.fromisoformat(str(v)[:10]) if v else None
+    except ValueError:
+        return None
+
+
+def bank_lag_note(R):
+    """계산-06 (N1, 2026-11-15): 받은 날만 보면 장부가 최신처럼 보여도 통장 거래 입력이 늦을 수 있다 (R6).
+    마지막 통장 거래일이 기준일보다 7일 넘게 앞서면 대표·팀장 보고에 한 줄 (막지는 않음). 모르면 빈 글."""
+    lb = last_bank_date(R)
+    if lb is None:
+        return ""
+    gap = (R["asof"] - lb).days
+    if gap <= BANK_LAG_DAYS:
+        return ""
+    return ("장부에 들어간 마지막 통장 거래가 %s (기준일보다 %d일 전)입니다 — 그 뒤 통장 입출금은 아직 장부에 없어 실적·지급에 빠졌을 수 있습니다."
+            % (lb.isoformat(), gap))
+
+
 def sources_line(R):
     """보고에 쓴 자료와 날짜 한 줄."""
     parts = []
