@@ -500,3 +500,25 @@ class mock_patch(object):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ───────────── 계산-13 (결정 e): 예산의 수금도 계산서 작성일 + 60일, 장부 평균은 참고로만 ─────────────
+class TestCalc13BudgetCollect(unittest.TestCase):
+    def test_budget_uses_60_days_like_available_cash(self):
+        import shutil
+        import tempfile
+        from ceo_report import budget
+        from ceo_report.budget_render import render_budget
+        from ceo_report.data import load
+        tmp = tempfile.mkdtemp()
+        try:
+            inp = os.path.join(tmp, "입력")
+            shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), inp)
+            d = load(inp)
+            B = budget.compute(d, budget.read_values(inp), 2027, D(2026, 11, 6), d.settings)
+            self.assertEqual(B["cash"]["days_used"], 60)
+            self.assertEqual(B["cash"]["days_used"], budget.COLLECT_DAYS)
+            html = render_budget(B, mode="mgmt")
+            self.assertIn("작성일 뒤 60일, 가용자금과 같은 기준", html)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)

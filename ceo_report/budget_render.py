@@ -310,11 +310,9 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
             ct.append("<tr class='tot'><td>1년</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
                       % (won(c["start"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])), won(sum(c["fixed"])),
                          _sgn(sum(c["nio"])) if sum(c["nio"]) else "—", won(c["bal"][-1])))
-            if c["days_used"] == c["days"]:
-                dtext = "%d년 계산서 %d건 평균 %.0f일" % (base, c["n_days"], c["days"])
-            else:
-                dtext = "회사 기준 작성일 뒤 %d일%s" % (c["days_used"], (" (입금된 계산서 %d건 평균 %.0f일은 건수가 적어 쓰지 않음)" % (c["n_days"], c["days"]))
-                                                   if c["days"] is not None else " (입금된 계산서 자료 없음)")
+            # 결정 e (2026-11-15): 가용자금과 같은 작성일 뒤 60일. 장부 평균은 입금 끝난 계산서만 세어 짧게 나오므로 참고로만
+            dtext = "작성일 뒤 %d일, 가용자금과 같은 기준%s" % (c["days_used"], (" — 입금된 계산서 %d건 평균 %.0f일은 아직 못 받은 계산서가 빠져 짧게 나와 쓰지 않음" % (c["n_days"], c["days"]))
+                                                       if c["days"] is not None else "")
             if c.get("avail0") is not None:
                 start_text = "%s 쓸 수 있는 돈 %s (은행 잔액 날짜 뒤 통장 입출금 반영, 사용 제한 뺌, 주간 보고와 같은 값)" % (B["asof"].isoformat(), won(c["avail0"]))
             else:

@@ -12,7 +12,7 @@
 - 매출원가 = 매출 × (1 − 목표 수익률). 급여 = 지금 1달 급여 × (1 + 인상률) + 늘릴 인원 × 1인 평균 × (1 + 인상률) (입사 월부터).
 - 그 밖의 판관비 = 계정별 올해 실적(1년으로 늘림) × 기준(인원·물가·그대로). 감가상각비 = 올해 예상(직접 입력 또는 작년 장부).
 - 영업외 수익 = 이자수익만 (지원금 등은 확정 전이라 넣지 않음). 영업외 비용 = 올해 실적을 1년으로 늘림.
-- 자금: 매출 입금은 올해 계산서 평균 회수 기간, 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
+- 자금: 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
 """
 import csv
 import datetime as dt
@@ -37,7 +37,6 @@ SALARY_WORDS = ("급여", "상여", "퇴직", "임금", "제수당")
 AP_SPLIT = (0.4, 0.6)       # 매입 지급: 행사 달, 다음 달
 DEFAULT_COST = 0.70
 COLLECT_DAYS = 60       # 매출 입금: 계산서 작성일 뒤 약 60일 (사용자 2026-11-12)
-MIN_COLLECT_N = 10      # 입금된 계산서가 이만큼 넘어야 장부 평균 수금 기간을 쓴다
 # 예산 숫자(매입·급여·판관비·세금·영업외)에 없는 정해진 지급: 자금일정·자금계획서에서 그대로 가져온다 (G2)
 FIXED_WORDS = ("원금", "상환", "보증금", "설비", "이전", "대여", "투자", "자산")
 FIXED_SKIP = ("이자", "급여", "보험", "세금", "카드", "임차료", "구독")
@@ -593,9 +592,9 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     bal0 = sum(b["balance"] for b in bals if b["date"] == bal_date) if bal_date else None
     restricted = sum(b.get("restricted") or 0 for b in bals if b["date"] == bal_date) if bal_date else 0
     days, n_days = _collect_days(d, base)
-    # 수금 기간: 회사 기준 작성일 뒤 약 60일 (사용자 2026-11-12). 입금된 계산서가 적으면 평균이 짧게 나와(못 받은 건은 빠짐)
-    # 입금이 앞당겨 보이므로 MIN_COLLECT_N 건 넘을 때만 장부 평균을 쓴다 (2026-11-14 오후 점검 G7)
-    days_used = days if (days is not None and n_days >= MIN_COLLECT_N) else COLLECT_DAYS
+    # 수금 기간: 가용자금과 같은 '작성일 뒤 60일' 하나로 (계산-13·사용자 결정 e, 2026-11-15). 장부 평균은 입금이 끝난 계산서만
+    # 세어 빨리 들어온 쪽으로 치우치므로(못 받은 건은 빠짐) 계산에 쓰지 않고 참고로만 보인다 (1차 C15·C10)
+    days_used = COLLECT_DAYS
     lag = max(0.0, days_used / 30.0)
     l0 = int(lag)
     frac = lag - l0
