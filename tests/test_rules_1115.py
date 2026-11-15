@@ -1506,3 +1506,37 @@ class TestRecognizedRevenueCutAtAsof(unittest.TestCase):
         P1 = [p for p in after["s3"]["projects"] if p["id"] == "P26203"][0]
         self.assertEqual(P1["recognized"], P0["recognized"])         # 10/31 기준으로는 11월 매출이 없던 것과 같다
         self.assertEqual(P1["recognized_after"], 30000000)
+
+
+class TestPartlyPaidTaxesStay(unittest.TestCase):
+    """1차 자금-6: 원천세를 세무서분만, 4대보험을 한 공단만 내도 그 기간 줄 전체가 사라져 남은 돈이 '꼭 나갈 돈'에서 빠졌다."""
+
+    def ln(self, day, no, code, vendor, debit=None, credit=None):
+        return {"date": day, "no": no, "account_code": code, "account": "", "debit": debit, "credit": credit, "vendor": vendor,
+                "vendor_code": "", "memo": ""}
+
+    def test_withholding_local_part_left(self):
+        from ceo_report import tax
+        D = dt.date
+        j = [self.ln(D(2026, 9, 25), "1", "25400", "역삼세무서", credit=1000000),
+             self.ln(D(2026, 9, 25), "1", "25400", "강남구청", credit=100000),
+             self.ln(D(2026, 10, 10), "2", "25400", "역삼세무서", debit=1000000),
+             self.ln(D(2026, 10, 10), "2", "10300", "신한", credit=1000000)]
+        rows = [r for r in tax.withholding(j, D(2026, 10, 15), mode="매월") if "9월" in r["대상기간"]]
+        self.assertEqual([r["금액"] for r in rows], ["100000"])
+        self.assertIn("남은 지자체분만", rows[0]["근거"])
+        j.append(self.ln(D(2026, 10, 12), "3", "25400", "강남구청", debit=100000))
+        self.assertFalse([r for r in tax.withholding(j, D(2026, 10, 15), mode="매월") if "9월" in r["대상기간"]])
+
+    def test_social_one_insurer_paid(self):
+        from ceo_report import tax
+        D = dt.date
+        j = [self.ln(D(2026, 9, 25), "1", "25400", "국민연금공단", credit=200000),
+             self.ln(D(2026, 9, 25), "1", "25400", "건강보험공단", credit=100000),
+             self.ln(D(2026, 10, 10), "2", "25400", "국민연금공단", debit=200000),
+             self.ln(D(2026, 10, 10), "2", "81700", "국민연금공단", debit=200000),
+             self.ln(D(2026, 10, 10), "2", "10300", "신한", credit=400000)]
+        rows = [r for r in tax.social(j, D(2026, 10, 15)) if r["대상기간"] == "2026년 9월분"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["금액"], "200000")   # 건강보험 직원분 10만 + 같은 비율 회사분 10만
+        self.assertIn("국민연금 납부 확인", rows[0]["근거"])
