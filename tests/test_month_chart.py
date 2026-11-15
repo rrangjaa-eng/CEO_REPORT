@@ -1,5 +1,6 @@
 """월간 2쪽 '월별 매출·매입·영업이익 흐름' 그림 (사용자 2026-11-04: 2쪽 남는 자리에, 매출·매입은 증빙 작성일자 기준)."""
 import datetime as dt
+import re
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -59,6 +60,27 @@ class TestMonthChart(unittest.TestCase):
         r = R()
         r["s4"]["ym"] = "2026-01"
         self.assertEqual(rd._month_chart(r), "")
+
+    def test_page_fit_lowers_only_the_chart_area(self):
+        # 월간 대표가 정한 3쪽을 넘으면(보고서.py 가 _issue_compact 로 다시 만듦) 그림 높이만 줄인다 — 달마다 숫자 줄은 그대로
+        # (2026-11-16 실제 자료: 2쪽에 ⑤가 다 안 들어가 ⑤가 3쪽, ⑥이 4쪽으로 밀렸음)
+        tall, low = rd._month_chart(R()), rd._month_chart(R(), H=120)
+        height = lambda h: int(re.search(r'viewBox="0 0 900 (\d+)"', h).group(1))
+        self.assertEqual(height(tall) - height(low), 130)
+        texts = lambda h: re.findall(r">([^<>]*)</text>", h)
+        self.assertEqual(texts(tall), texts(low))
+
+    def test_monthly_ceo_uses_low_chart_only_on_page_fit_retry(self):
+        from sample_input import SAMPLE
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        RM = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
+        seen, real = [], rd._month_chart
+        with mock.patch.object(rd, "_month_chart", lambda r, H=250: seen.append(H) or real(r, H)):
+            rd.render(RM, "ceo")
+            RM["_issue_compact"] = True
+            rd.render(RM, "ceo")
+        self.assertEqual(seen, [250, 120])
 
 
 class TestBuildEvidence(unittest.TestCase):

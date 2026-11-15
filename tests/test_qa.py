@@ -258,7 +258,7 @@ class TestInvoiceFileUnusable(unittest.TestCase):
         for card in ("미수금 (세금계산서 발행 후)", "행사 후 세금계산서 미발행"):
             self.assertIn(self.LABEL, text(mfs.split(card + "</div><div class='big'>")[1].split("</div>")[0]), card)
         self.assertIn("입금예정일 지난 미수금: 계산서 자료 없음 (계산서.csv)", mfs)
-        for prefix in ("날짜 없는 입금 예정", "예정일 지난 미처리"):
+        for prefix in ("날짜 없는 입금 예정", "예정일 지난 입금"):   # 결정 ② (2026-11-16): 지난 입금은 따로 한 줄
             inflow_side = tr_box_item(mfs, prefix).split(" / ")[0]
             self.assertIn("계산서 자료 없음", inflow_side, prefix)  # 입금 쪽 '0건 0'만 보이지 않는다
         for html in (ceo, mgmt):

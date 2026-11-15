@@ -797,7 +797,7 @@ def journal_layers(folder, ranked):
     left, layers, co = ranked[-2::-1], [], info.get("company") or ""
     if info.get("period") is not None:
         _, layers, left, _, _ = _same_year_layers(folder, left, rows, info["period"], None, co)
-    return layers + _prior_years(folder, "분개장", left, rows, None, co)[1]
+    return layers + _prior_years(folder, "분개장", left, rows, None, co, period=info.get("period"))[1]
 
 
 def _month_end(d):
@@ -821,7 +821,7 @@ def _read_fail(name, err):
     return "%s — %s" % (name, why)
 
 
-def _prior_years(folder, kind, names, rows, asof, company="", foreign=None):
+def _prior_years(folder, kind, names, rows, asof, company="", foreign=None, period=None):
     """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
 
     names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일이 지난 기수 파일이다.
@@ -834,6 +834,11 @@ def _prior_years(folder, kind, names, rows, asof, company="", foreign=None):
     """
     years = _years(rows)
     floor = min(years) if years else None
+    if floor is None:
+        # 새해 첫 주 (2026-11-16 점검): 새 기수 장부에 아직 전표가 하나도 없으면(1월 1~2일) 예전엔 지난 기수 파일을 하나도
+        # 붙이지 않아 작년 장부가 통째로 빠졌다 (원천세·부가세 예상이 비고, '예전 파일 정리'가 작년 장부를 옮길 수도 있었음).
+        # 그 장부의 '기 간' 시작 해(모르면 기준일의 해)보다 앞선 해 파일을 붙인다
+        floor = period[0].year if period else (asof.year if asof else None)
     picks, skipped, failed = [], [], []
     for n in names:
         try:
@@ -958,7 +963,7 @@ def load_books(folder, asof, stale_days):
                     books.notes.append("분개장 %s~%s 는 %s, 그 밖의 날짜는 이전 파일(%s)" % (
                         a.isoformat(), b.isoformat(), name, ", ".join(entry["layers"])))
             prior_rows, entry["prior"], skipped, prior_slips, prior_spans, prior_failed = _prior_years(
-                folder, kind, names_left, rows, asof, company, foreign)
+                folder, kind, names_left, rows, asof, company, foreign, period=info.get("period"))
             for n, co in foreign:   # P1-1·P2-4: 다른 회사 탭에서 받은 장부를 섞지 않고, 무엇을 뺐는지 알린다
                 books.notes.insert(0, "[확인] %s %s 은 다른 회사(%s) 장부로 적혀 있어 쓰지 않음 — 가장 새 파일 %s 은 %s. "
                                       "다른 회사 자료면 지우고, 이 회사 장부가 맞는지 확인하세요" % (kind, n, co, name, company))

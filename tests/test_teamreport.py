@@ -111,6 +111,47 @@ class TestNumbers(TeamReportCase):
         self.assertEqual(T["exp_rev"], T["tot"]["revenue"] + 300_000_000 + 50_000_000)
 
 
+class TestPriorYearEventRevenue(TeamReportCase):
+    """사용자 결정 ③ (2026-11-16 카드): 작년 이전 행사의 아직 장부에 안 잡힌 매출도 올해 매출 예상에 (대표 월간·예산과 같게)."""
+
+    def add_projects(self, *rows):
+        _append(os.path.join(self.folder, "프로젝트.csv"), list(rows))
+
+    def test_prior_year_left_added_to_this_year_forecast(self):
+        _, _, base, _ = self.make()
+        self.add_projects(
+            # 작년 12월 행사, 끝남(완료): 사전견적 4,000만 중 장부 매출 3,000만 → 1,000만이 올해 잡힐 매출 (남은 원가 0 → 이익에도)
+            {"프로젝트번호": "P25901", "프로젝트명": "가상 송년회", "팀": "기획1팀", "클라이언트": "가상고객", "상태": "완료",
+             "사전견적예산": "40,000,000", "계약금액": "44,000,000", "매출반영누계": "30,000,000", "행사일": "2025-12-20",
+             "완료일": "2025-12-21"},
+            # 작년 행사, 안 끝남: 남은 매출 500만은 넣고 이익은 '미확인' (작년 원가를 이 표가 모름)
+            {"프로젝트번호": "P25902", "프로젝트명": "가상 세미나", "팀": "기획1팀", "클라이언트": "가상고객", "상태": "진행",
+             "사전견적예산": "5,000,000", "계약금액": "5,500,000", "매출반영누계": "0", "행사일": "2025-11-10"},
+            # 작년 행사, 매출 다 잡힘: 넣지 않음
+            {"프로젝트번호": "P25903", "프로젝트명": "가상 포럼", "팀": "기획1팀", "클라이언트": "가상고객", "상태": "완료",
+             "사전견적예산": "7,000,000", "계약금액": "7,700,000", "매출반영누계": "7,000,000", "행사일": "2025-10-01",
+             "완료일": "2025-10-02"})
+        d, R, T, page = self.make()
+        self.assertEqual(T["add_rev"] - base["add_rev"], 15_000_000)
+        self.assertEqual(T["exp_rev"] - base["exp_rev"], 15_000_000)
+        self.assertEqual((T["prior_n"], T["prior_rev"]), (2, 15_000_000))
+        self.assertEqual(T["exp_gp"] - base["exp_gp"], 10_000_000)   # 끝난 송년회 몫만 (세미나는 이익 미확인)
+        self.assertEqual(T["miss_gp"] - base["miss_gp"], 1)
+        self.assertNotIn("P25901", [r["id"] for r in T["up"]])   # 진행·예정 표는 올해 행사만
+        self.assertIn("작년 이전 행사 2건의 아직 안 잡힌 매출 15,000,000 포함", text(page))
+        # 대표 월간 '앞으로 잡힐 매출'은 예전부터 같은 몫을 넣음 (행사 끝남 묶음)
+        self.assertEqual(R["s5"]["expected"]["past"] - compute(load(SAMPLE_COPY(self)), "monthly", ASOF)["s5"]["expected"]["past"],
+                         15_000_000)
+
+
+def SAMPLE_COPY(test):
+    tmp = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, tmp, True)
+    folder = os.path.join(tmp, "입력")
+    shutil.copytree(SAMPLE, folder)
+    return folder
+
+
 class TestDocumentRules(TeamReportCase):
     def test_no_salary_amounts_and_exclusion_notice(self):
         d, R, T, page = self.make()

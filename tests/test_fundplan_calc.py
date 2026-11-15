@@ -77,6 +77,15 @@ class TestPlanInCalc(unittest.TestCase):
         self.assertEqual([e["desc"] for e in F["moved"]], ["가상상사"])
         self.assertEqual([e["desc"] for e in F["late_in"]], ["가상고객"])
 
+    def test_late_plan_inflow_is_this_week_estimate(self):
+        # 사용자 결정 ② (2026-11-16): 예정일 지난 자금계획서 입금(가상고객 11/1)은 이번 주(11/6) 예상 입금 — 확정엔 안 넣음
+        R = compute(load(self.folder()), "weekly", ASOF)
+        late = [e for e in R["s2"]["late_in"] if e["desc"] == "가상고객"]
+        self.assertEqual([(e["orig_date"], e["date"], e["amount"], e["firm"]) for e in late],
+                         [(dt.date(2026, 11, 1), dt.date(2026, 11, 6), 5000000, False)])
+        self.assertIn(late[0], R["s2"]["dated"])
+        self.assertIn("이번 주 예상 입금", late[0]["basis"])
+
     def test_unmatched_in_covered_month_is_kept_and_flagged(self):
         R = compute(load(self.folder()), "weekly", ASOF)
         missing = R["fundplan"]["missing"]

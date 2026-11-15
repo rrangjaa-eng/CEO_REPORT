@@ -94,6 +94,20 @@ class Compute(Base):
             b = b + c["cin"][i] - (c["cpay"][i] + B["sal"][i] + c["sga_pay"][i] + c["tax"][i] + c["fixed"][i]) + c["nio"][i]
             self.assertEqual(c["bal"][i], b)
 
+    def test_prior_year_event_left_goes_into_base_year(self):
+        # 사용자 결정 ③ (2026-11-16 카드): 작년(2025) 행사라도 아직 장부에 안 잡힌 매출은 올해(2026) 매출 예상에 —
+        # 행사 달이 지났으므로 실적 달 바로 뒤 달(11월)에
+        before = self.B()
+        with open(os.path.join(self.inp, "프로젝트.csv"), "a", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f, lineterminator="\r\n").writerow(
+                ["P25901", "가상 송년회", "기획1팀", "가상고객", "완료", "40,000,000", "", "44,000,000", "30,000,000", "2025-12-20", "2025-12-21"])
+        after = self.B()
+        a, b = after["T"]["기획1팀"], before["T"]["기획1팀"]
+        self.assertEqual(a["base_rev"] - b["base_rev"], 10_000_000)
+        self.assertEqual([x - y for x, y in zip(a["rev26"], b["rev26"])], [0] * 10 + [10_000_000, 0])
+        self.assertIn("2025년까지 행사 1건의 아직 장부에 안 잡힌 매출 10,000,000원도 2026년 매출 예상에 넣음 (실적 달 바로 뒤 달)",
+                      after["notes"])
+
     def test_target_rate_used(self):
         with open(os.path.join(self.inp, "팀목표.csv"), "a", encoding="utf-8") as f:
             f.write("2027,기획1팀,1000000000,35\n")

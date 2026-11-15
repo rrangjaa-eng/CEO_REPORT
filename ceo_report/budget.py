@@ -410,7 +410,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
                          "급여·판관비·영업외는 끝난 달 평균으로 1년 환산" % (asof.isoformat(), base, done))
     all_rows = rows
     rows = [p for p in rows if int(p["ym"][5:7]) <= last_m]
-    left_unknown = []
+    left_unknown, prior_unknown, prior_add = [], [], [0, 0]
     teams = sorted(set(p["target"] for p in all_rows))
     # 내년에 행사가 있는 프로젝트의 팀도 넣는다
     got = []
@@ -441,15 +441,25 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         for x in year_revenue_left(d.projects.values(), base, t):
             if not x["left"]:
                 if x["left"] is None:
-                    left_unknown.append(x["P"].get("id"))
+                    (prior_unknown if x["prior"] else left_unknown).append(x["P"].get("id"))
                 continue
-            i = max(x["event"].month, min(last_m + 1, 12)) - 1
+            # 결정 ③ (2026-11-16): 그 전 해 행사의 아직 안 잡힌 매출은 행사 달이 이미 지났으므로 실적 달 바로 뒤 달에
+            i = (min(last_m + 1, 12) if x["prior"] else max(x["event"].month, min(last_m + 1, 12))) - 1
             rv[i] += x["left"]
             gp[i] += x["left"] * ((rr / 100.0) if rr is not None else (1 - cost_rate))
             fc[i] = True
+            if x["prior"]:
+                prior_add[0] += 1
+                prior_add[1] += x["left"]
         T[t] = {"rev26": rv, "gp26": [int(v) for v in gp], "fc": fc}
     if left_unknown:
         notes.append("%d년 행사 %d건은 장부 매출(매출반영누계)을 몰라 남은 매출을 넣지 못함: %s" % (base, len(left_unknown), ", ".join(sorted(left_unknown))))
+    if prior_add[0]:
+        notes.append("%d년까지 행사 %d건의 아직 장부에 안 잡힌 매출 %s원도 %d년 매출 예상에 넣음 (실적 달 바로 뒤 달)"
+                     % (base - 1, prior_add[0], format(prior_add[1], ","), base))
+    if prior_unknown:
+        notes.append("%d년까지 행사 %d건은 장부 매출(매출반영누계)을 몰라 남은 매출을 넣지 못함: %s"
+                     % (base - 1, len(prior_unknown), ", ".join(sorted(prior_unknown))))
     # 사람이 정하는 값
     def val(kind, who=COMPANY):
         return values.get((y, kind, who))
