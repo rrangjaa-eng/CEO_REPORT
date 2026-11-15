@@ -2576,7 +2576,10 @@ def _first_screen(R, mode, per):
         # 1쪽 자금(흐름·앞으로) · 2쪽 ③ 지난 미처리 · ④ 세금 · ⑤ 이번 달 실적(월별 흐름 그림 포함) · 3쪽 누적(이번 달 · 앞으로 들어올 매출 · 누적·목표). ⑦ 계정과목별 표는 경영관리용에만
         p1 = R["period"][1]
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per, "월말" if p1 == _month_end(p1) else _md(p1)))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
-                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
+                  # 쪽 맞춤 줄임(_issue_compact, 보고서.py 가 정한 쪽 수를 넘을 때만): 월별 그림을 낮게 — 2쪽 빈 곳을 채우던 그림이라
+                  # 2쪽에 ⑤가 다 안 들어가면 ⑤가 통째로 3쪽, ⑥이 4쪽으로 밀리던 것 (2026-11-16 실제 자료 4쪽). 목록은 줄이지 않는다
+                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode)
+                      + _month_chart(R, H=120 if R.get("_issue_compact") else 250)),
                      ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
     else:
