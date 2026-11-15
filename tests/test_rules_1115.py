@@ -1849,3 +1849,34 @@ class TestDividendUsesTaxStandards(unittest.TestCase):
         tax = lambda r: [t["tax"] for t in r["table"]]
         self.assertNotEqual(tax(before), tax(after))
         self.assertEqual(dividend.HEALTH_RATE, 0.0719)   # 계산이 끝나면 원래 값으로
+
+
+class TestWrongTermJournalWarned(unittest.TestCase):
+    """2차 C14: 지난 기수 분개장을 오늘 받으면 받은 날만 보고 최신으로 통과했다 — 마지막 통장 거래가 아주 오래면 크게 알린다."""
+
+    def test_old_term_note(self):
+        from ceo_report import gate
+        R = {"asof": D(2026, 11, 15), "auto_facts": {"last_bank": "2025-12-31"}}
+        self.assertIn("지난 기수", gate.bank_lag_note(R))
+        R["auto_facts"]["last_bank"] = "2026-11-01"
+        self.assertNotIn("지난 기수", gate.bank_lag_note(R))
+        self.assertIn("기준일보다 14일 전", gate.bank_lag_note(R))
+
+
+class TestMalformedJournalRowsRefused(unittest.TestCase):
+    """2차 P2-5: 분개장 JSON 의 짧은 줄을 조용히 버려 일부가 빠진 장부를 정상으로 썼다."""
+
+    def test_short_row_refuses_file(self):
+        import sys, tempfile, shutil
+        sys.path.insert(0, os.path.join(ROOT, "tests"))
+        from test_journal_json import COLS, write_json
+        from ceo_report import wehago
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        good = ["20261005", "00001", "매입전표", "차변", "81300", "접대비(판)", 100, 0, "가상", "00001", "메모", "", "", "",
+                "2026-11-13T10:00:00.000", 1]
+        doc = {"종류": "분개장", "형식": 1, "기간": {"start_date": "20260101", "end_date": "20261113", "gisu": "2"},
+               "열": COLS, "줄": [good, good[:5]]}
+        write_json(tmp, "261113 분개장 자동수집.json", doc)
+        with self.assertRaises(wehago.WehagoError):
+            wehago.read_journal_json(os.path.join(tmp, "261113 분개장 자동수집.json"))

@@ -454,9 +454,12 @@ def read_journal_json(path):
         if got != tot:
             raise WehagoError("%s: 위하고가 알려 준 전표는 %d개인데 받은 전표는 %d개 — 일부만 받았을 수 있어 쓰지 않음. 확장에서 분개장을 다시 받으세요"
                               % (name, tot, got))
+    # 2차 P2-5 (2026-11-15): 모양이 다른(짧은) 줄을 조용히 버려 일부가 빠진 장부를 정상으로 썼다 → 깨진 파일로 보고 쓰지 않음
+    bad = sum(1 for r in doc["줄"] if not isinstance(r, list) or len(r) < len(cols))
+    if bad:
+        raise WehagoError("%s: 줄 %d개가 모양이 달라 읽지 못함 (전체 %d줄) — 깨진 파일이라 쓰지 않음. 확장에서 분개장을 다시 받으세요"
+                          % (name, bad, len(doc["줄"])))
     for r in doc["줄"]:
-        if not isinstance(r, list) or len(r) < len(cols):
-            continue
         g = lambda c: r[ix[c]]
         side = str(r[gb]).strip() if gb is not None else ""
         # 화면 자료는 반대쪽 금액을 0으로 준다. 인쇄 파일처럼 빈칸으로 둔다 (차변/대변 구분이 있을 때만)

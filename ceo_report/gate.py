@@ -170,6 +170,7 @@ def book_date(R):
     return book[0]["date"] if book and book[0].get("date") else None
 
 
+WRONG_TERM_DAYS = 45   # 이보다 오래 통장 거래가 없으면 지난 기수 장부를 받은 것으로 의심 (실제 입력 지연은 90%가 17일 안)
 BANK_LAG_DAYS = 7   # 계산-06 (N1): 장부의 마지막 통장 거래일이 기준일보다 이만큼 넘게 앞서면 경고 (실제: 통장→장부 중간 3일, 90%는 17일 안)
 
 
@@ -191,6 +192,9 @@ def bank_lag_note(R):
     gap = (R["asof"] - lb).days
     if gap <= BANK_LAG_DAYS:
         return ""
+    if gap > WRONG_TERM_DAYS:   # 2차 C14 (2026-11-15): 지난 기수 화면을 오늘 받으면 받은 날만 보고 최신으로 통과했다 — 막지는 않되 크게 알림
+        return ("장부의 마지막 통장 거래가 %s (기준일보다 %d일 전)입니다 — 지난 기수(작년) 분개장을 받았거나 장부 입력이 크게 밀렸습니다. "
+                "위하고에서 올해 기수 분개장을 다시 받기 전에는 이 보고의 실적·잔액을 믿지 마세요." % (lb.isoformat(), gap))
     return ("장부에 들어간 마지막 통장 거래가 %s (기준일보다 %d일 전)입니다 — 그 뒤 통장 입출금은 아직 장부에 없어 실적·지급에 빠졌을 수 있습니다."
             % (lb.isoformat(), gap))
 
