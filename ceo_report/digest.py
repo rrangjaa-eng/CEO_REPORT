@@ -151,6 +151,16 @@ def lights(R, I=None):
         st = X.get("state")
         if st == "ok":
             lv, num, sub, facts = OK, "대조함", "위하고 원가·계산서와 인트라넷 대조", []
+            # 2차 P3-15 (2026-11-15): 대조는 했는데 차이가 있으면 '양호'가 아니다 — 거래처 미지급 차이·보통예금 차이를 신호에 잇는다
+            vs = X.get("vendor_summary") or {}
+            if vs.get("diff_count"):
+                facts.append("위하고 대조: 거래처 미지급 차이 %d곳%s." % (vs["diff_count"], " (합 %s원)" % "{:,}".format(vs["diff_sum"])
+                                                                   if vs.get("diff_sum") is not None else ""))
+            cdiff = (X.get("cash") or {}).get("balance_diff")
+            if cdiff:
+                facts.append("위하고 대조: 보통예금 장부 잔액과 계좌잔액.csv 합계 차이 %s원." % "{:,}".format(cdiff))
+            if facts:
+                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (부록 B-8)"
         else:
             lv, num, sub = WA, st or "자료 없음", "대조 자료 확인 필요"
             facts = ["위하고 대조: %s." % (X.get("reason") or st or "자료 없음")]

@@ -348,11 +348,14 @@ def _match_plan(req_all, events, F, norm_vendor):
         for ev in plan:
             if id(ev) in taken or ev["amount"] not in amounts:
                 continue
-            same = bool(key) and norm_vendor(ev["desc"]) == key
+            evk = norm_vendor(ev["desc"])
+            same = bool(key) and evk == key
             proj = bool(rq["code"]) and "".join(ch for ch in (ev.get("project") or "") if ch.isdigit()) == rq["code"]
             near = rq["date"] is not None and abs((ev["date"] - rq["date"]).days) <= 7
             if not (same or proj or near):
                 continue
+            if key and evk and not same and not proj:
+                continue   # 2차 P5-28 (2026-11-15): 거래처가 둘 다 적혀 있고 다르면 날짜·금액만으로 잇지 않음 — 다른 거래처의 확정 지급이 사라졌다
             rank = (0 if same else 1 if proj else 2, abs((ev["date"] - rq["date"]).days) if rq["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, ev)

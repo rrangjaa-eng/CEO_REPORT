@@ -15,6 +15,7 @@ import html
 import io
 import json
 import os
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -334,6 +335,19 @@ def _report_items(input_dir, asof):
     return out
 
 
+def _integrity_warn(s):
+    """정합성 점검 줄이 결정할 경고인가. 2차 P3-12 (2026-11-15): 예전엔 줄 어디에든 '0건'·'0개'가 있으면 버려
+    '확인 필요 10건'·'차변≠대변 3개 확인 필요, 금액 빈 줄 0개' 같은 실제 경고도 사라졌다. 이제 '확인 필요·불일치' 바로 뒤 건수만 본다."""
+    if "← 바뀜" in s:
+        return True
+    if "확인 필요" not in s and "불일치" not in s:
+        return False
+    m = re.search(r"(?:확인 필요|불일치)\s*:?\s*([\d,]+)\s*(?:건|개)", s)
+    if m:
+        return int(m.group(1).replace(",", "")) > 0
+    return not re.search(r"(?:확인 필요|불일치)\s*(?:없음|0(?![\d,]))", s)
+
+
 def _integrity_items(app_dir):
     path = os.path.join(app_dir, "정합성점검.txt")
     out = []
@@ -345,7 +359,7 @@ def _integrity_items(app_dir):
         return out
     for ln in text:
         s = ln.strip().lstrip("-·").strip()
-        if "← 바뀜" in s or (("확인 필요" in s or "불일치" in s) and "0건" not in s and "0개" not in s and "OK" not in s):
+        if _integrity_warn(s):
             out.append({"id": "정합성|%s" % _h(s), "kind": "정합성 점검", "date": when[:10], "amount": None, "vendor": "",
                         "title": "정합성 점검 (%s): %s" % (when, s[:140]), "detail": s,
                         "choices": ["이유 앎 — 괜찮음", "확인 필요"]})

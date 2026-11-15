@@ -196,13 +196,24 @@ def _h(text):
 
 
 def _subject(fact):
-    """할 일 이름표: 숫자가 바뀌어도 같은 일이면 같은 이름표 (프로젝트·거래처는 ':' 앞 이름)."""
-    head = fact.split(":")[0] if ":" in fact[:80] else fact
-    return re.sub(r"[\d,.\-−%]+", "#", head)
+    """할 일 이름표: 숫자가 바뀌어도 같은 일이면 같은 이름표 (프로젝트·거래처는 ':' 앞 이름).
+    2차 점검 P3-9·P4-10 (2026-11-15): ':' 앞 이름은 숫자를 그대로 둔다 — '행사 1차'·'행사 2차'처럼 숫자만 다른 두 프로젝트가
+    한 이름표가 되어 확인할 것 화면에서 하나가 사라졌다 (실제 자료 5묶음 19개)."""
+    if ":" in fact[:80]:
+        return fact.split(":")[0]
+    return re.sub(r"[\d,.\-−%]+", "#", fact)
+
+
+def _scale(fact):
+    """금액 크기 구간 (가장 큰 원 단위 숫자의 자릿수 ÷ 2: 10만~1천만 미만 · 1천만~10억 미만 …). 차이 10만에 한 결정이
+    5천만 차이에 붙지 않게 하되(P3-9), 미수 1.1억 → 9천만처럼 같은 구간 안에서 바뀐 것은 같은 일로 둔다."""
+    nums = [int(x.replace(",", "")) for x in re.findall(r"\d[\d,]{4,}", fact)]
+    big = max(nums) if nums else 0
+    return len(str(big)) // 2 if big >= 10000 else 0
 
 
 def todo_id(area, fact, action):
-    return "할일|%s|%s" % (area, _h(_subject(fact) + "|" + re.sub(r"[\d,.\-−%]+", "#", action)))
+    return "할일|%s|%s" % (area, _h(_subject(fact) + "|" + re.sub(r"[\d,.\-−%]+", "#", action) + "|%d" % _scale(fact)))
 
 
 def _owner(R, fact):
@@ -267,10 +278,15 @@ def todo_status(R, items):
         else:
             it["state"], it["st"] = "이월 %d번째" % (it["n"] - 1), "carry"
     now = set(it["id"] for it in items)
+    blind = R.get("_gate_hidden") is not None   # 자료가 막혀 자금 숫자를 비움 → 자금 할 일은 이번에 판단하지 못함 (P4-12)
     done = []
     for k, p in prev.items():
         if k not in now:
             d = dec.get(k) or {}
+            if blind and p.get("topic") == "cash":
+                done.append({"id": k, "topic": "cash", "text": p.get("text", ""), "owner": p.get("owner", ""),
+                             "state": "판단 못 함", "st": "na", "memo": "자료 확인에서 막혀 이번엔 자금을 판단하지 않음 (처리 아님)", "fact": ""})
+                continue
             done.append({"id": k, "topic": p.get("topic", "data"), "text": p.get("text", ""), "owner": p.get("owner", ""),
                          "state": "처리", "st": "done", "memo": d.get("메모") or "이번 보고엔 걸리지 않음", "fact": ""})
     return items, done
@@ -419,7 +435,7 @@ table.pt.td td,table.pt.td th{text-align:left!important;white-space:normal!impor
 table.pt.td td.n{white-space:nowrap!important}
 .tq-stt{font-size:11px;border-radius:8px;padding:0 7px;white-space:nowrap;font-weight:600}
 .tq-stt.v-new{background:#e8eefb;color:#2b4f9e}.tq-stt.v-carry{background:#fff3d6;color:#8a5d00}.tq-stt.v-dec{background:#eef1f4;color:#2b3a4e}
-.tq-stt.v-done{background:#e7f3ec;color:#2f7d5b}
+.tq-stt.v-done{background:#e7f3ec;color:#2f7d5b}.tq-stt.v-na{background:#fdecea;color:#a3271b}
 tr.tdone td{color:#8a93a0}
 .tp-note{font-size:11.5px;color:var(--sub);margin:4px 0}
 h1.tp{font-size:20px;margin:6px 0 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;break-after:avoid}
@@ -559,12 +575,14 @@ def _todo_table(items, done, with_topic, num_of):
                   "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % (it["st"], esc(it["state"])), "<td>%s</td>" % esc(it.get("memo") or "")]
         rows.append("<tr>%s</tr>" % "".join(cells))
     for it in done:
-        cells = ["<td class='n'>✓</td>", "<td>%s</td>" % esc(it["text"])]
+        cells = ["<td class='n'>%s</td>" % ("?" if it.get("st") == "na" else "✓"), "<td>%s</td>" % esc(it["text"])]
         if with_topic:
             cells.append("<td class='n'>%s</td>" % ("%d. %s" % (num_of[it["topic"]], esc(TOPIC_NAME[it["topic"]])) if it["topic"] in num_of else ""))
+        na = it.get("st") == "na"
         cells += ["<td class='n'>%s</td>" % esc(it["owner"]), "<td class='n'></td>",
-                  "<td class='n'><span class='tq-stt v-done'>처리</span></td>", "<td>%s</td>" % esc(it["memo"])]
-        rows.append("<tr class='tdone'>%s</tr>" % "".join(cells))
+                  "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % ("na" if na else "done", "판단 못 함" if na else "처리"),
+                  "<td>%s</td>" % esc(it["memo"])]
+        rows.append("<tr class='%s'>%s</tr>" % ("" if na else "tdone", "".join(cells)))
     return ("<div class='tw'><table class='pt td nofold'><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>"
             % ("".join("<th>%s</th>" % h for h in head), "".join(rows)))
 
@@ -665,7 +683,9 @@ def build(R, mode_css_mon, parts):
     np_ = (R.get("todo_prev") or {}).get("items") or {}
     carried = sum(1 for it in items if it["id"] in np_)
     h.append("<div class='tp-h'>할 일 <small>%s</small></div>" % esc(
-        ("지난번 할 일 %d건 중 %d건 처리 · %d건 이월" % (len(np_), len(done), carried)) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)"))
+        ("지난번 할 일 %d건 중 %d건 처리 · %d건 이월%s" % (len(np_), sum(1 for d in done if d.get("st") != "na"), carried,
+                                                 " · %d건 판단 못 함" % sum(1 for d in done if d.get("st") == "na")
+                                                 if any(d.get("st") == "na" for d in done) else "")) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)"))
     h.append(_todo_table(items, done, True, num_of))
     h.append("<div class='tp-note'>할 일 = 위험 분석의 해결방안(높음 먼저) + 위험 분석에 없는 자동 분석 경보 ‘높음’ + 자료 없는 주제의 채울 일. "
              "담당 = 프로젝트 팀(프로젝트 일이면), 아니면 경영관리. 기한 = 다음 보고 날. 상태·메모는 창의 ‘확인할 것’ 화면(보고 할 일)에서 "

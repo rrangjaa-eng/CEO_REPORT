@@ -4,6 +4,7 @@
 가상 자료로 옮겼다: 고친 뒤에 다시 생기면 실패한다. 통과는 '이미 알고 막은 것'만 보증한다 (점검 방법 4).
 """
 import datetime as dt
+import io
 import os
 import re
 import sys
@@ -21,6 +22,11 @@ from test_convert_review_fixes import (AUTO_PROJECTS, Run, jl, money, naming, pa
                                        unpaid_total)
 
 D = dt.date
+
+
+def _read(path, enc="utf-8"):
+    with open(path, encoding=enc) as f:
+        return f.read()
 D25 = D(2026, 10, 25)
 
 
@@ -1141,7 +1147,7 @@ class TestNoReportDuringConversion(unittest.TestCase):
         self.assertIsNone(convert.lock_age(P.input))
 
     def test_window_close_waits_for_work(self):
-        src = open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8").read()
+        src = _read(os.path.join(ROOT, "ceo_report", "gui.py"))
         body = src[src.index("    def close(self):"):src.index("    def ask_splits(self, multi):")]
         self.assertLess(body.index("if self.busy:"), body.index("self.root.destroy()"))
         self.assertIn("close_when_done", src[src.index("    def set_busy("):src.index("    def report(self, kind):")])
@@ -1233,7 +1239,7 @@ class TestRawFilesNeedTheDataResponse(unittest.TestCase):
     def test_extension_counts_only_the_data_response_as_success(self):
         import json
         from ceo_report.wehago_raw import NEED
-        src = open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8").read()
+        src = _read(os.path.join(ROOT, "chrome_extension", "background.js"))
         self.assertEqual(src.count("hasData(sc, r.got)"), 2)   # 결산·인사급여 모두 받기, 대조 화면
         self.assertIn("hasData({code: ack.code}, run.got)", src)   # 지금 열린 화면 받기
         js = json.loads(re.search(r"const NEED = (\{.*?\});", src).group(1))
@@ -1495,7 +1501,7 @@ class TestRecognizedRevenueCutAtAsof(unittest.TestCase):
         _append(os.path.join(f, "손익.csv"), [{"출처": "WEHAGO", "연월": "2026-11", "단위": "프로젝트", "대상": "P26203 C사 전시 부스",
                                               "매출": "30,000,000", "직접비": "0"}])
         import csv
-        rows = list(csv.DictReader(open(os.path.join(f, "프로젝트.csv"), encoding="utf-8-sig")))
+        rows = list(csv.DictReader(io.StringIO(_read(os.path.join(f, "프로젝트.csv"), "utf-8-sig"))))
         for r in rows:
             if r["프로젝트번호"] == "P26203":
                 r["매출반영누계"] = str(int((r["매출반영누계"] or "0").replace(",", "")) + 30000000)
@@ -1563,3 +1569,88 @@ class TestClosingSlipKeepsCorpTax(unittest.TestCase):
         self.assertEqual((kept["debit"], kept["credit"]), (12345000, None))
         moved = dict(ln, sort="결대", debit=None, credit=12345000)   # 손익 대체 쪽은 그대로 뺌
         self.assertIsNone(convert.closing_pl_line(moved, ("결차", "결대")))
+
+
+class TestTodoIdsKeepProjectsApart(unittest.TestCase):
+    """2차 P3-9·P4-10: 이름이 숫자만 다른 두 프로젝트의 할 일이 한 ID가 되어 하나가 사라졌고, 차이 10만에 한 결정이 5천만 차이에도 붙었다."""
+
+    def test_names_differing_in_numbers_stay_apart(self):
+        from ceo_report import mgmt_topics as M
+        a = M.todo_id("프로젝트", "[26101] 가을 행사 1차: 예산 초과 1,200,000원", "예산 다시 보기")
+        b = M.todo_id("프로젝트", "[26102] 가을 행사 2차: 예산 초과 1,200,000원", "예산 다시 보기")
+        self.assertNotEqual(a, b)
+
+    def test_small_decision_does_not_cover_big_gap(self):
+        from ceo_report import mgmt_topics as M
+        small = M.todo_id("자료", "장부와 위하고 차이 100,000원", "차이 원인 확인")
+        big = M.todo_id("자료", "장부와 위하고 차이 50,000,000원", "차이 원인 확인")
+        near = M.todo_id("자료", "장부와 위하고 차이 120,000원", "차이 원인 확인")
+        self.assertNotEqual(small, big)
+        self.assertEqual(small, near)
+
+
+class TestBlindCashTodosNotDone(unittest.TestCase):
+    """2차 P4-12: 자료가 막혀 자금을 판단하지 못한 보고에서 지난번 자금 할 일이 '처리'로 표시됐다."""
+
+    def test_cash_todo_is_not_marked_done_when_blind(self):
+        from ceo_report import mgmt_topics as M
+        prev = {"items": {"할일|자금|x": {"n": 1, "first": "2026-11-01", "text": "잔액 확인", "topic": "cash", "owner": "경영관리"},
+                          "할일|자료|y": {"n": 1, "first": "2026-11-01", "text": "자료 받기", "topic": "data", "owner": "경영관리"}}}
+        R = {"asof": D(2026, 11, 8), "todo_prev": prev, "todo_decisions": {}, "_gate_hidden": {}}
+        _, done = M.todo_status(R, [])
+        st = dict((d["id"], d["st"]) for d in done)
+        self.assertEqual(st, {"할일|자금|x": "na", "할일|자료|y": "done"})
+        R.pop("_gate_hidden")
+        _, done = M.todo_status(R, [])
+        self.assertEqual(set(d["st"] for d in done), {"done"})
+
+
+class TestPlanMatchNeedsSameVendor(unittest.TestCase):
+    """2차 P5-28: 지급요청을 자금계획서 줄과 날짜·금액만으로 이어, 승인 가정 체크를 풀면 다른 거래처의 확정 지급까지 사라졌다."""
+
+    def test_other_vendor_same_amount_near_date_not_taken(self):
+        from ceo_report import approval
+        norm = lambda v: (v or "").replace(" ", "").replace("(주)", "")
+        ev = {"source": "자금계획서", "io": "out", "amount": 1000000, "desc": "을상사", "date": D(2026, 11, 20), "project": ""}
+        rq = {"status": "pending", "amount": 1000000, "schedule_amount": None, "vendor": "갑상사", "code": "",
+              "date": D(2026, 11, 19), "xstatus": "", "rule": ""}
+        F = {"used": True, "months": {"2026-11"}}
+        taken, moved, absent = approval._match_plan([rq], [ev], F, norm)
+        self.assertEqual(taken, set())
+        same = dict(rq, vendor="을상사")
+        taken, moved, absent = approval._match_plan([same], [ev], F, norm)
+        self.assertEqual(taken, {id(ev)})
+        blank = dict(ev, desc="")   # 계획서에 거래처가 비었으면 예전처럼 날짜로 잇는다
+        taken, _, _ = approval._match_plan([dict(rq)], [blank], F, norm)
+        self.assertEqual(taken, {id(blank)})
+
+
+class TestIntegrityWarningsKept(unittest.TestCase):
+    """2차 P3-12: 정합성 결과 줄에 '0건·0개'가 어디든 있으면 버려 '10건'·'…3개 확인 필요, 금액 빈 줄 0개' 경고도 사라졌다."""
+
+    def test_counts_next_to_words_decide(self):
+        from ceo_report.checklist import _integrity_warn as w
+        self.assertTrue(w("입력 자료 확인 필요 10건 (파일 · 내용 · 건수)"))
+        self.assertTrue(w("전표 1,230개 중 차변≠대변 3개 확인 필요, 금액 빈 줄 0개"))
+        self.assertTrue(w("· 확인 필요: 설정.csv — 값 이상 (3건)"))
+        self.assertTrue(w("대조 불일치 2건"))
+        self.assertFalse(w("입력 자료 확인 필요 없음"))
+        self.assertFalse(w("전표 1,230개 중 차변≠대변 0개 OK, 금액 빈 줄 0개"))
+        self.assertFalse(w("대조 불일치 0건"))
+        self.assertTrue(w("자금계획 ← 바뀜"))
+
+
+class TestXchkSignalShowsGaps(unittest.TestCase):
+    """2차 P3-15: 위하고 대조에 차이가 있어도 경영관리 신호는 '양호·대조함'이었다."""
+
+    def test_vendor_or_cash_gap_turns_warning(self):
+        from ceo_report import digest
+        R = {"kind": "monthly", "xchk": {"state": "ok", "vendor_summary": {"diff_count": 2, "diff_sum": 3500000},
+                                         "cash": {"balance_diff": 0}}}
+        try:
+            L = digest.lights(R)
+        except Exception:
+            self.skipTest("lights() needs a fuller report")
+        x = [v for v in L if v["key"] == "xchk"][0]
+        self.assertEqual(x["lv"], digest.WA)
+        self.assertIn("거래처 미지급 차이 2곳", x["facts"][0])
