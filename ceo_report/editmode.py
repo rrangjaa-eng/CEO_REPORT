@@ -81,10 +81,12 @@ def original_path(html_path):
 
 def latest_report(output_dir, kind):
     """kind(주간·월간)의 가장 최근 대표 보고 HTML. (원래 파일, 고칠 파일) — 원래보다 새 _수정 이 있으면 그걸 이어서 고친다."""
-    found = sorted(glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind)))
+    found = glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind))
     if not found:
         return None, None
-    orig = found[-1]
+    # 2차 P4-7 (2026-11-15): '방금 만든 보고'(winstate.latest_reports)와 같게 가장 최근에 만든 것 — 예전엔 이름(기준일) 순이라
+    # 11/8 보고를 방금 다시 만들어도 11/15 보고를 열었다
+    orig = max(found, key=lambda p: (os.path.getmtime(p), p))
     ed = edited_path(orig)
     if os.path.isfile(ed) and os.path.getmtime(ed) >= os.path.getmtime(orig):
         return orig, ed

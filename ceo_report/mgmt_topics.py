@@ -344,14 +344,19 @@ def check_items(out_dir):
     recs = _records(out_dir)
     if not recs:
         return []
-    d, kind, path = recs[-1]
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return []
+    # 2차 P4-11 (2026-11-15): 같은 기준일에 주간·월간 기록이 둘 다 있으면 둘 다 (예전엔 이름 순으로 주간 것만 골랐다)
+    d = recs[-1][0]
+    items = {}
+    for _, kind, path in [r for r in recs if r[0] == d]:
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for k, it in (data.get("items") or {}).items():
+            items.setdefault(k, it)
     out = []
-    for k, it in (data.get("items") or {}).items():
+    for k, it in items.items():
         out.append({"id": k, "kind": "보고 할 일", "date": d.isoformat(), "amount": None, "vendor": "",
                     "title": "보고 할 일 (%s · %s): %s" % (TOPIC_NAME.get(it.get("topic"), ""), it.get("owner", ""), it.get("text", "")),
                     "detail": "%s%s" % (it.get("fact", ""), (" · %d번째 보고에 걸림" % it["n"]) if it.get("n", 1) > 1 else ""),

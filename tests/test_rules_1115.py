@@ -2220,3 +2220,48 @@ class TestForgetRemovesLeftoverCredentials(unittest.TestCase):
             f.write(b"x")
         self.assertTrue(credstore.clear(tmp))
         self.assertEqual(os.listdir(tmp), [])
+
+
+# ───────────── 2차 P4-6·P4-7·P4-11: 열기·수정 모드·확인 화면이 같은 보고를 고름 ─────────────
+class TestReportPickingAgrees(unittest.TestCase):
+    def _out(self):
+        import shutil
+        import tempfile
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        return out
+
+    def _touch(self, path, when, text="<html></html>"):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.utime(path, (when, when))
+
+    def test_saved_edit_opens_instead_of_the_original(self):
+        from ceo_report import winstate
+        out = self._out()
+        base = os.path.join(out, "2026-11-13_주간")
+        self._touch(base + "_대표보고.html", 1000)
+        self._touch(base + "_대표보고 (11-13 09시00분 만듦).pdf", 1000, "%PDF")
+        self.assertTrue(winstate.latest_reports(out)["대표"].endswith("만듦).pdf"))
+        self._touch(base + "_대표보고_수정.pdf", 2000, "%PDF")
+        self.assertEqual(winstate.latest_reports(out)["대표"], base + "_대표보고_수정.pdf")
+
+    def test_edit_mode_takes_the_report_made_last(self):
+        from ceo_report import editmode, winstate
+        out = self._out()
+        self._touch(os.path.join(out, "2026-11-15_주간_대표보고.html"), 1000)
+        self._touch(os.path.join(out, "2026-11-08_주간_대표보고.html"), 2000)   # 지난 기준일을 방금 다시 만듦
+        self.assertEqual(winstate.latest_reports(out)["name"], "2026-11-08_주간")
+        orig, _ = editmode.latest_report(out, "주간")
+        self.assertEqual(os.path.basename(orig), "2026-11-08_주간_대표보고.html")
+
+    def test_check_screen_has_weekly_and_monthly_todos_of_the_same_day(self):
+        import json
+        from ceo_report import mgmt_topics
+        out = self._out()
+        folder = os.path.join(out, mgmt_topics.RECORD_DIR)
+        os.makedirs(folder)
+        for kind, k in (("weekly", "주간할일"), ("monthly", "월간할일")):
+            with open(os.path.join(folder, "할일_%s_2026-11-15.json" % kind), "w", encoding="utf-8") as f:
+                json.dump({"items": {k: {"text": k, "topic": "cash", "owner": "경영관리", "n": 1}}}, f, ensure_ascii=False)
+        self.assertEqual(sorted(i["id"] for i in mgmt_topics.check_items(out)), ["월간할일", "주간할일"])
