@@ -839,17 +839,22 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_a
         tables.extend([project_table, execs, xchk])
     fp_table = build_fundplan(books, cfg, wehago_dir, asof)
     tables.extend([fp_table, fundplan_received_table(fp_table)])
-    tables.append(convert_pl.build_dept(books, cfg, _read_dept_prev(input_dir)))
-    tables.append(convert_pl.build_staff(books, cfg, _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)))
-    tables.append(convert_pl.build_dept_accounts(books, cfg, _read_prev_rows(input_dir, data.DEPT_ACCOUNT_FILE,
-                                                                             data.DEPT_ACCOUNT_KEYS)))
+    p = _read_dept_prev(input_dir)
+    tables.append(_keep_if_unreadable(convert_pl.build_dept(books, cfg, p or []), p))
+    p = _read_prev_rows(input_dir, data.STAFF_FILE, data.STAFF_KEYS)
+    tables.append(_keep_if_unreadable(convert_pl.build_staff(books, cfg, p or []), p))
+    p = _read_prev_rows(input_dir, data.DEPT_ACCOUNT_FILE, data.DEPT_ACCOUNT_KEYS)
+    tables.append(_keep_if_unreadable(convert_pl.build_dept_accounts(books, cfg, p or []), p))
     tables.append(build_tax(books, cfg, asof, input_dir, wehago_dir))
     tables.extend(build_bank(books, cfg))
     tables.append(build_debts(books, cfg))
-    tables.append(convert_pl.build_accounts(books, cfg, _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)))
-    tables.append(build_evidence(books, sales, _read_prev_rows(input_dir, data.EVID_FILE, data.EVID_KEYS)))
+    p = _read_prev_rows(input_dir, data.ACCOUNT_FILE, data.ACCOUNT_KEYS)
+    tables.append(_keep_if_unreadable(convert_pl.build_accounts(books, cfg, p or []), p))
+    p = _read_prev_rows(input_dir, data.EVID_FILE, data.EVID_KEYS)
+    tables.append(_keep_if_unreadable(build_evidence(books, sales, p or []), p))
     from . import annual   # 연간 보고용 (사용자 2026-11-10): 거래처별 매출·매입, 통장 흐름 분류, 결산 법인세
-    tables.append(annual.build_table(books, cfg, sales, _read_prev_rows(input_dir, annual.FILE, annual.KEYS)))
+    p = _read_prev_rows(input_dir, annual.FILE, annual.KEYS)
+    tables.append(_keep_if_unreadable(annual.build_table(books, cfg, sales, p or []), p))
     from . import cashflow   # 현금흐름표 (사용자 2026-11-12): 경영관리 보고에만
     tables.append(cashflow.build_table(books, cfg))
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 계정별 연월 합 → 재무상태표·손익
@@ -1023,27 +1028,37 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
 
 
 def _read_prev_rows(input_dir, name, keys):
-    """이전 파일의 줄 (새 분개장에 없는 달을 잇는 데 씀). 없거나 읽지 못하면 빈 목록."""
+    """이전 파일의 줄 (새 분개장에 없는 달을 잇는 데 씀). 없으면 빈 목록, 있는데 읽지 못하면 None (2차 P2-7)."""
     path = os.path.join(input_dir, name)
     if not os.path.exists(path):
         return []
     info = {}
     rows, ok = util.read_csv(path, keys, util.Issues(), info)
     if not ok or info.get("missing"):
-        return []
+        return None
     return [dict((k, r.get(k, "")) for k in keys) for r in rows]
 
 
 def _read_dept_prev(input_dir):
-    """이전 부서비용.csv 줄 (새 분개장에 없는 달을 잇는 데 씀). 없거나 읽지 못하면 빈 목록."""
+    """이전 부서비용.csv 줄 (새 분개장에 없는 달을 잇는 데 씀). 없으면 빈 목록, 있는데 읽지 못하면 None (2차 P2-7)."""
     path = os.path.join(input_dir, data.DEPT_FILE)
     if not os.path.exists(path):
         return []
     info = {}
     rows, ok = util.read_csv(path, data.DEPT_KEYS, util.Issues(), info)
     if not ok or info.get("missing"):
-        return []
+        return None
     return [dict((k, r.get(k, "")) for k in data.DEPT_KEYS + data.DEPT_OPTIONAL) for r in rows]
+
+
+def _keep_if_unreadable(table, prev):
+    """2차 P2-7 (2026-11-15): 이전 누적 파일이 있는데 읽지 못하면 그 파일을 그대로 둔다 — 예전에는 빈 목록으로 보고 새 장부의 달만
+    써서 새 장부에 없는 지난 달(1월 누적 등)이 사라졌다 (원본은 이전 폴더에만)."""
+    if prev is None and table.written:
+        table.written = False
+        table.reason = ("이전 %s 를 읽지 못해 그대로 둠 (새 장부에 없는 지난 달을 잃지 않게) — 엑셀에서 열려 있으면 닫고, "
+                        "깨졌으면 파일을 다른 이름으로 옮긴 뒤 다시 변환하세요" % table.name)
+    return table
 
 
 def fundplan_opening_checks(openings, books, cfg):

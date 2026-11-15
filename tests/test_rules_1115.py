@@ -2119,3 +2119,29 @@ class TestScheduleTidyKeepsUserColumns(unittest.TestCase):
                 return list(csv.DictReader(f))
         self.assertEqual([r["담당자 메모"] for r in rows(RC.SCHEDULE)], ["다음 주 다시 볼 것"])
         self.assertEqual([r["담당자 메모"] for r in rows(RC.ARCHIVE)], ["김 대리 확인"])
+
+
+# ───────────── 2차 P2-7: 이전 누적 CSV 를 못 읽으면 덮어쓰지 않음 (지난 달을 잃지 않게) ─────────────
+class TestUnreadableCumulativeKept(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import test_convert
+        test_convert.setUpModule()
+
+    def test_broken_previous_file_is_left_as_is_and_said(self):
+        from ceo_report import data
+        from test_convert_review_fixes import company, run_convert_core
+        tmp, input_dir, collect, wehago_dir = company(self)
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 0, res.lines)
+        done = [n for n in (data.DEPT_FILE, data.STAFF_FILE, data.ACCOUNT_FILE, data.EVID_FILE)
+                if any(ln.startswith("%s 만듦" % n) for ln in res.lines)]   # 이번 가상 장부로 만든 누적 파일
+        self.assertTrue(done)
+        for n in done:   # 머리글이 깨진 파일 (필수 열 없음)
+            with open(os.path.join(input_dir, n), "w", encoding="utf-8-sig") as f:
+                f.write("깨진,머리글\n2026-01,1\n")
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        for n in done:
+            self.assertEqual(_read(os.path.join(input_dir, n), "utf-8-sig"), "깨진,머리글\n2026-01,1\n", n)
+            self.assertTrue([ln for ln in res.lines if ln.startswith("[%s] 만들지 않음" % n) and "읽지 못해 그대로 둠" in ln],
+                            (n, res.lines))
