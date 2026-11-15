@@ -2734,3 +2734,24 @@ class TestPendingDownloadsAreNew(unittest.TestCase):
         os.utime(p, (t, t))
         S = winstate.steps(P, dirs=[dl])
         self.assertEqual((S["now"], S["new_since"]), (2, [winstate.PENDING]))
+
+
+# ───────────── 2차 P5-15: 창 상태 파일 값 모양이 틀려도 멈추지 않음 ─────────────
+class TestWindowStateBadValues(unittest.TestCase):
+    def test_bad_values_dropped(self):
+        import json
+        import shutil
+        import tempfile
+        from ceo_report import winstate
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, winstate.STATE_FILE), "w", encoding="utf-8") as f:
+            json.dump({"payday": 20261113, "pick": None, "auto": "예", "runs": "어제", "other": 1}, f)
+        st = winstate.load(tmp)
+        self.assertEqual(st, {"runs": {}, "other": 1})
+        self.assertEqual(winstate.start_values(tmp, D(2026, 11, 5))["payday"], "")
+        winstate.remember_run(tmp, "변환", True, now=dt.datetime(2026, 11, 5, 18, 40))
+        self.assertEqual(winstate.load(tmp)["runs"], {"변환": {"at": "2026-11-05 18:40", "ok": True}})
+        with open(os.path.join(tmp, winstate.STATE_FILE), "w", encoding="utf-8") as f:
+            json.dump({"runs": {"변환": {"at": 5, "ok": "y"}, "주간": {"at": "2026-11-05 10:00", "ok": False}}}, f)
+        self.assertEqual(list(winstate.load(tmp)["runs"]), ["주간"])

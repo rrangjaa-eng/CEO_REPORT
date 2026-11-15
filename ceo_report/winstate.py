@@ -65,11 +65,26 @@ def money(text):
 
 
 # ───────────── 창 입력값 기억 ─────────────
+def _clean(data):
+    """2차 P5-15 (2026-11-15): 값 모양이 틀린 칸(날짜 칸에 숫자, 기록 칸에 글자 등)은 버린다 — 예전엔 창이 오류로 멈췄다."""
+    out = dict(data)
+    for k in ("payday", "pick"):
+        if k in out and not isinstance(out[k], str):
+            del out[k]
+    if "auto" in out and not isinstance(out["auto"], bool):
+        del out["auto"]
+    if "runs" in out:
+        runs = out["runs"] if isinstance(out["runs"], dict) else {}
+        out["runs"] = {t: r for t, r in runs.items()
+                       if isinstance(r, dict) and isinstance(r.get("at"), str) and isinstance(r.get("ok"), bool)}
+    return out
+
+
 def load(input_dir):
     try:
         with open(os.path.join(input_dir, STATE_FILE), encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        return _clean(data) if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
