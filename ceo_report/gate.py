@@ -33,6 +33,29 @@ def problems(R):
         out.append("분개장 자료일을 모름 (자료 변환을 다시 하세요)")
     elif (R["asof"] - bd).days > days:
         out.append("분개장 자료일 %s — 기준일보다 %d일 전 (허용 %d일)" % (bd.isoformat(), (R["asof"] - bd).days, days))
+    out.extend(company_problems(R))
+    return out
+
+
+def company_problems(R):
+    """P1-1·P2-4 (2026-11-15): 위하고 SmartA 탭이 여러 회사로 열려 있으면 확장이 다른 회사 자료를 받을 수 있었다.
+    받은 분개장·자금계획서에 적힌 회사가 설정 회사명이나 서로와 다르면 막는다. 회사 이름을 모르면(예전 파일·빈 설정) 막지 않는다."""
+    from .wehago import same_company
+    facts = R.get("auto_facts") or {}
+    mine = str((R.get("settings") or {}).get("회사명") or "").strip()
+    if mine in ("", "회사명"):   # 설정 기본값(빈 칸 '회사명')은 이름을 모르는 것
+        mine = ""
+    book = str(facts.get("book_company") or "").strip()
+    plans = [str(c).strip() for c in facts.get("plan_companies") or [] if str(c).strip()]
+    out = []
+    if mine and book and not same_company(mine, book):
+        out.append("분개장이 다른 회사(%s) 장부임 — 설정 회사명은 %s. 위하고에서 이 회사 SmartA 화면을 앞에 띄우고 다시 받으세요 "
+                   "(이름만 다르게 적은 것이면 설정.csv 회사명을 위하고 회사 이름과 같게 고치세요)" % (book, mine))
+    for c in plans:
+        ref = book or mine
+        if ref and not same_company(ref, c):
+            out.append("자금계획서가 다른 회사(%s) 자료임 — %s %s. 위하고에서 이 회사 SmartA 화면을 앞에 띄우고 다시 받으세요"
+                       % (c, "분개장은" if book else "설정 회사명은", ref))
     return out
 
 

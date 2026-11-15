@@ -254,6 +254,7 @@ class Books:
         self.from_start = True
         self.journal_gaps = []   # 분개장 파일들 사이 어느 파일에도 없는 기간 [(시작, 끝)] (2026-11-14 K3)
         self.start_gap = ""   # 빈 기간 때문에 from_start 를 끈 까닭 (통장 잔액을 분개장으로 만들지 않음)
+        self.company = ""   # 가장 새 분개장(자동수집)에 적힌 회사 이름 (P1-1·P2-4, 2026-11-15). 모르면 빈 글자
 
 
 _SUBTOTAL = ("일계", "월계", "누계", "합계", "소계")
@@ -373,6 +374,23 @@ def read_journal_xls(path):
 _LEAD_CODE = re.compile(r"^\s*\[[^\]]*\]\s*")
 
 
+_CO_WORDS = re.compile(r"주식회사|유한회사|\(주\)|\(유\)|㈜|\s+")
+
+
+def company_key(name):
+    """회사 이름 비교용: 띄어쓰기·'주식회사'·'(주)'를 뺀 글자 (같은 회사를 다르게 적은 것까지 다르다고 보지 않게)."""
+    return _CO_WORDS.sub("", unicodedata.normalize("NFKC", str(name or ""))).lower()
+
+
+def same_company(a, b):
+    """두 회사 이름이 같은 회사인가. 어느 하나라도 모르면(빈 글자) 같다고 본다 (모르는 것으로 막지 않음).
+    한쪽이 다른 쪽을 품으면(예: '플랜트8' 과 '주식회사 플랜트8 본점') 같다고 본다."""
+    x, y = company_key(a), company_key(b)
+    if not x or not y:
+        return True
+    return x == y or (min(len(x), len(y)) >= 2 and (x in y or y in x))
+
+
 def read_journal_json(path):
     """크롬 확장 '대표보고 위하고 수집'이 저장한 분개장(.json, 2026-11-05) -> read_journal_xls 와 같은 모양.
 
@@ -417,6 +435,7 @@ def read_journal_json(path):
     out = Rows([["전표일자", "전표번호", "구분", "Code", "계정과목", "차변", "대변", "거래처", "Code", "적요",
                  "프로젝트명", "부서명", "사원명"] + (["줄번호"] if sq is not None else [])])
     out.known_extra = ("프로젝트명", "부서명", "사원명", "줄번호")
+    out.company = str(doc.get("회사") or "").strip()   # 확장이 받은 SmartA 탭 제목의 회사 이름 (P1-1·P2-4)
     period = doc.get("기간") or {}
     try:
         s, e = str(period.get("start_date", "")), str(period.get("end_date", ""))
@@ -474,7 +493,8 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     out, last = [], None
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
             "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
-            "sales_rows": [], "slip_projects": {}, "period": getattr(rows, "period", None)}
+            "sales_rows": [], "slip_projects": {}, "period": getattr(rows, "period", None),
+            "company": getattr(rows, "company", "") or ""}
     slips = {}   # (전표일자 ISO, 번호) -> 코드, 한 전표에 서로 다른 코드가 있으면 None (쓰지 않음)
     for row in rows[1:]:
         if not any(c.strip() for c in row):
@@ -720,12 +740,13 @@ def _gaps(spans):
     return out
 
 
-def _same_year_layers(folder, names, rows, period, asof):
+def _same_year_layers(folder, names, rows, period, asof, company="", foreign=None):
     """부분 내려받기 겹치기 (사용자 2026-11-05: 한두 건 고칠 때마다 분개장 전체를 다시 받기 번거로움).
 
     가장 새 분개장의 인쇄 '기 간'(period) 안 날짜는 그 파일 것만 쓰고, 그 밖의 같은 기수 날짜는 이전 분개장(새 것부터)에서
     가져온다. 이전 파일도 자기 '기 간' 안 날짜만, 이미 더 새 파일이 맡은 기간은 빼고 쓴다. 기간을 모르는 파일과
     가장 새 파일의 시작 해보다 앞선 해 파일(지난 기수)은 건드리지 않는다 (_prior_years 가 맡음).
+    company 와 다른 회사로 적힌 파일은 쓰지 않고 foreign 목록에 (파일, 회사) 로 남긴다 (P1-1·P2-4).
     -> (붙일 행, 쓴 파일, 남은 파일, 붙인 파일의 전표별 프로젝트 코드, 겹친 기간 목록)."""
     spans, added, used, rest, slips = [period], [], [], [], {}
     year0 = dt.date(period[0].year, 1, 1)
@@ -737,6 +758,11 @@ def _same_year_layers(folder, names, rows, period, asof):
             more, info = read_book(os.path.join(folder, n), "분개장", _file_date(n), asof)
         except Exception:
             rest.append(n)
+            continue
+        if not same_company(company, info.get("company")):
+            rest.append(n)
+            if foreign is not None:
+                foreign.append((n, info.get("company")))
             continue
         p = info.get("period")
         if p is None or p[1] < year0:
@@ -765,10 +791,10 @@ def journal_layers(folder, ranked):
         rows, info = read_book(os.path.join(folder, ranked[-1]), "분개장", _file_date(ranked[-1]), None)
     except Exception:
         return []
-    left, layers = ranked[-2::-1], []
+    left, layers, co = ranked[-2::-1], [], info.get("company") or ""
     if info.get("period") is not None:
-        _, layers, left, _, _ = _same_year_layers(folder, left, rows, info["period"], None)
-    return layers + _prior_years(folder, "분개장", left, rows, None)[1]
+        _, layers, left, _, _ = _same_year_layers(folder, left, rows, info["period"], None, co)
+    return layers + _prior_years(folder, "분개장", left, rows, None, co)[1]
 
 
 def _month_end(d):
@@ -792,7 +818,7 @@ def _read_fail(name, err):
     return "%s — %s" % (name, why)
 
 
-def _prior_years(folder, kind, names, rows, asof):
+def _prior_years(folder, kind, names, rows, asof, company="", foreign=None):
     """지난 기수 파일 (해를 넘는 프로젝트, 2026-11-03): WEHAGO 는 기수(연도)마다 따로 내려받는다.
 
     names(새 것부터) 중 모든 전표일자가 이미 고른 행들의 가장 이른 연도보다 앞선 해인 파일이 지난 기수 파일이다.
@@ -801,6 +827,7 @@ def _prior_years(folder, kind, names, rows, asof):
     파일이 맡은 기간은 '기 간'(모르면 전표가 있는 달 전체). 같은 해가 섞인 파일(같은 기수의 이전 내려받기)은 쓰지 않는다.
     -> (붙일 행, 붙인 파일 이름, 쓰지 않은 파일 이름, 붙인 파일의 전표별 프로젝트 코드, 붙인 기간 목록, 읽지 못한 파일 알림).
     분개장은 지난 기수 전표의 프로젝트명 코드도 함께 돌려준다 (2026-11-04: 버리면 작년 원가·매출이 모두 미연결).
+    company 와 다른 회사로 적힌 파일은 쓰지 않고 foreign 목록에 (파일, 회사) 로 남긴다 (P1-1·P2-4: 다른 회사 장부를 섞지 않음).
     """
     years = _years(rows)
     floor = min(years) if years else None
@@ -811,6 +838,11 @@ def _prior_years(folder, kind, names, rows, asof):
         except Exception as e:  # 지난 파일이 깨졌으면 쓰지 않되 무엇을 못 읽었는지 알린다 (K2)
             skipped.append(n)
             failed.append(_read_fail(n, e))
+            continue
+        if not same_company(company, more_info.get("company")):
+            skipped.append(n)
+            if foreign is not None:
+                foreign.append((n, more_info.get("company")))
             continue
         ys = _years(more)
         if floor is None or not ys or max(ys) >= floor:
@@ -903,18 +935,24 @@ def load_books(folder, asof, stale_days):
             entry.update(dict((k, info[k]) for k in ("last_date", "rows", "skipped", "undated", "sales", "other",
                                                      "after_ref", "extra_columns", "extra_note")))
             entry["ref_date"] = fdate or info["last_date"]
-            names_left, layer_slips = others.get(kind, []), {}
+            names_left, layer_slips, foreign = others.get(kind, []), {}, []
             spans = [_span_of(rows, info)]
+            company = info.get("company") or ""
+            if kind == "분개장":
+                entry["company"] = books.company = company
             if kind == "분개장" and info.get("period") and names_left:
                 layer_rows, entry["layers"], names_left, layer_slips, spans = _same_year_layers(
-                    folder, names_left, rows, info["period"], asof)
+                    folder, names_left, rows, info["period"], asof, company, foreign)
                 if entry["layers"]:
                     a, b = info["period"]
                     rows = sorted(layer_rows + rows, key=lambda r: (r["date"] is None, r["date"] or dt.date.min))
                     books.notes.append("분개장 %s~%s 는 %s, 그 밖의 날짜는 이전 파일(%s)" % (
                         a.isoformat(), b.isoformat(), name, ", ".join(entry["layers"])))
             prior_rows, entry["prior"], skipped, prior_slips, prior_spans, prior_failed = _prior_years(
-                folder, kind, names_left, rows, asof)
+                folder, kind, names_left, rows, asof, company, foreign)
+            for n, co in foreign:   # P1-1·P2-4: 다른 회사 탭에서 받은 장부를 섞지 않고, 무엇을 뺐는지 알린다
+                books.notes.insert(0, "[확인] %s %s 은 다른 회사(%s) 장부로 적혀 있어 쓰지 않음 — 가장 새 파일 %s 은 %s. "
+                                      "다른 회사 자료면 지우고, 이 회사 장부가 맞는지 확인하세요" % (kind, n, co, name, company))
             for f in prior_failed:   # K2: 읽지 못한 파일은 조용히 건너뛰지 않는다 (변환결과·경영관리 '입력 자료 확인 필요')
                 books.notes.insert(0, "[확인] %s 파일을 읽지 못해 쓰지 않음: %s — 지난해 장부라면 그 해 전표가 빠진 채 계산됩니다. "
                                       "위하고에서 다시 받아 넣으세요" % (kind, f))

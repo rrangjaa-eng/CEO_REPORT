@@ -1095,7 +1095,8 @@ def build_fundplan(books, cfg, wehago_dir, asof):
             notes.append("  %s %s %s %s %s원 — %s" % (r["상태"], r["예정일"], r["입출금"], r["거래처"],
                                                    "{:,}".format(r["금액"]), r["근거"]))
     return Table("자금계획.csv", fundplan.COLUMNS, res["rows"], notes=notes,
-                 extra={"received": [{"대상월": ym, "자료일": stamp.isoformat(), "파일": n} for ym, n, stamp in res["months"]]})
+                 extra={"received": [{"대상월": ym, "자료일": stamp.isoformat(), "파일": n} for ym, n, stamp in res["months"]],
+                        "companies": res.get("companies") or {}})
 
 
 def fundplan_received_table(fp_table):
@@ -1309,7 +1310,12 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         from . import review_checks
         tidy = review_checks.archive_paid_schedule(input_dir, books.journal, books.book_date, cfg["cash_codes"])
         from . import insights   # 자동 분석용 장부 풀이: 고정비·매달 있어야 할 전표 (사용자 2026-11-12)
-        insights.write_facts(input_dir, insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"]))
+        facts = insights.book_facts(books.journal, asof, books.book_date, cfg["cash_codes"])
+        # P1-1·P2-4: 받은 장부·자금계획서의 회사 이름 — 확인(gate)이 설정 회사명·서로와 맞춰 본다 (다른 회사 자료로 보고하지 않게)
+        fp_table = next((t for t in tables if t.name == "자금계획.csv" and t.written), None)
+        facts["book_company"] = books.company or ""
+        facts["plan_companies"] = sorted(set(v for v in ((fp_table.extra or {}).get("companies") or {}).values() if v)) if fp_table else []
+        insights.write_facts(input_dir, facts)
         dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
         from . import checklist, hometax

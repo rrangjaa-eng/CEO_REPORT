@@ -1237,3 +1237,76 @@ class TestRawFilesNeedTheDataResponse(unittest.TestCase):
         self.assertIn("hasData({code: ack.code}, run.got)", src)   # 지금 열린 화면 받기
         js = json.loads(re.search(r"const NEED = (\{.*?\});", src).group(1))
         self.assertEqual(js, NEED)   # 확장과 프로그램이 같은 자료 응답을 본다
+
+
+class TestOtherCompanyTabs(unittest.TestCase):
+    """P1-1·P2-4: 여러 회사 SmartA 탭 — 확장은 보고 있는 탭을 쓰고, 프로그램은 다른 회사 장부·자금계획서를 섞거나 보고하지 않는다."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.t, True)
+
+    def journal(self, name, company, start, end, rows):
+        from test_journal_json import COLS, write_json
+        doc = {"종류": "분개장", "형식": 1, "회사": company, "기간": {"start_date": start, "end_date": end, "gisu": "2"},
+               "열": COLS, "줄": rows}
+        write_json(self.t, name, doc)
+
+    def row(self, day, no, code, acct, dr, cr, sq):
+        return [day, no, "매입전표", "차변" if dr else "대변", code, acct, dr, cr, "가상", "00001", "메모", "", "", "",
+                "2026-11-13T10:00:00.000", sq]
+
+    def test_company_names_compare_loosely(self):
+        from ceo_report.wehago import same_company
+        self.assertTrue(same_company("주식회사 가나상사", "(주)가나상사"))
+        self.assertTrue(same_company("주식회사 가나상사", "가나상사"))
+        self.assertTrue(same_company("", "다라상사"))   # 모르면 막지 않음
+        self.assertFalse(same_company("주식회사 가나상사", "주식회사 다라상사"))
+
+    def test_other_company_prior_year_is_not_mixed_in(self):
+        from ceo_report import wehago
+        self.journal("261113 분개장 자동수집.json", "주식회사 가나상사", "20260101", "20261113",
+                     [self.row("20261010", "00001", "81300", "접대비(판)", 100, 0, 1),
+                      self.row("20261010", "00001", "25300", "미지급금", 0, 100, 2)])
+        self.journal("261103 분개장_2025.json", "주식회사 다라상사", "20250101", "20251231",
+                     [self.row("20250510", "00001", "81300", "접대비(판)", 900, 0, 1),
+                      self.row("20250510", "00001", "25300", "미지급금", 0, 900, 2)])
+        b = wehago.load_books(self.t, dt.date(2026, 11, 13), None)
+        self.assertEqual(b.company, "주식회사 가나상사")
+        self.assertEqual(sorted(set(r["date"].year for r in b.journal)), [2026])   # 다른 회사 2025 장부는 쓰지 않음
+        self.assertEqual(b.files["분개장"]["prior"], [])
+        self.assertTrue(any("다른 회사(주식회사 다라상사)" in n and n.startswith("[확인]") for n in b.notes), b.notes)
+        self.assertNotIn("261103 분개장_2025.json", wehago.journal_layers(self.t, ["261103 분개장_2025.json", "261113 분개장 자동수집.json"]))
+
+    def test_same_company_prior_year_still_used(self):
+        from ceo_report import wehago
+        self.journal("261113 분개장 자동수집.json", "주식회사 가나상사", "20260101", "20261113",
+                     [self.row("20261010", "00001", "81300", "접대비(판)", 100, 0, 1),
+                      self.row("20261010", "00001", "25300", "미지급금", 0, 100, 2)])
+        self.journal("261103 분개장_2025.json", "(주)가나상사", "20250101", "20251231",
+                     [self.row("20250510", "00001", "81300", "접대비(판)", 900, 0, 1),
+                      self.row("20250510", "00001", "25300", "미지급금", 0, 900, 2)])
+        b = wehago.load_books(self.t, dt.date(2026, 11, 13), None)
+        self.assertEqual(sorted(set(r["date"].year for r in b.journal)), [2025, 2026])
+
+    def test_gate_blocks_other_company(self):
+        from ceo_report import gate
+        R = {"settings": {"회사명": "주식회사 가나상사"}, "auto_facts": {"book_company": "주식회사 다라상사", "plan_companies": []}}
+        self.assertEqual(len(gate.company_problems(R)), 1)
+        self.assertIn("분개장이 다른 회사(주식회사 다라상사)", gate.company_problems(R)[0])
+        R["auto_facts"] = {"book_company": "주식회사 가나상사", "plan_companies": ["주식회사 다라상사"]}
+        self.assertIn("자금계획서가 다른 회사(주식회사 다라상사)", gate.company_problems(R)[0])
+        R["auto_facts"] = {"book_company": "가나상사", "plan_companies": ["(주)가나상사"]}
+        self.assertEqual(gate.company_problems(R), [])
+        R = {"settings": {"회사명": "회사명"}, "auto_facts": {"book_company": "주식회사 다라상사"}}   # 설정 기본값: 이름 모름
+        self.assertEqual(gate.company_problems(R), [])
+
+    def test_extension_prefers_the_tab_being_viewed(self):
+        with open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8") as f:
+            src = f.read()
+        body = re.search(r"async function findSmartaTab\(\) \{.*?\n\}", src, re.S).group(0)
+        self.assertIn("active: true, lastFocusedWindow: true", body)   # 지금 보고 있는 탭 먼저
+        self.assertIn("여러 회사", body)                                 # 회사가 섞여 있으면 받지 않음
+        self.assertNotIn("tabs.find((t) => /[?&]cno=/.test(t.url)) || null", src)

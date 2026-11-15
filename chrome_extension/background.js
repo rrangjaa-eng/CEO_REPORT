@@ -177,9 +177,24 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
 });
 
+// 회사 번호 (SmartA 주소의 cno 값)
+function cnoOf(url) {
+  const m = String(url || "").match(/[?&]cno=([^&#]+)/);
+  return m ? m[1] : "";
+}
+
+// 받을 SmartA 탭 (P1-1·P2-4, 2026-11-15): 예전에는 열린 SmartA 탭 중 첫 탭을 골라, 여러 회사를 열어 두면 지금 보는 회사가 아닌
+// 다른 회사 자료를 받을 수 있었다. 지금 보고 있는 탭이 SmartA 면 그 탭을 쓰고, 아니면 열린 SmartA 탭이 모두 같은 회사일 때만 쓴다.
 async function findSmartaTab() {
-  const tabs = await chrome.tabs.query({url: "https://smarta.wehago.com/*"});
-  return tabs.find((t) => /[?&]cno=/.test(t.url)) || null;
+  const tabs = (await chrome.tabs.query({url: "https://smarta.wehago.com/*"})).filter((t) => cnoOf(t.url));
+  if (!tabs.length) return null;
+  const [act] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  const mine = act && tabs.find((t) => t.id === act.id);
+  if (mine) return mine;
+  if (new Set(tabs.map((t) => cnoOf(t.url))).size > 1) {
+    throw new Error("위하고 SmartA 탭이 여러 회사로 열려 있음 — 받을 회사의 SmartA 탭을 앞에 띄운 뒤 다시 누르세요.");
+  }
+  return tabs[0];
 }
 
 // 자금계획은 searchDate 없이 열어야 '0. 계획월' 보기(달 단위 조회)로 열린다.
@@ -211,7 +226,9 @@ function waitLoaded(tabId, ms) {
 }
 
 async function sourceTab() {
-  const src = await findSmartaTab();
+  let src;
+  try { src = await findSmartaTab(); }
+  catch (e) { await setStatus({error: String(e.message || e), badge: "!"}); throw e; }
   if (!src) {
     await setStatus({error: "위하고 SmartA 화면이 열려 있지 않음", badge: "!"});
     throw new Error("위하고에 로그인한 뒤 SmartA(회계) 화면을 한 번 열어 두세요.");

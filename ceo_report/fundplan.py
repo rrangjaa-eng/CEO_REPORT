@@ -120,7 +120,8 @@ def parse_auto(path):
         elif bad:
             reason = "읽지 못한 줄 %d개" % bad
         out.append(({"month": mo, "items": items[mo], "checks": [], "ok": not reason, "reason": reason,
-                     "opening": None, "settled": [], "form": "자동수집"}, stamp))
+                     "opening": None, "settled": [], "form": "자동수집",
+                     "company": str(doc.get("회사") or "").strip()}, stamp))   # 받은 SmartA 탭의 회사 (P1-1·P2-4)
     return out
 
 
@@ -356,6 +357,8 @@ def load(folder):
         _, stamp, _, _, n, res = best[month]
         ym = "%d-%02d" % month
         out["months"].append((ym, n, stamp))
+        if res.get("company"):
+            out.setdefault("companies", {})[n] = res["company"]
         if res.get("opening") is not None:
             out.setdefault("openings", []).append((month, res["opening"], n))
         if res.get("settled"):
