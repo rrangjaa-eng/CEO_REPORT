@@ -705,6 +705,25 @@ def _canonical(url):
     return path, tuple(pairs)
 
 
+_NEXT_WORDS = ("다음", "다음페이지", "다음쪽", "next", "›", "»", ">", ">>")
+
+
+def _script_paging(page):
+    """주소 없이 스크립트로만 움직이는 쪽 이동 링크 -> (쪽 번호(2 이상) 링크 수, '다음'류 링크 수).
+    2차 P1-15 (2026-11-15): 이런 링크는 따라가지 못해, 1쪽만 읽고 '완료'가 될 수 있었다."""
+    nums = nexts = 0
+    for href, text in page.links:
+        h = (href or "").strip().lower()
+        if h and h != "#" and not h.startswith("javascript:"):
+            continue
+        t = re.sub(r"\s+", "", text or "").lower()
+        if t.isdigit() and int(t) >= 2:
+            nums += 1
+        elif t in _NEXT_WORDS:
+            nexts += 1
+    return nums, nexts
+
+
 def _classify_links(page, current_url, kind, list_path):
     """쪽 이동 링크를 가려낸다.
 
@@ -819,6 +838,7 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
     linked, fetched = set(), set()   # 쪽 링크로 본 주소 · 실제로 읽은 주소 (끝에 다 읽었는지 맞춰 본다)
     rows = collections.OrderedDict()
     pages = 0
+    script_warned, first_unknown = False, set()
     while queue:
         if pages >= max_pages:
             raise StructureMismatch(
@@ -862,6 +882,22 @@ def _collect_list(opener, kind, max_pages, progress, adopt=None, expect=None, di
             raise StructureMismatch("%s 목록: 쪽 링크의 조회 값(%s)을 붙이면 첫 쪽 내용이 달라져 멈춤"
                                     % (label, ", ".join(sorted(n for n, _ in adopt or ()))))
         follow, recognised, unknown, mixed, shape = _classify_links(page, url, kind, list_path)
+        # 2차 P1-15: 스크립트로만 움직이는 쪽 번호 링크뿐이면 따라갈 수 없으니 멈춘다 (예전엔 1쪽만 읽고 완료)
+        s_nums, s_next = _script_paging(page)
+        if s_nums or s_next:
+            diag.append("  스크립트로 된 쪽 이동처럼 보이는 링크: 쪽 번호 %d · 다음류 %d" % (s_nums, s_next))
+            if s_nums and not recognised:
+                raise StructureMismatch("%s 목록: 쪽 이동 링크가 스크립트라 따라갈 수 없어 멈춤 (일부 쪽만 읽은 자료는 저장하지 않음)" % label)
+            if s_next and not script_warned:
+                script_warned = True
+                diag.append("[확인] %s 목록: 스크립트로 된 '다음' 링크가 있어 뒤쪽 묶음을 놓쳤을 수 있음 — 인트라넷 화면의 마지막 쪽 번호와 "
+                            "읽은 쪽 수를 비교하세요" % label)
+        # 2차 P1-15: 첫 쪽에 없던 모르는 쪽 이름이 뒤쪽에서 나오면 그 쪽들을 놓칠 수 있으니 멈춘다 (예전엔 첫 쪽만 확인)
+        if pages == 1:
+            first_unknown = set(unknown)
+        elif unknown - first_unknown:
+            raise StructureMismatch("%s 목록: %d쪽에서 처음 보는 쪽 이동 이름(%s)이 나와 따라가지 않고 멈춤"
+                                    % (label, pages, ", ".join(sorted(unknown - first_unknown))))
         links = _list_links(page, url, list_path)
         diag.append("  같은 목록 링크 %d개: %s" % (len(links), ", ".join(sorted(set(links))[:40])))
         diag.append("  쪽 링크로 알아봄 %d · 따라갈 주소 %d · 알 수 없는 이름 %s · 함께 바뀌는 조회 %s" % (

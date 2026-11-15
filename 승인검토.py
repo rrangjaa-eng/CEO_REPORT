@@ -368,6 +368,9 @@ def run_collect(a, asof, now):
     write_structure_log(a.출력, collected_at, diag, rc)
     if rc is not None:
         return rc
+    for x in diag:   # 2차 P1-15: 수집은 끝났지만 놓친 쪽이 있을 수 있다는 알림은 화면에도
+        if str(x).startswith("[확인]"):
+            _say(x)
     if result.project_skipped:
         _say("[확인] 프로젝트 목록에서 칸 수가 다른 줄 %d건은 읽지 않고 건너뜀 — 그 프로젝트의 계산서는 미연결로 남습니다 "
              "(모양: 출력\\인트라넷_구조점검.txt)" % result.project_skipped)

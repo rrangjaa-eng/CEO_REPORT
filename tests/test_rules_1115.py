@@ -2898,3 +2898,38 @@ class TestEnterBlockedWhileBusy(unittest.TestCase):
         f.busy = False
         bound["<Return>"](None)
         self.assertEqual(ran, [1])
+
+
+# ───────────── 2차 P1-15: 인트라넷 쪽 이동을 못 알아보면 일부만 읽고 '완료'하지 않음 ─────────────
+class TestIntranetPagingNotSilentlyPartial(unittest.TestCase):
+    def test_script_only_page_numbers_stop(self):
+        from test_intranet import collect_raises, intranet, payment_page, prow, site_routes
+        routes = site_routes(extra={("GET", "/payment/index"): (200, {}, payment_page(
+            [prow(5101), prow(5102)], links=[("javascript:goPage(2)", "2"), ("#", "3")]))})
+        exc, _ = collect_raises(self, routes)
+        self.assertIsInstance(exc, intranet().StructureMismatch)
+        self.assertIn("스크립트", str(exc))
+
+    def test_new_page_name_on_second_page_stops(self):
+        from test_intranet import collect_raises, intranet, payment_page, prow, site_routes
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, payment_page([prow(5101)], links=[("/payment/index?page=2", "2")])),
+            ("GET", "/payment/index?page=2"): (200, {}, payment_page(
+                [prow(5102)], links=[("/payment/index?page=1", "1"), ("/payment/index?blockno=3", "3")])),
+        })
+        exc, _ = collect_raises(self, routes)
+        self.assertIsInstance(exc, intranet().StructureMismatch)
+        self.assertIn("2쪽에서 처음 보는", str(exc))
+
+    def test_script_next_link_is_flagged(self):
+        from test_intranet import PASSWORD, USER, intranet, make_fake_opener, payment_page, prow, site_routes
+        routes = site_routes(extra={
+            ("GET", "/payment/index"): (200, {}, payment_page(
+                [prow(5101)], links=[("/payment/index?page=2", "2"), ("javascript:nextBlock()", "다음")])),
+            ("GET", "/payment/index?page=2"): (200, {}, payment_page([prow(5102)], links=[("/payment/index?page=1", "1")])),
+        })
+        opener, _ = make_fake_opener(routes)
+        diag = []
+        res = intranet().collect(opener, USER, PASSWORD, diag=diag)
+        self.assertEqual(len(res.payments), 2)
+        self.assertTrue(any(x.startswith("[확인]") and "다음" in x for x in diag), diag)
