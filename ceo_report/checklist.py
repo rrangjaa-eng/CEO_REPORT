@@ -81,7 +81,16 @@ def convert_items(tables, cross, notes):
             out.append({"id": "통장만|%s" % _h(n), "kind": "전표 입력", "date": "", "amount": None, "vendor": "",
                         "title": "통장 줄만 있는 전표가 있음 (상대 계정 줄을 넣어 주세요)",
                         "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
+        elif n.startswith("[확인] ") and not n.startswith(_HANDLED):
+            # 2차 P2-15 (2026-11-15): 그 밖의 [확인] 알림(장부 빈 기간·다른 회사 장부·깨진 위하고 원본 등)도 확인할 것에
+            body = n.replace("[확인] ", "", 1)
+            out.append({"id": "변환알림|%s" % _h(n), "kind": "변환 알림", "date": "", "amount": None, "vendor": "",
+                        "title": body.split(" — ")[0][:120], "detail": body, "choices": ["다시 받음·고침", "확인함"]})
     return out
+
+
+_HANDLED = ("[확인] 카드 전표 입력 전", "[확인] 원천세 장부·위하고", "[확인] 4대보험 직원분 장부·위하고", "[확인] 지급요청 짝짓기",
+            "[확인] 통장 줄만 있는 전표")
 
 
 def save_convert_items(input_dir, items, now=None, trace=None):

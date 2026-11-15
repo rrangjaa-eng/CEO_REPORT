@@ -107,6 +107,8 @@ def files(wehago_dir, skipped=None):
             with open(path, encoding="utf-8") as f:
                 d = json.load(f)
         except (OSError, ValueError):
+            if skipped is not None:   # 2차 P2-6: 깨진 파일도 이름을 남겨 '그 전 것을 씀'을 알린다
+                skipped.append(n)
             continue
         if not isinstance(d, dict) or "응답" not in d:
             continue
@@ -366,14 +368,31 @@ def build_tables(wehago_dir):
     """자료 변환에 붙는 표 (원본이 없으면 '만들지 않음' — 기존 파일 그대로)."""
     from .convert import Table
     from .payroll import EMP_FILE, PAY_FILE, YE_FILE
-    F = files(wehago_dir)
+    skipped = []
+    F = files(wehago_dir, skipped)
     out = []
     for name, cols, rows, what in ((EMP_FILE, EMP_COLUMNS, employees(F), "인사_사원등록"),
                                    (PAY_FILE, PAY_COLUMNS, pay_rows(F), "인사_월별급상여수당지급현황"),
                                    (YE_FILE, YE_COLUMNS, yearend_rows(F), "연말정산_연말정산현황"),
                                    (ASSET_FILE, ASSET_COLUMNS, asset_rows(F), "결산_고정자산관리대장")):
+        # 2차 P2-6·P1-13 (2026-11-15): 깨진·자료 없는 새 원본, 읽었는데 0줄, 원본 없음을 구별해 알린다 (예전엔 모두 '원본 없음'이거나
+        # 말없이 그 전 날 원본을 썼다)
+        used = [v[1] for (sc, _), v in F.items() if sc == what]
+        used_day = max((os.path.basename(u)[:6] for u in used), default="")
+        bad = sorted(n for n in skipped if what in n and n[:6] > used_day)
+        newer = ("가장 최근 받은 원본(%s)이 깨졌거나 자료가 없어 %s" % (", ".join(bad), "그 전(%s) 원본을 씀" % used_day if used
+                                                               else "쓸 원본이 없음")) if bad else ""
         if rows:
-            out.append(Table(name, cols, rows, notes=["위하고 %s 원본으로 %d줄" % (what, len(rows))]))
+            notes = ["위하고 %s 원본으로 %d줄" % (what, len(rows))]
+            if newer:
+                notes.append("[확인] 위하고 %s: %s — 위하고에서 다시 받으세요" % (what, newer))
+            out.append(Table(name, cols, rows, notes=notes))
+        elif used:
+            out.append(Table(name, cols, [], written=False, reason="위하고 %s 원본(%s 받음)에서 읽은 줄 0건%s — 기존 파일 그대로 "
+                             "(정말 0건이면 위하고 화면에서 확인하세요)" % (what, used_day, " · " + newer if newer else "")))
+        elif bad:
+            out.append(Table(name, cols, [], written=False, reason="위하고 %s %s — 기존 파일 그대로, 위하고에서 다시 받으세요"
+                             % (what, newer)))
         else:
             out.append(Table(name, cols, [], written=False, reason="위하고 %s 원본 없음 (기존 파일 그대로)" % what))
     return out

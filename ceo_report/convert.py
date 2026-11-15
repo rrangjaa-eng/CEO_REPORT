@@ -1354,7 +1354,8 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
             listings = tidy + overlap + dups + ht["notes"] + checks
             summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
             items = (review_checks.duplicate_items(books.journal) + ht["items"]
-                     + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
+                     + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]
+                                                     + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]))
             trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
                      if v["text"]}
             if not checklist.save_convert_items(input_dir, items, ran_at, trace):
@@ -1424,10 +1425,13 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         out.append(util.mask_rrn(link_stdout_line(res.links)))
     if backup:
         out.append(backup_line)
+    # 진행 상황 칸에도 (사용자 2026-11-04 카드). 2차 P2-15 (2026-11-15): 변환 방식을 바꾸는 [확인] 알림(장부 빈 기간·다른 회사 장부·
+    # 깨진 원본 등)이 변환결과.txt 에만 있었다 → 모든 [확인] 알림을 진행 상황에도 (같은 글은 한 번)
+    out.extend(dict.fromkeys([str(n) for t in tables for n in (t.notes or []) if str(n).startswith("[확인]")]
+                             + [str(n) for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]))
     if _undecided(tables, cross):
         out.append("대조 판단 불가 %d건" % _undecided(tables, cross))
     out.append("대조 불일치 %d건" % _mismatches(tables, cross))
-    out.extend(n for t in tables for n in (t.notes or []) if str(n).startswith("[확인] 카드 전표 입력 전"))   # 진행 상황 칸에도 (사용자 2026-11-04)
     out.extend(summary)
     out.append("대조 내용: " + os.path.join(input_dir, "변환결과.txt"))
     res.lines = out

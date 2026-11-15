@@ -2318,3 +2318,60 @@ class TestExtensionMasksIdNumbersEverywhere(unittest.TestCase):
         src = _read(os.path.join(ROOT, "chrome_extension", "bridge.js"))
         self.assertIn("scrub(r[k], k)", src)      # 분개장 줄
         self.assertIn("rows: scrub(j)", src)      # 자금계획 줄
+
+
+# ───────────── 2차 P2-6·P1-13·P2-15: 위하고 원본이 깨졌거나 0줄이면 그렇게 알리고, [확인] 알림은 진행 상황·확인할 것에도 ─────────────
+class TestRawScreensSaidHonestly(unittest.TestCase):
+    def _dir(self):
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def _emp_file(self, d, name, emps):
+        import json
+        body = {"종류": "인사원본", "화면": "사원등록", "연도": "", "수집시각": "2026-11-1%s 09:00:00" % name[5],
+                "응답": [{"path": "/humanresource/hrm0110/condition", "data": {"emp": emps, "rank": [], "position": []}}]}
+        with open(os.path.join(d, "%s 인사_사원등록 자동수집.json" % name), "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
+
+    def test_broken_newer_file_is_said_when_older_is_used(self):
+        from ceo_report import wehago_raw
+        d = self._dir()
+        self._emp_file(d, "261112", [{"nm_krname": "가상일", "cd_emp": "1"}, {"nm_krname": "가상이", "cd_emp": "2"}])
+        with open(os.path.join(d, "261113 인사_사원등록 자동수집.json"), "w", encoding="utf-8") as f:
+            f.write("{깨진")
+        emp = [t for t in wehago_raw.build_tables(d) if t.name.startswith("사원")][0]
+        self.assertTrue(emp.written)
+        self.assertTrue(any(n.startswith("[확인] 위하고 인사_사원등록") and "261113" in n and "그 전(261112)" in n for n in emp.notes),
+                        emp.notes)
+
+    def test_zero_rows_is_not_called_missing(self):
+        from ceo_report import wehago_raw
+        d = self._dir()
+        self._emp_file(d, "261113", [])
+        emp = [t for t in wehago_raw.build_tables(d) if t.name.startswith("사원")][0]
+        self.assertFalse(emp.written)
+        self.assertIn("읽은 줄 0건", emp.reason)
+        self.assertNotIn("원본 없음", emp.reason)
+
+    def test_every_check_note_becomes_an_item(self):
+        items = checklist.convert_items([], [], ["[확인] 분개장 2026-03-01~2026-03-31 전표가 어느 파일에도 없음 — 그 기간 분개장을 받아 넣으세요"])
+        self.assertEqual([i["kind"] for i in items], ["변환 알림"])
+        self.assertTrue(items[0]["title"].startswith("분개장 2026-03-01"))
+
+
+class TestCheckNotesReachProgress(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import test_convert
+        test_convert.setUpModule()
+
+    def test_book_check_note_is_in_progress_lines_once(self):
+        from test_convert_review_fixes import company, result_text, run_convert_core
+        tmp, input_dir, collect, wehago_dir = company(self)
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        got = [ln for ln in res.lines if ln.startswith("[확인] 분개장이")]
+        self.assertEqual(len(got), 1, res.lines)
+        self.assertEqual(result_text(input_dir).count("  알림 " + got[0]), 1)   # 변환결과.txt 에는 예전처럼 한 번
