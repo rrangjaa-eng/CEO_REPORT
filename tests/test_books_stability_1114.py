@@ -330,3 +330,31 @@ class TestPriorYearLineIdLayers(TestLineIdLayers):
         b = wehago.load_books(self.dir, ASOF, None)
         lines = sorted((r["date"].isoformat(), r["memo"]) for r in b.journal if r["account_code"] == "81300")
         self.assertEqual(lines, [("2025-10-10", "메모"), ("2025-12-05", "날짜 고침"), ("2026-01-05", "메모")])
+
+
+class TestNewYearEmptyBook(TestLineIdLayers):
+    """새해 첫 주 (2026-11-16): 새 기수 장부에 아직 전표가 없어도(1/2) 작년 장부를 붙인다.
+    예전엔 새해 장부 전표가 0줄이면 지난 기수 파일을 하나도 안 붙여 원천세·부가세 예상이 비었고 (1/5처럼 줄이 있으면 정상),
+    '예전 파일 정리'가 재작년 장부를 지난자료로 옮겼다."""
+
+    def files(self):
+        from test_journal_json import write_json
+        y25 = [self.row("20251210", "00001", "81300", "접대비(판)", 100, 0, 11),
+               self.row("20251210", "00001", "25300", "미지급금", 0, 100, 12)]
+        y26 = [self.row("20261210", "00001", "81300", "접대비(판)", 200, 0, 21),
+               self.row("20261210", "00001", "25300", "미지급금", 0, 200, 22)]
+        write_json(self.dir, "261103 분개장.json", self.doc(y25, "20250101", "20251231"))   # 이름에 해가 없는 재작년 장부
+        write_json(self.dir, "261231 분개장 자동수집.json", self.doc(y26, "20260101", "20261231"))
+        write_json(self.dir, "270102 분개장 자동수집.json", self.doc([], "20270101", "20270102"))
+
+    def test_prior_year_books_read_when_new_book_has_no_lines(self):
+        self.files()
+        b = wehago.load_books(self.dir, dt.date(2027, 1, 2), None)
+        self.assertEqual(b.files["분개장"]["name"], "270102 분개장 자동수집.json")
+        self.assertEqual(b.files["분개장"]["prior"], ["261103 분개장.json", "261231 분개장 자동수집.json"])
+        self.assertEqual(sorted(r["date"].isoformat() for r in b.journal if r["account_code"] == "81300"),
+                         ["2025-12-10", "2026-12-10"])
+
+    def test_tidy_keeps_prior_year_books(self):
+        self.files()
+        self.assertEqual(app.old_files(self.dir, dt.date(2027, 1, 2)), [])
