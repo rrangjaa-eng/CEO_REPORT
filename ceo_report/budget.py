@@ -14,6 +14,7 @@
 - 영업외 수익 = 이자수익만 (지원금 등은 확정 전이라 넣지 않음). 영업외 비용 = 올해 실적을 1년으로 늘림.
 - 자금: 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
 """
+import collections
 import csv
 import datetime as dt
 import os
@@ -309,12 +310,27 @@ def _loan_plan(input_dir, debts, asof, until):
             led_code[norm_code(x["vcode"])] = led_code.get(norm_code(x["vcode"]), 0) + x["balance"]
         led_name[norm_vendor(x["vendor"])] = led_name.get(norm_vendor(x["vendor"]), 0) + x["balance"]
     pays, notes = [], []
+
+    def _key(r):
+        c = norm_code(r.get("거래처코드"))
+        return ("code", c) if c and c != "0" and c in led_code else ("name", norm_vendor((r.get("차입처") or "").strip()))
+    # 1차 C4 (2026-11-15): 같은 은행(거래처코드) 대출이 여럿이면 장부 잔액(은행 전체)을 대출마다 통째로 붙여 두 번 갚는 것으로 셌다
+    # → 같은 은행 대출끼리 원금 비율로 나눈다 (원금을 모르면 똑같이)
+    share = collections.defaultdict(list)
+    for r in rows:
+        share[_key(r)].append(int(_num(r.get("원금")) or 0))
     for r in rows:
         name = (r.get("차입처") or "").strip() or "차입처 없음"
         code = norm_code(r.get("거래처코드"))
         bal = led_code.get(code) if code and code != "0" else None
         if bal is None:
             bal = led_name.get(norm_vendor(name))
+        group = share[_key(r)]
+        if bal is not None and len(group) > 1:
+            mine, tot = int(_num(r.get("원금")) or 0), sum(group)
+            bal = int(round(bal * mine / float(tot))) if tot > 0 and mine > 0 else int(round(bal / float(len(group))))
+            notes.append("대출 %s: 같은 은행 대출 %d건 — 장부 잔액을 원금 비율로 나눠 이 대출 몫 %s원으로 봄"
+                         % (name, len(group), format(bal, ",")))
         due = parse_date(r.get("만기일"))
         how = (r.get("상환방식") or "").strip()
         src = (r.get("만기근거") or "").strip() or "차입금현황"   # H 변환: 사용자가 직접 넣은 새 만기일이면 '직접 입력' (11/14 신한 연장)

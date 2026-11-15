@@ -3527,3 +3527,38 @@ class TestEvidenceUsesShownReportDate(unittest.TestCase):
         with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("asof = self.ev_asof", src)
+
+
+# ───────────── 1차 C4: 같은 은행 대출 여러 건에 은행 전체 잔액을 반복하지 않음 ─────────────
+class TestSameBankLoansSplit(unittest.TestCase):
+    def test_budget_split(self):
+        import csv as _csv
+        import tempfile
+        from ceo_report import budget
+        tmp = tempfile.mkdtemp()
+        with open(os.path.join(tmp, budget.LOAN_FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = _csv.writer(f)
+            w.writerow(["차입처", "거래처코드", "계정코드", "차입일", "만기일", "상환방식", "원금", "월상환액", "자금용도", "만기근거", "매년연장"])
+            w.writerow(["가상은행", "301", "29300", "2025-03-31", "2027-03-31", "일시", "100,000,000", "", "운전"])
+            w.writerow(["가상은행", "301", "26000", "2025-05-31", "2027-05-31", "일시", "200,000,000", "", "운전"])
+        debts = [{"kind": "차입금", "balance": 300_000_000, "vcode": "301", "vendor": "가상은행"}]
+        pays, notes = budget._loan_plan(tmp, debts, dt.date(2026, 11, 15), dt.date(2027, 12, 31))
+        self.assertEqual(sorted(p["amount"] for p in pays), [100_000_000, 200_000_000])
+        self.assertTrue(any("같은 은행 대출 2건" in n for n in notes), notes)
+
+    def test_credit_moves_only_long_part(self):
+        import collections as _c
+        from ceo_report import credit as K
+        # 같은 은행: 단기 1억(이미 유동부채) + 장기 2억, 둘 다 1년 안 만기 → 장기 2억만 옮긴다
+        loans = [(dt.date(2026, 1, 5), "26000", "가상은행", dt.date(2027, 3, 1), "", 0, 100_000_000),
+                 (dt.date(2026, 1, 5), "29300", "가상은행", dt.date(2027, 3, 1), "", 0, 200_000_000)]
+        LD = K.loans_at({"loans": loans}, dt.date(2026, 12, 31), dt.date(2026, 12, 31))
+        self.assertEqual(LD[0][1], 300_000_000)
+        long_bal = _c.defaultdict(int)
+        for d_, code, v, *_rest in loans:
+            if str(code).startswith(("291", "293")):
+                long_bal[v] += _rest[-1] - _rest[-2]
+        mv = sum(min(cur, long_bal.get(v, 0)) for v, bal, m_, k, cur, st in LD if long_bal.get(v, 0) > 0)
+        self.assertEqual(mv, 200_000_000)
+        with open(os.path.join(ROOT, "ceo_report", "credit.py"), encoding="utf-8") as f:
+            self.assertIn("min(cur, max(long_bal.get(v, 0), 0))", f.read())
