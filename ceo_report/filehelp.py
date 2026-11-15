@@ -189,11 +189,12 @@ def render(rows, esc):
             h.append(_steps("위하고에서 신고할 때 (부가세)", WEHAGO_STEPS["부가세"], esc))
         else:
             h.append("<table class='re'><tr><th>코드</th><th class='l'>소득</th><th>인원</th><th>총지급액</th><th>소득세</th><th>지방소득세 (위택스)</th></tr>%s</table>"
-                     % "".join("<tr><td>%s</td><td class='l'>%s</td><td>급여 자료 받은 뒤</td><td>%s</td><td>%s</td><td>%s</td></tr>"
-                               % (esc(r["칸"]), esc(r["이름"]), W(r["공급가액"]) or "급여 자료 받은 뒤", W(r["세액"]), W(r["지방소득세"])) for r in main))
+                     % "".join("<tr><td>%s</td><td class='l'>%s</td><td>위하고 신고서</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                               % (esc(r["칸"]), esc(r["이름"]), W(r["공급가액"]) or "위하고 신고서", W(r["세액"]), W(r["지방소득세"])) for r in main))
             h.append(_steps("위하고에서 신고할 때 (원천세)", WEHAGO_STEPS["원천세"], esc))
     h.append(_steps("위하고에서 제출할 때 (간이지급명세서)", WEHAGO_STEPS["간이지급"], esc))
-    h.append("<div class='note'>칸 번호는 2026년 홈택스 일반과세자 신고서 기준. 인원·총지급액·소득자별 지급액은 '인사·급여 자료 받기'로 위하고 자료가 들어오면 채웁니다. 위하고 메뉴 이름은 PC 화면 확인 뒤 맞춤. 세무사 확인 필요.</div>")
+    # 2차 P4-17 (2026-11-15): 예전 안내는 '급여 자료가 들어오면 채운다'였지만 채우는 기능이 없었다 — 약속하지 않고 어디서 볼지 적는다
+    h.append("<div class='note'>칸 번호는 2026년 홈택스 일반과세자 신고서 기준. 원천세의 인원·총지급액·소득자별 지급액은 이 도우미가 채우지 않습니다 — 위하고 원천징수이행상황신고서 화면의 숫자를 그대로 쓰세요(소득세·지방소득세는 장부 예수금 기준 어림값이라 위하고 숫자와 대조). 위하고 메뉴 이름은 PC 화면 확인 뒤 맞춤. 세무사 확인 필요.</div>")
     return "".join(h)
 
 

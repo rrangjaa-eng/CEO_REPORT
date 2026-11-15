@@ -3365,3 +3365,16 @@ class TestIntegrityComparesLiveInputs(unittest.TestCase):
         out = []
         integrity._input_drift(live, fresh, res, out)
         self.assertIn("- 확인 필요: b.csv — 입력 폴더에 없음", out)
+
+
+# ───────────── 2차 P4-17: 신고 도우미가 하지 않는 '급여 자료 오면 채움'을 약속하지 않음 ─────────────
+class TestFilingHelperNoFalsePromise(unittest.TestCase):
+    def test_text(self):
+        import html as H
+        from ceo_report import filehelp
+        rows = [{"신고": "원천세", "기간": "2026-07-01~2026-12-31", "기한": "2027-01-11", "칸": "A01", "이름": "근로소득 간이세액",
+                 "공급가액": "", "세액": "100000", "지방소득세": "10000", "근거": ""}]
+        page = filehelp.render(rows, H.escape)
+        self.assertNotIn("급여 자료 받은 뒤", page)
+        self.assertNotIn("들어오면 채웁니다", page)
+        self.assertIn("이 도우미가 채우지 않습니다", page)
