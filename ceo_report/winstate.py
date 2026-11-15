@@ -255,14 +255,33 @@ def latest_reports(output_dir):
             "name": os.path.basename(base)}
 
 
+OTHER_WEHAGO = "위하고 결산·인사·카드 등 자료"
+_DATA_EXT = (".json", ".xls", ".xlsx", ".csv")
+
+
+def other_wehago_time(paths):
+    """분개장·자금계획서 말고 수집\위하고 에 받은 자료(시산표·재무상태표·급여·원천징수·카드·차입금 등) 중 가장 새로 받은 때.
+    2차 P3-16 (2026-11-15): 이것들도 변환에 쓰이는데 '다시 변환' 판단에서 빠져, 새로 받아도 다시 변환하라는 말이 없었다."""
+    from . import fundplan, wehago
+    out = []
+    for p in _files(paths.wehago):
+        n = os.path.basename(p)
+        if not n.lower().endswith(_DATA_EXT):
+            continue
+        if wehago._kind_of(n)[0] == "분개장" or fundplan.is_fundplan_name(p) or fundplan.is_auto_plan_name(p):
+            continue
+        out.append(p)
+    return _newest(out)
+
+
 def steps(paths):
     """세 단계 상태. -> {'collect': 시각, 'convert': 시각, 'new_since': 변환 뒤 새로 받은 자료 이름들, 'report': latest_reports,
     'now': 지금 할 차례 단계 번호 (1~3)}."""
-    src = sources(paths)
-    collected = [w for n, w, _ in src[:4] if isinstance(w, dt.datetime)]
+    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), "")]
+    collected = [w for n, w, _ in src if isinstance(w, dt.datetime)]
     last_collect = max(collected) if collected else None
     conv = convert_time(paths.input)
-    new_since = [n for n, w, _ in src[:4] if isinstance(w, dt.datetime) and (conv is None or w > conv)]
+    new_since = [n for n, w, _ in src if isinstance(w, dt.datetime) and (conv is None or w > conv)]
     rep = latest_reports(paths.output)
     if last_collect is None:
         now = 1

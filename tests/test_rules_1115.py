@@ -2620,3 +2620,31 @@ class TestHometaxRowsCounted(unittest.TestCase):
         self.assertIn("같은 승인번호 1건은 한 번만", notes[0])
         self.assertIn("매출 0건", notes[1])
         self.assertIn("읽지 못한 줄 1건", notes[0])
+
+
+# ───────────── 2차 P3-16: 새 시산표·급여·카드 자료도 '다시 변환' 판단에 ─────────────
+class TestOtherWehagoDataAsksReconvert(unittest.TestCase):
+    def test_new_trial_balance(self):
+        import shutil
+        import tempfile
+        from ceo_report import app, checklist, winstate
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.wehago, exist_ok=True)
+        os.makedirs(P.input, exist_ok=True)
+
+        def touch(name, when):
+            p = os.path.join(P.wehago, name)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("{}")
+            t = when.timestamp()
+            os.utime(p, (t, t))
+        touch("261105 분개장 자동수집.json", dt.datetime(2026, 11, 5, 10, 0))
+        checklist.save_convert_items(P.input, [], now=dt.datetime(2026, 11, 5, 18, 0))
+        self.assertEqual(winstate.steps(P)["new_since"], [])
+        touch("261106 결산_합계잔액시산표(2기) 자동수집.json", dt.datetime(2026, 11, 6, 9, 0))
+        S = winstate.steps(P)
+        self.assertEqual((S["now"], S["new_since"]), (2, [winstate.OTHER_WEHAGO]))
+        touch("261106 메모.txt", dt.datetime(2026, 11, 7, 9, 0))   # 자료 아닌 파일은 세지 않음
+        self.assertEqual(winstate.steps(P)["collect"], dt.datetime(2026, 11, 6, 9, 0))
