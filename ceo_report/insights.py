@@ -364,6 +364,17 @@ def invoice_pairs(R):
     return out
 
 
+MISSING_CONTRACT = "계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 계약금액을 넣으면 나옵니다."
+
+
+def missing_contracts(R, team=None):
+    """계약금액이 없어 지금 예상 이익·이익 흐름·예상 적자 경보를 못 낸 프로젝트 수 (사용자 결정 c, 2026-11-15:
+    실제 자료 302개 모두 빈칸이라 팀장·대표는 빠진 줄 몰랐음 R3). team 을 주면 그 팀 프로젝트만. 0 은 미등록과 같이 본다
+    (profit_flow 도 0 이면 건너뜀)."""
+    return sum(1 for p in (R.get("s3") or {}).get("projects") or []
+               if not p.get("contract") and (team is None or (p.get("team") or "") == team))
+
+
 def profit_flow(R):
     """8: 프로젝트 견적 이익 → 지금 예상 이익 -> [{name, team, quote, now, diff, closed}] (줄어든 순).
 

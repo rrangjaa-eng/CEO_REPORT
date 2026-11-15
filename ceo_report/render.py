@@ -2549,13 +2549,13 @@ def _first_screen(R, mode, per):
         p1 = R["period"][1]
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per, "월말" if p1 == _month_end(p1) else _md(p1)))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode) + _month_chart(R)),
-                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
     else:
         wo = week_outflows(R)
         # 1쪽 = 이번 주 지급(출금 목록·다음 주 예정), 2쪽 = 자금 현황 → 실적 (사용자 2026-11-05: 맥락에 맞게, 빈 곳 최소)
         blocks = ([("%s 출금 목록" % _day(wo["fri"]), _week_out_table(R, mode))] + funds
-                  + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True), mode) + _issue_card(R, I, mode) + over)])
+                  + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True), mode) + _issue_card(R, I, mode) + over + _contract_line(R))])
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
     h.append(_recon_line(R))
@@ -2592,6 +2592,13 @@ def _first_screen(R, mode, per):
                  % (len(R["risks"]), hi))
     h.append("</div>")
     return "".join(h)
+
+
+def _contract_line(R):
+    """계약금액이 없어 예상 이익을 못 낸 프로젝트 수 한 줄 (사용자 결정 c, 2026-11-15: 대표·팀장 모두). 없으면 빈 글."""
+    from .insights import MISSING_CONTRACT, missing_contracts
+    n = missing_contracts(R)
+    return "<div class='note'>%s</div>" % esc(MISSING_CONTRACT % n) if n else ""
 
 
 def _avail_foot(mode, extra, tax):

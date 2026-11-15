@@ -300,5 +300,33 @@ class TestAssumptionMinorDividend(unittest.TestCase):
         self.assertEqual(self.plan("15000000")["best"], 10_000_000)    # 자녀 이자 1,500만 + 배당 500만 = 2천만
 
 
+class TestDecisionCMissingContract(unittest.TestCase):
+    """결정 c (2026-11-15): 계약금액이 없어 예상 이익을 못 낸 프로젝트 수를 팀장·대표 보고에 한 줄 (실제 302개 모두 빈칸, R3)."""
+
+    def R(self):
+        return {"asof": D(2026, 11, 13), "s5": {},
+                "s3": {"projects": [{"id": "26001", "name": "가 행사", "team": "기획1팀", "contract": None},
+                                    {"id": "26002", "name": "나 행사", "team": "기획2팀", "contract": 5_000_000},
+                                    {"id": "26003", "name": "다 행사", "team": "기획1팀", "contract": 0}]}}
+
+    def test_count_and_ceo_line(self):
+        from ceo_report import insights, render
+        R = self.R()
+        self.assertEqual(insights.missing_contracts(R), 2)
+        self.assertEqual(insights.missing_contracts(R, "기획1팀"), 2)
+        self.assertEqual(insights.missing_contracts(R, "기획2팀"), 0)
+        self.assertIn("계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 2개", render._contract_line(R))
+        R["s3"]["projects"] = R["s3"]["projects"][1:2]
+        self.assertEqual(render._contract_line(R), "")
+
+    def test_team_report_shows_the_count_even_without_profit_rows(self):
+        from ceo_report import insights_render
+        I = {"flow": [], "alerts": [], "pairs": []}
+        h = insights_render.team_section(I, self.R(), "기획1팀")
+        self.assertIn("프로젝트 이익 흐름", h)
+        self.assertIn("계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 2개", h)
+        self.assertEqual(insights_render.team_section(I, self.R(), "기획2팀"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

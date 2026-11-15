@@ -173,13 +173,18 @@ def team_section(I, R, team, start_no=7):
     # 8 이익 흐름
     # 끝난 프로젝트는 모두, 진행 중은 추정 예산을 넘은 것만 (2026-11-14 오후 점검 T1·7절: 진행 중 '차이'는 넘은 만큼만 뜻이 있음)
     fl = [f for f in I["flow"] if f["name"] in names and (f.get("closed") or f["diff"] < 0)]
-    if fl:
-        rows = "".join("<tr><td class='l'>%s</td><td class='c'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
-                       % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"]))
-                       for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
-        sec("프로젝트 이익 흐름 (견적 때 → 지금)",
-            "<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
-            "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
+    miss = sum(1 for p in mine.values() if not p.get("contract"))   # 결정 c (2026-11-15): 빠진 줄 모르지 않게 수를 한 줄로
+    if fl or miss:
+        body = ""
+        if fl:
+            rows = "".join("<tr><td class='l'>%s</td><td class='c'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
+                           % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"]))
+                           for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
+            body = ("<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
+                    "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
+        if miss:
+            body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
+        sec("프로젝트 이익 흐름 (견적 때 → 지금)", body)
         no += 1
     # 4 경보 (그 팀 프로젝트)
     al = [(lv, t) for lv, t in I["alerts"] if any(t.startswith(n) for n in names)]
