@@ -970,9 +970,11 @@ class Window(object):
         self.root.after(AUTO_CHECK_MS, self.watch)
 
     def open_live(self):
-        from . import live
+        from . import live, winstate
         path = os.path.join(self.paths.output, live.FILE)
-        if not os.path.exists(path):
+        made, conv = winstate._mtime(path), winstate.convert_time(self.paths.input)
+        # 1차 E11 (2026-11-15): 없을 때뿐 아니라, 마지막 변환보다 오래됐거나 '못 만듦' 안내면 새로 만든 뒤 연다
+        if made is None or (conv is not None and made < conv) or live.is_failed_page(path):
             app.build_live(self.paths, self.say, self.asof.get().strip())
         if os.path.exists(path):
             open_path(path)

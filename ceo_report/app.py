@@ -378,7 +378,11 @@ def build_live(paths, say, asof=""):
     try:
         path, diff = live.build(paths.input, paths.output, parse_date(asof) if asof else None)
     except Exception as e:   # 현황 화면 때문에 변환을 실패로 만들지 않는다
-        say("지금 현황 화면을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:150]))
+        why = "%s: %s" % (type(e).__name__, str(e)[:150])
+        # 1차 E11 (2026-11-15): 예전엔 실패해도 다시 만들지 않은 예전 화면이 그대로 열렸다 — 예전 화면은 옮기고 '못 만듦' 안내로 바꾼다
+        live.mark_failed(paths.output, why)
+        say("[확인] 지금 현황 화면을 새로 만들지 못함 (%s) — 예전 현황 화면은 '%s'로 옮김(최신 자료 아님). "
+            "자료 변환은 끝났으니 숫자는 보고서에서 확인하세요" % (why, live.STALE_FILE))
         return None
     say("지금 현황 화면 새로 씀 (%s) · 지난 현황 뒤 바뀐 것 %d건" % (os.path.basename(path), len(diff)))
     for name, a, b in diff[:8]:

@@ -3083,3 +3083,68 @@ flush(false).then((r) => console.log(JSON.stringify({r, left: store.pendingSaves
     def test_manifest_version(self):
         with open(os.path.join(ROOT, "chrome_extension", "manifest.json"), encoding="utf-8") as f:
             self.assertIn('"version": "0.9.5"', f.read())
+
+
+# ───────────── 1차 E11: 지금 현황을 새로 못 만들면 예전 화면이 최신처럼 열리지 않음 ─────────────
+class TestLiveFailureNotStale(unittest.TestCase):
+    def test_failure_moves_old_and_writes_notice(self):
+        import tempfile
+        from unittest import mock
+        from ceo_report import app, live
+        tmp = tempfile.mkdtemp()
+        out, inp = os.path.join(tmp, "out"), os.path.join(tmp, "in")
+        os.makedirs(out)
+        os.makedirs(inp)
+        with open(os.path.join(out, live.FILE), "w", encoding="utf-8") as f:
+            f.write("<title>지금 현황</title>예전 숫자 123")
+        paths = app.Paths(tmp) if hasattr(app, "Paths") else type("P", (), {"input": inp, "output": out})()
+        paths.input, paths.output = inp, out
+        said = []
+        with mock.patch.object(live, "build", side_effect=PermissionError("쓰기 막힘")):
+            self.assertIsNone(app.build_live(paths, said.append))
+        self.assertTrue(any(s.startswith("[확인] 지금 현황 화면을 새로 만들지 못함") for s in said), said)
+        with open(os.path.join(out, live.FILE), encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("새로 만들지 못했습니다", page)
+        self.assertNotIn("예전 숫자", page)
+        self.assertTrue(live.is_failed_page(os.path.join(out, live.FILE)))
+        with open(os.path.join(out, live.STALE_FILE), encoding="utf-8") as f:
+            self.assertIn("예전 숫자 123", f.read())
+        # 다시 실패해도 '지난판'을 안내 페이지로 덮지 않는다
+        with mock.patch.object(live, "build", side_effect=OSError("또")):
+            app.build_live(paths, said.append)
+        with open(os.path.join(out, live.STALE_FILE), encoding="utf-8") as f:
+            self.assertIn("예전 숫자 123", f.read())
+
+    def test_open_rebuilds_when_older_than_convert(self):
+        import tempfile
+        import time
+        from unittest import mock
+        from ceo_report import app, gui, live, winstate
+        tmp = tempfile.mkdtemp()
+        out, inp = os.path.join(tmp, "out"), os.path.join(tmp, "in")
+        os.makedirs(out)
+        os.makedirs(inp)
+        path = os.path.join(out, live.FILE)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<title>지금 현황</title>")
+        old = time.time() - 3600
+        os.utime(path, (old, old))
+        built, opened = [], []
+
+        class Fake:
+            paths = type("P", (), {"input": inp, "output": out})()
+            say = staticmethod(lambda s: None)
+            asof = type("V", (), {"get": staticmethod(lambda: "")})()
+        with mock.patch.object(winstate, "convert_time", return_value=dt.datetime.now()), \
+                mock.patch.object(app, "build_live", side_effect=lambda *a, **k: built.append(1)), \
+                mock.patch.object(gui, "open_path", side_effect=opened.append):
+            gui.Window.open_live(Fake())
+            self.assertEqual(built, [1])
+            os.utime(path, None)   # 변환 뒤에 만든 화면이면 그대로 연다
+            gui.Window.open_live(Fake())
+            self.assertEqual(built, [1])
+            live.mark_failed(out, "시험")   # '못 만듦' 안내면 다시 만들어 본다
+            gui.Window.open_live(Fake())
+            self.assertEqual(built, [1, 1])
+        self.assertEqual(len(opened), 3)
