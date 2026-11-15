@@ -344,12 +344,23 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         P["expected"] = P["paid_total"] + P["requested"] + P["card_unpaid"] + P["planned"]
         b = P["budget"]
         # 금액 미확인 원가 줄이 있으면 예상총집행이 모자라므로 잔여예산을 정확한 숫자로 보이지 않는다 (D-02)
-        P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]
-        P["profit_end"] = None if (P["contract"] is None or P["unknown_cost"]) else P["contract"] - P["expected"]
+        P["remain"] = None if (b is None or P["unknown_cost"]) else b - P["expected"]   # 자금 일정의 '남은 예산' 기준 (장부 전 요청 뺌)
         P["unrecognized"] = None if (P["contract"] is None or P["recognized"] is None) else P["contract"] - P["recognized"]
         # 손익 판단용 등록 지출 = 쓴 돈 + 요청(장부 전 인트라넷 지급요청 포함) + 카드 미결제 + 계획 (T1). 금액 모르는 줄이 있으면 None
         P["committed"] = None if (P["unknown_cost"] or P["intranet_req_unknown"]) else P["expected"] + P["intranet_req"]
         P["closed"] = is_closed(P)
+        # 예산에서 남은 돈·예산 초과 (1차 점검 E1·B5·B6, 2026-11-15): 장부 전 지급요청까지 넣은 등록 지출로 본다 — 대표 '예산 초과'
+        # 줄·프로젝트 칸·위험표가 팀장 경보(T1)와 같은 기준 (예전엔 장부 전 요청을 빼 A사 113% 초과를 놓쳤음)
+        P["remain_all"] = None if (b is None or P["committed"] is None) else b - P["committed"]
+        # 종료 시점 예상 원가·이익 = 지금 예상 이익(profit_now)과 같은 식: 진행 중은 추정 예산과 등록 지출 중 큰 쪽, 끝난 것은 등록 지출.
+        # 예산이 없으면 등록 지출까지만 (예전엔 장부 전 요청·남은 예산을 안 봐 화면마다 4,000만~4,500만 달랐음)
+        if P["committed"] is None:
+            P["cost_end"] = None
+        elif P["closed"] or b is None:
+            P["cost_end"] = P["committed"]
+        else:
+            P["cost_end"] = max(P["committed"], b)
+        P["profit_end"] = None if (P["contract"] is None or P["cost_end"] is None) else P["contract"] - P["cost_end"]
         # 지금 예상 이익: 끝난 프로젝트 = 계약 − 등록 지출. 진행 중 = 계약 − 추정 예산과 등록 지출 중 큰 쪽
         # (아직 요청·계획으로 올리지 않은 남은 예산도 나갈 돈으로 본다 — 예전엔 남은 예산만큼 늘 '이익 개선'으로 보였음)
         if P["contract"] is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
@@ -1342,9 +1353,10 @@ def risks(R):
                ", 금액 미확인 %d건 포함" % s2["undated_in_unknown"] if s2["undated_in_unknown"] else ""),
             "거래처와 입금일을 확정해 일정에 반영.")
     for P in R["s3"]["projects"]:
-        if P["budget"] is not None and P["budget"] > 0 and P["expected"] * 100.0 / P["budget"] > over_pct:
-            add("높음", "프로젝트", "%s %s: 예상총집행 %s원이 예산 %s원의 %.1f%%."
-                % (P["id"], P["name"], won(P["expected"]), won(P["budget"]), P["expected"] * 100.0 / P["budget"]),
+        spent = P["committed"] if P.get("committed") is not None else P["expected"]   # 장부 전 지급요청 포함 (1차 E1·B6)
+        if P["budget"] is not None and P["budget"] > 0 and spent * 100.0 / P["budget"] > over_pct:
+            add("높음", "프로젝트", "%s %s: 등록 지출(장부 전 지급요청 포함) %s원이 예산 %s원의 %.1f%%."
+                % (P["id"], P["name"], won(spent), won(P["budget"]), spent * 100.0 / P["budget"]),
                 "남은 지급요청·집행계획 중 줄일 수 있는 항목 확인, 추가 범위는 고객과 변경계약 협의, 예산 수정 등록.")
         if P["profit_end"] is not None and P["profit_end"] < 0:
             add("높음", "프로젝트", "%s %s: 종료 시점 예상이익 %s원." % (P["id"], P["name"], won(P["profit_end"])),

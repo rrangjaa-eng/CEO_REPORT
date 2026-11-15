@@ -8,7 +8,7 @@ import math
 import re
 from collections import OrderedDict
 
-from .util import won, man, pct, d2s, esc, ssum, date as parse_date
+from .util import won, man, pct, d2s, esc, ssum, ssum_or_none, date as parse_date
 from .calc import _event_date, _month_end, counts_in, unissued_due
 from . import areas
 
@@ -930,12 +930,17 @@ WARN_NOTES = ("지정일이 일정 자료 범위", "지급 자료 없음", "계�
 RESTRICT_CEO = "쓸 수 없는 돈 (담보·전용)"   # 대표용 '사용제한' 이름 (사용자 2026-11-04)
 
 
+def _left(P):
+    """예산에서 남은 돈: 장부 전 지급요청까지 뺀 것 (calc remain_all, 1차 점검 E1·B5·B6). 모르면 None."""
+    return P.get("remain_all", P["remain"])
+
+
 def _proj_chip(P):
     if P["budget"] is None:
         return "<span class='chip c-n'>예산 미지정</span>"
     if P["unknown_cost"]:
         return "<span class='chip c-q'>확인 필요</span>"
-    if P["remain"] is not None and P["remain"] < 0:
+    if _left(P) is not None and _left(P) < 0:
         return "<span class='chip c-over'>예산 초과</span>"
     return "<span class='chip c-ok'>예산 내</span>"
 
@@ -945,11 +950,11 @@ def _proj_right(P):
         return "<small>잔여 예산</small>" + _na("예산 미지정" + (" (%s)" % P["budget_reason"] if P["budget_reason"] else ""))
     if P["unknown_cost"]:
         return "<small>잔여 예산</small>" + _na("확인 필요" + _unknown_cost_text(P["unknown_cost"]))
-    if P["remain"] is None:
+    if _left(P) is None:
         return "<small>잔여 예산</small>" + _na("확인 필요")
-    if P["remain"] < 0:
-        return "<small>예산 초과</small><span class='neg'>%s</span>" % esc(won(-P["remain"]))
-    return "<small>잔여 예산</small>%s" % esc(won(P["remain"]))
+    if _left(P) < 0:
+        return "<small>예산 초과</small><span class='neg'>%s</span>" % esc(won(-_left(P)))
+    return "<small>잔여 예산</small>%s" % esc(won(_left(P)))
 
 
 def _active_by_event(s3, n_show):
@@ -2337,12 +2342,12 @@ def _over_line(R):
     """프로젝트 예산 초과만 한 줄 (사용자 2026-11-03: 집행 예정·잔여 예산은 이미 지급 예정 일정에 들어가 있어 금액은 겹침,
     대표가 따로 알아야 할 것은 '어느 프로젝트가 예산을 넘었나'뿐). 막대·상세는 경영관리 보고 3장."""
     ps = R["s3"]["projects"]
-    over = sorted([P for P in ps if P["budget"] is not None and not P["unknown_cost"] and P["remain"] is not None and P["remain"] < 0],
-                  key=lambda P: P["remain"])
-    q = sum(1 for P in ps if P["budget"] is not None and P["unknown_cost"])
+    over = sorted([P for P in ps if P["budget"] is not None and not P["unknown_cost"] and _left(P) is not None and _left(P) < 0],
+                  key=_left)
+    q = sum(1 for P in ps if P["budget"] is not None and (P["unknown_cost"] or _left(P) is None))
     if over:
         body = "<b class='neg'>예산 초과 %d건</b> · %s" % (len(over), " · ".join(
-            "%s <b class='neg'>%s 초과</b>" % (esc(_short(P["name"], 20)), esc(won(-P["remain"]))) for P in over))
+            "%s <b class='neg'>%s 초과</b>" % (esc(_short(P["name"], 20)), esc(won(-_left(P)))) for P in over))
     else:
         body = "<b>예산 초과 없음</b>"
     if q:
@@ -3170,17 +3175,20 @@ def _s4(R):
     rows = []
     for P in s4["projects"]:
         rows.append([esc(P["id"]), esc(P["name"]), W(P["contract"], "계약금액 미등록"), W(P["recognized"]),
-                     W(P["unrecognized"], "판단 불가"), W(P["expected"]),
+                     W(P["unrecognized"], "판단 불가"), W(P.get("cost_end", P["expected"]), "판단 불가"),
                      W(P["profit_end"], "판단 불가") + (" <span class='na'>(미확인 원가 %d건)</span>" % P["unknown_cost"]
                                                        if P["unknown_cost"] else ""),
                      esc(pct(P["profit_end"], P["contract"]))])
-    h.append(table(["번호", "프로젝트", "계약금액", "매출 반영 누계", "계약 중 매출 미반영", "예상 총집행", "종료 시점 예상이익",
+    ce = [P.get("cost_end", P["expected"]) for P in s4["projects"]]
+    h.append(table(["번호", "프로젝트", "계약금액", "매출 반영 누계", "계약 중 매출 미반영", "종료 예상 원가", "종료 시점 예상이익",
                     "예상이익률"], rows, num_cols=(2, 3, 4, 5, 6, 7),
                    total=["전체", "", _amt_unk(R["s5"]["contract"], R["s5"]["contract_missing"], "미등록"), "",
-                          _amt_unk(s4["unrecognized"], s4["unrecognized_missing"]), W(R["s3"]["total"]["expected"]),
+                          _amt_unk(s4["unrecognized"], s4["unrecognized_missing"]),
+                          _amt_unk(*ssum_or_none(ce)) if ce else W(None, "-"),
                           "", ""]))
-    h.append("<div class='note'>예상이익 = 계약금액 − 예상 총집행(누적 지급 + 요청 미지급 + 카드 미결제 + 미요청 계획). "
-             "금액 미확인 원가가 있으면 ‘판단 불가’.</div>")
+    h.append("<div class='note'>종료 예상 원가 = 등록 지출(누적 지급 + 요청 미지급 + 장부 전 지급요청 + 카드 미결제 + 미요청 계획)과 "
+             "추정 예산 중 큰 쪽 (끝난 프로젝트는 등록 지출, 예산 미지정은 등록 지출까지만). 예상이익 = 계약금액 − 종료 예상 원가 — "
+             "팀장 보고 '지금 예상 이익'과 같은 식. 금액 미확인 원가·요청이 있으면 ‘판단 불가’.</div>")
     return "".join(h)
 
 
