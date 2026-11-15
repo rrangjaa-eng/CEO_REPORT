@@ -398,7 +398,10 @@ class TestN4ConversionTime(unittest.TestCase):
         import 변환
         t = tempfile.mkdtemp()
         before = dt.datetime.now().replace(microsecond=0)
-        변환.main(["--기준일", "2026-01-02", "--입력", os.path.join(t, "입력"), "--수집폴더", os.path.join(t, "수집")])
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            변환.main(["--기준일", "2026-01-02", "--입력", os.path.join(t, "입력"), "--수집폴더", os.path.join(t, "수집")])
         with open(os.path.join(t, "입력", "변환결과.txt"), encoding="utf-8-sig") as f:
             first = f.readline()
         m = re.match(r"변환 시각 (\S+ \S+) · 기준일 2026-01-02", first)
@@ -406,6 +409,93 @@ class TestN4ConversionTime(unittest.TestCase):
         when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
         self.assertGreaterEqual(when, before)
         self.assertLessEqual(when, dt.datetime.now())
+
+
+class TestCalc04PeriodValues(unittest.TestCase):
+    """계산-04·R8: 국민연금 상한은 기간 값 (2026-07부터 659만), 기간 끝난 값은 그대로 쓰지 않음. 결정 h: 확인 기록."""
+
+    def test_pension_cap_by_period(self):
+        import tempfile
+        from ceo_report import taxlaw
+        d = tempfile.mkdtemp()
+        self.assertEqual(taxlaw.value_on(d, "국민연금상한", D(2026, 6, 30))[:2], (6_370_000, True))
+        self.assertEqual(taxlaw.value_on(d, "국민연금상한", D(2026, 7, 1))[:2], (6_590_000, True))
+        self.assertEqual(taxlaw.value_on(d, "국민연금상한", D(2027, 7, 1))[:2], (None, False))   # 기간 밖: 옛 값으로 대신하지 않음
+
+    def test_old_confirmation_of_ended_period_value_is_not_used(self):
+        import tempfile
+        from ceo_report import taxlaw
+        d = tempfile.mkdtemp()
+        taxlaw.confirm(d, 2026, {"국민연금상한": "6,370,000"}, "", today=D(2026, 11, 13))   # 실제: 11/13 637만 확인
+        v, ok, why = taxlaw.value(d, 2026, "국민연금상한", today=D(2026, 11, 15))
+        self.assertEqual((v, ok), (6_590_000, True))
+        self.assertIn("다름", why)
+        st = taxlaw.status(d, 2026, today=D(2026, 11, 15))
+        row = [r for r in st["rows"] if r[0] == "국민연금상한"][0]
+        self.assertFalse(row[5])                                   # '확인함'으로 보이지 않음
+
+    def test_confirmation_record_has_no_default_source_and_keeps_who_and_effective_date(self):
+        import csv as _csv
+        import tempfile
+        from ceo_report import taxlaw
+        d = tempfile.mkdtemp()
+        taxlaw.confirm(d, 2026, {"국민연금상한": "6,590,000"}, "", today=D(2026, 11, 16))
+        taxlaw.confirm(d, 2026, {"최저한세율": "7%"}, "○○세무회계", today=D(2026, 11, 16), who="담당자", effective="2026-01-01")
+        with open(os.path.join(d, taxlaw.FILE), encoding="utf-8-sig") as f:
+            rows = {r["항목"]: r for r in _csv.DictReader(f)}
+        self.assertEqual(rows["국민연금상한"]["출처"], "")            # 기본값 '세무사'로 채우지 않음
+        self.assertEqual(rows["국민연금상한"]["시행일"], "2026-07-01")  # 기간 값은 그 기간 시작일
+        self.assertEqual((rows["최저한세율"]["확인한 사람"], rows["최저한세율"]["시행일"]), ("담당자", "2026-01-01"))
+        with self.assertRaises(ValueError):
+            taxlaw.confirm(d, 2026, {"최저한세율": "7%"}, "고시", who="담당자", effective="7월1일")
+
+    def test_payroll_uses_the_cap_of_that_month(self):
+        from ceo_report import taxlaw
+        import ceo_report.payroll as pr
+        seen = []
+        real = taxlaw.value_on
+        def spy(input_dir, key, day, today=None):
+            seen.append((key, day))
+            return real(input_dir, key, day, today)
+        import tempfile
+        with mock_patch(taxlaw, "value_on", spy):
+            pr.check(tempfile.mkdtemp(), "2026-08")
+        self.assertIn(("국민연금상한", D(2026, 8, 1)), seen)
+
+
+class TestR11LawFetchFailure(unittest.TestCase):
+    """R11·A3: 법령 조문을 하나도 못 받으면 'N개 받음'이 아니라 '못 받음', 받은 날도 남기지 않음 (자동 확인이 다시 해 보게)."""
+
+    def test_all_failed(self):
+        import tempfile
+        from ceo_report import app, lawwatch
+        d = tempfile.mkdtemp()
+        lawwatch.save_oc(d, "me")
+
+        def broken(url, timeout=0):
+            raise OSError("이름을 찾을 수 없음")
+        rows = lawwatch.check(d, 2026, D(2026, 7, 2), broken)
+        self.assertTrue(rows and all(r[2] == "실패" for r in rows))
+        S = lawwatch.load(d)
+        self.assertEqual(S.get("last", ""), "")
+        self.assertEqual(S["last_try"]["받음"], 0)
+        self.assertTrue(lawwatch.due(d, D(2026, 7, 20)))          # 그달에 다시 해 봄
+        with mock_patch(lawwatch, "check", lambda i, y: rows):
+            head = app.law_check(d, 2026)[0]
+        self.assertIn("하나도 받지 못함", head)
+        self.assertNotIn("개 받음", head)
+
+
+class mock_patch(object):
+    def __init__(self, obj, name, new):
+        self.obj, self.name, self.new = obj, name, new
+
+    def __enter__(self):
+        self.old = getattr(self.obj, self.name)
+        setattr(self.obj, self.name, self.new)
+
+    def __exit__(self, *a):
+        setattr(self.obj, self.name, self.old)
 
 
 if __name__ == "__main__":

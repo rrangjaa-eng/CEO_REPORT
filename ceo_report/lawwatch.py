@@ -224,7 +224,11 @@ def check(input_dir, year, today=None, opener=None):
                            "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
                            "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("flag"))}
         out.append((keys, tag, state, info["시행일자"], note))
-    S["last"] = today.isoformat()
+    # R11 (2026-11-15): 하나도 못 받았으면 '받은 날'을 남기지 않는다 (1월·7월 자동 확인이 그달에 다시 해 보게). 이유는 파일로 남김
+    if any(st not in ("실패", "못 찾음") for _, _, st, _, _ in out):
+        S["last"] = today.isoformat()
+    S["last_try"] = {"날": today.isoformat(), "받음": sum(1 for r in out if r[2] not in ("실패", "못 찾음")), "전체": len(out),
+                     "실패": [("%s: %s" % (r[1], r[4]))[:300] for r in out if r[2] in ("실패", "못 찾음")][:20]}
     _write(input_dir, S)
     return out
 

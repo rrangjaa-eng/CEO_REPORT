@@ -767,5 +767,11 @@ def law_check(input_dir, year):
     from . import lawwatch
     rows = lawwatch.check(input_dir, year)
     bad = [r for r in rows if r[2] in ("개정됨", "못 찾음", "실패") or "안 보임" in r[4]]
-    head = "법령 조문 %d개 받음 — 다시 볼 것 %d개" % (len(rows), len(bad))
+    got = [r for r in rows if r[2] not in ("못 찾음", "실패")]
+    if not got:   # R11 (2026-11-15): 모두 실패해도 'N개 받음'으로 보였음 — 받은 수 그대로, 못 받으면 '못 받음'
+        why = next((r[4] for r in rows if r[4]), "")
+        head = ("법령 조문을 하나도 받지 못함 (%d개 모두 실패) — 인터넷 연결과 아이디(OC)를 확인하고 다시 받아 주세요%s"
+                % (len(rows), (". 이유: " + why[:120]) if why else ""))
+    else:
+        head = "법령 조문 %d개 중 %d개 받음 — 다시 볼 것 %d개" % (len(rows), len(got), len(bad))
     return [head] + ["%s: %s%s · %s" % (tag, st, (" (시행 %s)" % eff) if eff else "", note) for _, tag, st, eff, note in rows]

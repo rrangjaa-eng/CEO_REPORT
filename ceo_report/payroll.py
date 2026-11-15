@@ -91,7 +91,9 @@ def check(input_dir, ym, holders=()):
     names = sorted(n for (m, n) in slips if m == ym and n not in holders)
     mw, mw_ok, _ = law("최저시급")
     hours, _, _ = law("월소정시간")
-    rates = dict((k, law(k)) for k in ("국민연금요율", "건강보험료율", "장기요양비율", "고용보험요율", "국민연금상한", "식대비과세"))
+    rates = dict((k, law(k)) for k in ("국민연금요율", "건강보험료율", "장기요양비율", "고용보험요율", "식대비과세"))
+    # 국민연금 상한은 해마다 7월에 바뀐다: 그 달이 든 기간의 값 (계산-04, 2026-11-15 R8)
+    rates["국민연금상한"] = taxlaw.value_on(input_dir, "국민연금상한", dt.date(year, int(ym[5:7]), 1))
     for n in names:
         s = slips[(ym, n)]
         e = emps.get(n, {})

@@ -1532,9 +1532,16 @@ class Window(object):
         end = 2 + half
         src = ttk.Frame(body, style="Card.TFrame")
         src.grid(row=end, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        # 결정 h (2026-11-15): 기본값으로 채우지 않는다 — 실제로 확인한 곳·사람·시행일을 남김
         ttk.Label(src, text="확인한 곳").pack(side="left")
-        self.law_src = tk.StringVar(value="세무사")
-        ttk.Entry(src, textvariable=self.law_src, width=16).pack(side="left", padx=(4, 8))
+        self.law_src = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_src, width=12).pack(side="left", padx=(4, 8))
+        ttk.Label(src, text="확인한 사람").pack(side="left")
+        self.law_who = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_who, width=8).pack(side="left", padx=(4, 8))
+        ttk.Label(src, text="시행일").pack(side="left")
+        self.law_eff = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_eff, width=11).pack(side="left", padx=(4, 8))
         self._btn(src, "체크한 항목 확인함으로 저장", self.law_save)
         self._btn(src, "닫기", w.destroy)
         self.law_msg = tk.StringVar(value="빨간 항목은 미확인 — 확인 전에는 그 값을 쓰는 계산을 합계에 넣지 않습니다.")
@@ -1570,8 +1577,12 @@ class Window(object):
         if not pick:
             self.law_msg.set("체크한 항목이 없습니다.")
             return
+        if not self.law_src.get().strip() or not self.law_who.get().strip():
+            self.law_msg.set("'확인한 곳'(예: 세무사 사무소·고시)과 '확인한 사람'을 넣어 주세요. 시행일은 아는 경우만 (YYYY-MM-DD).")
+            return
         try:
-            n = taxlaw.confirm(self.paths.input, self.today.year, pick, self.law_src.get().strip())
+            n = taxlaw.confirm(self.paths.input, self.today.year, pick, self.law_src.get().strip(),
+                               who=self.law_who.get().strip(), effective=self.law_eff.get().strip())
         except (ValueError, OSError) as e:
             self.law_msg.set("저장하지 못함: %s" % e)
             return

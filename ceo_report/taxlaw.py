@@ -14,7 +14,9 @@ import datetime as dt
 import os
 
 FILE = "세법기준.csv"
-COLUMNS = ["연도", "항목", "값", "확인일", "출처"]
+# 확인 기록 (계산-07·결정 h, 2026-11-15): 시행일·확인한 사람도 남긴다. '출처(확인한 곳)'는 기본값으로 채우지 않는다
+# (예전엔 창 기본값 '세무사'로 21개가 모두 저장돼 실제로 누가 봤는지 알 수 없었음)
+COLUMNS = ["연도", "항목", "값", "확인일", "출처", "시행일", "확인한 사람"]
 
 # (키, 쉬운 이름, 단위, 어디에 쓰나)
 ITEMS = [
@@ -103,6 +105,16 @@ DEFAULTS = {
 }
 LATEST = max(DEFAULTS)
 
+# 해마다 7월처럼 한 해 중간에 바뀌는 값: (시작일, 끝일, 값, 근거). 그날이 든 기간의 값을 쓰고, 기간 밖이면 '확인 필요'
+# (계산-04, 2026-11-15 R8: 2026-07부터 659만인데 11/13에 637만을 '확인'해 급여 점검이 옛 상한을 썼음)
+PERIODS = {
+    "국민연금상한": [
+        (dt.date(2024, 7, 1), dt.date(2025, 6, 30), 6_170_000, "보건복지부 고시 (2024-07 ~ 2025-06 기준소득월액 상한)"),
+        (dt.date(2025, 7, 1), dt.date(2026, 6, 30), 6_370_000, "보건복지부 고시 (2025-07 ~ 2026-06 기준소득월액 상한)"),
+        (dt.date(2026, 7, 1), dt.date(2027, 6, 30), 6_590_000, "보건복지부고시 제2026-31호 (2026-07 ~ 2027-06 기준소득월액 상한)"),
+    ],
+}
+
 
 def _parse(key, text):
     t = str(text or "").strip().replace(",", "").replace("원", "")
@@ -118,7 +130,7 @@ def _parse(key, text):
 
 
 def read(input_dir):
-    """사용자 확인 -> {(연도, 키): (값, 확인일, 출처)}."""
+    """사용자 확인 -> {(연도, 키): (값, 확인일, 출처, 시행일, 확인한 사람)} (예전 파일은 뒤 두 칸이 빈 글)."""
     out = {}
     path = os.path.join(input_dir, FILE) if input_dir else None
     if not path or not os.path.exists(path):
@@ -135,7 +147,8 @@ def read(input_dir):
                 v = _parse(k, r.get("값"))
             except ValueError:
                 continue
-            out[(y, k)] = (v, (r.get("확인일") or "").strip(), (r.get("출처") or "").strip())
+            out[(y, k)] = (v, (r.get("확인일") or "").strip(), (r.get("출처") or "").strip(),
+                           (r.get("시행일") or "").strip(), (r.get("확인한 사람") or "").strip())
     return out
 
 
@@ -152,8 +165,36 @@ def _default(year, key):
     return None, "미확인", "기준값 없음", None
 
 
+def _day_for(year, today=None):
+    """연도 값을 물을 때 기간 값(PERIODS)을 고를 날: 올해는 오늘, 지난해는 12/31, 다음 해는 1/1."""
+    t = today or dt.date.today()
+    return t if year == t.year else (dt.date(year, 12, 31) if year < t.year else dt.date(year, 1, 1))
+
+
+def value_on(input_dir, key, day, today=None):
+    """그날 쓰는 값 -> (값, 쓸 수 있나, 설명). PERIODS 에 있는 키는 그날이 든 기간으로 고르고, 없으면 그해 값 (계산-04)."""
+    per = PERIODS.get(key)
+    if not per:
+        return value(input_dir, day.year, key, today)
+    hit = [p for p in per if p[0] <= day <= p[1]]
+    if not hit:
+        return None, False, "%s: %s이 든 기간의 값이 프로그램에 없음 — 고시를 확인해 창에서 넣어 주세요" % (LABEL[key], day.isoformat())
+    start, end, v, why = hit[0]
+    mine = read(input_dir).get((day.year, key))
+    if mine is not None and mine[0] is not None:
+        eff = _day(mine[3])
+        if mine[0] == v or (eff and start <= eff <= day):   # 같은 값이거나, 이 기간 안에 시행한다고 적어 확인한 값
+            return mine[0], True, "확인함 %s%s%s" % (mine[1], " · " + mine[2] if mine[2] else "", " (시행 %s)" % mine[3] if mine[3] else "")
+        return v, True, ("%s에 확인한 %s은 이 기간(%s ~ %s) 값과 다름 → %s 사용 (%s). 창 '세법 기준 확인'에서 다시 확인해 주세요"
+                         % (mine[1] or "예전", show(key, mine[0]), start.isoformat(), end.isoformat(), show(key, v), why))
+    return v, True, "자료확인 · %s" % why
+
+
 def value(input_dir, year, key, today=None):
-    """-> (값, 쓸 수 있나, 설명). 쓸 수 있나 = 사용자가 확인했거나 기본값 상태가 '자료확인'이고 값이 있음."""
+    """-> (값, 쓸 수 있나, 설명). 쓸 수 있나 = 사용자가 확인했거나 기본값 상태가 '자료확인'이고 값이 있음.
+    한 해 중간에 바뀌는 값(PERIODS)은 그해 오늘(지난해는 12/31) 기준 기간 값."""
+    if key in PERIODS:
+        return value_on(input_dir, key, _day_for(year, today), today)
     mine = read(input_dir).get((year, key))
     v, st, why, eff = _default(year, key)
     fl = None
@@ -191,7 +232,8 @@ def status(input_dir, year, today=None):
     rows, todo = [], []
     for k, name, _, _ in ITEMS:
         v, ok, why = value(input_dir, year, k, today)
-        rows.append((k, name, v, ok, why, (year, k) in mine and ok))
+        # '확인함'은 사용자가 확인한 값을 그대로 쓸 때만 (기간이 바뀌어 다른 값을 쓰면 '자료확인'으로 보임 — R8)
+        rows.append((k, name, v, ok, why, (year, k) in mine and ok and mine[(year, k)][0] == v))
         if not ok:
             todo.append(k)
     return {"year": year, "rows": rows, "todo": todo, "confirmed": all(r[5] for r in rows), "known": year <= LATEST}
@@ -210,9 +252,13 @@ def show(key, v):
     return str(v)
 
 
-def confirm(input_dir, year, values, source="", today=None):
-    """사용자 확인 저장. values = {키: 값 글 또는 None(=지금 보이는 값 그대로 확인)}. -> 저장한 항목 수."""
+def confirm(input_dir, year, values, source="", today=None, who="", effective=""):
+    """사용자 확인 저장. values = {키: 값 글 또는 None(=지금 보이는 값 그대로 확인)}. -> 저장한 항목 수.
+    source = 확인한 곳, who = 확인한 사람, effective = 시행일(YYYY-MM-DD, 비우면 기간 값은 그 기간 시작일) — 기본값으로 채우지 않음 (결정 h)."""
     day = (today or dt.date.today()).isoformat()
+    effective = (effective or "").strip()
+    if effective and _day(effective) is None:
+        raise ValueError("시행일은 YYYY-MM-DD 로 넣어 주세요 (예: 2026-07-01)")
     cur = read(input_dir)
     n = 0
     for k, text in values.items():
@@ -221,15 +267,19 @@ def confirm(input_dir, year, values, source="", today=None):
         v = _parse(k, text) if text not in (None, "") else value(input_dir, year, k)[0]
         if v is None:
             raise ValueError("%s: 값이 없어 확인할 수 없음 — 세무사에게 받은 값을 넣어 주세요" % LABEL[k])
-        cur[(year, k)] = (v, day, source)
+        eff = effective
+        if not eff and k in PERIODS:   # 기간 값: 그 값이 든 기간의 시작일 (그해 안에서)
+            hit = [p for p in PERIODS[k] if p[2] == v and p[0].year <= year <= p[1].year]
+            eff = hit[-1][0].isoformat() if hit else ""
+        cur[(year, k)] = (v, day, (source or "").strip(), eff, (who or "").strip())
         n += 1
     os.makedirs(input_dir, exist_ok=True)
     tmp = os.path.join(input_dir, FILE + ".tmp")
     with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(COLUMNS)
-        for (y, k), (v, d, s) in sorted(cur.items(), key=lambda x: (x[0][0], [i[0] for i in ITEMS].index(x[0][1]))):
-            w.writerow([y, k, v if UNIT[k] != "비율" else ("%g%%" % round(v * 100, 4)), d, s])
+        for (y, k), (v, d, s, e, who_) in sorted(cur.items(), key=lambda x: (x[0][0], [i[0] for i in ITEMS].index(x[0][1]))):
+            w.writerow([y, k, v if UNIT[k] != "비율" else ("%g%%" % round(v * 100, 4)), d, s, e, who_])
     os.replace(tmp, os.path.join(input_dir, FILE))
     return n
 
