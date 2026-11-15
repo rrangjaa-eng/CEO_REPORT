@@ -697,7 +697,12 @@ def _actual_for(actual, upto, card, lines, bill, pay, start):
     end = _period_end(bill, start)
     if end > upto:
         return None   # 이용기간이 아직 안 끝남: 받은 날 뒤 사용을 몰라 평균 규칙 그대로
-    return sum(a for d, a in items if card_due(d, pay, start) == bill)
+    got = [a for d, a in items if card_due(d, pay, start) == bill]
+    if not got:
+        # 1차 D5 (2026-11-15): 화면을 좁은 기간으로 조회해 받으면 그 이용기간 줄이 하나도 없다 — 예전엔 '실제 사용 0'으로 보고
+        # 평균 채우기까지 건너뛰어 카드대금 예상이 사라졌음. 한 건도 없으면 모르는 것으로 보고 평균 규칙 그대로
+        return None
+    return sum(got)
 CARD_MIN_AVG = 100000    # 최근 3달 평균이 이보다 적은 카드는 평균으로 채우지 않음
 
 

@@ -3585,3 +3585,29 @@ class TestDoneLineKeepsNextMonth(unittest.TestCase):
                     project=p) for p in ("P1", "P2")]
         new, _ = fundplan.apply(inv, [plan_ev("2026-10-05", 110_000_000, "가상고객", "이미 입금")], D(2026, 10, 20), 7)
         self.assertEqual(len(new), 2)   # 107일 뒤 계산서 두 줄은 남는다
+
+
+class TestCardScreenNarrowQuery(unittest.TestCase):
+    """1차 D5: 카드 사용 화면을 좁은 기간으로 받아 그 이용기간 줄이 하나도 없으면 '실제 사용 0'으로 보지 않고 평균 규칙 그대로. 합성 값."""
+
+    def test_period_missing_from_screen_keeps_average(self):
+        import json
+        import shutil
+        import tempfile
+        from ceo_report import screen_tax, tax
+        from test_screen_tax_1114 import TestCardActual
+        D = dt.date
+        folder = tempfile.mkdtemp()
+        try:
+            doc = {"종류": "결산", "화면코드": "SAAC0105", "수집시각": "2026-11-13 09:00", "응답": [
+                {"path": "/smarta/saac0105/6/", "data": {"data": [   # 11월 사용만 조회해 받음 (10월 이용기간 줄 없음)
+                    {"da_sbook": "20261105", "nm_ctrade": "[00501]신한_5860", "cd_ctrade": "00501", "mn_total": 400000}]}}]}
+            with open(os.path.join(folder, "261113 결산_신용카드 자동수집.json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False)
+            real, upto = screen_tax.card_usage(folder)
+        finally:
+            shutil.rmtree(folder)
+        rows = tax.cards(TestCardActual().journal(), D(2026, 11, 10), {"신한": (14, 1)}, actual=real, actual_upto=upto)
+        nov = [r for r in rows if "11월" in r["대상기간"]]
+        self.assertEqual([r["금액"] for r in nov], ["3000000"], [r["근거"] for r in rows])   # 예전엔 줄이 사라졌음
+        self.assertNotIn("위하고 카드 사용 기준", nov[0]["대상기간"])
