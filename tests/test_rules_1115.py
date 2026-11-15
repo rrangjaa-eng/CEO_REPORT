@@ -522,3 +522,77 @@ class TestCalc13BudgetCollect(unittest.TestCase):
             self.assertIn("작성일 뒤 60일, 가용자금과 같은 기준", html)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ───────────── 계산-05 (결정 g): 자금계획서에 없는 매달 같은 고정 지출도 꼭 나갈 정기 지출 ─────────────
+def bank_slip(day, no, lines):
+    """통장 출금 전표: lines = [(계정코드, 계정, 거래처코드, 거래처, 차변, 적요)] + 보통예금 대변."""
+    out = [{"date": day, "no": str(no), "account_code": a, "account": n, "vendor_code": vc, "vendor": v,
+            "debit": amt, "credit": None, "memo": memo} for a, n, vc, v, amt, memo in lines]
+    out.append({"date": day, "no": str(no), "account_code": "10300", "account": "보통예금", "vendor_code": "", "vendor": "",
+                "debit": None, "credit": sum(x[4] for x in lines), "memo": ""})
+    return out
+
+
+class TestCalc05FixedCosts(unittest.TestCase):
+    def journal(self):
+        J, no = [], 0
+        for m, (prin, intr) in zip((8, 9, 10), ((1200000, 334390), (1210000, 324390), (1220000, 314390))):
+            no += 1   # 할부: 원금 + 이자 합계가 매달 같음
+            J += bank_slip(D(2026, m, 21), no, [("29300", "장기차입금", "00679", "캐피탈", prin, ""), ("93100", "이자비용", "00679", "캐피탈", intr, "")])
+        for m, d, a in ((9, 11, 895068), (10, 11, 867945), (11, 11, 924904)):
+            no += 1   # 대출 이자: 조금씩 다름 (±15% 안)
+            J += bank_slip(D(2026, m, d), no, [("93100", "이자비용", "1107", "대출_보증기금", a, "")])
+        for m, d in ((8, 25), (9, 28), (10, 26)):
+            no += 1   # 공제부금 (정기예금 계정이지만 '공제')
+            J += bank_slip(D(2026, m, d), no, [("10500", "정기예.적금", "257", "공제부금", 300000, "공제부금 불입")])
+            no += 1   # 정기예금 가입 (공제·적금 아님) → 보지 않음 (deposits 가 다룸)
+            J += bank_slip(D(2026, m, d), no, [("10500", "정기예.적금", "900", "은행", 300000, "정기예금 가입")])
+            no += 1   # 미지급금 지급 → 보지 않음 (계산서·자금계획서 쪽)
+            J += bank_slip(D(2026, m, 4), no, [("25300", "미지급금", "371", "직원", 100000, "")])
+        for m, a in ((8, 100000), (9, 300000), (10, 100000)):
+            no += 1   # 금액이 들쭉날쭉 → 매달 같은 돈 아님
+            J += bank_slip(D(2026, m, 10), no, [("81900", "임차료", "500", "창고", a, "")])
+        for m in (6, 7, 8):
+            no += 1   # 9월부터 안 나감 → 끝난 지출
+            J += bank_slip(D(2026, m, 15), no, [("81900", "임차료", "501", "옛 창고", 500000, "")])
+        for m in (8, 9, 10):
+            no += 1   # 거래처코드 없음 → 이름으로 묶지 않음 (계산-01)
+            J += bank_slip(D(2026, m, 15), no, [("83100", "지급수수료", "", "이름만", 50000, "")])
+        return J
+
+    def test_finds_monthly_fixed_costs_by_code(self):
+        from ceo_report import tax
+        rows = tax.fixed_costs(self.journal(), D(2026, 11, 15))
+        self.assertEqual(sorted(set(r["거래처코드"] for r in rows)), ["1107", "257", "679"])
+        first = {}
+        for r in rows:
+            first.setdefault(r["거래처코드"], r)
+            self.assertEqual(r["세목"], tax.FIXED_KIND)
+            self.assertEqual(r["상태"], "예상")
+        self.assertEqual((first["679"]["납부예정일"], first["679"]["금액"]), ("2026-11-23", "1534390"))   # 21일이 토요일 → 월요일
+        self.assertEqual((first["1107"]["납부예정일"], first["1107"]["금액"]), ("2026-12-11", "924904"))  # 11월분은 이미 나감
+        self.assertEqual((first["257"]["납부예정일"], first["257"]["금액"]), ("2026-11-25", "300000"))   # 가장 이른 날 25일
+        self.assertIn("결정 g", first["679"]["근거"])
+        self.assertEqual(sum(1 for r in rows if r["거래처코드"] == "679"), 8)   # 11월 ~ 기준일 달 + 7달 (2027-06)
+
+    def test_codes_of_other_rows_are_skipped(self):
+        from ceo_report import tax
+        rows = tax.fixed_costs(self.journal(), D(2026, 11, 15), skip_codes=["679"])
+        self.assertNotIn("679", set(r["거래처코드"] for r in rows))
+
+    def test_fixed_cost_is_a_must_pay_and_plan_row_with_same_code_wins(self):
+        from ceo_report import calc, tax
+        self.assertIn(tax.FIXED_KIND, calc.MUST_KINDS)
+        t = {"kind": tax.FIXED_KIND, "period": "캐피탈 2026년 11월분", "due": D(2026, 11, 23), "amount": 1534390, "state": "예상",
+             "basis": "", "codes": ("679",), "book": D(2026, 11, 14)}
+        events, info = tax.merge([], [t], D(2026, 11, 15))
+        self.assertEqual(len(events), 1)
+        calc.mark_must(events, info)
+        self.assertTrue(events[0]["must"])
+        plan = {"date": D(2026, 11, 21), "io": "out", "amount": 1534390, "firm": True, "cat": "차입금 상환", "desc": "하나캐피탈",
+                "vendor_code": "679", "source": "자금계획서"}
+        events, info = tax.merge([plan], [t], D(2026, 11, 15))
+        self.assertEqual(events, [plan])   # 자금계획서에 있으면 두 번 빼지 않음
+        calc.mark_must(events, info)
+        self.assertTrue(plan["must"])

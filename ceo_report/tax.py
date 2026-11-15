@@ -756,6 +756,80 @@ def deposits(journal, asof, codes=("10500",), words=("정기예금",)):
     return _stamp(rows, journal)
 
 
+FIXED_KIND = "고정 지출"
+FIXED_MONTHS = 3          # 최근 이만큼 이어진 달마다 통장에서 나갔으면 매달 나가는 돈으로 본다
+FIXED_TOL = 0.15          # 그 달들 금액이 가운데 값의 ±15% 안 (이자처럼 조금씩 다른 것 포함)
+# 미지급금·미지급비용·외상매입금·예수금·부가세예수금·미지급세금을 갚는 지급은 계산서·급여·카드·세금으로 이미 일정에 들어간다
+SETTLE_PREFIX = ("251", "252", "253", "254", "255", "261", "262")
+
+
+def fixed_costs(journal, asof, skip_codes=(), months_ahead=AHEAD_MONTHS):
+    """매달 같은 금액으로 통장에서 바로 나가는 지출 (사용자 2026-11-15 결정 g, 계산-05: 자금계획서에 없어도 꼭 나갈 정기 지출).
+
+    실제 예: 하나캐피탈 할부(원금+이자 153만), 기술보증기금 대출 이자 2건(약 90만·51만), 지식재산공제부금 30만 — 자금계획서에 없어
+    가용자금 큰 숫자에서 빠졌다 (R7). 장부에서 찾는다:
+      · 통장 출금 전표의 통장이 아닌 차변 줄을 거래처코드별로 더한다 (거래처코드가 없으면 보지 않음 — 이름으로 묶지 않는다, 계산-01).
+      · 미지급금·미지급비용·예수금 등을 갚는 줄은 뺀다 (계산서·급여·카드·세금 일정에 이미 있음). 정기예금 계정 줄은 공제부금·적금만
+        (정기예금 가입·만기는 deposits()). 다른 세금 줄(급여·4대보험·카드·정기예금 등)이 쓰는 거래처코드도 뺀다 (skip_codes).
+      · 최근 FIXED_MONTHS 달이 끊김 없이 이어지고(마지막 달이 기준일 달 또는 그 전 달) 그 달들 금액이 가운데 값의 ±15% 안이면 매달 나가는 돈.
+    마지막으로 나간 달 다음 달부터 기준일 달 + months_ahead 달까지 '예상' 줄: 금액 = 마지막 달 금액, 날짜 = 최근 달들 중 가장 이른 날(쉬는 날이면 다음 영업일).
+    자금계획서·자금일정에 같은 거래처코드 지급이 ±7일 안에 있으면 보고서가 그 줄을 쓰고 이 줄은 넣지 않는다 (merge ⓪, 두 번 빼지 않음)."""
+    skip = set(_code(c) for c in skip_codes if _code(c))
+    slips = {}
+    for x in journal:
+        if x["date"] is not None:
+            slips.setdefault((x["date"], x.get("no")), []).append(x)
+    per = {}     # 거래처코드 -> {(연, 월): [(날짜, 금액)]}
+    names = {}
+    for (day, _), lines in slips.items():
+        if day > asof or not _from_bank(lines):
+            continue
+        by = {}
+        for x in lines:
+            acct = _sq(x["account_code"])
+            if acct.startswith(BANK_PREFIX) or acct.startswith(SETTLE_PREFIX) or not (x.get("debit") or 0):
+                continue
+            if acct == "10500" and not any(w in _sq(x.get("memo")) + _sq(x.get("vendor")) for w in OTHER_SAVINGS):
+                continue
+            c = _code(x.get("vendor_code"))
+            name = str(x.get("vendor") or "")
+            if not c or c in skip or CARD_PREFIX.match(name.strip()) or any(w in _sq(name) for w in INSURERS + ("세무서", "구청", "시청", "군청")):
+                continue
+            by[c] = by.get(c, 0) + x["debit"]
+            names[c] = name.strip() or names.get(c, "")
+        for c, a in by.items():
+            per.setdefault(c, {}).setdefault((day.year, day.month), []).append((day, a))
+    rows = []
+    prev_m = _next_month(asof.year, asof.month, -1)
+    until = _next_month(asof.year, asof.month, months_ahead)
+    for c, M in sorted(per.items()):
+        last = max(M)
+        if last < prev_m:
+            continue   # 지난달·이번 달에 안 나갔으면 끝난 지출로 본다
+        run = [last]
+        while len(run) < FIXED_MONTHS and _next_month(*run[-1], -1) in M:
+            run.append(_next_month(*run[-1], -1))
+        if len(run) < FIXED_MONTHS:
+            continue
+        amts = [sum(a for _, a in M[ym]) for ym in run]
+        mid = sorted(amts)[len(amts) // 2]
+        if mid <= 0 or any(abs(a - mid) > FIXED_TOL * mid for a in amts):
+            continue
+        day_of = min(d.day for ym in run for d, _ in M[ym])
+        amount = amts[0]
+        lo, hi = min(amts), max(amts)
+        span = format(lo, ",") if lo == hi else "%s~%s" % (format(lo, ","), format(hi, ","))
+        basis = ("장부 최근 %d달(%d-%02d~%d-%02d) 매달 %d일쯤 통장에서 나감 (%s원) — 자금계획서에 없으면 꼭 나갈 정기 지출로 봄 (결정 g). "
+                 "금액은 마지막 달 금액" % (FIXED_MONTHS, run[-1][0], run[-1][1], last[0], last[1], day_of, span))
+        ym = _next_month(*last)
+        while ym <= until:
+            due = _after(_day_in(ym[0], ym[1], day_of))
+            if _recent(due, asof):
+                rows.append(_row(FIXED_KIND, "%s %d년 %d월분" % (names.get(c) or "거래처 %s" % c, ym[0], ym[1]), due, amount, "예상", basis, (c,)))
+            ym = _next_month(*ym)
+    return _stamp(rows, journal)
+
+
 def _row(kind, period, due, amount, state, basis, codes=()):
     return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
             "상태": state, "근거": basis, "과세표준": "", "산출세액": "", "기납부": "", "대손충당금": "", "세무조정": "",

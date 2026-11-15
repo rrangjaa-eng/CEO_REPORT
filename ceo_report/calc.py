@@ -959,14 +959,14 @@ def period_ends(kind, asof, payday=None):
     return [("%d월" % _month_end(_add_months(asof, i)).month, _month_end(_add_months(asof, i))) for i in range(1, 4)]
 
 
-MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금")
+MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금", "고정 지출")   # 고정 지출: 결정 g (2026-11-15, tax.fixed_costs)
 MUST_CAT_EXTRA = ("세금", "회사부담금")
 MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
 LOAN_WORDS = ("차입금", "대출", "이자")
 
 
 def must_pay(ev, card=True, loans=False, pay=True):
-    """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급.
+    """꼭 나갈 정기 지출 (2026-11-14 D1 '정기 지출 예상도 빼기'): 급여·4대보험·원천세·부가세·법인세·카드대금 지급 + 매달 같은 고정 지출 (결정 g).
     날짜·금액이 거의 정해진 돈이라 '예상'이어도 큰 숫자(여유 자금)에서 뺀다.
 
     · 프로그램이 장부로 계산한 줄(세금예상): 세목으로.

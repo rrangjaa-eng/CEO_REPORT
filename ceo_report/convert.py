@@ -997,6 +997,8 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
     rows += ct_rows
     rows += corptax.carry_rows(books.journal, cfg, asof, manual, input_dir, wehago_dir)   # 작년분 4/30까지·8/31 중간예납 (2026-11-14 F5)
+    # 결정 g (2026-11-15): 매달 같은 금액으로 통장에서 바로 나가는 지출 (대출 이자·할부·공제부금). 다른 줄이 쓰는 거래처는 빼고 찾는다
+    rows += tax.fixed_costs(books.journal, asof, skip_codes=[c for r in rows for c in (r.get("거래처코드") or "").split()])
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
     notes = ["%s %s → %s %s %s원 (%s)" % (r["세목"], r["대상기간"], r["납부예정일"] or "날짜 미정",
                                        "입금" if r["세목"] == tax.DEPOSIT_IN else "납부", "{:,}".format(int(r["금액"])) if r["금액"] else "미확인", r["상태"]) for r in rows]
