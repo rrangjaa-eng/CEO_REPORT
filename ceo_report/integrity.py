@@ -286,14 +286,32 @@ def compare_keys(app_dir, keys, out):
         out.append("- 핵심 숫자를 저장하지 못함 (%s)" % type(e).__name__)
 
 
+WORK_DIR = "_점검임시"
+
+
+def _work_dir(app_dir):
+    """2차 C9·P2-17·P3-7·P5-26·P6-4 (2026-11-15): 입력 사본(급여·계좌가 든 파일 포함)을 회사 PC 의 임시 폴더가 아니라 프로그램 폴더
+    (외장하드) 안에 만든다 — 중간에 끊겨도 회사 PC 에 남지 않고, 다음 점검 때 남은 것을 지운다. -> 이번 실행 폴더."""
+    work = os.path.join(app_dir, WORK_DIR)
+    try:
+        if os.path.isdir(work):
+            for n in os.listdir(work):   # 지난번에 끊겨 남은 사본
+                shutil.rmtree(os.path.join(work, n), True)
+        os.makedirs(work, exist_ok=True)
+        return tempfile.mkdtemp(prefix="점검_", dir=work)
+    except OSError:
+        return tempfile.mkdtemp(prefix="ceo_report_check_")
+
+
 def run(app_dir, out_path, asof=None):
+    from . import credstore, transfer
     asof = asof or dt.date.today()
     now = dt.datetime.now()
     out = ["# 자료 정합성 점검 %s (기준일 %s)" % (now.strftime("%Y-%m-%d %H:%M"), asof)]
     input_dir = os.path.join(app_dir, "입력")
     collect = os.path.join(app_dir, "수집")
     wehago_dir = os.path.join(collect, "위하고")
-    tmp = tempfile.mkdtemp()
+    tmp = _work_dir(app_dir)
     rc = 0
     try:
         books = wehago.load_books(wehago_dir, asof, None)
@@ -305,7 +323,9 @@ def run(app_dir, out_path, asof=None):
             rc = 3   # 장부를 못 읽으면 점검 실패로 남긴다 (2026-11-14 코덱스 검토: 성공으로 기록됐음)
         temp_input = os.path.join(tmp, "입력")
         if os.path.isdir(input_dir):
-            shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns("이전"))
+            # 점검에 쓰지 않는 계정·계좌 파일은 베끼지 않는다
+            shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns(
+                "이전", credstore.CRED_FILE, transfer.ACCOUNT_FILE, transfer.LOG_FILE, "*.tmp", "~$*"))
         os.makedirs(os.path.join(tmp, "출력"), exist_ok=True)
         res = convert.run(temp_input, collect, wehago_dir, asof, now, ran_at=dt.datetime.now())
         if getattr(res, "code", 0):
@@ -322,6 +342,10 @@ def run(app_dir, out_path, asof=None):
         rc = 8
     finally:
         shutil.rmtree(tmp, True)
+        try:
+            os.rmdir(os.path.join(app_dir, WORK_DIR))   # 비었으면 치운다
+        except OSError:
+            pass
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\nrc=%s\n" % rc)
     return rc

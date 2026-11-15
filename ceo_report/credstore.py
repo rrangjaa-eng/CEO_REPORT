@@ -31,9 +31,16 @@ def save(input_dir, user_id, password):
     raw = json.dumps({"id": user_id, "pw": password}, ensure_ascii=False).encode("utf-8")
     body = _MAGIC + base64.b64encode(_mix(raw))
     tmp = path_of(input_dir) + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(body)
-    os.replace(tmp, path_of(input_dir))
+    try:
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.replace(tmp, path_of(input_dir))
+    except OSError:   # 2차 P1-17: 실패한 저장의 임시 파일(계정이 든)을 남기지 않는다
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def load(input_dir):
@@ -51,7 +58,11 @@ def load(input_dir):
 
 
 def clear(input_dir):
-    """-> 지웠으면 True."""
+    """-> 지웠으면 True. 2차 P1-17 (2026-11-15): 예전에 저장하다 실패해 남은 임시 파일(계정이 든 '.tmp')도 함께 지운다."""
+    try:
+        os.remove(path_of(input_dir) + ".tmp")
+    except FileNotFoundError:
+        pass
     try:
         os.remove(path_of(input_dir))
         return True

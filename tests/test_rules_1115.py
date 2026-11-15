@@ -2171,3 +2171,52 @@ class TestDecisionsSavedTogether(unittest.TestCase):
             for t in ts:
                 t.join(5)
         self.assertEqual(sorted(real(tmp)), ["항목1", "항목2"])
+
+
+# ───────────── 2차 C9 묶음: 정합성 점검의 입력 사본은 프로그램 폴더 안에, 계정·계좌 파일은 베끼지 않음 ─────────────
+class TestIntegrityCopyStaysOnTheDrive(unittest.TestCase):
+    def test_copy_is_inside_the_program_folder_without_secrets_and_is_cleaned(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import convert, credstore, integrity, transfer
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), os.path.join(tmp, "입력"))
+        os.makedirs(os.path.join(tmp, "수집", "위하고"))
+        for n in (credstore.CRED_FILE, transfer.ACCOUNT_FILE, transfer.LOG_FILE):
+            with open(os.path.join(tmp, "입력", n), "w", encoding="utf-8") as f:
+                f.write("가상")
+        os.makedirs(os.path.join(tmp, integrity.WORK_DIR, "점검_지난번끊김", "입력"))   # 지난번에 끊겨 남은 사본
+        seen = {}
+        real = convert.run
+
+        def spy(input_dir, *a, **kw):
+            seen["dir"], seen["files"] = input_dir, sorted(os.listdir(input_dir))
+            return real(input_dir, *a, **kw)
+        with mock.patch.object(convert, "run", side_effect=spy):
+            integrity.run(tmp, os.path.join(tmp, "정합성.txt"), D(2026, 10, 31))
+        self.assertTrue(os.path.abspath(seen["dir"]).startswith(os.path.join(os.path.abspath(tmp), integrity.WORK_DIR)))
+        for n in (credstore.CRED_FILE, transfer.ACCOUNT_FILE, transfer.LOG_FILE):
+            self.assertNotIn(n, seen["files"])
+        self.assertFalse(os.path.exists(os.path.join(tmp, integrity.WORK_DIR)))   # 지난 것·이번 것 모두 치움
+
+
+# ───────────── 2차 P1-17: 기억 지우기는 실패한 저장의 임시 계정 파일도 지움 ─────────────
+class TestForgetRemovesLeftoverCredentials(unittest.TestCase):
+    def test_clear_removes_tmp_and_failed_save_leaves_none(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import credstore
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with mock.patch.object(credstore.os, "replace", side_effect=OSError(13, "denied")):
+            with self.assertRaises(OSError):
+                credstore.save(tmp, "가상아이디", "가상비번")
+        self.assertEqual(os.listdir(tmp), [])
+        credstore.save(tmp, "가상아이디", "가상비번")
+        with open(credstore.path_of(tmp) + ".tmp", "wb") as f:   # 예전 판이 남긴 것
+            f.write(b"x")
+        self.assertTrue(credstore.clear(tmp))
+        self.assertEqual(os.listdir(tmp), [])
