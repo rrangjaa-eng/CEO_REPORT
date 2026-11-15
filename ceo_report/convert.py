@@ -1206,6 +1206,17 @@ def _keep_side(input_dir):
     return out
 
 
+def _drop_stale(input_dir, name):
+    """새로 쓰지 못한 보조 파일의 예전 것을 지운다 (지난 실행 값을 이번 것처럼 쓰지 않게). -> 이제 없는가."""
+    path = os.path.join(input_dir, name)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+        return not os.path.exists(path)
+    except OSError:
+        return False
+
+
 def _put_back_side(input_dir, kept):
     """_keep_side 때로 되돌린다 -> (되돌린 이름, 되돌리지 못한 이름). 바뀌지 않은 파일은 건드리지 않는다."""
     done, lost = [], []
@@ -1315,7 +1326,11 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         fp_table = next((t for t in tables if t.name == "자금계획.csv" and t.written), None)
         facts["book_company"] = books.company or ""
         facts["plan_companies"] = sorted(set(v for v in ((fp_table.extra or {}).get("companies") or {}).values() if v)) if fp_table else []
-        insights.write_facts(input_dir, facts)
+        side_fail = []   # 2차 P2-14·P3-10 (2026-11-15): 자동분석·확인할것 저장 실패가 '변환 완료'에 묻혔다
+        if not insights.write_facts(input_dir, facts):
+            side_fail.append("경고: %s(장부 기준일·회사 이름·고정비)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
+                             % (insights.FILE, "예전 것은 지워 보고가 자료기준일.csv 로 장부 날짜를 봄"
+                                if _drop_stale(input_dir, insights.FILE) else "예전 것이 남아 보고가 지난 장부 날짜·회사 이름을 볼 수 있음"))
         dups = review_checks.duplicate_lines(books.journal)
         overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
         from . import checklist, hometax
@@ -1326,7 +1341,14 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
                  + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]))
         trace = {k: v["text"] for k, v in review_checks.payable_trace(books.journal, cfg["payable_codes"], books.book_date).items()
                  if v["text"]}
-        checklist.save_convert_items(input_dir, items, ran_at, trace)
+        if not checklist.save_convert_items(input_dir, items, ran_at, trace):
+            side_fail.append("경고: %s(변환에서 찾은 확인할 것 %d건)을 쓰지 못함 — %s. 외장하드 연결을 확인하고 자료 변환을 다시 실행하세요"
+                             % (checklist.CONVERT_FILE, len(items), "예전 항목은 지움" if _drop_stale(input_dir, checklist.CONVERT_FILE)
+                                else "확인할 것 화면에 예전 항목이 보일 수 있음"))
+        if side_fail:
+            res.code = 7
+            listings = listings + side_fail
+            summary = summary + side_fail
     snap_console, snap_warning = snapshot_lines(snap, snap_line, asof, cfg)
     lines = result_lines(ran_at, asof, books, cfg, cfg_notes, tables, backup_line, kept, snap_line, res.links, cross, listings,
                          snap_warning)

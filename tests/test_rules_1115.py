@@ -1903,3 +1903,47 @@ class TestTeamReportFailuresShown(TeamReportCase):
         self.assertEqual(len(pages2), len(teams) - 1)
         self.assertEqual(len(R["_team_failed"]), 1)
         self.assertIn("return 7   # 팀장 보고 일부를 못 씀", _read(os.path.join(ROOT, "보고서.py")))
+
+
+# ───────────── 2차 P2-14·P3-10: 자동분석·확인할것 저장 실패가 '변환 완료'에 묻히지 않음 ─────────────
+class TestConvertSideFilesFailLoudly(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import test_convert
+        test_convert.setUpModule()   # 샘플을 임시 폴더에 새로 쓴다
+
+    def _company(self):
+        from test_convert_review_fixes import company
+        return company(self)
+
+    def test_side_file_failures_are_said_and_stale_copies_removed(self):
+        from unittest import mock
+        from ceo_report import insights
+        from test_convert_review_fixes import result_text, run_convert_core
+        tmp, input_dir, collect, wehago_dir = self._company()
+        for name in (insights.FILE, checklist.CONVERT_FILE):   # 지난 실행이 남긴 것 (지난 장부 날짜)
+            with open(os.path.join(input_dir, name), "w", encoding="utf-8") as f:
+                f.write('{"book_date": "2026-01-02"}')
+        with mock.patch.object(insights, "write_facts", return_value=False), \
+                mock.patch.object(checklist, "save_convert_items", return_value=False):
+            res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 7, res.lines)
+        warn = [ln for ln in res.lines if ln.startswith("경고: ") and "쓰지 못함" in ln]
+        self.assertEqual(len(warn), 2, res.lines)
+        self.assertIn("예전 것은 지워", warn[0])
+        self.assertIn("예전 항목은 지움", warn[1])
+        text = result_text(input_dir)
+        for w in warn:
+            self.assertIn(w, text)
+        self.assertFalse(os.path.exists(os.path.join(input_dir, insights.FILE)))
+        self.assertFalse(os.path.exists(os.path.join(input_dir, checklist.CONVERT_FILE)))
+
+    def test_normal_run_writes_both_and_stays_zero(self):
+        from ceo_report import insights
+        from test_convert_review_fixes import run_convert_core
+        tmp, input_dir, collect, wehago_dir = self._company()
+        res = run_convert_core(input_dir, collect, wehago_dir)
+        self.assertEqual(res.code, 0, res.lines)
+        self.assertTrue(os.path.exists(os.path.join(input_dir, insights.FILE)))
+        self.assertTrue(os.path.exists(os.path.join(input_dir, checklist.CONVERT_FILE)))
+        self.assertFalse([ln for ln in res.lines if "쓰지 못함" in ln], res.lines)

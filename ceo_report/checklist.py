@@ -85,15 +85,17 @@ def convert_items(tables, cross, notes):
 
 
 def save_convert_items(input_dir, items, now=None, trace=None):
-    """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀)."""
+    """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀).
+    -> 썼는가."""
     data = {"_시각": (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M"), "items": items, "trace": trace or {}}
     path = os.path.join(input_dir, CONVERT_FILE)
     try:
         with open(path + ".tmp", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1, default=str)
         os.replace(path + ".tmp", path)
-    except OSError:
-        pass
+        return True
+    except OSError:   # 2차 P2-14: 실패를 알리게 돌려준다 (변환이 알림)
+        return False
 
 
 def _load_trace(input_dir):
