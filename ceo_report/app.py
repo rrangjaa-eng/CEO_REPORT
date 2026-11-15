@@ -396,7 +396,8 @@ def headless(paths, log_path, asof="", today=None):
     2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고 (대표보고.exe --자동 결과.txt [기준일]).
     창에서 '자동'을 누른 것과 같게: 기준일은 비우면 오늘, 출금일·가용자금 날짜·출금 목록 합침은 창을 열 때 칸 값 그대로."""
     from . import winstate
-    lines = []
+    from .version import build
+    lines = ["판: %s" % build()]
     day = parse_date(asof) if asof else (today or dt.date.today())
     vals = winstate.start_values(paths.input, day) if day else {"payday": "", "pick": ""}
     group, only = load_merge(paths)
@@ -440,7 +441,8 @@ def self_check(log_path, base=None):
     base = base or getattr(sys, "_MEIPASS", program_dir())
     sample = os.path.join(base, "입력양식", "샘플")
     tmp = tempfile.mkdtemp()
-    lines = []
+    from .version import build
+    lines = ["판: %s" % build()]
     try:
         shutil.copytree(sample, os.path.join(tmp, "입력"))
         os.makedirs(os.path.join(tmp, "수집", "위하고"))

@@ -326,22 +326,9 @@ def evidence_choices(output_dir, kind, asof=None):
 
 
 # ───────────── 종료 코드를 말로 ─────────────
-STOP_MARK = "이 보고를 만들지 않았습니다"   # gate.stop_page 글
-
-
 def blocked_reports(files):
-    """만든 파일 중 자료 확인(게이트)에 막혀 '만들지 않음' 안내만 쓴 대표·팀장 보고 HTML."""
-    out = []
-    for f in files or []:
-        if not f.lower().endswith(".html"):
-            continue
-        try:
-            with open(f, encoding="utf-8") as fh:
-                if STOP_MARK in fh.read(4000):
-                    out.append(f)
-        except (OSError, UnicodeDecodeError):
-            continue
-    return out
+    """만든 파일 중 자료 확인(게이트)에 막혀 '만들지 않음' 안내만 쓴 대표·팀장 보고 HTML (gate.stop_page)."""
+    return [f for f in files or [] if f.lower().endswith(".html") and _is_stop_page(f)]
 
 
 def outcome(task, rc, files):

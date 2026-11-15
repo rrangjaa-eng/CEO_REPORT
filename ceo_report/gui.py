@@ -68,7 +68,8 @@ class Window(object):
         self.auto_tried = None    # 자동으로 한 번 돌린 자료 표시 (실패해도 같은 자료로 되풀이하지 않게)
         self.check = None
         self.edit = None
-        root.title(TITLE)
+        from .version import build
+        root.title("%s (판 %s)" % (TITLE, build()))
         root.configure(background=C["bg"])
         # 사용자 2026-11-04: 한 화면에 다 보이게. 글꼴을 이름 있는 Font 로 두고, 화면보다 크면 줄인다 (fit_to_screen)
         fam = "Malgun Gothic"

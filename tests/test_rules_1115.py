@@ -1753,3 +1753,15 @@ class TestFinishMessagesTellTheTruth(unittest.TestCase):
         self.assertIn(b, got)
         from ceo_report import winstate
         self.assertTrue(winstate.outcome("예산", 0, got)[0])
+
+
+class TestBuildStamp(unittest.TestCase):
+    """2차 C16·P6-12: exe 에 판(커밋) 표시가 없어 어떤 판이 깔렸는지 알 수 없었다."""
+
+    def test_stamp_and_display(self):
+        from ceo_report import version
+        self.assertTrue(version.build())
+        wf = _read(os.path.join(ROOT, ".github", "workflows", "build-exe.yml"))
+        self.assertLess(wf.find("tools/stamp_build.py"), wf.find("PyInstaller --noconfirm"))
+        self.assertIn("ceo_report._build", wf)
+        self.assertIn("판 %s", _read(os.path.join(ROOT, "ceo_report", "gui.py")))
