@@ -21,8 +21,10 @@ SHEET = "입력정보"
 HEADER = ["*입금은행", "*입금계좌", "고객관리성명", "*입금액", "출금통장표시내용", "입금통장표시내용", "입금인코드", "비고", "업체사용key"]
 MAX_BYTES = {"account": 16, "holder": 20, "amount": 15, "our": 14, "their": 14, "memo": 20, "key": 20}
 
-# 정기적으로 나가는 돈 (이체 파일에 넣지 않음): 자동이체·카드·세금·급여·예금 등
-REGULAR = ("카드", "세금", "부가세", "원천세", "4대보험", "회사부담금", "급여", "인건비", "임차료", "구독료", "차입금", "정기예금",
+# 정기적으로 나가는 돈 (이체 파일에 넣지 않음): 자동이체·카드·세금·급여·예금 등 — 분류(자금항목)에 이 낱말이 있을 때만.
+# 2차 C2·P5-8 (2026-11-15): 거래처 이름 낱말로는 빼지 않는다 (초대카드제작소·프로젝트 인건비 지급이 빠졌음, 규칙 '적요 낱말 대신
+# 계정과목·거래처코드'). 이름으로는 '꼭 나갈 돈' 한 곳(calc.must_pay: 세무서·구청·공단·…카드·카드사_번호)만 따른다.
+REGULAR = ("카드", "세금", "부가세", "원천세", "4대보험", "회사부담금", "급여", "임차료", "구독료", "차입금", "정기예금",
            "보험료", "통신비", "관리비")
 # 아직 요청이 아닌 계획 (이체할 돈이 아님)
 PLANS = ("프로젝트 남은 예산", "프로젝트 집행계획")
@@ -266,20 +268,48 @@ def find_account(accounts, ln):
     return acc, None
 
 
+def regular_why(e):
+    """정기 지급(이체 파일에 넣지 않음)이면 그 까닭, 아니면 ''. 프로젝트 지급은 정기 지급이 아니다."""
+    from .calc import auto_debit, must_pay
+    cat = str(e.get("cat") or "")
+    if e.get("source") == "세금예상":
+        return "장부로 계산한 " + (cat.split(" (")[0] or "세금")
+    if e.get("source") in ("프로젝트집행", "남은 예산", "계산서") or cat.startswith("프로젝트"):
+        return ""
+    words = [w for w in REGULAR if w in cat]
+    if words:
+        return "분류 '%s'" % cat
+    if must_pay(e, loans=True) or auto_debit(e):
+        return "꼭 나갈 정기 지출 (거래처 %s)" % (e.get("desc") or "")
+    return ""
+
+
 def is_regular(e):
-    text = " ".join(str(e.get(k) or "") for k in ("cat", "desc"))
-    return e.get("source") == "세금예상" or any(w in text for w in REGULAR)
+    return bool(regular_why(e))
 
 
-def pick(events, start, end):
-    """[start, end] 에 나갈 거래처 지급 (정기 지급·계획 제외) -> (거래처별로 합친 줄, 뺀 줄 수)."""
+def name_hint(e):
+    """정기 지급으로 빼지 않았지만 거래처 이름에 정기 지급 낱말이 있는 지급 -> 그 낱말 (없으면 ''). 넣되 한 번 더 보게 알린다."""
+    name = str(e.get("desc") or "")
+    return next((w for w in REGULAR if w in name), "")
+
+
+def pick(events, start, end, info=None):
+    """[start, end] 에 나갈 거래처 지급 (정기 지급·계획 제외) -> (거래처별로 합친 줄, 뺀 줄 수).
+    info(dict)를 주면 info['regular'] = [(거래처, 금액, 까닭)] (뺀 정기 지급), info['hints'] = [(거래처, 낱말)] 를 채운다."""
     lines, skipped = {}, 0
     for e in events:
         if e["io"] != "out" or e["date"] is None or not (start <= e["date"] <= end) or e.get("cat") in PLANS:
             continue
-        if is_regular(e):
+        why = regular_why(e)
+        if why:
             skipped += 1
+            if info is not None:
+                info.setdefault("regular", []).append((str(e.get("desc") or "").strip(), e.get("amount"), why))
             continue
+        hint = name_hint(e)
+        if hint and info is not None:
+            info.setdefault("hints", []).append((str(e.get("desc") or "").strip(), hint))
         name = str(e.get("desc") or "").strip()
         code = str(e.get("vendor_code") or "").strip()
         k = code_key(code) or vendor_key(name) or "?%d" % len(lines)
@@ -330,12 +360,12 @@ def multi_accounts(accounts, ln):
     return None
 
 
-def build(events, accounts, start, end, splits=None, multi=None):
+def build(events, accounts, start, end, splits=None, multi=None, info=None):
     """-> (파일 줄 [9칸], 막힌 줄 [(거래처, 금액, 이유)], 뺀 정기 지급 수).
 
     splits: {거래처코드 열쇠: {예금주: 금액}} — 한 코드에 예금주가 다른 계좌가 여럿일 때 사람별로 나눠 넣는다
     (사용자 2026-11-05). 합계가 지급액과 같을 때만 쓴다. multi(list)를 주면 나눌 금액이 필요한 거래처를 채운다."""
-    picked, skipped = pick(events, start, end)
+    picked, skipped = pick(events, start, end, info)
     rows, blocked = [], []
     splits = splits or {}
     for k, ln in picked:
@@ -585,13 +615,19 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     accounts, notes = read_accounts(input_dir)
     for n in notes:
         say(n)
-    rows, blocked, skipped = build(R["events"], accounts, start, end, splits, multi)
+    info = {}
+    rows, blocked, skipped = build(R["events"], accounts, start, end, splits, multi, info)
     if missing is not None:
         missing.extend(missing_accounts(R["events"], accounts, start, end))
     say("이체 대상 %s ~ %s: 파일에 넣음 %d건 %s원, 못 넣음 %d건, 정기 지급 %d건은 뺌" % (
         start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
     for vendor, amount, why in blocked:
         say("  못 넣음: %s %s — %s" % (vendor, "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    for vendor, amount, why in info.get("regular") or []:   # 2차 C2·P5-8: 무엇을 뺐는지 이름으로
+        say("  정기 지급이라 뺌: %s %s — %s" % (vendor or "(거래처 없음)", "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    for vendor, word in sorted(set(info.get("hints") or [])):
+        say("[주의] %s — 이름에 '%s'이(가) 있지만 분류가 정기 지급이 아니라 파일에 넣었습니다. 자동이체로 나가는 돈이면 은행 화면에서 이 줄을 지우세요"
+            % (vendor, word))
     if not rows:
         say("파일에 넣을 줄이 없어 만들지 않았습니다")
         _put_away(output_dir, start, end, say, "이번에 넣을 줄 0건")

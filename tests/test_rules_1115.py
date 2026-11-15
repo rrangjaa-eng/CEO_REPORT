@@ -1947,3 +1947,49 @@ class TestConvertSideFilesFailLoudly(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(input_dir, insights.FILE)))
         self.assertTrue(os.path.exists(os.path.join(input_dir, checklist.CONVERT_FILE)))
         self.assertFalse([ln for ln in res.lines if "쓰지 못함" in ln], res.lines)
+
+
+# ───────────── 2차 C2·P5-8: 거래처 이름 낱말로 이체 파일에서 빼지 않음, 뺀 것은 이름으로 ─────────────
+class TestTransferRegularByCategory(unittest.TestCase):
+    def _ev(self, desc, cat="자금계획서 미지급금 지급", source="자금계획서", amount=1_000_000):
+        return {"date": D(2026, 11, 4), "io": "out", "amount": amount, "desc": desc, "cat": cat, "source": source,
+                "project": "", "firm": True, "basis": "", "vendor_code": ""}
+
+    def test_vendor_name_words_do_not_drop_a_vendor_payment(self):
+        from ceo_report import transfer
+        info = {}
+        picked, skipped = transfer.pick([self._ev("초대카드제작소"),
+                                         self._ev("인건비", cat="프로젝트 지급요청", source="프로젝트집행")],
+                                        D(2026, 11, 1), D(2026, 11, 7), info)
+        self.assertEqual(skipped, 0)
+        self.assertEqual(sorted(ln["vendor"] for _, ln in picked), ["인건비", "초대카드제작소"])
+        self.assertIn(("초대카드제작소", "카드"), info["hints"])
+
+    def test_category_tax_and_card_company_still_left_out_with_names(self):
+        from ceo_report import transfer
+        info = {}
+        evs = [self._ev("가상건물", cat="임차료", source="자금일정"),
+               self._ev("급여 10월분", cat="급여 (장부 계산)", source="세금예상"),
+               self._ev("신한카드"),                       # 카드사 (이름 끝이 카드) — 꼭 나갈 돈 한 곳의 규칙
+               self._ev("신한_5860"),                      # 장부 카드 거래처
+               self._ev("가상세무서")]                      # 세무서
+        picked, skipped = transfer.pick(evs, D(2026, 11, 1), D(2026, 11, 7), info)
+        self.assertEqual((picked, skipped), ([], 5))
+        self.assertEqual([v for v, _, _ in info["regular"]], ["가상건물", "급여 10월분", "신한카드", "신한_5860", "가상세무서"])
+        self.assertTrue(all(why for _, _, why in info["regular"]))
+
+    def test_make_file_says_what_it_left_out(self):
+        src = _read(os.path.join(ROOT, "ceo_report", "transfer.py"))
+        self.assertIn("정기 지급이라 뺌: %s", src)
+
+
+# ───────────── 2차 P5-7: 출금일을 멀리 잡아도 이체 기간 = 보고 출금 목록 기간 ─────────────
+class TestTransferRangeMatchesReportList(unittest.TestCase):
+    def test_far_payday_starts_the_day_after_asof(self):
+        from ceo_report import winstate
+        self.assertEqual(winstate.transfer_range(D(2026, 11, 27), D(2026, 11, 10)), (D(2026, 11, 11), D(2026, 11, 27)))
+
+    def test_near_payday_and_unknown_asof_unchanged(self):
+        from ceo_report import winstate
+        self.assertEqual(winstate.transfer_range(D(2026, 11, 13), D(2026, 11, 10)), (D(2026, 11, 11), D(2026, 11, 13)))
+        self.assertEqual(winstate.transfer_range(D(2026, 11, 13)), (D(2026, 11, 7), D(2026, 11, 13)))

@@ -45,11 +45,12 @@ def next_friday(asof):
 
 
 def transfer_range(payday, asof=None):
-    """이체 파일 기간: 출금일이 끝인 한 주 (출금일-6일 ~ 출금일). 기준일이 그 안이면 기준일 다음 날부터 (이미 지난 날은 뺌)."""
-    start = payday - dt.timedelta(days=6)
-    if asof is not None and asof >= start:
-        start = min(asof + dt.timedelta(days=1), payday)
-    return start, payday
+    """이체 파일 기간 = 주간 보고의 출금 목록 기간: 기준일 다음 날 ~ 출금일.
+    2차 P5-7 (2026-11-15): 출금일을 한 주보다 멀리 잡으면 보고 목록은 기준일 다음 날부터인데 이체 파일은 출금일 앞 7일만이라
+    그 사이 지급이 이체 파일에서 빠졌다. 기준일을 모르면 출금일이 끝인 한 주 (출금일-6일 ~ 출금일)."""
+    if asof is None:
+        return payday - dt.timedelta(days=6), payday
+    return min(asof + dt.timedelta(days=1), payday), payday
 
 
 def money(text):
