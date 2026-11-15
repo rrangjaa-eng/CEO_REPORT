@@ -858,30 +858,46 @@ class Window(object):
         self.q.put(("line", text))
 
     def pump(self):
+        # 2차 P5-14 (2026-11-15): 한 건 처리 중 예외(파일 열기 실패 등)로 다음 예약이 없어져 진행 표시가 멈췄다 →
+        # 건마다 오류를 글로 남기고, 다음 예약은 언제나 한다
         try:
             while True:
-                kind, val = self.q.get_nowait()
-                if kind == "line":
-                    self.log.configure(state="normal")
-                    self.log.insert("end", val + "\n")
-                    self.log.see("end")
-                    self.log.configure(state="disabled")
-                elif kind == "done":
-                    self.finish(*val)
-                elif kind == "checks":
-                    n, text = val
-                    self.check_n.configure(text=n)
-                    self.check_now.set(text)
-                elif kind == "edited":
-                    pdf, text = val
-                    self.say(text)
-                    if pdf:
-                        open_path(pdf)
-                elif kind == "call":
-                    val()
-        except queue.Empty:
-            pass
-        self.root.after(100, self.pump)
+                try:
+                    kind, val = self.q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._pump_one(kind, val)
+                except Exception as e:
+                    try:
+                        self.log.configure(state="normal")
+                        self.log.insert("end", "화면 처리 중 오류 (%s): %s\n" % (type(e).__name__, str(e)[:150]))
+                        self.log.see("end")
+                        self.log.configure(state="disabled")
+                    except Exception:
+                        pass
+        finally:
+            self.root.after(100, self.pump)
+
+    def _pump_one(self, kind, val):
+        if kind == "line":
+            self.log.configure(state="normal")
+            self.log.insert("end", val + "\n")
+            self.log.see("end")
+            self.log.configure(state="disabled")
+        elif kind == "done":
+            self.finish(*val)
+        elif kind == "checks":
+            n, text = val
+            self.check_n.configure(text=n)
+            self.check_now.set(text)
+        elif kind == "edited":
+            pdf, text = val
+            self.say(text)
+            if pdf:
+                open_path(pdf)
+        elif kind == "call":
+            val()
 
     def set_busy(self, busy, text, ok=None):
         self.busy = busy

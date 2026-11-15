@@ -2755,3 +2755,50 @@ class TestWindowStateBadValues(unittest.TestCase):
         with open(os.path.join(tmp, winstate.STATE_FILE), "w", encoding="utf-8") as f:
             json.dump({"runs": {"변환": {"at": 5, "ok": "y"}, "주간": {"at": "2026-11-05 10:00", "ok": False}}}, f)
         self.assertEqual(list(winstate.load(tmp)["runs"]), ["주간"])
+
+
+# ───────────── 2차 P5-14: 진행 처리 한 건이 실패해도 다음 처리 예약은 남음 ─────────────
+class TestPumpKeepsGoing(unittest.TestCase):
+    def test_error_in_one_item(self):
+        import queue
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        logged, after = [], []
+
+        class Log(object):
+            def configure(self, **k):
+                pass
+
+            def insert(self, where, text):
+                logged.append(text)
+
+            def see(self, where):
+                pass
+
+        class Root(object):
+            def after(self, ms, fn):
+                after.append(ms)
+
+        done = []
+
+        class Fake(object):
+            q = queue.Queue()
+            log = Log()
+            root = Root()
+
+            def _pump_one(self, kind, val):
+                if kind == "bad":
+                    raise OSError(5, "열 수 없음")
+                done.append(kind)
+
+            def pump(self):
+                pass
+        f = Fake()
+        f.q.put(("bad", None))
+        f.q.put(("line", "다음"))
+        gui.Window.pump(f)
+        self.assertEqual(done, ["line"])
+        self.assertTrue(any("화면 처리 중 오류" in x for x in logged), logged)
+        self.assertEqual(after, [100])
