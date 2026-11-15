@@ -96,7 +96,9 @@ _HANDLED = ("[확인] 카드 전표 입력 전", "[확인] 원천세 장부·위
 def save_convert_items(input_dir, items, now=None, trace=None):
     """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀).
     -> 썼는가."""
-    data = {"_시각": (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M"), "items": items, "trace": trace or {}}
+    when = now or dt.datetime.now()
+    # "_시작": 변환을 시작한 시각(초) — 2차 P5-12: 이것보다 뒤에 받은 자료는 이번 변환에 없을 수 있으니 '새 자료'로 본다
+    data = {"_시각": when.strftime("%Y-%m-%d %H:%M"), "_시작": when.strftime("%Y-%m-%d %H:%M:%S"), "items": items, "trace": trace or {}}
     path = os.path.join(input_dir, CONVERT_FILE)
     try:
         with open(path + ".tmp", "w", encoding="utf-8") as f:

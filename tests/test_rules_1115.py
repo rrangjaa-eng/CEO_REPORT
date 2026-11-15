@@ -2991,3 +2991,31 @@ class TestRecurringScheduleNearestPair(unittest.TestCase):
                 return [r["비고"] for r in csv.DictReader(f)]
         self.assertEqual(notes(RC.SCHEDULE), ["첫 주"])     # 아직 안 나간 첫 주는 남는다 (예전엔 첫 주가 둘째 주 출금을 가져갔음)
         self.assertEqual(notes(RC.ARCHIVE), ["둘째 주"])
+
+
+# ───────────── 2차 P5-12: 변환 도중 들어온 자료는 다음에 '새 자료' ─────────────
+class TestDataDuringConvertIsNew(unittest.TestCase):
+    def test_seconds(self):
+        import shutil
+        import tempfile
+        from ceo_report import app, checklist, winstate
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.input, exist_ok=True)
+        os.makedirs(P.wehago, exist_ok=True)
+        start = dt.datetime(2026, 11, 15, 10, 0, 50)
+        checklist.save_convert_items(P.input, [], now=start)
+        p = os.path.join(P.convert_file if hasattr(P, "convert_file") else P.input, checklist.CONVERT_FILE)
+        t = (start + dt.timedelta(seconds=40)).timestamp()   # 변환이 같은 분 안에 끝남
+        os.utime(p, (t, t))
+
+        def put(name, when):
+            q = os.path.join(P.wehago, name)
+            with open(q, "w", encoding="utf-8") as f:
+                f.write("{}")
+            os.utime(q, (when.timestamp(), when.timestamp()))
+        put("261115 분개장 자동수집.json", dt.datetime(2026, 11, 15, 10, 0, 30))   # 변환 전에 받음
+        self.assertEqual(winstate.steps(P, dirs=[])["new_since"], [])
+        put("261115 자금계획 자동수집.json", dt.datetime(2026, 11, 15, 10, 0, 55))   # 변환 도중 받음
+        self.assertEqual(winstate.steps(P, dirs=[])["new_since"], ["자금계획서"])

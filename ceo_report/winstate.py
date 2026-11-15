@@ -210,6 +210,12 @@ def freshness(paths, asof):
 
 def convert_time(input_dir):
     from . import checklist
+    try:   # 2차 P5-12 (2026-11-15): 초까지 적은 시작 시각이 있으면 그것 — 변환 도중 들어온 자료를 다음 자동 실행이 놓치지 않게
+        with open(os.path.join(input_dir, checklist.CONVERT_FILE), encoding="utf-8") as f:
+            started = (json.load(f) or {}).get("_시작") or ""
+        return dt.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     _, when = checklist._load_convert_items(input_dir)
     exact = _mtime(os.path.join(input_dir, checklist.CONVERT_FILE))
     try:
