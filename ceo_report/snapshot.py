@@ -55,8 +55,12 @@ def _page_counts(pages):
     return str(pay), str(proj)
 
 
-def write_snapshot(root, collected_at, payments, projects, pages=None):
-    """스냅숏 폴더를 쓰고 최종 폴더 경로를 돌려준다. 실패하면 이 함수가 만든 '.작성중' 폴더만 지우고 오류를 다시 낸다."""
+def write_snapshot(root, collected_at, payments, projects, pages=None, extra=None):
+    """스냅숏 폴더를 쓰고 최종 폴더 경로를 돌려준다. 실패하면 이 함수가 만든 '.작성중' 폴더만 지우고 오류를 다시 낸다.
+
+    extra(폴더): 함께 넣을 파일(지급 요청서 등)을 쓰는 함수. 2차 C20·P1-16 (2026-11-15): 예전엔 스냅숏을 완성으로 만든 뒤
+    지급요청서.csv 를 따로 써서, 그것만 실패하면 '요청서 없는 완성 스냅숏'이 남고 다음 변환이 있던 상세 내역을 지웠다.
+    이제 완성 표시(수집정보.csv·폴더 이름 바꾸기) 전에 써서, 실패하면 이번 스냅숏 전체가 없던 일이 된다."""
     stamp = collected_at.strftime(TIME_FORMAT)
     final = os.path.join(root, "인트라넷_" + collected_at.strftime("%Y%m%d_%H%M%S"))
     work = final + ".작성중"
@@ -73,6 +77,8 @@ def write_snapshot(root, collected_at, payments, projects, pages=None):
                    [[stamp] + [("" if p.get(c) is None else p.get(c)) for c in PAYMENT_COLUMNS] for p in payments])
         _write_csv(os.path.join(work, PROJECT_FILE), ["수집시각"] + PROJECT_COLUMNS,
                    [[stamp] + [("" if p.get(c) is None else p.get(c)) for c in PROJECT_COLUMNS] for p in projects])
+        if extra is not None:
+            extra(work)
         pp, jp = _page_counts(pages)
         _write_csv(os.path.join(work, INFO_FILE), ["항목", "값"],
                    [["형식", FORMAT], ["수집시각", stamp], ["지급요청_건수", len(payments)], ["프로젝트_건수", len(projects)],

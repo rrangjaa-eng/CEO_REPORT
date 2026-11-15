@@ -2459,3 +2459,22 @@ class TestEvidenceKeepsAllWarnings(unittest.TestCase):
         doc = evidence.build(self._page("<style>.gate{}</style><div class='gate'>자금계획서가 빠진 달: 12월</div>"), ["1-1"])
         self.assertEqual(doc.count("근거 표"), 1, doc)
         self.assertEqual(evidence.warnings(self._page("")), [])
+
+
+# ───────────── 2차 C20·P1-16: 지급 요청서를 못 쓰면 스냅숏도 완성되지 않음 ─────────────
+class TestSnapshotWithRequestsAllOrNothing(unittest.TestCase):
+    def test_failed_request_file_leaves_previous_snapshot(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from ceo_report import payreq, snapshot
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        rows = [{"key": "k1", "project": "26001", "vendor": "가나", "amount": 1000, "note": "첫 줄"}]
+        old = snapshot.write_snapshot(root, dt.datetime(2026, 11, 14, 9), [], [], extra=lambda f: payreq.write(f, rows))
+        self.assertTrue(os.path.exists(os.path.join(old, payreq.FILE)))
+        with mock.patch.object(payreq, "write", side_effect=OSError(28, "No space")):
+            with self.assertRaises(OSError):
+                snapshot.write_snapshot(root, dt.datetime(2026, 11, 15, 9), [], [], extra=lambda f: payreq.write(f, rows))
+        self.assertEqual(snapshot.latest_snapshot(root), old)   # 요청서 없는 '완성' 스냅숏이 생기지 않는다
+        self.assertEqual(sorted(os.listdir(root)), [os.path.basename(old)])   # 작성중 폴더도 남지 않음
