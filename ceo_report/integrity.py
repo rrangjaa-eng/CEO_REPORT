@@ -57,7 +57,8 @@ def _journal_checks(books, out):
         out.append("- %d년 말 계정 첫자리별 차변−대변 합: %s (합 %s)" % (y, dict(sorted(cls.items())), _won(sum(cls.values()))))
     sorts = collections.Counter((ln.get("sort") or "").strip() for ln in J)
     out.append("- 전표 유형: %s" % dict(sorts.most_common()))
-    return start
+    # 1차 D18 (2026-11-15): 차변≠대변을 찾아도 점검이 '성공(0)'으로 끝났다 → 맞지 않으면 3 (확인할 것 화면을 엶)
+    return start and not bad and total == 0
 
 
 def _convert_checks(res, temp_input, out):
@@ -143,6 +144,7 @@ def _report_checks(tmp, temp_input, asof, out):
     out.append("## 보고서 만들기 (임시 폴더)")
     P = app.Paths(tmp)
     month_end = _month_end(asof)
+    ok = True
     for task, day in (("주간", asof), ("월간", month_end)):
         lines = []
         try:
@@ -150,12 +152,15 @@ def _report_checks(tmp, temp_input, asof, out):
         except Exception as e:   # 점검은 멈추지 않는다
             rc, files = "예외 %s" % type(e).__name__, []
         out.append("- %s %s: 종료 코드 %s, 파일 %d개" % (task, day, rc, len(files)))
+        if rc != 0:   # 2차 P5-25 (2026-11-15): 보고를 못 만들어도 점검 종료 코드는 0이었다
+            ok = False
         for ln in lines:
             if "보고서 7번" in ln:
                 continue   # 점검 보고서는 임시 폴더라 남지 않는다: 아래에 내용을 바로 적는다 (사용자 2026-11-05 '7번이 어딨는데')
             if "확인 필요" in ln or "오류" in ln:
                 out.append("  · " + ln[:200])
     out += issue_summary(temp_input, month_end)
+    return ok
 
 
 def issue_summary(temp_input, day):
@@ -309,7 +314,8 @@ def run(app_dir, out_path, asof=None):
         _cross_checks(temp_input, out)
         if os.path.isdir(os.path.join(tmp, "수집")) is False:
             os.makedirs(os.path.join(tmp, "수집"), exist_ok=True)
-        _report_checks(tmp, temp_input, asof, out)
+        if not _report_checks(tmp, temp_input, asof, out):
+            rc = rc or 3
         compare_keys(app_dir, key_numbers(temp_input, asof, res), out)
     except Exception as e:
         out.append("점검 오류 (%s): %s" % (type(e).__name__, str(e)[:300]))

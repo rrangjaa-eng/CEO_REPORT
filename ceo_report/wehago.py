@@ -850,10 +850,16 @@ def _prior_years(folder, kind, names, rows, asof, company="", foreign=None):
             continue
         picks.append((n, more, more_info))
     added, used, spans, slips = [], [], [], {}
+    # 1차 D1 (2026-11-15): 같은 해 안에서 날짜를 고친 전표를 일부 기간만 다시 받으면 옛 날짜 줄도 남아 두 번 셌다 (통장 1,000만 과대 예시).
+    # 같은 기수 분개장처럼 줄 번호가 있으면 더 새 파일에 이미 있는 (해, 줄 번호)는 날짜가 달라도 뺀다
+    seen = set()
     for i, (n, more, more_info) in enumerate(picks):   # 새 것부터: 이미 더 새 파일이 맡은 날짜는 건너뛴다
         span = _span_of(more, more_info)
         keep = [r for r in more if (r.get("date") is None and i == 0) or (
-            r.get("date") is not None and not _in(r["date"], spans) and (span is None or span[0] <= r["date"] <= span[1]))]
+            r.get("date") is not None and not _in(r["date"], spans) and (span is None or span[0] <= r["date"] <= span[1])
+            and not (r.get("line_id") and (r["date"].year, r["line_id"]) in seen))]
+        seen.update((r["date"].year, r["line_id"]) for r in more if r.get("line_id") and r.get("date") is not None
+                    and (span is None or span[0] <= r["date"] <= span[1]))
         if span is not None:
             spans.append(span)
         if not keep:

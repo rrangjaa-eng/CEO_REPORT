@@ -1811,3 +1811,23 @@ class TestUnknownAmountsStayUnknown(unittest.TestCase):
     def test_closed_project_with_unknown_cost_counts_as_unknown_profit(self):
         src = _read(os.path.join(ROOT, "ceo_report", "teamreport.py"))
         self.assertIn('rem_cost = None if P_.get("unknown_cost") else 0', src)
+
+
+class TestIntegrityFailsOnMismatch(unittest.TestCase):
+    """1차 D18·2차 P5-25: 차변≠대변을 찾거나 보고를 못 만들어도 정합성 점검이 '성공(0)'으로 끝났다."""
+
+    def test_unbalanced_slip_is_not_ok(self):
+        from types import SimpleNamespace
+        from ceo_report import integrity
+        ln = lambda no, code, dr, cr: {"date": D(2026, 1, 2), "no": no, "account_code": code, "debit": dr, "credit": cr, "sort": "일반"}
+        base = [ln("1", "33100", None, 20000000), ln("1", "10300", 20000000, None)]   # 설립 자본금 (처음부터 있음)
+        mk = lambda J: SimpleNamespace(journal=J, files={}, unused=[])
+        out = []
+        ok = integrity._journal_checks(mk(base), out)
+        bad = base + [ln("2", "81100", 1000000, None), ln("2", "10300", None, 900000)]
+        out2 = []
+        self.assertFalse(integrity._journal_checks(mk(bad), out2))
+        self.assertTrue(any("확인 필요" in x for x in out2))
+        src = _read(os.path.join(ROOT, "ceo_report", "integrity.py"))
+        self.assertIn("if not _report_checks(tmp, temp_input, asof, out):", src)
+        self.assertIsInstance(ok, bool)

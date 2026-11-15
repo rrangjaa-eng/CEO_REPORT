@@ -309,3 +309,24 @@ class TestLineIdLayers(unittest.TestCase):
         lines = sorted((r["date"].isoformat(), r["memo"]) for r in b.journal if r["account_code"] == "81300")
         self.assertEqual(lines, [("2026-10-10", "메모"), ("2026-11-02", "날짜 고침")])
         self.assertEqual(b.files["분개장"]["layers"], ["261110 분개장 자동수집.json"])
+
+
+class TestPriorYearLineIdLayers(TestLineIdLayers):
+    """1차 D1 (2026-11-15): 지난 기수 분개장도 같은 해 안에서 날짜를 고친 줄을 일부 기간만 다시 받으면 두 번 셌다."""
+
+    def test_redated_prior_year_line_counted_once(self):
+        from test_journal_json import write_json
+        cur = [self.row("20260105", "00001", "81300", "접대비(판)", 10, 0, 1),
+               self.row("20260105", "00001", "25300", "미지급금", 0, 10, 2)]
+        old = [self.row("20251128", "00007", "81300", "접대비(판)", 500, 0, 77, "고치기 전"),
+               self.row("20251128", "00007", "25300", "미지급금", 0, 500, 78, "고치기 전"),
+               self.row("20251010", "00001", "81300", "접대비(판)", 100, 0, 11),
+               self.row("20251010", "00001", "25300", "미지급금", 0, 100, 12)]
+        new = [self.row("20251205", "00003", "81300", "접대비(판)", 500, 0, 77, "날짜 고침"),
+               self.row("20251205", "00003", "25300", "미지급금", 0, 500, 78, "날짜 고침")]
+        write_json(self.dir, "261113 분개장 자동수집.json", self.doc(cur, "20260101", "20261113"))
+        write_json(self.dir, "261101 분개장_2025 자동수집.json", self.doc(old, "20250101", "20251231"))
+        write_json(self.dir, "261110 분개장_2025_기간20251201-20251231 자동수집.json", self.doc(new, "20251201", "20251231"))
+        b = wehago.load_books(self.dir, ASOF, None)
+        lines = sorted((r["date"].isoformat(), r["memo"]) for r in b.journal if r["account_code"] == "81300")
+        self.assertEqual(lines, [("2025-10-10", "메모"), ("2025-12-05", "날짜 고침"), ("2026-01-05", "메모")])
