@@ -2301,7 +2301,7 @@ class TestExtensionMasksIdNumbersEverywhere(unittest.TestCase):
         if shutil.which("node") is None:
             self.skipTest("node 없음")
         js = (
-            'const src=require("fs").readFileSync(process.argv[1],"utf8");'
+            'const src=require("fs").readFileSync(process.argv[1],"utf8").replace(/\\r\\n/g,"\\n");'
             'const m=src.match(/const DROP_KEY[\\s\\S]*?\\nfunction scrub[\\s\\S]*?\\n}\\n/);'
             'eval(m[0].replace(/const /g,"var ").replace("function scrub","global.scrub=function"));'
             'console.log(JSON.stringify(scrub(JSON.parse(process.argv[2]))));')
@@ -3060,7 +3060,7 @@ class TestSaverQueueKeepsNewFiles(unittest.TestCase):
         if shutil.which("node") is None:
             self.skipTest("node 없음")
         js = r'''
-const src = require("fs").readFileSync(process.argv[1], "utf8");
+const src = require("fs").readFileSync(process.argv[1], "utf8").replace(/\r\n/g, "\n");
 const m = src.match(/async function pending\(\)[\s\S]*?\n}\n/);
 const f = src.match(/async function flush\(ask\)[\s\S]*?\n}\n/);
 let store = {pendingSaves: [{name: "a.json", text: "A"}]};
