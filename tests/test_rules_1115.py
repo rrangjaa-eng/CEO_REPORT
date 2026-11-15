@@ -1765,3 +1765,31 @@ class TestBuildStamp(unittest.TestCase):
         self.assertLess(wf.find("tools/stamp_build.py"), wf.find("PyInstaller --noconfirm"))
         self.assertIn("ceo_report._build", wf)
         self.assertIn("판 %s", _read(os.path.join(ROOT, "ceo_report", "gui.py")))
+
+
+class TestForecastTrackHonest(unittest.TestCase):
+    """1차 B15·B16: 예상 입금이 80% 빗나가도 '믿고 써도 됨'이었고, 같은 기준일을 며칠 뒤 다시 만들면 예측 기록을 덮어 오차가 0이 됐다."""
+
+    def test_expected_inflow_miss_is_flagged(self):
+        from ceo_report import digest
+        K = {"months": [{"in": {"firm": 0, "all": 100000000, "actual": 20000000},
+                         "out": {"firm": 0, "all": 0, "actual": 0}}]}
+        out = digest.track_suggest(K)
+        self.assertTrue(any("덜 들어왔습니다" in x for x in out))
+        self.assertFalse(any("믿고 써도" in x for x in out))
+
+    def test_earlier_day_record_is_kept(self):
+        import tempfile, shutil, time
+        from ceo_report import insights
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        folder = os.path.join(tmp, insights.RECORD_DIR)
+        os.makedirs(folder)
+        path = os.path.join(folder, "일정_2026-11-08.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('[{"old": 1}]')
+        old = time.time() - 3 * 86400
+        os.utime(path, (old, old))
+        self.assertTrue(insights._frozen(path))
+        os.utime(path, None)
+        self.assertFalse(insights._frozen(path))

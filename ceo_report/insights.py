@@ -823,19 +823,35 @@ def compute(R, facts=None, invoices=None, prev_events=None):
 RECORD_DIR = "자동분석기록"
 
 
-def write_record(out_dir, R):
+def _frozen(path, today=None):
+    """1차 B16 (2026-11-15): 같은 기준일 보고를 며칠 뒤 다시 만들면 예측 기록을 그때 자료(이미 실제가 된 돈)로 덮어 오차가 0이 됐다.
+    지난날 남긴 기록은 그대로 두고, 같은 날 다시 만든 것만 덮어쓴다."""
+    try:
+        made = dt.date.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return False
+    return made < (today or dt.date.today())
+
+
+def _dump(path, obj):
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def write_record(out_dir, R, today=None):
     folder = os.path.join(out_dir, RECORD_DIR)
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, "일정_%s.json" % R["asof"].isoformat())
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(events_for_record(R), f, ensure_ascii=False)
+    if not _frozen(path, today):
+        _dump(path, events_for_record(R))
     try:   # 이번 달 예상 영업이익도 남긴다: 나중 장부와 견줌 (사용자 2026-11-12)
         M = month_forecast(R)
     except Exception:
         M = None
-    if M and M.get("forecast") is not None:
-        with open(os.path.join(folder, "예측_%s.json" % R["asof"].isoformat()), "w", encoding="utf-8") as f:
-            json.dump({"ym": M["ym"], "profit": M["forecast"]}, f, ensure_ascii=False)
+    pf = os.path.join(folder, "예측_%s.json" % R["asof"].isoformat())
+    if M and M.get("forecast") is not None and not _frozen(pf, today):
+        _dump(pf, {"ym": M["ym"], "profit": M["forecast"]})
     return path
 
 

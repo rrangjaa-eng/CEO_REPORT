@@ -1523,8 +1523,9 @@ def _next_week_summary(G):
         state = "확정" if firm == len(rs) else ("예상" if not firm else "확정 %d · 예상 %d" % (firm, len(rs) - firm))
         h.append("<tr><td>%s</td><td>%d건</td><td>%s</td><td class='vout'>%s</td><td>%s</td></tr>"
                  % (esc(cat), len(rs), esc(days), amt, esc(state)))
-    h.append("<tr class='tot'><td>합계</td><td>%d건</td><td></td><td class='vout'>%s</td><td></td></tr></tbody></table>"
-             % (len(G["rows"]), esc(won(G["total"]))))
+    unk_all = sum(1 for e in G["rows"] if e["amount"] is None)   # 1차 자금-16 (2026-11-15): 합계 줄이 금액 미확인 건을 숨겼다
+    h.append("<tr class='tot'><td>합계</td><td>%d건</td><td></td><td class='vout'>%s%s</td><td></td></tr></tbody></table>"
+             % (len(G["rows"]), esc(won(G["total"])), (" " + _na("+ 금액 미확인 %d건" % unk_all)) if unk_all else ""))
     return "".join(h)
 
 
