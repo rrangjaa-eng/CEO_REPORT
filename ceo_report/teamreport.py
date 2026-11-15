@@ -555,7 +555,7 @@ def write_all(d, R, out_dir, today=None):
     out = []
     asof = R.get("asof") or today or dt.date.today()
     from . import insights, insights_render
-    I = insights.for_report(R)[0] if R.get("s2") else None   # 자동 분석 (사용자 2026-11-12: 팀장 보고는 목업대로)
+    I, ierr = insights.for_report(R) if R.get("s2") else (None, "")   # 자동 분석 (사용자 2026-11-12: 팀장 보고는 목업대로)
     for team in team_names(d):
         T = build(d, R, team)
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
@@ -565,13 +565,21 @@ def write_all(d, R, out_dir, today=None):
         page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div>%s<div class='excl'>"
                             % (esc(gate.sources_line(R)), "<div class='lag' style='font-size:12px;color:#7a4f00;background:#fff8e1;"
                                "border:1px solid #e0a000;border-radius:6px;padding:4px 8px;margin:4px 0;font-weight:700'>%s</div>" % esc(lag) if lag else ""), 1)
+        if I is None and ierr:   # 2차 P3-19 (2026-11-15): 자동 분석이 실패하면 팀장 보고에서 그 절이 말없이 빠졌다
+            page = page.replace("<div class='basis'>", "<p class='note'>※ 자동 분석 절(이익 흐름·주의할 프로젝트 등)을 만들지 못했습니다 (%s). "
+                                "경영관리에 알려 주세요.</p><div class='basis'>" % esc(ierr.split(":")[0]), 1)
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)
             except Exception as e:   # 자동 분석 때문에 팀장 보고를 못 만들면 안 된다. 다만 빠진 것은 한 줄로 알린다 (K2)
                 page = page.replace("<div class='basis'>", "<p class='note'>※ 자동 분석 절(이익 흐름·주의할 프로젝트 등)을 붙이지 못했습니다 (%s). "
                                     "경영관리에 알려 주세요.</p><div class='basis'>" % esc(type(e).__name__), 1)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(page)
+        try:   # 2차 P4-5 (2026-11-15): 한 팀이 실패하면 나머지 팀도 안 쓰고 월간은 '완료'(0)였다 → 팀마다 쓰고 실패를 모아 알림
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                f.write(page)
+            os.replace(path + ".tmp", path)
+        except OSError as e:
+            R.setdefault("_team_failed", []).append("%s (%s)" % (team, e.strerror or type(e).__name__))
+            continue
         out.append(path)
     return out

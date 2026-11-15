@@ -509,6 +509,10 @@ def main(argv=None):
         except OSError as e:
             _say(_write_help(os.path.join(a.출력, "팀장용"), e))
             team_pages = []
+            R.setdefault("_team_failed", []).append("팀장용 폴더")
+        if R.get("_team_failed"):
+            _say("팀장 보고를 쓰지 못한 팀: %s — 그 팀 문서는 예전 것이 남아 있을 수 있습니다. 출력\\팀장용 파일이 열려 있으면 닫고 다시 만드세요"
+                 % ", ".join(R["_team_failed"]))
         for page_path in team_pages:
             made.append(page_path)
             if browser:
@@ -582,6 +586,8 @@ def main(argv=None):
             _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다.")
         else:
             _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
+    if R.get("_team_failed"):
+        return 7   # 팀장 보고 일부를 못 씀 (P4-5): 대표·경영관리는 만들었지만 '완료'로 끝내지 않는다
     return 0
 
 

@@ -1880,3 +1880,26 @@ class TestMalformedJournalRowsRefused(unittest.TestCase):
         write_json(tmp, "261113 분개장 자동수집.json", doc)
         with self.assertRaises(wehago.WehagoError):
             wehago.read_journal_json(os.path.join(tmp, "261113 분개장 자동수집.json"))
+
+
+class TestTeamReportFailuresShown(TeamReportCase):
+    """2차 P3-19·P4-5: 자동 분석 실패가 팀장 보고에서 말없이 빠졌고, 한 팀을 못 쓰면 나머지도 안 쓰고 월간은 '완료'였다."""
+
+    def test_analysis_failure_note_and_per_team_failure(self):
+        from unittest import mock
+        from ceo_report import teamreport, insights
+        d, R, _, _ = self.make()
+        out = os.path.join(self.tmp, "출력")
+        with mock.patch.object(insights, "for_report", return_value=(None, "KeyError: 'x'")):
+            pages = teamreport.write_all(d, R, out)
+        self.assertTrue(pages)
+        self.assertIn("자동 분석 절", _read(pages[0]))
+        # 첫 팀 자리에 폴더를 만들어 쓰기를 막아도 다른 팀은 쓰고, 실패는 모은다
+        teams = teamreport.team_names(d)
+        bad = pages[0] + ".tmp"
+        os.makedirs(bad)
+        R.pop("_team_failed", None)
+        pages2 = teamreport.write_all(d, R, out)
+        self.assertEqual(len(pages2), len(teams) - 1)
+        self.assertEqual(len(R["_team_failed"]), 1)
+        self.assertIn("return 7   # 팀장 보고 일부를 못 씀", _read(os.path.join(ROOT, "보고서.py")))
