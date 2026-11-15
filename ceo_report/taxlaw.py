@@ -265,9 +265,20 @@ def confirm(input_dir, year, values, source="", today=None, who="", effective=""
     for k, text in values.items():
         if k not in LABEL:
             continue
-        v = _parse(k, text) if text not in (None, "") else value(input_dir, year, k)[0]
+        try:
+            v = _parse(k, text) if text not in (None, "") else value(input_dir, year, k)[0]
+        except ValueError:
+            raise ValueError("%s: 숫자로 넣어 주세요 (받은 글: %s)" % (LABEL[k], text))
         if v is None:
             raise ValueError("%s: 값이 없어 확인할 수 없음 — 세무사에게 받은 값을 넣어 주세요" % LABEL[k])
+        # 2차 P5-20 (2026-11-15): 음수·200%·nan 도 '확인함'으로 저장됐다 → 비율은 0~100%, 금액·시간은 0 이상만
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if v != v or v in (float("inf"), float("-inf")):
+                raise ValueError("%s: 숫자가 아님 (%s)" % (LABEL[k], text))
+            if UNIT.get(k) == "비율" and not 0 <= v <= 1:
+                raise ValueError("%s: 비율은 0%%~100%% 사이로 넣어 주세요 (받은 값 %s)" % (LABEL[k], text))
+            if UNIT.get(k) in ("원", "시간") and v < 0:
+                raise ValueError("%s: 0 이상으로 넣어 주세요 (받은 값 %s)" % (LABEL[k], text))
         eff = effective
         if not eff and k in PERIODS:   # 기간 값: 그 값이 든 기간의 시작일 (그해 안에서)
             hit = [p for p in PERIODS[k] if p[2] == v and p[0].year <= year <= p[1].year]

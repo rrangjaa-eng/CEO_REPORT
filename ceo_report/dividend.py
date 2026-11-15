@@ -102,9 +102,18 @@ def save(input_dir, name, share, minor, salaried, interest, other, delete=False,
         raise ValueError("이름을 넣으세요")
     from .util import guard_save
     guard_save(os.path.join(input_dir, FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
-    rows = [r for r in read(input_dir) if r["이름"].strip() != name]
+    allrows = read(input_dir)
+    old = next((r for r in allrows if r["이름"].strip() == name), None)
+    rows = [r for r in allrows if r["이름"].strip() != name]
     action = "지움" if delete else "저장"
     if not delete:
+        # 2차 P5-17 (2026-11-15): 한 사람을 다시 저장하며 비워 둔 칸이 예전 값을 지웠다 → 빈 칸은 그대로 두고 '-'만 지움
+        def keep(text, col):
+            t = str(text or "").strip()
+            if t == "" and old is not None:
+                return old.get(col) or ""
+            return "" if t == "-" else text
+        interest, other, dependents = keep(interest, "다른금융소득"), keep(other, "그밖소득"), keep(dependents, "공제인원")
         s = _num(share, "지분율")
         if s is None or not 0 < s <= 100:
             raise ValueError("지분율은 0보다 크고 100 이하 (예: 50)")

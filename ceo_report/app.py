@@ -533,8 +533,11 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
     path = os.path.join(input_dir, SCHED_FILE)
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    empty = False
     if os.path.exists(path):
         enc, raw = _encoding(path)
+        empty = not raw.decode(enc).strip()   # 2차 P5-19 (2026-11-15): 빈 파일에 머리글 없이 더해 다음에 0줄로 읽혔다 → 새 파일처럼 씀
+    if os.path.exists(path) and not empty:
         text_now = raw.decode(enc)
         first = next(csv.reader([text_now.splitlines()[0]])) if text_now.strip() else []
         cols = [c.strip() for c in first] or header
@@ -669,13 +672,20 @@ def save_card(input_dir, company, pay_day, start_day=1):
     current, notes = tax.read_card_days(input_dir)
     if notes and os.path.exists(os.path.join(input_dir, tax.CARD_FILE)) and not current:
         raise ValueError("%s 머리글이 양식과 다릅니다 — 파일을 확인하세요" % tax.CARD_FILE)
+    # 2차 P2-9·P5-18·P6-2 (2026-11-15): 날짜를 못 읽은 다른 카드 줄이 저장 때 조용히 사라졌다 → 먼저 고치게 하고 저장하지 않음
+    bad = [n for n in notes if "줄 날짜를 읽지 못함" in n and (" %s 줄" % co) not in n]
+    if bad:
+        raise ValueError("%s 에 날짜를 못 읽은 다른 카드 줄이 있어 저장하면 그 줄이 사라집니다 — 그 줄부터 고치세요: %s"
+                         % (tax.CARD_FILE, "; ".join(bad)))
     current[co] = tuple(days)
     rows = sorted((c, p, s) for c, (p, s) in current.items())
-    with open(os.path.join(input_dir, tax.CARD_FILE), "w", encoding="utf-8-sig", newline="") as f:
+    path = os.path.join(input_dir, tax.CARD_FILE)
+    with open(path + ".tmp", "w", encoding="utf-8-sig", newline="") as f:   # 쓰다 실패해도 원래 파일은 그대로 (머리글만 남지 않게)
         w = csv.writer(f, lineterminator="\r\n")
         w.writerow(tax.CARD_COLUMNS)
         for r in rows:
             w.writerow(r)
+    os.replace(path + ".tmp", path)
     return rows
 
 

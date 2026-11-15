@@ -49,6 +49,12 @@ def open_path(path):
     return True
 
 
+
+def _shown(text, unit):
+    """저장 안내에 보일 값: 빈 칸은 '(그대로)', '-'는 '(지움)' (2차 P5-17)."""
+    t = str(text or "").strip()
+    return "(그대로)" if not t else ("(지움)" if t in ("-", "지움") else t + unit)
+
 class Window(object):
     def __init__(self, root, paths=None, today=None):
         self.root = root
@@ -1358,6 +1364,10 @@ class Window(object):
         from . import transfer
         code = self.a_code.get().strip()
         name = self.a_name.get().strip() if code else ""
+        if not delete and not (self.a_bank.get().strip() or self.a_no.get().strip()):
+            # 2차 P5-1 (2026-11-15): 저장 뒤 칸이 비었는데 '저장'(또는 Enter)을 다시 누르면 그 거래처 계좌가 모두 지워졌다
+            self.say("은행·계좌번호를 넣으세요 — 계좌를 지우려면 '지우기'를 누르세요 (아무것도 바꾸지 않음)")
+            return
         try:
             if delete:
                 action, n = transfer.save_account(self.paths.input, code, name, "", "", self.a_holder.get())
@@ -1388,6 +1398,11 @@ class Window(object):
         self._flash(self.f_goal, "저장됨", lambda: "월간 누적 실적에 쓰임")
 
     def _save_budget(self, items, what):
+        # 2차 P5-17 (2026-11-15): 칸은 저장된 값을 미리 보여 주지 않으므로 비운 칸이 예전 값을 지웠다 → 빈 칸은 그대로, '-'만 지움
+        items = [(k, w, "" if str(t).strip() in ("-", "지움") else t) for k, w, t in items if str(t or "").strip()]
+        if not items:
+            self.say("바꿀 값을 넣으세요 — 비운 칸은 그대로 두고, 지우려면 '-'를 넣으세요 (아무것도 바꾸지 않음)")
+            return
         try:
             n = app.save_budget_values(self.paths.input, self.b_year.get(), items)
         except (ValueError, OSError) as e:
@@ -1401,12 +1416,14 @@ class Window(object):
         t = self.b_team.get().strip()
         if self.b_add.get().strip() and not self.b_mon.get().strip():
             self.b_mon.set("1")
-        self._save_budget([("성장률", t, self.b_grow.get()), ("늘릴인원", t, self.b_add.get()), ("입사월", t, self.b_mon.get() if self.b_add.get().strip() else "")],
-                          "%s 성장률 %s%% · 인원 %s" % (t, self.b_grow.get().strip() or "(비움)", self.b_add.get().strip() or "변동 없음"))
+        add = self.b_add.get().strip()
+        mon = "-" if add in ("-", "지움") else (self.b_mon.get() if add else "")
+        self._save_budget([("성장률", t, self.b_grow.get()), ("늘릴인원", t, self.b_add.get()), ("입사월", t, mon)],
+                          "%s 성장률 %s · 인원 %s" % (t, _shown(self.b_grow.get(), "%"), _shown(add, "")))
 
     def save_budget_co(self):
         self._save_budget([("급여인상률", "", self.b_raise.get()), ("물가인상률", "", self.b_infl.get())],
-                          "급여 인상률 %s%% · 물가 인상률 %s%%" % (self.b_raise.get().strip() or "(비움)", self.b_infl.get().strip() or "(비움)"))
+                          "급여 인상률 %s · 물가 인상률 %s" % (_shown(self.b_raise.get(), "%"), _shown(self.b_infl.get(), "%")))
 
     def confirm_budget(self):
         if self.busy:

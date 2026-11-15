@@ -1654,3 +1654,58 @@ class TestXchkSignalShowsGaps(unittest.TestCase):
         x = [v for v in L if v["key"] == "xchk"][0]
         self.assertEqual(x["lv"], digest.WA)
         self.assertIn("거래처 미지급 차이 2곳", x["facts"][0])
+
+
+class TestSavedValuesNotLost(unittest.TestCase):
+    """2차 P5-17·P2-9·P5-19·P5-20: 창에서 저장하면 예전 값이 지워지거나, 다른 줄이 사라지거나, 엉뚱한 값이 '확인함'이 됐다."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, True)
+
+    def test_shareholder_blank_fields_keep_old_values(self):
+        from ceo_report import dividend
+        dividend.save(self.tmp, "가상주주", "60", False, True, "1,000,000", "2,000,000", dependents="3")
+        dividend.save(self.tmp, "가상주주", "70", False, True, "", "", dependents="")
+        r = [x for x in dividend.read(self.tmp) if x["이름"] == "가상주주"][0]
+        self.assertEqual((r["지분율"], r["다른금융소득"], r["그밖소득"], r["공제인원"]), ("70", "1000000", "2000000", "3"))
+        dividend.save(self.tmp, "가상주주", "70", False, True, "-", "", dependents="")
+        r = [x for x in dividend.read(self.tmp) if x["이름"] == "가상주주"][0]
+        self.assertEqual((r["다른금융소득"], r["그밖소득"]), ("", "2000000"))
+
+    def test_card_save_refuses_to_drop_other_bad_line(self):
+        from ceo_report import app, tax
+        with open(os.path.join(self.tmp, tax.CARD_FILE), "w", encoding="utf-8-sig") as f:
+            f.write("카드사,납부일,기산일\n신한,15,1\n롯데,삼십,1\n")
+        with self.assertRaises(ValueError):
+            app.save_card(self.tmp, "신한", "20")
+        self.assertIn("롯데,삼십", _read(os.path.join(self.tmp, tax.CARD_FILE), "utf-8-sig"))
+        app.save_card(self.tmp, "롯데", "25")   # 잘못된 줄을 그 카드로 고치는 것은 됨
+        self.assertEqual(tax.read_card_days(self.tmp)[0]["롯데"], (25, 1))
+
+    def test_schedule_into_empty_file_gets_header(self):
+        from ceo_report import app, data
+        open(os.path.join(self.tmp, app.SCHED_FILE), "w").close()
+        app.add_schedule(self.tmp, "2026-11-30", "지급", "1,000,000", "확정", "가상업체")
+        text = _read(os.path.join(self.tmp, app.SCHED_FILE), "utf-8-sig")
+        self.assertTrue(text.startswith("예정일") or text.splitlines()[0].count(",") >= 3)
+        self.assertIn("가상업체", text.splitlines()[1])
+
+    def test_tax_standard_rejects_odd_values(self):
+        from ceo_report import taxlaw
+        rate = next(k for k, u in taxlaw.UNIT.items() if u == "비율")
+        won_key = next(k for k, u in taxlaw.UNIT.items() if u == "원")
+        for bad in ({rate: "-5%"}, {rate: "200%"}, {rate: "nan"}, {won_key: "-1000"}, {won_key: "abc"}):
+            with self.assertRaises(ValueError):
+                taxlaw.confirm(self.tmp, 2026, bad, source="시험")
+        self.assertEqual(taxlaw.confirm(self.tmp, 2026, {rate: "9.5%"}, source="시험"), 1)
+
+    def test_account_resave_with_blank_fields_does_not_delete(self):
+        src = _read(os.path.join(ROOT, "ceo_report", "gui.py"))   # 시험 PC에 tkinter 가 없어 글로 본다
+        src = src[src.find("    def save_account(self, delete=False):"):]
+        i, j = src.find("계좌를 지우려면 '지우기'"), src.find("transfer.save_account(")
+        self.assertTrue(0 <= i < j, "빈 칸 '저장'은 지우기 전에 막아야 함")
