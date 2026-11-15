@@ -780,6 +780,11 @@ def _left_out_lines(R):
         if D["unknown_n"]:
             out.append("미지급금 금액 미확인 %d곳" % D["unknown_n"])
         for ln in D["loans"]:
+            if ln.get("yearly"):   # 결정 A8 (2026-11-15, 보고-08): 매년 연장은 가정 — 안 되면 갚을 원금을 한 줄로
+                out.append("차입금 %s %s (만기 %s, 매년 연장 예정%s) — 연장이 안 되면 만기에 원금 %s을 갚아야 함 (여유 자금에 넣지 않음)" % (
+                    ln["vendor"] or ln["account"], won(ln["balance"]), ln.get("due") or "모름",
+                    ", 만기일 직접 입력" if ln.get("due_basis") == "직접 입력" else "", won(ln["balance"])))
+                continue
             out.append("차입금 %s %s%s — 상환은 자금계획서·자금일정에 적힌 것만 반영" % (
                 ln["vendor"] or ln["account"], won(ln["balance"]), " (만기 %s)" % ln["due"] if ln.get("due") else ""))
         if D["loan_unknown_n"]:

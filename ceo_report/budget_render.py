@@ -173,6 +173,11 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     if B["missing"]:
         h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 성장률 0%%, 목표 수익률은 기본 원가율 설정으로 계산했습니다.</div>"
                  % ", ".join(B["missing"]))
+    fixed_m = None if Y.get("sal") is None or Y.get("sga") is None else (Y["sal"] + Y["sga"]) / 12.0
+    if mg and c.get("min_cash") and fixed_m:   # 가정 표시 (사용자 11/15 카드: 최소 보유현금은 매년 예산 만들 때 다시 정함, 그 전엔 1억)
+        h.append("<div class='note' style='color:#9a5a00'>%s</div>" % esc(
+            "최소 보유현금 %s = 이 예산의 한 달 고정 지출(급여·판관비, 감가상각 뺌) %s의 %.1f달 치 — 예산을 확정할 때 몇 달 치로 둘지 다시 정하세요 "
+            "(설정 '위험_최소보유현금', 다시 정하기 전에는 지금 값 그대로)." % (won(c["min_cash"]), won(int(round(fixed_m))), c["min_cash"] / fixed_m)))
     # 1. 정할 값
     h.append("<div class='sec'><div class='q'>1. 정해야 할 값%s</div>" % S("in", "입력값"))
     cols = "".join("<th>%s</th>" % esc(t) for t in teams)

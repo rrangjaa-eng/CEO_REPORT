@@ -134,6 +134,41 @@ def load(folder, iss):
                     "date": (r.get("기준일") or "").strip(), "due": (r.get("만기일") or "").strip(),
                     "due_basis": (r.get("만기근거") or "").strip(),
                     "opening": (r.get("전기이월") or "").strip() != "없음"})
+    # 대출만기.csv (사용자가 직접 넣는 새 만기일·매년 연장, 11/14): 위하고·적요의 만기일보다 우선 (결정 A8, 2026-11-15 보고-08)
+    from .reconcile import _code, read_maturity
+    over = read_maturity(folder)
+    for x in out:
+        o = over.get(_code(x["vcode"])) if x["kind"] == LOAN and x["vcode"] else None
+        if not o:
+            continue
+        x["yearly"] = (o.get("매년연장") or "").strip() in ("예", "Y", "y", "O", "o", "1")
+        if _valid_day(o.get("새만기일")):
+            x["due"], x["due_basis"] = o["새만기일"].strip(), "직접 입력"
+        x["extend_note"] = (o.get("메모") or "").strip()
+    return out
+
+
+def _valid_day(text):
+    try:
+        dt.date.fromisoformat((text or "").strip())
+        return True
+    except ValueError:
+        return False
+
+
+EXTEND_CHECK_DAYS = 60   # 결정 A8: 매년 연장하는 대출은 만기 60일 전부터 '연장 확인' 할 일
+
+
+def extend_checks(D, asof):
+    """매년 연장 예정 대출 (가정, 사용자 11/14) -> [{vendor, vcode, balance, due(date), days}] 만기 60일 안 또는 지난 것만 (결정 A8)."""
+    out = []
+    for ln in (D or {}).get("loans") or []:
+        if not ln.get("yearly") or not _valid_day(ln.get("due")):
+            continue
+        due = dt.date.fromisoformat(ln["due"])
+        days = (due - asof).days
+        if days <= EXTEND_CHECK_DAYS:
+            out.append({"vendor": ln["vendor"] or ln["account"], "vcode": ln["vcode"], "balance": ln["balance"], "due": due, "days": days})
     return out
 
 

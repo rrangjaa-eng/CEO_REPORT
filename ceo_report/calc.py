@@ -1308,6 +1308,13 @@ def risks(R):
                 "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
                 "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
                 "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+    from .debts import extend_checks   # 결정 A8 (2026-11-15, 보고-08): 매년 연장 대출은 만기 60일 전부터 연장 확인 할 일
+    for L in extend_checks(R.get("debts"), R["asof"]):
+        left = "%d일 남음" % L["days"] if L["days"] >= 0 else "%d일 지남" % -L["days"]
+        add("중간" if L["days"] >= 0 else "높음", "자금",
+            "대출 %s 만기 %s (%s) — 매년 연장 예정이라 원금 %s원을 갚을 돈으로 잡지 않음." % (L["vendor"], d2s(L["due"]), left, won(L["balance"])),
+            "은행·보증기관에 연장되는지 확인하세요. 연장되면 입력 폴더 대출만기.csv 에 새 만기일과 근거(메모)를 넣고, "
+            "안 되면 원금 상환 일정을 자금계획서에 넣으세요.")
     if s2["out_missing"]:
         add("높음", "자료", "지급 자료를 읽지 못해 지급예정이 빠졌으므로 기간별 계산 잔액과 최저 잔액을 계산하지 않음: %s."
             % ", ".join(s2["out_missing"]),

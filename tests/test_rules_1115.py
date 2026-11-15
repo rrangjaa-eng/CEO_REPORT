@@ -624,3 +624,63 @@ class TestReport05BudgetTableMgmtOnly(unittest.TestCase):
             self.assertIn("예산 대비 (2025-12-20 확정 예산)", render(R, "mgmt"))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ───────────── 보고-08 (결정 A8): 매년 연장 대출은 만기 60일 전 '연장 확인' 할 일 + 경영관리에 '안 되면 원금 상환' 한 줄 ─────────────
+class TestReport08LoanExtension(unittest.TestCase):
+    def make(self, new_due):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        inp = os.path.join(tmp, "입력")
+        shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), inp)
+        with open(os.path.join(inp, "장부채무.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            f.write("구분,계정코드,계정과목,거래처코드,거래처,잔액,기준일,만기일,만기근거,전기이월\n"
+                    "차입금,29300,장기차입금,00256,가상은행 보증대출,200000000,2026-10-31,2026-04-17,적요,\n"
+                    "차입금,29300,장기차입금,00900,가상캐피탈,50000000,2026-10-31,2026-12-01,적요,\n")
+        with open(os.path.join(inp, "대출만기.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            f.write("거래처코드,차입처,새만기일,매년연장,메모\n256,가상은행 보증대출,%s,예,가상 연장\n900,가상캐피탈,,,\n" % new_due)
+        from ceo_report.calc import compute
+        from ceo_report.data import load
+        return compute(load(inp), "monthly", D(2026, 10, 31))
+
+    def test_todo_within_60_days_only_for_yearly_loans(self):
+        from ceo_report.render import render
+        R = self.make("2026-12-20")   # 50일 남음
+        mine = [r for r in R["risks"] if r["fact"].startswith("대출 ")]
+        self.assertEqual(len(mine), 1)   # 매년 연장이 아닌 가상캐피탈(만기 31일 남음)은 넓히지 않음
+        self.assertIn("가상은행 보증대출 만기 2026-12-20 (50일 남음)", mine[0]["fact"])
+        self.assertIn("대출만기.csv", mine[0]["action"])
+        mg, ceo = render(R, "mgmt"), render(R, "ceo")
+        self.assertIn("연장이 안 되면 만기에 원금 200,000,000을 갚아야 함", mg)
+        self.assertNotIn("연장이 안 되면", ceo)
+
+    def test_no_todo_when_far_but_line_stays(self):
+        from ceo_report.render import render
+        R = self.make("2027-04-17")
+        self.assertFalse([r for r in R["risks"] if r["fact"].startswith("대출 ")])
+        self.assertIn("만기 2027-04-17, 매년 연장 예정, 만기일 직접 입력", render(R, "mgmt"))
+
+
+# ───────────── 가정 표시: 최소 보유현금은 한 달 고정 지출 몇 달 치인지 예산 화면(경영관리용)에 (11/15 카드) ─────────────
+class TestAssumptionMinCashMonths(unittest.TestCase):
+    def test_budget_mgmt_shows_months_of_fixed_costs(self):
+        import shutil
+        import tempfile
+        from ceo_report import budget
+        from ceo_report.budget_render import render_budget
+        from ceo_report.data import load
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        inp = os.path.join(tmp, "입력")
+        shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), inp)
+        d = load(inp)
+        B = budget.compute(d, budget.read_values(inp), 2027, D(2026, 11, 6), d.settings)
+        mg = render_budget(B, mode="mgmt")
+        m = re.search(r"최소 보유현금 ([\d,]+) = 이 예산의 한 달 고정 지출\(급여·판관비, 감가상각 뺌\) ([\d,]+)의 ([\d.]+)달 치", mg)
+        self.assertTrue(m, "줄 없음")
+        mc, fixed, n = int(m.group(1).replace(",", "")), int(m.group(2).replace(",", "")), float(m.group(3))
+        self.assertAlmostEqual(mc / float(fixed), n, places=1)
+        self.assertIn("다시 정하세요", mg)
+        self.assertNotIn("다시 정하세요", render_budget(B, mode="ceo"))
