@@ -3284,3 +3284,35 @@ class TestPlReconcileUsesDataYear(unittest.TestCase):
         rows = RC.journal_rows(RC.journal_files(t), dt.date(2026, 11, 13))
         items = [r["항목"] for r in rows]
         self.assertIn("지난 수집 뒤 바뀐 지난 날짜 전표 없음", items, items)
+
+
+# ───────────── 1차 D14: 선수금 발행·나눈 매출 줄도 계산서 대조에서 맞춤 ─────────────
+class TestInvoiceReconcileAdvanceAndSplit(unittest.TestCase):
+    def test_intranet_advance(self):
+        from ceo_report import reconcile as RC
+        from test_reconcile import ln
+        D = dt.date
+        j = [ln(D(2026, 3, 1), "10800", 11_000_000, project="[26001] 봄 행사"),
+             dict(ln(D(2026, 3, 1), "25900", 0, 10_000_000, project="[26001] 봄 행사"), account="선수금"),
+             ln(D(2026, 3, 1), "41200", 0, 5_000_000, project="[26002] 여름 행사"),
+             dict(ln(D(2026, 3, 1), "25900", 0, 2_000_000, project="[26002] 여름 행사"), account="선수금")]
+        P = [{"행사명": "[26001] 봄 행사", "계산서": "10,000,000"},     # 선수금으로만 발행
+             {"행사명": "[26002] 여름 행사", "계산서": "7,000,000"},     # 매출 500만 + 선수금 200만
+             {"행사명": "[26003] 가을", "계산서": "1,000,000"}]          # 장부에 없음 → 다름
+        rows = RC.intranet_rows(j, P)
+        self.assertEqual([r["항목"] for r in rows if r["판정"] == "다름"], ["[26003] 가을", "프로젝트 요약"])
+
+    def test_etax_split_slip_and_advance(self):
+        import tempfile
+        from ceo_report import reconcile as RC
+        from test_reconcile import ln, raw, save
+        D = dt.date
+        t = tempfile.mkdtemp()
+        res = {"result1": [{"da_sbook": "20260106", "cd_trade": "0000000101", "mn_mnam": 10_000_000},
+                           {"da_sbook": "20260107", "cd_trade": "0000000102", "mn_mnam": 3_000_000}], "result2": []}
+        save(t, "x.json", raw("SAAC0103", "2026-11-14 10:00:00", {"/smarta/saac0103/jungsang/": res}))
+        j = [dict(ln(D(2026, 1, 6), "41200", 0, 6_000_000, "00101"), no="5"),
+             dict(ln(D(2026, 1, 6), "41200", 0, 4_000_000, "00101"), no="5"),
+             dict(ln(D(2026, 1, 7), "25900", 0, 3_000_000, "00102"), no="9", account="선수금")]
+        rows = RC.etax_rows(j, RC.raw_files(t))
+        self.assertEqual(rows[0]["판정"], "같음", rows)

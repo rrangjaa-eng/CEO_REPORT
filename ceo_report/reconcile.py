@@ -429,18 +429,25 @@ def diff_rows(prev, cur):
 PCODE = re.compile(r"\[(\d{5})\]")
 
 
+def _is_advance_line(ln):
+    from .wehago import _is_advance
+    return _is_advance(ln)
+
+
 def intranet_rows(journal, projects):
     """인트라넷 프로젝트 '계산서'(발행액) ↔ 장부 매출(4…) 프로젝트별. 부가세 포함으로 적은 것(×1.1)도 같다고 본다."""
     if not projects:
         return []
     book = collections.defaultdict(int)
+    adv = collections.defaultdict(int)   # 1차 D14 (2026-11-15): 선수금으로 발행한 계산서(매출 계정 없음)도 발행으로 본다
     for ln in journal or []:
         c = re.sub(r"\D", "", str(ln.get("account_code") or ""))
-        if not c.startswith("4"):
+        is_adv = _is_advance_line(ln)
+        if not c.startswith("4") and not is_adv:
             continue
         m = PCODE.search(str(ln.get("project_name") or "")) or PCODE.search(str(ln.get("memo") or ""))
         if m:
-            book[m.group(1)] += int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
+            (adv if is_adv else book)[m.group(1)] += int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
     rows, n_same, n_both0 = [], 0, 0
     for p in projects:
         m = PCODE.search(str(p.get("행사명") or ""))
@@ -449,10 +456,12 @@ def intranet_rows(journal, projects):
         code = m.group(1)
         inv = _num(p.get("계산서"))
         b = book.get(code, 0)
+        a = adv.get(code, 0)
         if not inv and not b:
             n_both0 += 1
             continue
-        if abs(inv - b) <= 1000 or abs(inv - round(b * 1.1)) <= 1000:
+        # 매출만, 매출+아직 매출로 안 바뀐 선수금, 선수금만 — 어느 쪽이든 (부가세 포함 ×1.1 도) 맞으면 같다고 본다
+        if any(abs(inv - x) <= 1000 or abs(inv - round(x * 1.1)) <= 1000 for x in {b, b + a, a} if x):
             n_same += 1
             continue
         rows.append(_row("인트라넷 계산서", "[%s] %s" % (code, re.sub(r"^\s*\[\d{5}\]\s*", "", str(p.get("행사명") or ""))[:30]),
@@ -617,10 +626,16 @@ def etax_rows(journal, raw):
     if not isinstance(items, list) or not items:
         return []
     book = collections.Counter()
+    slips = collections.defaultdict(list)   # 1차 D14: 한 계산서를 매출 줄 여럿(프로젝트별 등)으로 나눈 전표·선수금 발행도 맞춘다
     for ln in journal or []:
         c = re.sub(r"\D", "", str(ln.get("account_code") or ""))
-        if c.startswith("4") and ln.get("date") is not None:
-            book[(ln["date"], _code(ln.get("vendor_code")), int(ln.get("credit") or 0) - int(ln.get("debit") or 0))] += 1
+        if (c.startswith("4") or _is_advance_line(ln)) and ln.get("date") is not None:
+            amt = int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
+            book[(ln["date"], _code(ln.get("vendor_code")), amt)] += 1
+            slips[(ln["date"], str(ln.get("no") or ""), _code(ln.get("vendor_code")))].append(amt)
+    for (day, _, vc), amts in slips.items():
+        if len(amts) > 1:
+            book[(day, vc, sum(amts))] += 1
     miss, miss_amt, n = 0, 0, 0
     for it in items:
         d0 = _day(it.get("da_sbook"))
