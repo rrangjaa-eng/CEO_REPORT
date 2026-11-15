@@ -3236,3 +3236,51 @@ class TestHeadsIgnoreCorrectedDept(unittest.TestCase):
         rows = dict((r["부서"], r) for r in convert_pl.build_dept(books, CFG).rows)
         self.assertEqual((rows["기획1팀"]["인원"], rows["기획2팀"]["인원"]), ("1", "1"))
         self.assertEqual(rows["기획1팀"]["급여"], "2000000")
+
+
+# ───────────── 1차 D13: 손익 대조는 받은 해가 아니라 자료의 회계연도로 ─────────────
+class TestPlReconcileUsesDataYear(unittest.TestCase):
+    def test_last_year_pl_received_this_year(self):
+        import tempfile
+        from ceo_report import reconcile as RC
+        from test_reconcile import jfile, ln, raw, save
+        D = dt.date
+        t = tempfile.mkdtemp()
+        j = [ln(D(2025, 5, 1), "10800", 100_000_000), ln(D(2025, 5, 1), "41200", 0, 100_000_000),
+             ln(D(2026, 5, 1), "10800", 200_000_000), ln(D(2026, 5, 1), "41200", 0, 200_000_000)]
+        pl = [{"cd_gr": "61000", "cd_acctit": "0", "mn_total2": 100_000_000}]
+        save(t, "261113 결산_손익계산서_2025 자동수집.json",
+             raw("SACL0106", "2026-11-13 10:00:00", {"/smarta/sacl0106/0": pl}, 2025))
+        save(t, "261113 분개장 자동수집.json", jfile("2026-11-13 14:00:00", []))
+        rows = [r for r in RC.balances_rows(j, RC.raw_files(t), RC.journal_files(t)[0][0]) if r["구분"] == "손익"]
+        self.assertEqual([(r["항목"], r["판정"]) for r in rows], [("2025년 매출액", "같음")], rows)
+
+    def test_year_missing_in_book(self):
+        import tempfile
+        from ceo_report import reconcile as RC
+        from test_reconcile import jfile, ln, raw, save
+        D = dt.date
+        t = tempfile.mkdtemp()
+        j = [ln(D(2026, 5, 1), "10800", 200_000_000), ln(D(2026, 5, 1), "41200", 0, 200_000_000)]
+        pl = [{"cd_gr": "61000", "cd_acctit": "0", "mn_total2": 100_000_000}]
+        save(t, "261113 결산_손익계산서_2025 자동수집.json",
+             raw("SACL0106", "2026-11-13 10:00:00", {"/smarta/sacl0106/0": pl}, 2025))
+        save(t, "261113 분개장 자동수집.json", jfile("2026-11-13 14:00:00", []))
+        rows = [r for r in RC.balances_rows(j, RC.raw_files(t), RC.journal_files(t)[0][0]) if r["구분"] == "손익"]
+        self.assertEqual([r["판정"] for r in rows], ["참고"])
+
+    def test_partial_period_not_counted_as_deleted(self):
+        import tempfile
+        from ceo_report import reconcile as RC
+        from test_reconcile import jfile, jline, save
+        t = tempfile.mkdtemp()
+        old = [jline("20260105", "10300", 1000, 0, 1), jline("20260105", "40100", 0, 1000, 2),
+               jline("20261105", "82100", 500, 0, 3), jline("20261105", "10300", 0, 500, 4)]
+        new = [jline("20261105", "82100", 500, 0, 3), jline("20261105", "10300", 0, 500, 4)]
+        part = jfile("2026-11-13 14:00:00", new)
+        part["기간"] = {"start_date": "20261101", "end_date": "20261130"}   # 11월만 다시 받음
+        save(t, "261110 분개장 자동수집.json", jfile("2026-11-10 09:00:00", old))
+        save(t, "261113 분개장 자동수집.json", part)
+        rows = RC.journal_rows(RC.journal_files(t), dt.date(2026, 11, 13))
+        items = [r["항목"] for r in rows]
+        self.assertIn("지난 수집 뒤 바뀐 지난 날짜 전표 없음", items, items)

@@ -170,9 +170,16 @@ def journal_files(wehago_dir):
         if not isinstance(d, dict) or d.get("종류") != "분개장" or not isinstance(d.get("줄"), list):
             continue
         y = str((d.get("기간") or {}).get("start_date") or "")[:4]
-        out.append((_stamp(d.get("수집시각")) or dt.datetime.min, int(y) if y.isdigit() else 0, d.get("열") or [], d["줄"]))
+        f = _JFile((_stamp(d.get("수집시각")) or dt.datetime.min, int(y) if y.isdigit() else 0, d.get("열") or [], d["줄"]))
+        f.period = (_day((d.get("기간") or {}).get("start_date")), _day((d.get("기간") or {}).get("end_date")))
+        out.append(f)
     out.sort(key=lambda t: t[0], reverse=True)
     return out
+
+
+class _JFile(tuple):
+    """(수집시각, 연도, 열, 줄) + period(조회 시작일, 끝일) — 1차 D13: 지난 수집 비교를 두 파일의 공통 조회 기간 안에서만 한다."""
+    period = (None, None)
 
 
 # ───────────── 장부 잔액 ─────────────
@@ -282,10 +289,14 @@ def balances_rows(journal, raw, jstamp):
         upto = dt.date(year, 12, 31) if not this_year else (when.date() if when != dt.datetime.min else None)
         basis = ("%d년 말 (결산 끝난 해)" % year) if not this_year else ("재무상태표 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)))
         _compare_balances(rows, "재무상태표 %d" % year, other, book_balances(journal, upto), same, basis)
-    pl = (raw.get("SACL0106") or [None])[0]
-    if pl:
-        when, year, d = pl
-        rows.extend(pl_rows(journal, d, when, jstamp))
+    # 1차 D13 (2026-11-15): 손익계산서는 받은 해가 아니라 자료의 회계연도로 장부와 맞춘다 (해마다 가장 늦게 받은 것 하나씩)
+    seen_years = set()
+    for when, year, d in raw.get("SACL0106") or []:
+        y = year or (when.year if when != dt.datetime.min else 0)
+        if y in seen_years:
+            continue
+        seen_years.add(y)
+        rows.extend(pl_rows(journal, d, when, jstamp, year=y))
     return rows
 
 
@@ -296,8 +307,9 @@ def _hm(t):
 PL_GROUPS = {"61000": ("매출액", "4"), "65000": ("판매비와 관리비", "8")}
 
 
-def pl_rows(journal, d, when, jstamp):
-    """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…)."""
+def pl_rows(journal, d, when, jstamp, year=None):
+    """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…).
+    year: 자료의 회계연도(없으면 받은 해). 지난 해(결산 끝난 해)는 그해 12월 31일까지 장부와 맞추고 받은 시각을 따지지 않는다."""
     rows = []
     data = d.get("응답") or []
     lines = None
@@ -306,8 +318,13 @@ def pl_rows(journal, d, when, jstamp):
             lines = r.get("data")
     if not isinstance(lines, list) or when == dt.datetime.min:
         return rows
-    year = when.year
-    same = bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+    year = year or when.year
+    this_year = year >= (jstamp.year if jstamp else when.year)
+    upto = when.date() if this_year else dt.date(year, 12, 31)
+    same = (not this_year) or bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+    if not any(j.get("date") is not None and j["date"].year == year for j in journal or []):
+        return [_row("손익", "%d년 손익계산서" % year, "손익계산서", None, None, "손익계산서 %s 받음" % _hm(when), "참고",
+                     "읽은 장부에 %d년 전표가 없어 맞춰 보지 않았습니다." % year)]
     for ln in lines:
         gr = str(ln.get("cd_gr") or "")
         if gr not in PL_GROUPS or str(ln.get("cd_acctit") or "0") not in ("0", ""):
@@ -318,13 +335,14 @@ def pl_rows(journal, d, when, jstamp):
         for j in journal or []:
             dd = j.get("date")
             c = re.sub(r"\D", "", str(j.get("account_code") or ""))
-            if dd is None or dd.year != year or dd > when.date() or not c.startswith(first):
+            if dd is None or dd.year != year or dd > upto or not c.startswith(first):
                 continue
             book += (int(j.get("credit") or 0) - int(j.get("debit") or 0)) * (1 if first == "4" else -1)
         small = abs(other - book) < 100_000   # 2026-11-15 실제: 위하고 손익계산서 판관비가 같은 때 시산표 합보다 1,200원 큼(끝전)
         verdict = "같음" if other == book else ("다름" if same and not small else "참고")
         rows.append(_row("손익", "%d년 %s" % (year, name), "손익계산서", other, book,
-                         "손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)), verdict,
+                         ("손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp))) if this_year else "%d년 말 (결산 끝난 해)" % year,
+                         verdict,
                          "" if verdict == "같음" else ("10만 원 안쪽 끝전 차이입니다 (위하고 손익계산서 표시 차이)." if small
                                                       else "결산 대체 전표(매출원가 대체 등)나 받은 시각 차이일 수 있습니다.")))
     return rows
@@ -375,14 +393,22 @@ def diff_rows(prev, cur):
     pw, _, pc, pl = prev
     cw, _, cc, cl = cur
     a, b = _key_rows(pc, pl), _key_rows(cc, cl)
+    # 1차 D13 (2026-11-15): 두 파일의 조회 기간이 다르면(전체 뒤 일부 기간만 받음 등) 겹치는 기간 안의 줄만 비교한다
+    ps, pe = getattr(prev, "period", (None, None))
+    cs, ce = getattr(cur, "period", (None, None))
+    lo = max([x for x in (ps, cs) if x] or [None]) if (ps or cs) else None
+    hi = min([x for x in (pe, ce) if x] or [None]) if (pe or ce) else None
+
+    def inside(day):
+        return day is None or ((lo is None or day >= lo) and (hi is None or day <= hi))
     cut = pw.date()
     late = collections.defaultdict(lambda: [0, 0])
     for k in set(b) - set(a):
         d = b[k][0]
-        if d and d < cut:
+        if d and d < cut and inside(d):
             late[d.strftime("%Y-%m")][0] += 1
             late[d.strftime("%Y-%m")][1] += b[k][2]
-    gone = [k for k in set(a) - set(b)]
+    gone = [k for k in set(a) - set(b) if inside(a[k][0])]
     changed = [k for k in set(a) & set(b) if a[k][1:] != b[k][1:]]
     rows = []
     basis = "지난 수집 %s → 이번 %s" % (_hm(pw), _hm(cw))
