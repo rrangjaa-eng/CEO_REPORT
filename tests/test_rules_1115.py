@@ -962,3 +962,38 @@ class TestLinkFollowsTheSameLine(unittest.TestCase):
         ov, notes = self.links([["2026-10-20", "7", "2", "", "", "26201"]])
         out, more = linking.check_links(self.J(("00100", 500000), ("00300", 300000)), ov)
         self.assertEqual((dict(out), more, notes, out.unchecked), ({("2026-10-20", "7", 2): "26201"}, [], [], 1))
+
+
+# ───────────── P3-3: 자금계획서가 없는 날까지 가수금 상환을 '안전'으로 보지 않음 ─────────────
+class TestSuspenseRepayOnlyWithinPlan(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        self.t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.t, True)
+        with open(os.path.join(self.t, "계정잔액.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("연월,계정코드,계정,차변,대변\n처음부터,,예,,\n2025-02,25700,가수금,0,40000000\n")
+        for target, value in (("ceo_report.gate.problems", []), ("ceo_report.gate.sources_line", "사용한 자료: 시험")):
+            p = mock.patch(target, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def R(self, received, events):
+        return {"asof": D(2026, 11, 13), "fundplan": {"received": received},
+                "s2": {"start": 300000000, "min_cash": 100000000, "horizon": D(2027, 5, 31),
+                       "dated": [{"date": d, "io": "out", "amount": a, "firm": True, "source": "자금계획서", "desc": "가", "cat": "자금계획서"}
+                                 for d, a in events]}}
+
+    def test_short_plan_is_not_judged(self):
+        from ceo_report import gasu
+        G = gasu.compute(self.t, self.R(["2026-11", "2026-12"], [(D(2026, 12, 10), 1000000)]))
+        self.assertFalse(G["ok"])
+        self.assertIn("2026-12-31까지만", G["why"])
+
+    def test_end_is_the_plan_end_not_stretched(self):
+        from ceo_report import gasu
+        # 계획 줄은 12월까지지만 2027-02 까지 받은 달(줄 없는 달) → 2월 말까지 보고 판단
+        G = gasu.compute(self.t, self.R(["2026-11", "2026-12", "2027-01", "2027-02"], [(D(2026, 12, 10), 1000000)]))
+        self.assertTrue(G["ok"])
+        self.assertEqual(G["end"], D(2027, 2, 28))
