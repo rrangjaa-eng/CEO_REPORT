@@ -2044,3 +2044,52 @@ class TestPartialBackupNotCounted(unittest.TestCase):
         self.assertTrue(app.backup_input(paths, keep=3, now=dt.datetime(2026, 11, 6, 9, 0, 0)))
         self.assertEqual(sorted(os.listdir(base)), ["20261102_090000", "20261103_090000", "20261106_090000"])
         self.assertIs(shutil.copytree, real)
+
+
+# ───────────── 2차 P4-4·P4-8: 새 HTML·PDF 를 다 만든 뒤에 바꿔 넣음 (이전 파일을 먼저 잃지 않음, 반쯤 쓴 PDF 없음) ─────────────
+class TestReportFilesSwappedWhenComplete(unittest.TestCase):
+    def _cli(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("report_cli_p44", os.path.join(ROOT, "보고서.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_failed_html_write_keeps_the_old_page(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        cli = self._cli()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "a_대표보고.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<html>예전 보고</html>")
+        with mock.patch.object(cli.os, "replace", side_effect=OSError(28, "No space left on device")):
+            with self.assertRaises(OSError):
+                cli._write_page(path, "<html>새 보고</html>")
+        self.assertEqual(_read(path), "<html>예전 보고</html>")
+        self.assertEqual(os.listdir(tmp), ["a_대표보고.html"])
+
+    def test_timeout_leaves_no_half_pdf_and_keeps_the_old_one(self):
+        import shutil
+        import subprocess
+        import tempfile
+        from unittest import mock
+        cli = self._cli()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        html, pdf = os.path.join(tmp, "a_수정.html"), os.path.join(tmp, "a_수정.pdf")
+        for p, b in ((html, b"<html></html>"), (pdf, b"%PDF-old\n%%EOF\n")):
+            with open(p, "wb") as f:
+                f.write(b)
+
+        def slow(cmd, **kw):
+            with open([a for a in cmd if a.startswith("--print-to-pdf=")][0].split("=", 1)[1], "wb") as f:
+                f.write(b"%PDF-1.4\n1 0 obj")   # 반쯤 쓰다 시간 초과
+            raise subprocess.TimeoutExpired(cmd, 120)
+        with mock.patch.object(cli.subprocess, "run", side_effect=slow):
+            self.assertIn("120초", cli.to_pdf("b", html, pdf))
+        with open(pdf, "rb") as f:
+            self.assertEqual(f.read(), b"%PDF-old\n%%EOF\n")
+        self.assertEqual(sorted(os.listdir(tmp)), ["a_수정.html", "a_수정.pdf"])

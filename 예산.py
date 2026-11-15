@@ -85,8 +85,7 @@ def main(argv=None):
         base = os.path.join(out, "%d_예산_%s" % (year, who))
         if mode == "ceo" and stop:
             try:
-                with open(base + ".html", "w", encoding="utf-8") as f:
-                    f.write(gate.stop_page("%d년 예산 대표용" % year, stop))
+                보고서._write_page(base + ".html", gate.stop_page("%d년 예산 대표용" % year, stop))   # 다 쓴 뒤 바꿈 (P4-4)
             except OSError as e:
                 _say("파일을 쓰지 못했습니다: %s (%s)" % (base + ".html", e.strerror or type(e).__name__))
                 return 7
@@ -95,8 +94,7 @@ def main(argv=None):
         if stop:   # 항목은 남기고 자금 전망 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=True), 1)
         try:
-            with open(base + ".html", "w", encoding="utf-8") as f:
-                f.write(page)
+            보고서._write_page(base + ".html", page)
         except OSError as e:
             _say("파일을 쓰지 못했습니다: %s (%s)" % (base + ".html", e.strerror or type(e).__name__))
             return 7
