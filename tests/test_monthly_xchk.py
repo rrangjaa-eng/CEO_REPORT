@@ -35,8 +35,9 @@ from test_convert_xchk import (BANK_BALANCES, BANK_TX, OPENING_CASH, cash_table,
                                write_xchk, xchk_table)
 from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  # noqa: E402
 
-# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(2차 P2-19: 자금일정 확정여부 예상 허용, 2026-11-15). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "c44297e"
+# 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(결정 카드 ①② 2026-11-16: 대표 주간에서 마감 전 영업이익 빼기,
+# 예정일 지난·당일 입금을 이번 주 예상 입금으로). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
+BASELINE = "f0be8ac"
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
