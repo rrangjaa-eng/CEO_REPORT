@@ -125,31 +125,49 @@ def _texts(o):
     return "\n".join(x.strip() for x in out if x and x.strip())
 
 
-def find_admrul(oc, query, opener=None):
-    """고시(행정규칙) 중 이름에 query 가 든 가장 최근 것 → {mst(ID), 시행일자, 공포일자, kind} 또는 None."""
+def _in_force(cands, ref):
+    """2차 P1-22 (2026-11-15): 여러 시행본 중 ref(YYYYMMDD) 에 시행 중인 것 = 시행일자 ≤ ref 중 가장 늦은 것. 없으면 가장 이른 것.
+    예전엔 검색 결과의 첫 번째(또는 가장 늦은) 시행본을 골라, 아직 시행 전인 미래 시행본 조문과 올해 값을 맞춰 보았다."""
+    if not cands:
+        return None
+    ok = [c for c in cands if c["시행일자"] and c["시행일자"] <= ref]
+    if ok:
+        return max(ok, key=lambda c: c["시행일자"])
+    return min(cands, key=lambda c: c["시행일자"] or "99999999")
+
+
+def find_admrul(oc, query, opener=None, ref=None):
+    """고시(행정규칙) 중 이름에 query 가 든 것 → {mst(ID), 시행일자, 공포일자, kind} 또는 None.
+    ref(YYYYMMDD)가 있으면 그날 시행 중인 것, 없으면 가장 최근 것."""
     q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "query": query, "display": 20})
     data = _get(BASE + "lawSearch.do?" + q, opener)
-    best = None
+    cands = []
     for d in _walk(data):
         nm = (d.get("행정규칙명") or "").strip()
         rid = d.get("행정규칙일련번호") or d.get("행정규칙ID") or d.get("ID")
         if query in nm and rid:
             day = str(d.get("시행일자") or d.get("발령일자") or "")
-            if best is None or day > best["시행일자"]:
-                best = {"mst": str(rid), "시행일자": day, "공포일자": str(d.get("발령일자") or ""), "kind": "admrul"}
-    return best
+            cands.append({"mst": str(rid), "시행일자": day, "공포일자": str(d.get("발령일자") or ""), "kind": "admrul"})
+    if ref:
+        return _in_force(cands, ref)
+    return max(cands, key=lambda c: c["시행일자"]) if cands else None
 
 
-def find_law(oc, name, opener=None):
-    """법령 이름 → {mst, 시행일자, 공포일자} 또는 None."""
+def find_law(oc, name, opener=None, ref=None):
+    """법령 이름 → {mst, 시행일자, 공포일자} 또는 None. ref(YYYYMMDD)가 있으면 그날 시행 중인 시행본, 없으면 첫 번째."""
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "query": name, "display": 20})
     data = _get(BASE + "lawSearch.do?" + q, opener)
+    cands = []
     for d in _walk(data):
         nm = (d.get("법령명한글") or d.get("법령명") or "").strip()
         if nm.replace(" ", "") == name.replace(" ", "") and (d.get("법령일련번호") or d.get("MST")):
-            return {"mst": str(d.get("법령일련번호") or d.get("MST")), "시행일자": str(d.get("시행일자") or ""),
-                    "공포일자": str(d.get("공포일자") or "")}
-    return None
+            c = {"mst": str(d.get("법령일련번호") or d.get("MST")), "시행일자": str(d.get("시행일자") or ""),
+                 "공포일자": str(d.get("공포일자") or "")}
+            if not ref:
+                return c
+            if c not in cands:
+                cands.append(c)
+    return _in_force(cands, ref) if ref else None
 
 
 def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
@@ -197,11 +215,13 @@ def check(input_dir, year, today=None, opener=None):
     if not S.get("oc"):
         raise ValueError("국가법령정보 Open API 아이디(OC)를 먼저 넣어 주세요 (open.law.go.kr 무료 신청)")
     out, laws, got = [], {}, {}
+    ref = max(today, dt.date(int(year), 1, 1)).strftime("%Y%m%d") if str(year).isdigit() else today.strftime("%Y%m%d")
     for keys, name, n, sub in WATCH:
         tag = name if name in ADMRUL else "%s %s" % (name, jo_name(n, sub))
         try:
-            if name not in laws:
-                laws[name] = find_admrul(S["oc"], ADMRUL[name], opener) if name in ADMRUL else find_law(S["oc"], name, opener)
+            if name not in laws:   # P1-22: 값을 쓰는 해(year)에 시행 중인 시행본 — 올해면 오늘, 다음 해면 그해 1월 1일
+                laws[name] = (find_admrul(S["oc"], ADMRUL[name], opener, ref) if name in ADMRUL
+                              else find_law(S["oc"], name, opener, ref))
             info = laws[name]
             if not info:
                 out.append((keys, tag, "못 찾음", "", "법령 이름으로 찾지 못함"))

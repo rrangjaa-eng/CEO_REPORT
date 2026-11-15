@@ -3437,3 +3437,35 @@ class TestExpectedScheduleNotAnError(unittest.TestCase):
         self.assertFalse(iss.items)
         with open(os.path.join(ROOT, "ceo_report", "data.py"), encoding="utf-8") as f:
             self.assertIn('["확정", "추정", "예상"]', f.read())
+
+
+# ───────────── 2차 P1-22: 법령은 값을 쓰는 해에 시행 중인 시행본으로 맞춰 봄 ─────────────
+class TestLawVersionInForce(unittest.TestCase):
+    def opener(self, payload):
+        import contextlib
+        import io as _io
+        import json as _json
+
+        @contextlib.contextmanager
+        def op(url, timeout=20):
+            yield _io.BytesIO(_json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        return op
+
+    def test_law(self):
+        from ceo_report import lawwatch as LW
+        res = {"LawSearch": {"law": [
+            {"법령명한글": "소득세법", "법령일련번호": "200", "시행일자": "20270101", "공포일자": "20261210"},   # 미래 시행본이 먼저
+            {"법령명한글": "소득세법", "법령일련번호": "100", "시행일자": "20260101", "공포일자": "20251220"}]}}
+        op = self.opener(res)
+        self.assertEqual(LW.find_law("x", "소득세법", op, ref="20261115")["mst"], "100")
+        self.assertEqual(LW.find_law("x", "소득세법", op, ref="20270101")["mst"], "200")
+        self.assertEqual(LW.find_law("x", "소득세법", op)["mst"], "200")   # ref 없으면 예전처럼 첫 번째
+
+    def test_admrul(self):
+        from ceo_report import lawwatch as LW
+        res = {"AdmRulSearch": {"admrul": [
+            {"행정규칙명": "가상 고시", "행정규칙일련번호": "9", "시행일자": "20270101", "발령일자": "20261201"},
+            {"행정규칙명": "가상 고시", "행정규칙일련번호": "8", "시행일자": "20260101", "발령일자": "20251201"}]}}
+        op = self.opener(res)
+        self.assertEqual(LW.find_admrul("x", "가상 고시", op, ref="20261115")["mst"], "8")
+        self.assertEqual(LW.find_admrul("x", "가상 고시", op)["mst"], "9")
