@@ -60,6 +60,15 @@ align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#ff
 </script>""" + END
 
 
+def _sig(path):
+    """파일의 (바뀐 시각, 크기) — 없으면 None."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def edited_path(html_path):
     base, ext = os.path.splitext(html_path)
     return base + SUFFIX + ext
@@ -113,6 +122,10 @@ class Session(object):
         self.key = secrets.token_urlsafe(16)
         self.server = None
         self.lock = threading.Lock()
+        # P3-4·P4-3 (2026-11-15): 수정 모드를 연 뒤 원본 보고가 다시 만들어지면(막힘 안내로 바뀐 것 포함) 열린 화면의 옛 숫자로
+        # PDF 를 만들지 않는다 — 원본 파일의 바뀐 시각·크기를 기억해 저장 때 견준다.
+        self.orig = original_path(save_html)
+        self.orig_sig = _sig(self.orig)
 
     @property
     def url(self):
@@ -171,6 +184,11 @@ class Session(object):
         page = strip(page)
         if "</html>" not in page.lower():
             return False, "보고서 내용이 아님", None
+        if _sig(self.orig) != self.orig_sig:
+            msg = ("원본 보고가 수정 모드를 연 뒤 다시 만들어져(또는 자료 확인으로 막혀) 이 화면의 숫자가 예전 것일 수 있어 저장하지 않음 "
+                   "— 이 창을 닫고 수정 모드를 다시 여세요")
+            self.on_saved(None, msg)
+            return False, msg, None
         with self.lock:
             tmp = self.dst + ".tmp"
             try:
