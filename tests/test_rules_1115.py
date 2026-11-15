@@ -3171,3 +3171,22 @@ class TestCardScreenDuplicateResponse(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
         self.assertEqual(real["code:501"], [(dt.date(2026, 10, 5), 2500000), (dt.date(2026, 10, 6), 1000)])
+
+
+# ───────────── 1차 D3: 이름 같고 코드 다른 거래처 → 입금 배분이 섞일 수 있음을 알림 ─────────────
+class TestSameNameDifferentCodeWarned(unittest.TestCase):
+    def test_note(self):
+        from test_convert_review_fixes import build_inv, receipt, sale
+        d1, d2 = dt.date(2026, 9, 1), dt.date(2026, 9, 20)
+        a = receipt(d2, 41, 11000000)
+        for r in a:
+            r["vendor_code"] = "002"
+        sales = [sale(d1, "가상고객A", 10000000), sale(d1, "가상고객A", 10000000)]
+        from test_convert_review_fixes import jl
+        j = [dict(jl(d1, 1, "10800", "수입수수료미수금", 11000000, None, "가상고객A"), vendor_code="001")] + a
+        t = build_inv(j, sales)
+        hit = [n for n in t.notes if n.startswith("[확인] 이름이 같고 거래처코드가 다른 거래처 1곳")]
+        self.assertEqual(len(hit), 1, t.notes)
+        self.assertIn("코드 1·2", hit[0])
+        t = build_inv(a, sales)   # 코드가 하나면 알림 없음
+        self.assertFalse([n for n in t.notes if "거래처코드가 다른" in n])

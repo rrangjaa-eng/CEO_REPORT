@@ -171,6 +171,7 @@ class _Journal(object):
         self.opening_any = False
         self.balance = {}      # 거래처 -> 매출채권 차변-대변 (모르는 줄이 있으면 None)
         self.names = {}        # 거래처 -> 보이는 이름
+        self.codes = collections.defaultdict(set)   # 거래처(이름) -> 거래처코드들 (1차 D3: 이름 같고 코드 다른 곳 알림)
         self.unknown = False   # 입금인지 아닌지 판단할 수 없는 줄이 있음
         self.credit_all = 0    # 매출채권 대변(차변을 뺀 값이 양수인 줄)의 합 -- 입금·수정을 나누기 전에 따로 센다
         for i, row in enumerate(journal):
@@ -178,6 +179,8 @@ class _Journal(object):
                 continue
             vn = row.get("vendor_norm") or norm_vendor(row.get("vendor"))
             self.names.setdefault(vn, mask_rrn(row.get("vendor")))
+            if str(row.get("vendor_code") or "").strip().lstrip("0"):
+                self.codes[vn].add(str(row.get("vendor_code")).strip().lstrip("0"))
             d, c = row.get("debit"), row.get("credit")
             if d is None and c is None:
                 self.unknown = True
@@ -550,6 +553,11 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     if ded:
         notes.append("매출 때 바로 차감된 금액(카드 수수료 등) %d건 %s → 입금액에 포함 (분개장 매출채권은 차감 뒤 금액)"
                      % (len(ded), won(sum(inv["deducted"] for inv in ded))))
+    mixed = sorted((jr.names.get(vn) or vn, sorted(c)) for vn, c in jr.codes.items() if len(c) > 1)
+    if mixed:   # 1차 D3 (2026-11-15): 입금 배분은 이름으로 묶어서, 이름 같고 코드 다른 거래처끼리 입금이 섞일 수 있다 — 알림만
+        notes.append("[확인] 이름이 같고 거래처코드가 다른 거래처 %d곳 — 입금이 다른 코드의 계산서에 붙었을 수 있음"
+                     "(회사 전체 받을 돈 합계는 맞음, 거래처별·계산서별 미수만 확인): %s"
+                     % (len(mixed), " · ".join("%s(코드 %s)" % (n, "·".join(c)) for n, c in mixed[:5])))
     notes.append("미배분 수금 %d건 %s" % (len(leftover), won(left_sum)))
     for r in leftover:
         notes.append("  미배분 수금 %s %s %s (전표 %s)" % (_day(r["date"]), r["vendor"], won(r["left"]), r["no"]))
