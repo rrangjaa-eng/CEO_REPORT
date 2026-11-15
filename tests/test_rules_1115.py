@@ -3378,3 +3378,19 @@ class TestFilingHelperNoFalsePromise(unittest.TestCase):
         self.assertNotIn("급여 자료 받은 뒤", page)
         self.assertNotIn("들어오면 채웁니다", page)
         self.assertIn("이 도우미가 채우지 않습니다", page)
+
+
+# ───────────── 2차 P6-14: 사용자별 설치 브라우저 경로도 PDF 만들 때 찾음 ─────────────
+class TestUserInstalledBrowserFound(unittest.TestCase):
+    def test_localappdata(self):
+        import tempfile
+        from unittest import mock
+        import importlib
+        rep = importlib.import_module("보고서")
+        tmp = tempfile.mkdtemp()
+        exe = os.path.join(tmp, "Google", "Chrome", "Application", "chrome.exe")
+        os.makedirs(os.path.dirname(exe))
+        open(exe, "w").close()
+        self.assertIn(exe, rep._user_browsers({"LOCALAPPDATA": tmp}))
+        with mock.patch.object(rep, "BROWSERS", []), mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
+            self.assertEqual(rep.find_browser(), exe)

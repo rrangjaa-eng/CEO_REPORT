@@ -58,8 +58,19 @@ def _write_help(folder, e):
             % (folder, e.strerror or type(e).__name__))
 
 
+def _user_browsers(env=None):
+    """2차 P6-14 (2026-11-15): 사용자별로 설치한 크롬·엣지(%LOCALAPPDATA%·%ProgramFiles%가 다른 드라이브) 경로도 본다."""
+    env = os.environ if env is None else env
+    out = []
+    for base in (env.get("LOCALAPPDATA"), env.get("ProgramFiles"), env.get("ProgramFiles(x86)"), env.get("ProgramW6432")):
+        if base:
+            out += [os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
+                    os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")]
+    return out
+
+
 def find_browser():
-    for p in BROWSERS:
+    for p in BROWSERS + _user_browsers():
         if os.path.exists(p):
             return p
     for name in ("msedge", "chrome", "chromium", "chromium-browser", "google-chrome"):
