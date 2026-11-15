@@ -3499,3 +3499,17 @@ class TestFreshnessSeesBrokenFile(unittest.TestCase):
             f.write('{"종류": "분개장", "줄": []}')
         row = [r for r in winstate.freshness(P, today) if r["name"] == "분개장"][0]
         self.assertEqual(row["level"], "g")
+
+
+# ───────────── 2차 P4-14: 연간 보고에 근거만 뽑기를 요청하면 지원 안 함을 알림 ─────────────
+class TestAnnualEvidenceRefused(unittest.TestCase):
+    def test_refuse(self):
+        import contextlib
+        import importlib
+        import io as _io
+        rep = importlib.import_module("보고서")
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = rep.main(["연간", "--근거", "5-2", "--입력", "/없는/폴더", "--출력", "/없는/출력"])
+        self.assertEqual(rc, 2)
+        self.assertIn("근거자료만 따로 뽑기를 지원하지 않습니다", buf.getvalue())

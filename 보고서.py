@@ -399,6 +399,10 @@ def main(argv=None):
     ap.add_argument("--연도", default=None, help="연간: 보고할 해 (기본: 기준일의 해, 1~3월이면 지난해)")
     a = ap.parse_args(argv)
     if a.유형 == "연간":
+        if a.근거 is not None:   # 2차 P4-14 (2026-11-15): 예전엔 말없이 연간 보고 전체를 다시 만들었다
+            _say("연간 보고는 근거자료만 따로 뽑기를 지원하지 않습니다 — 근거는 연간 경영관리 보고에서 그 번호를 찾아 보세요 "
+                 "(근거만 뽑기는 주간·월간 보고에서 됩니다)")
+            return 2
         return _annual(a)
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
     asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
