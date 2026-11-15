@@ -991,7 +991,7 @@ class Window(object):
         winstate.remember_run(self.paths.input, task, rc == 0)
         if task in ("변환", "정합성", "자동"):
             self.refresh_checks()
-        ok, line = winstate.rc_message(task, rc)
+        ok, line = winstate.outcome(task, rc, files)
         if task == "정합성":
             self.set_busy(False, line, ok=ok)
             self.refresh_state()
@@ -999,7 +999,12 @@ class Window(object):
             return
         if task == "자동":
             n = sum(1 for f in files if f.lower().endswith(".pdf"))
-            self.say("자동 반영 끝 — 지금 현황과 보고 PDF %d개를 새로 만들었습니다 (출력 폴더)" % n)
+            stops = winstate.blocked_reports(files)
+            if stops:
+                self.say("자동 반영 끝 — 자료 확인에서 막혀 대표 보고 %d개는 만들지 않았습니다 (보고 PDF %d개). 맨 위 경고를 확인하세요"
+                         % (len(stops), n))
+            else:
+                self.say("자동 반영 끝 — 지금 현황과 보고 PDF %d개를 새로 만들었습니다 (출력 폴더)" % n)
         elif rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]

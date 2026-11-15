@@ -405,6 +405,9 @@ def headless(paths, log_path, asof="", today=None):
                              group=group, only=only)
         if files:
             lines.append("만든 파일: %s" % ", ".join(os.path.basename(f) for f in files))
+        stops = winstate.blocked_reports(files)
+        if stops:   # 2차 C12 (2026-11-15): 막혀도 '자동 완료'처럼 보였다 → 결과 글에 남긴다
+            lines.append("대표 보고: 자료 확인에서 막혀 만들지 않음 (%s)" % ", ".join(os.path.basename(f) for f in stops))
     except Exception as e:   # 트레이스백 대신 한 줄
         lines.append("예상하지 못한 오류 (%s): %s" % (type(e).__name__, str(e)[:200]))
         rc = 7
@@ -482,7 +485,9 @@ def save_merge(paths, group, only):
         pass
 
 
-def new_files(folder, since):
+def new_files(folder, since, depth=1):
+    """since 뒤에 바뀐 파일. 1차 E10 (2026-11-15): 예산(출력/예산)·팀장(출력/팀장용) 보고는 한 단계 아래 폴더에 있어
+    예전엔 찾지 못한 채 '대표용 PDF를 열었습니다'라고 했다 → 한 단계 아래 폴더까지 본다."""
     out = []
     try:
         names = os.listdir(folder)
@@ -490,8 +495,13 @@ def new_files(folder, since):
         return out
     for n in names:
         p = os.path.join(folder, n)
-        if os.path.isfile(p) and os.path.getmtime(p) >= since:
-            out.append(p)
+        try:
+            if os.path.isfile(p) and os.path.getmtime(p) >= since:
+                out.append(p)
+            elif depth > 0 and os.path.isdir(p):
+                out += new_files(p, since, depth - 1)
+        except OSError:
+            continue
     return sorted(out, key=os.path.getmtime)
 
 

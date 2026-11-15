@@ -326,6 +326,41 @@ def evidence_choices(output_dir, kind, asof=None):
 
 
 # ───────────── 종료 코드를 말로 ─────────────
+STOP_MARK = "이 보고를 만들지 않았습니다"   # gate.stop_page 글
+
+
+def blocked_reports(files):
+    """만든 파일 중 자료 확인(게이트)에 막혀 '만들지 않음' 안내만 쓴 대표·팀장 보고 HTML."""
+    out = []
+    for f in files or []:
+        if not f.lower().endswith(".html"):
+            continue
+        try:
+            with open(f, encoding="utf-8") as fh:
+                if STOP_MARK in fh.read(4000):
+                    out.append(f)
+        except (OSError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def outcome(task, rc, files):
+    """-> (완료인가, 한 줄). 2차 C11·C12·P5-23, 1차 E10 (2026-11-15): 종료 코드가 0이어도 대표 보고가 자료 확인에서 막혔거나
+    PDF가 하나도 없으면 'PDF를 열었습니다'·'자동 완료, 다시 만들었습니다' 대신 그 사실을 말한다."""
+    ok, line = rc_message(task, rc)
+    if rc != 0 or task not in ("주간", "월간", "연간", "예산", "자동"):
+        return ok, line
+    stops = blocked_reports(files)
+    pdfs = [f for f in files or [] if f.lower().endswith(".pdf")
+            and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
+    if stops:
+        return False, ("%s 끝 — 자료 확인에서 막혀 대표 보고는 만들지 않았습니다 (%d개). 연 안내 화면의 까닭을 확인하세요"
+                       % (task, len(stops)))
+    if not pdfs:
+        return False, "%s 끝 — 대표 보고 PDF를 찾지 못했습니다. 아래 글을 확인하세요" % task
+    return ok, line
+
+
 def rc_message(task, rc):
     """-> (완료인가, 한 줄). 진행 글 맨 위에 크게 보인다."""
     if rc == 0:

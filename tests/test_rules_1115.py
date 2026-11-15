@@ -1709,3 +1709,47 @@ class TestSavedValuesNotLost(unittest.TestCase):
         src = src[src.find("    def save_account(self, delete=False):"):]
         i, j = src.find("계좌를 지우려면 '지우기'"), src.find("transfer.save_account(")
         self.assertTrue(0 <= i < j, "빈 칸 '저장'은 지우기 전에 막아야 함")
+
+
+class TestFinishMessagesTellTheTruth(unittest.TestCase):
+    """2차 C11·C12·P5-23, 1차 E10: 막혔거나 PDF가 없어도 'PDF를 열었습니다'·'자동 완료'로 보였고, 예산·팀장 출력은 찾지도 못했다."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, True)
+
+    def _w(self, rel, text):
+        p = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        return p
+
+    def test_blocked_and_missing_pdf_are_not_success(self):
+        from ceo_report import winstate, gate
+        stop = self._w("2026-11-15_주간_대표보고.html", gate.stop_page("주간 대표 보고", ["자금계획서 없음"]))
+        ok, line = winstate.outcome("주간", 0, [stop])
+        self.assertFalse(ok)
+        self.assertIn("막혀", line)
+        html_only = self._w("2026-11-08_주간_대표보고.html", "<html>보고</html>")
+        ok, line = winstate.outcome("주간", 0, [html_only])
+        self.assertFalse(ok)
+        self.assertIn("찾지 못했습니다", line)
+        pdf = self._w("2026-11-08_주간_대표보고.pdf", "%PDF")
+        self.assertEqual(winstate.outcome("주간", 0, [html_only, pdf]), winstate.rc_message("주간", 0))
+
+    def test_new_files_sees_budget_and_team_folders(self):
+        import time
+        from ceo_report import app
+        t0 = time.time() - 5
+        a = self._w(os.path.join("예산", "2027_예산_대표용.pdf"), "%PDF")
+        b = self._w(os.path.join("팀장용", "2026-10-31_월간_팀장_기획1팀.pdf"), "%PDF")
+        got = app.new_files(self.tmp, t0)
+        self.assertIn(a, got)
+        self.assertIn(b, got)
+        from ceo_report import winstate
+        self.assertTrue(winstate.outcome("예산", 0, got)[0])
