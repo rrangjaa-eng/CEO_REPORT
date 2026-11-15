@@ -13,6 +13,7 @@ import json
 import os
 import re
 import urllib.parse
+import threading
 import urllib.request
 
 FILE = "세법조문.json"
@@ -169,10 +170,14 @@ def load(input_dir):
     return S
 
 
+_LOCK = threading.Lock()   # 2차 P1-23: 아이디 저장과 법령 받기 결과 저장이 서로 덮지 않게 (읽고-고치고-쓰기를 하나씩)
+
+
 def save_oc(input_dir, oc):
-    S = load(input_dir)
-    S["oc"] = (oc or "").strip()
-    _write(input_dir, S)
+    with _LOCK:
+        S = load(input_dir)
+        S["oc"] = (oc or "").strip()
+        _write(input_dir, S)
 
 
 def _write(input_dir, S):
@@ -191,7 +196,7 @@ def check(input_dir, year, today=None, opener=None):
     S = load(input_dir)
     if not S.get("oc"):
         raise ValueError("국가법령정보 Open API 아이디(OC)를 먼저 넣어 주세요 (open.law.go.kr 무료 신청)")
-    out, laws = [], {}
+    out, laws, got = [], {}, {}
     for keys, name, n, sub in WATCH:
         tag = name if name in ADMRUL else "%s %s" % (name, jo_name(n, sub))
         try:
@@ -220,16 +225,20 @@ def check(input_dir, year, today=None, opener=None):
                 if not any(abs(p - v) < 1e-6 * max(1, abs(v)) for p in pool):
                     miss.append(taxlaw.LABEL[k])
         note = ("지금 값이 조문에 안 보임: %s · 조문 숫자 %s" % (", ".join(miss), _short(nums))) if miss else "지금 값이 조문에 있음"
-        S["items"][tag] = {"hash": h, "text": text[:4000], "시행일자": info["시행일자"], "공포일자": info["공포일자"],
-                           "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
-                           "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("flag"))}
+        got[tag] = {"hash": h, "text": text[:4000], "시행일자": info["시행일자"], "공포일자": info["공포일자"],
+                    "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
+                    "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("flag"))}
         out.append((keys, tag, state, info["시행일자"], note))
-    # R11 (2026-11-15): 하나도 못 받았으면 '받은 날'을 남기지 않는다 (1월·7월 자동 확인이 그달에 다시 해 보게). 이유는 파일로 남김
-    if any(st not in ("실패", "못 찾음") for _, _, st, _, _ in out):
-        S["last"] = today.isoformat()
-    S["last_try"] = {"날": today.isoformat(), "받음": sum(1 for r in out if r[2] not in ("실패", "못 찾음")), "전체": len(out),
-                     "실패": [("%s: %s" % (r[1], r[4]))[:300] for r in out if r[2] in ("실패", "못 찾음")][:20]}
-    _write(input_dir, S)
+    with _LOCK:   # P1-23: 받는 동안 바꾼 아이디를 되돌리지 않게, 저장 직전에 다시 읽어 받은 조문만 넣는다
+        cur = load(input_dir)
+        cur.setdefault("items", {}).update(got)
+        # R11 (2026-11-15): 하나도 못 받았으면 '받은 날'을 남기지 않는다. 2차 P1-21: 통신·응답 실패가 하나라도 있으면 남기지 않는다
+        # (예전엔 일부만 받아도 '받은 날'이 남아 1월·7월 자동 확인이 그달에 다시 하지 않았음). 이유는 파일로 남김
+        if out and not any(st == "실패" for _, _, st, _, _ in out) and any(st != "못 찾음" for _, _, st, _, _ in out):
+            cur["last"] = today.isoformat()
+        cur["last_try"] = {"날": today.isoformat(), "받음": sum(1 for r in out if r[2] not in ("실패", "못 찾음")), "전체": len(out),
+                           "실패": [("%s: %s" % (r[1], r[4]))[:300] for r in out if r[2] in ("실패", "못 찾음")][:20]}
+        _write(input_dir, cur)
     return out
 
 

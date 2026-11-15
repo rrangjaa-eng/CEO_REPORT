@@ -2802,3 +2802,50 @@ class TestPumpKeepsGoing(unittest.TestCase):
         self.assertEqual(done, ["line"])
         self.assertTrue(any("화면 처리 중 오류" in x for x in logged), logged)
         self.assertEqual(after, [100])
+
+
+# ───────────── 2차 P1-21·P1-23: 법령 일부 실패면 받은 날을 남기지 않고, 받는 동안 바꾼 아이디를 되돌리지 않음 ─────────────
+class TestLawPartialAndOverlap(unittest.TestCase):
+    def test_partial_failure_keeps_auto_check(self):
+        import shutil
+        import tempfile
+        from ceo_report import lawwatch
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from test_lawwatch import fake
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        lawwatch.save_oc(d, "me")
+        class Any(dict):
+            def get(self, k, default=None):
+                return "조문 … 100분의 7"
+        good = fake(Any())
+        calls = []
+
+        def half(url, timeout=0):
+            calls.append(url)
+            if len(calls) % 3 == 0:
+                raise OSError("끊김")
+            return good(url, timeout)
+        rows = lawwatch.check(d, 2026, D(2026, 7, 2), half)
+        self.assertTrue(any(r[2] == "실패" for r in rows) and any(r[2] not in ("실패", "못 찾음") for r in rows))
+        self.assertEqual(lawwatch.load(d).get("last", ""), "")
+        self.assertTrue(lawwatch.due(d, D(2026, 7, 3)))   # 그달 안에 다시 해 봄
+
+    def test_oc_saved_during_check_survives(self):
+        import shutil
+        import tempfile
+        from ceo_report import lawwatch
+        from test_lawwatch import fake
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        lawwatch.save_oc(d, "old")
+        good = fake({})
+        state = {"done": False}
+
+        def opener(url, timeout=0):
+            if not state["done"]:   # 받는 중에 사용자가 아이디를 바꿈
+                state["done"] = True
+                lawwatch.save_oc(d, "new")
+            return good(url, timeout)
+        lawwatch.check(d, 2026, D(2026, 7, 2), opener)
+        self.assertEqual(lawwatch.load(d)["oc"], "new")
