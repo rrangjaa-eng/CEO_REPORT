@@ -154,10 +154,16 @@ def card_usage(wehago_dir):
         return {}, None
     out = {}
     last = None
+    seen = set()
     for r in best[1].get("응답") or []:
         data = r.get("data")
         if not _CARD_PATH.search(str(r.get("path") or "")) or not isinstance(data, dict):
             continue
+        # 1차 D6 (2026-11-15): 같은 응답이 두 번 저장되면(실제 11/14 원천징수부에 있었음) 카드 사용을 두 번 셌다 — 같은 응답은 한 번만
+        key = (str(r.get("path") or "").rstrip("/"), json.dumps(data, sort_keys=True, ensure_ascii=False, default=str))
+        if key in seen:
+            continue
+        seen.add(key)
         for it in data.get("data") or []:
             t = re.sub(r"\D", "", str(it.get("da_sbook") or ""))[:8]
             try:

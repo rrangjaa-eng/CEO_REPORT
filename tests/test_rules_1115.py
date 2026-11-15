@@ -3148,3 +3148,26 @@ class TestLiveFailureNotStale(unittest.TestCase):
             gui.Window.open_live(Fake())
             self.assertEqual(built, [1, 1])
         self.assertEqual(len(opened), 3)
+
+
+# ───────────── 1차 D6: 같은 카드 화면 응답이 두 번 저장돼도 한 번만 셈 ─────────────
+class TestCardScreenDuplicateResponse(unittest.TestCase):
+    def test_same_response_twice(self):
+        import json
+        import shutil
+        import tempfile
+        from ceo_report import screen_tax
+        folder = tempfile.mkdtemp()
+        try:
+            resp = {"path": "/smarta/saac0105/6/", "data": {"data": [
+                {"da_sbook": "20261005", "nm_ctrade": "[00501]카드_0001", "cd_ctrade": "00501", "mn_total": 2500000}]}}
+            other = {"path": "/smarta/saac0105/6", "data": {"data": [
+                {"da_sbook": "20261006", "nm_ctrade": "[00501]카드_0001", "cd_ctrade": "00501", "mn_total": 1000}]}}
+            doc = {"종류": "결산", "화면코드": "SAAC0105", "수집시각": "2026-11-13 09:00",
+                   "응답": [resp, json.loads(json.dumps(resp)), other]}
+            with open(os.path.join(folder, "261113 결산_신용카드 자동수집.json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False)
+            real, _ = screen_tax.card_usage(folder)
+        finally:
+            shutil.rmtree(folder)
+        self.assertEqual(real["code:501"], [(dt.date(2026, 10, 5), 2500000), (dt.date(2026, 10, 6), 1000)])
