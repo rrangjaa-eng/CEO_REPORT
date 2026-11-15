@@ -2431,3 +2431,31 @@ class TestBrokenReconcileRawIsListed(unittest.TestCase):
         hit = [r for r in rows if r.get("항목") == "261113 결산_합계잔액시산표(2기) 자동수집.json"]
         self.assertEqual(len(hit), 1, rows)
         self.assertIn("깨졌거나", hit[0]["할일"])
+
+
+# ───────────── 2차 P3-17: 근거자료로 떼어도 맨 위 자료 경고가 모두 따라감 ─────────────
+class TestEvidenceKeepsAllWarnings(unittest.TestCase):
+    def _page(self, top):
+        return ("<html><head><title>주간 경영관리 보고</title></head><body><div class='wrap'>" + top +
+                "<table><tr><td><b>근거 1-1</b></td><td>여유 자금</td><td><a href='#ev-1-1'>보기</a></td></tr></table>"
+                "<div class='evb' id='ev-1-1'>근거 표<ul><li>x</li></ul></div><!-- /ev-1-1 --></div></body></html>")
+
+    def test_alerts_follow(self):
+        from ceo_report import evidence
+        top = ("<div class='gate-lag' style='border:2px'>장부의 통장 거래 입력이 늦음</div>"
+               "<style>.gate{}</style><div class='gate'>자금계획서가 빠진 달: 12월</div>"
+               "<div class='ins-alert'>자료 대조 경고 · 장부와 비교 자료가 다름: 통장 12,000,000원</div>"
+               "<div class='ins-alert'>자동 분석을 못 했습니다 · 빠져 있습니다<div class='mgonly'>오류: KeyError</div><!-- /mgonly --></div>"
+               "<div class='ins-alert'>경보 · 여유 자금 부족</div>")
+        doc = evidence.build(self._page(top), ["1-1"])
+        for t in ("장부의 통장 거래 입력이 늦음", "자금계획서가 빠진 달: 12월", "자료 대조 경고", "자동 분석을 못 했습니다", "오류: KeyError"):
+            self.assertIn(t, doc)
+        self.assertNotIn("여유 자금 부족", doc)   # 경보(사업 판단)는 근거 문서에 붙이지 않는다 — 자료 경고만
+        self.assertEqual(doc.count("자료 대조 경고"), 1)
+
+    def test_gap_note_does_not_swallow_the_page(self):
+        """목록 없는 '빠진 달' 경고 뒤 먼 곳의 </ul></div> 까지 한 덩어리로 잡지 않는다 (예전 정규식은 그랬음)."""
+        from ceo_report import evidence
+        doc = evidence.build(self._page("<style>.gate{}</style><div class='gate'>자금계획서가 빠진 달: 12월</div>"), ["1-1"])
+        self.assertEqual(doc.count("근거 표"), 1, doc)
+        self.assertEqual(evidence.warnings(self._page("")), [])

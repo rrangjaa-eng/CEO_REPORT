@@ -42,6 +42,19 @@ def _block(mgmt_html, target):
     return _unlabel(m.group(0))
 
 
+# 보고 맨 위의 자료 경고 (render.py 가 만드는 모양 그대로, 글은 모두 이스케이프돼 '<' 가 없다)
+_WARN = re.compile(
+    r"<style>[^<]*</style><div class='gate'>[^<]*(?:<ul>(?:<li>[^<]*</li>)*</ul>)?</div>"   # 자금계획서·분개장 미반영(목록) · 빠진 달(한 줄)
+    r"|<div class='gate-lag'[^>]*>[^<]*</div>"                                                # 장부의 통장 거래 입력이 늦음
+    r"|<div class='ins-alert'>(?:자동 분석을 못 했습니다|자료 대조 경고)[^<]*"                  # 자동 분석 실패 · 자료 대조 경고
+    r"(?:<div class='mgonly'>[^<]*</div><!-- /mgonly -->)?</div>")
+
+
+def warnings(mgmt_html):
+    """경영관리 보고에 달린 자료 경고 조각들 (나온 차례, 같은 것은 한 번)."""
+    return list(dict.fromkeys(m.group(0) for m in _WARN.finditer(mgmt_html or "")))
+
+
 def build(mgmt_html, nums, who="대표", when=""):
     """뽑은 근거 문서 HTML. 모르는 번호는 ValueError (있는 번호를 알려 준다)."""
     idx = {n: (t, w) for n, t, w in index_of(mgmt_html)}
@@ -56,10 +69,9 @@ def build(mgmt_html, nums, who="대표", when=""):
     parts = ["<div class='wrap'><h1>%s</h1><div class='meta'>요청: %s%s · 제출: 경영관리</div>" % (
         _html.escape(name), _html.escape(who), (" · " + _html.escape(when)) if when else ""),
         "<table class='pt evt' style='margin:10px 0 16px'><thead><tr><th>번호</th><th>대표용 항목</th></tr></thead><tbody>%s</tbody></table>" % rows]
-    # 경영관리 보고가 자료 미반영 경고를 달고 있으면 근거자료에도 그대로 붙인다 (2026-11-14 코덱스 검토: 떼어 낸 근거엔 경고가 없었음)
-    warn = re.search(r"<style>[^<]*</style><div class='gate'>.*?</ul></div>", mgmt_html, re.S)
-    if warn:
-        parts.append(warn.group(0))
+    # 경영관리 보고가 자료 경고를 달고 있으면 근거자료에도 그대로 붙인다 (2026-11-14 코덱스 검토: 떼어 낸 근거엔 경고가 없었음)
+    # 2026-11-15 P3-17: 미반영 경고만 옮겼음 → 맨 위 자료 경고를 모두 (장부 입력 늦음·빠진 달·자동 분석 실패·자료 대조 경고)
+    parts.extend(warnings(mgmt_html))
     seen = set()
     for n in nums:
         t, w = idx[n]
