@@ -11,6 +11,7 @@ import re
 import tempfile
 
 from . import convert, wehago
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 
 def _won(v):
@@ -98,7 +99,7 @@ def _cross_checks(temp_input, out):
         p = os.path.join(temp_input, name)
         if not os.path.exists(p):
             return None
-        with open(p, encoding="utf-8-sig", newline="") as f:
+        with _open_text(p) as f:
             return list(csv.DictReader(f))
     pl, ev = rows("손익.csv"), rows("증빙월별.csv")
     if pl is not None and ev is not None:
@@ -185,7 +186,7 @@ def _num_csv(path, col, where=None):
     from .util import num
     import csv
     total = 0
-    with open(path, encoding="utf-8-sig") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             if where is None or where(r):
                 total += num(r.get(col)) or 0
@@ -206,7 +207,7 @@ def key_numbers(temp_input, asof, res):
 
     def bank():
         import csv
-        with open(p("장부잔액.csv"), encoding="utf-8-sig") as f:
+        with _open_text(p("장부잔액.csv")) as f:
             rows = list(csv.DictReader(f))
         last = max(r["기준일"] for r in rows)
         return sum(int(r["잔액"] or 0) for r in rows if r["기준일"] == last)

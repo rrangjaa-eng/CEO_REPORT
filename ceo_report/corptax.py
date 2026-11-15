@@ -8,6 +8,7 @@
 """
 import csv
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 DEP_FILE = "감가상각비.csv"
 DEP_COLUMNS = ["연도", "연간감가상각비"]
@@ -68,7 +69,7 @@ def read_ledger(input_dir, wehago_dir=None):
         rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
     if not rows and input_dir and os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
         try:
-            with open(os.path.join(input_dir, LEDGER_FILE), encoding="utf-8-sig", newline="") as f:
+            with _open_text(os.path.join(input_dir, LEDGER_FILE)) as f:
                 rows = list(csv.DictReader(f))
         except (OSError, UnicodeDecodeError, csv.Error):
             rows = []
@@ -85,7 +86,7 @@ def read(input_dir):
     path = os.path.join(input_dir, DEP_FILE)
     out = {}
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, v = (r.get("연도") or "").strip(), _int(r.get("연간감가상각비"))
                 if y.isdigit() and v is not None:
@@ -104,6 +105,8 @@ def save(input_dir, year, amount):
         raise ValueError("연도는 4자리 (예: 2026)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, DEP_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = dict((k, v) for k, v in read(input_dir).items() if isinstance(k, str))   # 대장 값은 파일에 쓰지 않음
     if str(amount or "").strip():
         v = _int(amount)

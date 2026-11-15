@@ -11,6 +11,7 @@ AI 없이 규칙 계산만 한다: 배당 총액을 바꿔 가며 주주마다(�
 import csv
 import datetime as dt
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "주주.csv"
 COLUMNS = ["이름", "지분율", "미성년자", "회사급여", "다른금융소득", "그밖소득", "공제인원"]
@@ -80,7 +81,7 @@ def read(input_dir):
     path = os.path.join(input_dir, FILE)
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return [r for r in csv.DictReader(f) if (r.get("이름") or "").strip()]
 
 
@@ -99,6 +100,8 @@ def save(input_dir, name, share, minor, salaried, interest, other, delete=False,
     name = (name or "").strip()
     if not name:
         raise ValueError("이름을 넣으세요")
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     rows = [r for r in read(input_dir) if r["이름"].strip() != name]
     action = "지움" if delete else "저장"
     if not delete:
@@ -148,7 +151,7 @@ def wages(input_dir, name, asof):
     lo = (asof.replace(day=1) - dt.timedelta(days=365)).strftime("%Y-%m")
     hi = asof.strftime("%Y-%m")
     tot, months = 0, set()
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             if (r.get("사원명") or "").strip() != name or not (lo < (r.get("연월") or "") <= hi):
                 continue
@@ -319,7 +322,7 @@ def read_settings(input_dir):
     path = os.path.join(input_dir, SET_FILE)
     out = {}
     if os.path.exists(path):
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 k, v = (r.get("항목") or "").strip(), (r.get("값") or "").strip()
                 if k and v:
@@ -338,6 +341,8 @@ def missing_required(st):
 
 def save_settings(input_dir, values, strict=False):
     """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict."""
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, SET_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_settings(input_dir)
     spec = dict((k, (kind, opts)) for k, _, _, kind, opts, _, _ in QUESTIONS)
     for k, v in values.items():

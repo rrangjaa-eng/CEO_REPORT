@@ -12,6 +12,7 @@
 import csv
 import datetime as dt
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "세법기준.csv"
 # 확인 기록 (계산-07·결정 h, 2026-11-15): 시행일·확인한 사람도 남긴다. '출처(확인한 곳)'는 기본값으로 채우지 않는다
@@ -135,7 +136,7 @@ def read(input_dir):
     path = os.path.join(input_dir, FILE) if input_dir else None
     if not path or not os.path.exists(path):
         return out
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             try:
                 y, k = int(r.get("연도") or ""), (r.get("항목") or "").strip()

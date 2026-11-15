@@ -5,6 +5,7 @@
 """
 import csv
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 TARGET_FILE = "팀목표.csv"
 TARGET_COLUMNS = ["연도", "팀", "매출목표", "목표수익률"]
@@ -31,7 +32,7 @@ def read(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, team = (r.get("연도") or "").strip(), (r.get("팀") or "").strip()
                 if y.isdigit() and team:
@@ -55,6 +56,8 @@ def save(input_dir, year, team, revenue, rate):
         raise ValueError("목표 수익률은 0~100 사이 숫자 (예: 32)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, TARGET_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read(input_dir)
     cur[(y, team)] = {"revenue": rev, "rate": rt}
     path = os.path.join(input_dir, TARGET_FILE)

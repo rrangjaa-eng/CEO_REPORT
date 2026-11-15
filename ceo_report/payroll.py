@@ -11,6 +11,7 @@ import collections
 import csv
 import datetime as dt
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 EMP_FILE, PAY_FILE = "사원.csv", "급여명세.csv"
 # 작년 연말정산 결과 (위하고 연말정산 화면 → 변환, 사용자 2026-11-12: 작년 결과로 직원별 부양가족 공제 예상)
@@ -31,7 +32,7 @@ STANDARD_CREDIT = 130_000
 def _read(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f))
 
 

@@ -1038,3 +1038,37 @@ class TestPayDetailUnreadable(unittest.TestCase):
             self.assertEqual(f.read(), b"\xff\xfe\x00broken")   # 덮지 않음
         hit = [m for f, _, m in data.load(d).issues.items if f == paydetail.DETAIL_FILE]
         self.assertTrue(hit and "읽지 못해" in hit[0])
+
+
+# ───────────── C5: 엑셀에서 CP949 로 다시 저장한 입력 파일도 읽고, 못 읽으면 새 줄만으로 덮지 않음 ─────────────
+class TestSafetyCp949Inputs(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def put(self, name, text, enc="cp949"):
+        with open(os.path.join(self.d, name), "wb") as f:
+            f.write(text.encode(enc) if isinstance(text, str) else text)
+
+    def test_cp949_files_keep_their_rows_when_saving(self):
+        from ceo_report import checklist, targets
+        self.put(targets.TARGET_FILE, "연도,팀,매출목표,목표수익률\r\n2026,기획1팀,1000000000,30\r\n")
+        targets.save(self.d, "2026", "기획3팀", "500,000,000", "20")
+        self.assertEqual(sorted(t for _, t in targets.read(self.d)), ["기획1팀", "기획3팀"])
+        self.put(checklist.STORE, ",".join(checklist.STORE_COLS) + "\r\nA1,확인함,메모,2026-11-10,내용\r\n")
+        checklist.save_decision(self.d, "A2", "확인함", "새 메모", "내용2")
+        self.assertEqual(sorted(checklist.read_decisions(self.d)), ["A1", "A2"])
+        self.put(checklist.BANK_FILE, ",".join(checklist.BANK_COLS) + "\r\n2026-11-01,100,가\r\n")
+        checklist.save_bank(self.d, "2026-11-15", "300")
+        self.assertEqual(len(checklist.read_bank(self.d)), 2)
+
+    def test_unreadable_file_is_not_overwritten(self):
+        from ceo_report import targets
+        self.put(targets.TARGET_FILE, b"\xff\xfe\x00\xd8broken\x80")
+        with self.assertRaises(ValueError) as cm:
+            targets.save(self.d, "2026", "기획3팀", "500,000,000", "20")
+        self.assertIn("그대로 둠", str(cm.exception))
+        with open(os.path.join(self.d, targets.TARGET_FILE), "rb") as f:
+            self.assertEqual(f.read(), b"\xff\xfe\x00\xd8broken\x80")

@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from . import util
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 CONVERT_FILE = "확인할것.json"
 STORE = "확인결정.csv"
@@ -119,7 +120,7 @@ def read_decisions(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 if r.get("항목ID"):
                     out[r["항목ID"]] = r
@@ -132,6 +133,8 @@ def save_decision(input_dir, item_id, choice, memo="", content=""):
     """결정 한 줄을 넣거나 고친다. choice 를 비우면 결정을 지운다 (다시 '결정할 것'으로)."""
     if not item_id:
         raise ValueError("항목이 없음")
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, STORE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_decisions(input_dir)
     if choice:
         cur[item_id] = {"항목ID": item_id, "결정": choice.strip(), "메모": (memo or "").strip()[:500],
@@ -159,6 +162,8 @@ def save_bank(input_dir, day, amount, memo=""):
     t = str(amount or "").replace(",", "").replace("원", "").strip()
     if not t.lstrip("-").isdigit():
         raise ValueError("통장 잔액은 숫자 (예: 364,912,852)")
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, BANK_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     rows = read_bank(input_dir)
     rows[d] = (int(t), (memo or "").strip())
     path = os.path.join(input_dir, BANK_FILE)
@@ -177,7 +182,7 @@ def read_bank(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 d = util.date((r.get("날짜") or "").strip())
                 v = util.num(r.get("통장잔액"))
@@ -194,7 +199,7 @@ def book_balance(input_dir, day):
     bal_path, mov_path = os.path.join(input_dir, "장부잔액.csv"), os.path.join(input_dir, "장부입출금.csv")
     snaps = {}
     try:
-        with open(bal_path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(bal_path) as f:
             for r in csv.DictReader(f):
                 d, v = util.date(r.get("기준일")), util.num(r.get("잔액"))
                 if d is not None and v is not None:
@@ -204,7 +209,7 @@ def book_balance(input_dir, day):
         return None, None
     moves = []
     try:
-        with open(mov_path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(mov_path) as f:
             for r in csv.DictReader(f):
                 d, v = util.date(r.get("일자")), util.num(r.get("금액"))
                 if d is not None and v is not None:

@@ -28,6 +28,7 @@ import datetime as dt
 import json
 import os
 import re
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "자료대조.csv"
 KEYS = ["구분", "항목", "비교자료", "비교값", "장부값", "차이", "기준", "판정", "할일", "대표경고"]
@@ -155,7 +156,7 @@ def journal_files(wehago_dir):
         if "분개장" not in n or not n.endswith(".json"):
             continue
         try:
-            with open(os.path.join(wehago_dir, n), encoding="utf-8-sig") as f:
+            with _open_text(os.path.join(wehago_dir, n)) as f:
                 d = json.load(f)
         except (OSError, ValueError):
             continue
@@ -462,7 +463,7 @@ def read_maturity(input_dir):
     변환은 사용자 파일을 만들거나 고치지 않는다 (입력양식\대출만기.csv 를 입력 폴더에 복사해 고쳐 쓴다)."""
     path = os.path.join(input_dir or "", MATURITY_FILE)
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             rows = list(csv.DictReader(f))
     except OSError:
         rows = [dict(r) for r in MATURITY_DEFAULT]
@@ -821,7 +822,7 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
 # ───────────── 보고 쪽 ─────────────
 def load(input_dir):
     try:
-        with open(os.path.join(input_dir, FILE), encoding="utf-8-sig", newline="") as f:
+        with _open_text(os.path.join(input_dir, FILE)) as f:
             return list(csv.DictReader(f))
     except OSError:
         return []

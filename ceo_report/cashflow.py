@@ -15,6 +15,7 @@ import os
 import re
 
 from .util import esc
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "현금흐름.csv"
 KEYS = ["일자", "구분", "항목", "금액"]
@@ -307,7 +308,7 @@ def load(input_dir):
     if not os.path.exists(path):
         return None
     out = []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             try:
                 d = dt.date(*[int(x) for x in (r.get("일자") or "").split("-")])
@@ -415,7 +416,7 @@ def annual(rows, year, end_balance, start_balance=None):
 def _read_csv(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f))
 
 

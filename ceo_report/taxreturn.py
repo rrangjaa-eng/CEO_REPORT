@@ -5,6 +5,7 @@
 """
 import csv
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "법인세신고.csv"
 COLUMNS = ["연도", "구분", "사업연도", "수입금액", "장부세전이익", "과세표준", "산출세액", "공제감면세액", "총부담세액",
@@ -30,7 +31,7 @@ def load(input_dir):
     if not os.path.exists(path):
         return {}
     out = {}
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             y = _n(r.get("연도"))
             if not y:

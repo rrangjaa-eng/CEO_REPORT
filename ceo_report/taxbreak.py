@@ -13,6 +13,7 @@ import csv
 import os
 
 from .surplus import FOUNDED
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 MIN_TAX = 0.07          # 중소기업 최저한세율 (과세표준의 7%)
 LOCAL_RATE = 0.10       # 법인지방소득세도 같은 비율로 줄어든다
@@ -27,7 +28,7 @@ def W(v):
 def _read_csv(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f))
 
 

@@ -22,6 +22,7 @@ from collections import OrderedDict
 
 from .calc import year_revenue_left
 from .corptax import corp_tax, depreciation
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 VALUES_FILE = "예산값.csv"
 VALUES_COLUMNS = ["연도", "구분", "대상", "값"]
@@ -62,7 +63,7 @@ def read_values(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, k, who = (r.get("연도") or "").strip(), (r.get("구분") or "").strip(), (r.get("대상") or "").strip()
                 v = _num(r.get("값"))
@@ -91,6 +92,8 @@ def save_values(input_dir, year, items):
         raise ValueError("연도는 4자리 (예: 2027)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, VALUES_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_values(input_dir)
     for kind, who, text in items:
         if kind not in KINDS:
@@ -296,7 +299,7 @@ def _loan_plan(input_dir, debts, asof, until):
         return None, []
     from .wehago import norm_code, norm_vendor
     from .util import date as parse_date
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         rows = list(csv.DictReader(f))
     led_code, led_name = {}, {}
     for x in debts or []:
@@ -754,7 +757,7 @@ def confirm(input_dir, B, today=None):
     path = os.path.join(input_dir, CONFIRM_FILE)
     if os.path.exists(path):
         try:
-            with open(path, encoding="utf-8-sig", newline="") as f:
+            with _open_text(path) as f:
                 keep = [r for r in csv.DictReader(f) if (r.get("연도") or "").strip() != y]
         except (OSError, UnicodeDecodeError, csv.Error):
             keep = []
@@ -783,7 +786,7 @@ def read_confirmed(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, m, who = (r.get("연도") or "").strip(), (r.get("월") or "").strip(), (r.get("대상") or "").strip()
                 if not (y.isdigit() and m.isdigit() and who):

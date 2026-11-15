@@ -18,6 +18,7 @@ import os
 import re
 
 from .util import esc
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "잉여금.csv"
 KEYS = ["연도", "항목", "금액", "상태", "근거"]
@@ -263,7 +264,7 @@ def load(input_dir):
     if not os.path.exists(path):
         return None
     out = collections.defaultdict(dict)
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             try:
                 y = int(r.get("연도") or "")

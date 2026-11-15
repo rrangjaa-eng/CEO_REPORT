@@ -11,6 +11,7 @@ import os
 import re
 import zipfile
 from xml.sax.saxutils import escape
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 ACCOUNT_FILE = "거래처계좌.csv"
 ACCOUNT_COLUMNS = ["거래처코드", "거래처", "은행", "계좌번호", "예금주"]
@@ -115,7 +116,7 @@ def _read_rows(input_dir):
     if not os.path.exists(path):
         return [], None
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             reader = csv.DictReader(f)
             head = [h.strip() for h in (reader.fieldnames or [])]
             if not all(c in head for c in OLD_COLUMNS):
@@ -450,10 +451,10 @@ REPEAT_DAYS = 45           # 이만큼 안에 만든 파일에 같은 계좌·�
 def _conv_time(input_dir):
     """마지막 자료 변환 시각과 실패 여부 (변환결과.txt 첫 줄 '변환 시각 …', N4 뒤 실제 시각). -> (datetime 또는 None, 실패 글 또는 '')."""
     try:
-        with open(os.path.join(input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+        with _open_text(os.path.join(input_dir, "변환결과.txt")) as f:
             head = [f.readline() for _ in range(3)]
-    except OSError:
-        return None, "자료 변환 기록(변환결과.txt)이 없음 — 자료 변환을 먼저 하세요"
+    except (OSError, UnicodeDecodeError):
+        return None, "자료 변환 기록(변환결과.txt)이 없거나 읽지 못함 — 자료 변환을 먼저 하세요"
     m = re.match(r"변환 시각 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", head[0].strip())
     when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S") if m else None
     failed = next((ln.strip() for ln in head[1:] if ln.startswith("변환 실패")), "")
@@ -518,7 +519,7 @@ def _put_away(output_dir, start, end, say, why):
 def read_log(input_dir):
     import csv
     try:
-        with open(os.path.join(input_dir, LOG_FILE), encoding="utf-8-sig", newline="") as f:
+        with _open_text(os.path.join(input_dir, LOG_FILE)) as f:
             return list(csv.DictReader(f))
     except OSError:
         return []

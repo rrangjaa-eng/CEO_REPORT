@@ -17,6 +17,7 @@ import time
 from . import fundplan, wehago
 from .data import SCHEMA
 from .util import date as parse_date
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 ARCHIVE = "지난자료"
 SCHED_FILE = "자금일정.csv"
@@ -458,7 +459,7 @@ MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' �
 
 def load_merge(paths):
     try:
-        with open(os.path.join(paths.input, MERGE_FILE), encoding="utf-8-sig") as f:
+        with _open_text(os.path.join(paths.input, MERGE_FILE)) as f:
             lines = f.read().splitlines()
     except (OSError, UnicodeDecodeError):
         return "건별", ""

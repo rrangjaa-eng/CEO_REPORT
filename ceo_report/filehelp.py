@@ -13,6 +13,7 @@ import datetime as dt
 import re
 
 from .filing import HOMETAX, _sq
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 CARD = re.compile(r"^[^\s_]+_\d{4}$")
 ASSET = ("206", "207", "208", "209", "210", "212", "213")
@@ -156,7 +157,7 @@ def load(input_dir):
     path = os.path.join(input_dir, FILE)
     if not os.path.exists(path):
         return None
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f)) or None
 
 
