@@ -1170,3 +1170,29 @@ class TestStaleEmptyPlanMonth(unittest.TestCase):
             R["fundplan"]["used"] = True
             R["s2"]["periods"] = [{"label": "12월", "end": D(2026, 12, 31), "firm": {"avail": 1}, "all": {"avail": 1}}]
             self.assertIn("2026-12", gate.blank_plan_gaps(R))
+
+
+# ───────────── P3-8: 서로 반대인 대조 차이가 더해져 대표 경고가 사라지지 않음 ─────────────
+class TestReconWarningsDoNotCancel(unittest.TestCase):
+    def write(self, rows):
+        import csv
+        import shutil
+        import tempfile
+        from ceo_report import reconcile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, reconcile.FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["구분", "항목", "비교자료", "비교값", "장부값", "차이", "기준", "판정", "할일", "대표경고"])
+            w.writerows(rows)
+        return reconcile.for_report(d)[0]
+
+    def test_opposite_differences_from_two_sources_keep_the_warning(self):
+        warn = self.write([["잔액", "보통예금", "합계잔액시산표", "0", "20000000", "20000000", "", "다름", "", "예"],
+                           ["잔액", "보통예금", "재무상태표 2026", "40000000", "20000000", "-20000000", "", "다름", "", "예"]])
+        self.assertEqual([(w["what"], abs(w["diff"])) for w in warn], [("통장", 20000000)])
+
+    def test_parts_of_one_item_in_one_source_still_add_up(self):
+        warn = self.write([["잔액", "단기차입금", "합계잔액시산표", "0", "15000000", "15000000", "", "다름", "", "예"],
+                           ["잔액", "장기차입금", "합계잔액시산표", "15000000", "0", "-15000000", "", "다름", "", "예"]])
+        self.assertEqual([(w["what"], w["diff"]) for w in warn], [("차입금", 0)])   # 차입금 합계는 같음

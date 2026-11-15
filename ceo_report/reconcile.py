@@ -824,14 +824,18 @@ def load(input_dir):
     try:
         with _open_text(os.path.join(input_dir, FILE)) as f:
             return list(csv.DictReader(f))
-    except OSError:
+    except (OSError, UnicodeDecodeError, csv.Error):
         return []
 
 
 def for_report(input_dir):
-    """-> (R['recon'] 대표 경고 목록, 경영관리 표 줄). 경고는 같은 때 받은 자료끼리 1천만 원 넘게 다를 때만."""
+    """-> (R['recon'] 대표 경고 목록, 경영관리 표 줄). 경고는 같은 때 받은 자료끼리 1천만 원 넘게 다를 때만.
+
+    P3-8 (2026-11-15): 같은 비교 자료 안에서 한 항목을 이루는 계정(단기·장기 차입금)은 더하지만, 같은 항목을 여러 자료
+    (시산표·재무상태표 …)와 맞춘 차이는 더하지 않고 가장 크게 어긋난 것 하나를 쓴다 — 예전에는 모두 더해 +2천만·−2천만이
+    0 이 되어 대표 경고가 사라졌다."""
     rows = load(input_dir)
-    warn = collections.OrderedDict()
+    per = collections.OrderedDict()   # 항목 -> {비교 자료: 차이 합}
     for r in rows:
         if r.get("대표경고") != "예":
             continue
@@ -840,8 +844,12 @@ def for_report(input_dir):
             diff = int(r.get("차이") or 0)
         except ValueError:
             continue
-        warn[what] = warn.get(what, 0) + diff
-    return [{"what": k, "diff": v} for k, v in warn.items()], rows
+        src = per.setdefault(what, collections.OrderedDict())
+        src[r.get("비교자료") or ""] = src.get(r.get("비교자료") or "", 0) + diff
+    warn = []
+    for what, by_src in per.items():
+        warn.append({"what": what, "diff": max(by_src.values(), key=abs)})
+    return warn, rows
 
 
 def _grp_name(name):
