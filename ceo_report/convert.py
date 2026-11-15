@@ -1276,16 +1276,23 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
     if snap is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05): 최근 스냅숏 것을 입력 폴더로
         from . import payreq
         if os.path.exists(os.path.join(snap.path, payreq.FILE)):
-            reqs = payreq.read(snap.path)
-            try:
-                payreq.write(input_dir, reqs)
-                summary.append("지급 요청서(관리팀 승인·사장님 승인 전) %d건 · 세부사항 있음 %d건 → 주간 출금 목록 상세 내역에 맞춰 붙임"
-                               % (len(reqs), sum(1 for r in reqs if r["note"])))
-            except OSError:
-                summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
-        else:   # 최근 수집에 지급 요청서가 없으면 예전 것을 남기지 않는다 (지난 세부사항이 새 출금에 붙지 않게)
+            reqs, why = payreq.read_checked(snap.path)
+            if reqs is None:   # P5-22: 못 읽은 파일을 0건으로 써서 있던 상세를 지우지 않는다
+                summary.append("경고: 최근 수집의 지급 요청서(%s)를 읽지 못함 (%s) — 입력 폴더의 예전 상세 내역을 그대로 둠, "
+                               "인트라넷 수집을 다시 하세요" % (payreq.FILE, why))
+            else:
+                try:
+                    payreq.write(input_dir, reqs)
+                    summary.append("지급 요청서(관리팀 승인·사장님 승인 전) %d건 · 세부사항 있음 %d건 → 주간 출금 목록 상세 내역에 맞춰 붙임"
+                                   % (len(reqs), sum(1 for r in reqs if r["note"])))
+                except OSError:
+                    summary.append("지급 요청서 파일을 입력 폴더에 쓰지 못함 (%s)" % payreq.FILE)
+        elif os.path.exists(os.path.join(input_dir, payreq.FILE)):
+            # 최근 수집에 지급 요청서가 없으면 예전 것을 남기지 않는다 (지난 세부사항이 새 출금에 붙지 않게) — 지웠다고 알린다
             try:
                 os.remove(os.path.join(input_dir, payreq.FILE))
+                summary.append("최근 인트라넷 수집에 지급 요청서 세부사항이 없어 예전 상세를 지움 — 주간 출금 목록 상세 내역이 비어 있을 수 "
+                               "있음 (수집을 다시 하면 채워짐)")
             except OSError:
                 pass
     if books.state == "ok":

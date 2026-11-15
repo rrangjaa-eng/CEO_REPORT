@@ -997,3 +997,44 @@ class TestSuspenseRepayOnlyWithinPlan(unittest.TestCase):
         G = gasu.compute(self.t, self.R(["2026-11", "2026-12", "2027-01", "2027-02"], [(D(2026, 12, 10), 1000000)]))
         self.assertTrue(G["ok"])
         self.assertEqual(G["end"], D(2027, 2, 28))
+
+
+# ───────────── P5-22: 못 읽은 지급 요청서·출금 상세를 0건으로 쓰거나 덮지 않음 ─────────────
+class TestPayDetailUnreadable(unittest.TestCase):
+    def test_conversion_keeps_old_details_when_snapshot_file_is_unreadable(self):
+        import test_convert
+        from test_books_stability_1114 import _company, _run
+        from ceo_report import payreq
+        test_convert.setUpModule()   # 샘플을 임시 폴더에 새로 쓴다
+        input_dir, collect, wehago_dir = _company(self)
+        snap = max((os.path.join(collect, n) for n in os.listdir(collect)), key=os.path.getmtime)
+        payreq.write(snap, [{"key": "k1", "project": "26201", "vendor": "가상", "amount": 1100000, "note": "가상 세부"}])
+        self.assertEqual(_run(input_dir, collect, wehago_dir).code, 0)
+        with open(os.path.join(input_dir, payreq.FILE), "rb") as f:
+            before = f.read()
+        self.assertIn("가상 세부".encode("utf-8"), before)
+        with open(os.path.join(snap, payreq.FILE), "wb") as f:
+            f.write(b"\xff\xfe\x00broken")   # 못 읽는 파일
+        res = _run(input_dir, collect, wehago_dir)
+        with open(os.path.join(input_dir, payreq.FILE), "rb") as f:
+            self.assertEqual(f.read(), before)   # 0건으로 덮지 않음
+        self.assertTrue([ln for ln in res.lines if "지급 요청서" in ln and "읽지 못함" in ln], res.lines)
+
+    def test_cp949_files_are_read_and_save_refuses_unreadable(self):
+        import shutil
+        import tempfile
+        from ceo_report import data, paydetail, payreq
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, payreq.FILE), "w", encoding="cp949", newline="") as f:
+            f.write("키,프로젝트,업체명,금액,세부사항\r\nk1,26201,가상,1100000,엑셀 저장\r\n")
+        rows, why = payreq.read_checked(d)
+        self.assertEqual((rows[0]["note"], why), ("엑셀 저장", None))
+        with open(os.path.join(d, paydetail.DETAIL_FILE), "wb") as f:
+            f.write(b"\xff\xfe\x00broken")
+        with self.assertRaises(ValueError):
+            paydetail.save(d, "가상", "1000", "새 상세")
+        with open(os.path.join(d, paydetail.DETAIL_FILE), "rb") as f:
+            self.assertEqual(f.read(), b"\xff\xfe\x00broken")   # 덮지 않음
+        hit = [m for f, _, m in data.load(d).issues.items if f == paydetail.DETAIL_FILE]
+        self.assertTrue(hit and "읽지 못해" in hit[0])

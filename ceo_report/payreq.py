@@ -123,23 +123,31 @@ def write(folder, rows):
     return path
 
 
-def read(folder):
-    """-> [{'key','project','vendor','amount','note'}]. 없거나 머리글이 다르면 []."""
+def read_checked(folder):
+    """-> (줄 목록, None) 또는 (None, 못 읽은 까닭). 파일이 없으면 ([], None).
+
+    2026-11-15 P5-22: 예전에는 못 읽은 파일(엑셀 저장 CP949·머리글 다름)도 '0건'으로 돌려줘, 변환이 그 0건을 입력 폴더에 써서
+    있던 상세를 지웠다. 이제 UTF-8·CP949 를 모두 읽고, 그래도 못 읽으면 None 과 까닭을 돌려준다.
+    """
     path = os.path.join(folder, FILE)
     if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
-    except (OSError, UnicodeDecodeError, csv.Error):
-        return []
+        return [], None
+    from .util import Issues, read_csv
+    iss, info = Issues(), {}
+    rows, ok = read_csv(path, COLUMNS, iss, info)
+    if not ok or info.get("missing"):
+        return None, "; ".join(m for _, _, m in iss.items) or "읽지 못함"
     out = []
     for r in rows:
-        if any(c not in r for c in COLUMNS):
-            return []
         out.append({"key": (r["키"] or "").strip(), "project": pid_of(r["프로젝트"]), "vendor": (r["업체명"] or "").strip(),
                     "amount": _amount(r["금액"]), "note": (r["세부사항"] or "").strip()})
-    return out
+    return out, None
+
+
+def read(folder):
+    """-> [{'key','project','vendor','amount','note'}]. 없거나 못 읽으면 [] (까닭이 필요하면 read_checked)."""
+    rows, _ = read_checked(folder)
+    return rows or []
 
 
 # ---------------------------------------------------------------------------

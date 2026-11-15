@@ -23,22 +23,28 @@ def _amount(text):
     return int(t) if t.lstrip("-").isdigit() else None
 
 
-def read(input_dir):
-    """-> [{"vendor", "amount", "text", "source"}]. 파일이 없거나 머리글이 다르면 []."""
+def read_checked(input_dir):
+    """-> (줄 목록, None) 또는 (None, 못 읽은 까닭). 파일이 없으면 ([], None). UTF-8·CP949 모두 읽는다 (C5·P5-22)."""
     path = os.path.join(input_dir, DETAIL_FILE)
     if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
-    except (OSError, UnicodeDecodeError, csv.Error):
-        return []
+        return [], None
+    from .util import Issues, read_csv
+    iss, info = Issues(), {}
+    rows, ok = read_csv(path, DETAIL_COLUMNS[:3], iss, info)
+    if not ok or info.get("missing"):
+        return None, "; ".join(m for _, _, m in iss.items) or "읽지 못함"
     out = []
     for r in rows:
         v, a, t = (r.get("거래처") or "").strip(), _amount(r.get("금액")), (r.get("상세내역") or "").strip()
         if v and a is not None and t:
             out.append({"vendor": v, "amount": a, "text": t, "source": (r.get("출처") or MANUAL).strip() or MANUAL})
-    return out
+    return out, None
+
+
+def read(input_dir):
+    """-> [{"vendor", "amount", "text", "source"}]. 파일이 없거나 못 읽으면 [] (까닭은 read_checked)."""
+    rows, _ = read_checked(input_dir)
+    return rows or []
 
 
 def save(input_dir, vendor, amount, text, source=MANUAL):
@@ -51,7 +57,10 @@ def save(input_dir, vendor, amount, text, source=MANUAL):
         raise ValueError("금액은 원 단위 숫자 (예: 3,300,000)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
-    rows = [r for r in read(input_dir)
+    have, why = read_checked(input_dir)
+    if have is None:   # 못 읽은 파일을 새 한 줄로 덮어 있던 상세를 지우지 않는다 (P5-22)
+        raise ValueError("%s 을 읽지 못해 저장하지 않음 (%s) — 엑셀에서 열려 있으면 닫고 다시 하세요. 파일은 그대로 둠" % (DETAIL_FILE, why))
+    rows = [r for r in have
             if not (_norm(r["vendor"]) == _norm(vendor) and r["amount"] == a and r["source"] == source)]
     if text:
         rows.append({"vendor": vendor, "amount": a, "text": text, "source": source})
