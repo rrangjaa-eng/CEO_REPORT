@@ -1007,6 +1007,9 @@ class Window(object):
         if task == "주간":
             app.save_merge(self.paths, group, only)
         ev_task = task.startswith("근거")
+        if ev_task and getattr(self, "ev_asof", None) is not None and self.ev_asof != asof:
+            self.say("근거는 고른 보고의 기준일 %s 에서 뽑습니다 (기준일 칸 %s 와 다름)" % (self.ev_asof.isoformat(), asof.isoformat()))
+            asof = self.ev_asof
         if task.startswith("예산"):
             year = self.b_year.get().strip() if hasattr(self, "b_year") else ""
         else:
@@ -1222,6 +1225,14 @@ class Window(object):
         threading.Thread(target=work, daemon=True).start()
 
     # ───────────── 근거자료 고르기 (사용자 2026-11-05 개선 4) ─────────────
+    @staticmethod
+    def _day_of(name):
+        """'2026-10-31_주간_경영관리보고.html' -> 2026-10-31 (못 읽으면 None)."""
+        try:
+            return dt.date.fromisoformat(str(name or "")[:10])
+        except ValueError:
+            return None
+
     def pick_evidence(self):
         rep = winstate.latest_reports(self.paths.output)
         kind = rep.get("kind") or "주간"
@@ -1235,12 +1246,14 @@ class Window(object):
         r.pack(fill="x")
         body = ttk.Frame(frm)
         vars_ = []
+        shown = {}
 
         def load():
             for w in body.winfo_children():
                 w.destroy()
             vars_.clear()
             name, rows = winstate.evidence_choices(self.paths.output, kv.get(), self.asof_date())
+            shown["name"] = name
             if not rows:
                 ttk.Label(body, text="%s 경영관리 보고가 없습니다. 먼저 %s 보고를 만드세요." % (kv.get(), kv.get())).pack(anchor="w")
                 return
@@ -1258,6 +1271,8 @@ class Window(object):
             if not nums:
                 return
             self.ev_nums = ", ".join(nums)
+            # 2차 P4-15 (2026-11-15): 화면에 보여 준 보고(그 기준일)에서 뽑는다 — 예전엔 기준일 칸 날짜로 실행해 다른 날 보고를 찾다 멈췄음
+            self.ev_asof = self._day_of(shown.get("name"))
             top.destroy()
             self.start("근거" + kv.get())
         b = ttk.Frame(frm)

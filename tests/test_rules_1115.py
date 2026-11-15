@@ -3513,3 +3513,17 @@ class TestAnnualEvidenceRefused(unittest.TestCase):
             rc = rep.main(["연간", "--근거", "5-2", "--입력", "/없는/폴더", "--출력", "/없는/출력"])
         self.assertEqual(rc, 2)
         self.assertIn("근거자료만 따로 뽑기를 지원하지 않습니다", buf.getvalue())
+
+
+# ───────────── 2차 P4-15: 근거 고르기 화면이 보여 준 보고의 기준일로 실행 ─────────────
+class TestEvidenceUsesShownReportDate(unittest.TestCase):
+    def test_day_of(self):
+        try:
+            from ceo_report import gui
+        except ImportError:
+            self.skipTest("tkinter 없음")
+        self.assertEqual(gui.Window._day_of("2026-10-31_주간_경영관리보고.html"), dt.date(2026, 10, 31))
+        self.assertIsNone(gui.Window._day_of(None))
+        with open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("asof = self.ev_asof", src)
