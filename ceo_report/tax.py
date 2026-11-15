@@ -331,7 +331,10 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
         month_lines = [ln for ln in withheld if start <= ln["date"] <= end and (ln.get("credit") is not None or ln.get("debit") is None)]
         owed_who = set(who(ln) for ln in month_lines if ln.get("credit"))
         part = None
-        if paid_who and owed_who and not owed_who <= paid_who:
+        # 낸 직원분이 그 달 뗀 직원분에 못 미칠 때만 '일부 납부' — 여러 공단분을 한 공단 거래처로 몰아 낸 전표는 다 낸 것
+        paid_emp = sum(p[1] for p in pays if end < p[0] <= asof)
+        month_emp = sum((ln.get("credit") or 0) for ln in month_lines)
+        if paid_who and owed_who and not owed_who <= paid_who and paid_emp < month_emp:
             part = [ln.get("credit") for ln in month_lines if who(ln) not in paid_who]
         state = "예상"
         if accrued.get((y, m)):

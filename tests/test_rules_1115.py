@@ -1078,7 +1078,8 @@ class TestSafetyCp949Inputs(unittest.TestCase):
 class TestJournalNamesKeepPeriods(unittest.TestCase):
     def test_extension_names_by_period_and_program_ranks_them(self):
         from ceo_report import wehago as W
-        src = open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8") as f:
+            src = f.read()
         self.assertIn("periodTag(msg.kind, msg.params)", src)
         self.assertIn("_기간${s}-${e}", src)
         # 확장이 만드는 이름 (올해 전체 · 지난해 전체 · 지난해 일부 · 올해 일부) — 모두 분개장으로 읽고 받은 날이 맞아야 함
@@ -1540,3 +1541,25 @@ class TestPartlyPaidTaxesStay(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["금액"], "200000")   # 건강보험 직원분 10만 + 같은 비율 회사분 10만
         self.assertIn("국민연금 납부 확인", rows[0]["근거"])
+
+    def test_social_all_paid_under_one_insurer_name(self):
+        from ceo_report import tax
+        D = dt.date   # 두 공단분을 한 공단 거래처로 몰아 냈어도 금액이 다 찼으면 다 낸 것
+        j = [self.ln(D(2026, 9, 25), "1", "25400", "국민연금공단", credit=200000),
+             self.ln(D(2026, 9, 25), "1", "25400", "건강보험공단", credit=100000),
+             self.ln(D(2026, 10, 10), "2", "25400", "국민연금공단", debit=300000),
+             self.ln(D(2026, 10, 10), "2", "10300", "신한", credit=300000)]
+        self.assertFalse([r for r in tax.social(j, D(2026, 10, 15)) if r["대상기간"] == "2026년 9월분"])
+
+
+class TestClosingSlipKeepsCorpTax(unittest.TestCase):
+    """1차 C5·D8: 결산전표의 법인세 줄(법인세등 차변)을 변환이 지워 결산 뒤 연간 보고도 실제 대신 예상 법인세를 썼다."""
+
+    def test_corp_tax_debit_survives(self):
+        from ceo_report import convert
+        ln = {"date": dt.date(2025, 12, 31), "no": "9", "sort": "결차", "account_code": "99800", "account": "법인세등",
+              "debit": 12345000, "credit": None}
+        kept = convert.closing_pl_line(ln, ("결차", "결대"))
+        self.assertEqual((kept["debit"], kept["credit"]), (12345000, None))
+        moved = dict(ln, sort="결대", debit=None, credit=12345000)   # 손익 대체 쪽은 그대로 뺌
+        self.assertIsNone(convert.closing_pl_line(moved, ("결차", "결대")))
