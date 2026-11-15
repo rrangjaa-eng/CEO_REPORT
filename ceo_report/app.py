@@ -639,7 +639,11 @@ def old_files(wehago_dir, asof):
     """[(파일 이름, 까닭)] — 변환이 쓰지 않는 예전 파일.
 
     WEHAGO 장부(분개장·매입매출장·전자세금계산서(매입)): 종류마다 가장 새 파일과, 지난해 장부는 해마다 가장 새 파일 하나만 남긴다.
-    자금계획서: 이번 달 이후 달만 쓴다. 같은 달 파일이 여럿이면 가장 새 것만 남긴다. 읽지 못한 파일은 옮기지 않는다 (확인하도록)."""
+    자금계획서: 같은 달을 더 새 파일이 맡아 쓰이지 않는 파일만 옮긴다. 읽지 못한 파일은 옮기지 않는다 (확인하도록).
+
+    2차 P1-12·P2-16 (2026-11-15): ① 변환이 읽지 않는 모양(PDF 등)이 '가장 새 파일'로 잡혀 멀쩡한 장부를 옮겼다 → 변환과 같은
+    확장자 규칙으로만 고른다. ② 가장 새 장부가 깨졌으면 그 종류는 아무것도 옮기지 않는다 (예전엔 깨진 것만 남기고 멀쩡한 것을 옮겼음).
+    ③ 지난달만 맡은 자금계획서도 변환이 '예정일 지남'(아직 안 나간 지급)을 찾는 데 쓰므로 옮기지 않는다 (예전엔 옮겨 그 줄이 사라졌음)."""
     try:
         names = sorted(n for n in os.listdir(wehago_dir) if os.path.isfile(os.path.join(wehago_dir, n)) and not n.startswith("~$"))
     except OSError:
@@ -650,10 +654,17 @@ def old_files(wehago_dir, asof):
         kind, readable = wehago._kind_of(n)
         if kind is None or not readable or fundplan.is_fundplan_name(n):
             continue
+        ext = os.path.splitext(n)[1].lower()
+        if not (ext == ".xlsx" or (ext in (".xls", ".json") and kind == "분개장")):   # 변환(wehago.load)이 읽는 모양만 (①)
+            continue
         groups.setdefault(kind, []).append(n)
     for kind, files in groups.items():
         ranked = sorted(files, key=lambda n: (wehago._rank_date(n) or dt.date.min, wehago._mtime(os.path.join(wehago_dir, n)), n))
         newest = ranked[-1]
+        try:   # ② 가장 새 파일을 변환처럼 읽어 본다 — 못 읽으면 이 종류는 그대로 둔다
+            wehago.read_book(os.path.join(wehago_dir, newest), kind, wehago._file_date(newest), None)
+        except Exception:
+            continue
         top = (wehago._rank_date(newest) or dt.date.min).year
         keep_year = {}
         for n in ranked:
@@ -667,28 +678,15 @@ def old_files(wehago_dir, asof):
             if n not in keep:
                 out.append((n, "%s 더 새 파일이 있음" % kind))
     res = fundplan.load(wehago_dir)
-    month_now = (asof.year, asof.month)
-    used, past = set(), {}
-    for ym, name, _ in res["months"]:
-        y, m = int(str(ym)[:4]), int(str(ym)[5:7])
-        if (y, m) < month_now:
-            past.setdefault(name, ym)
-        else:
-            used.add(name)
-    # 한 파일에 지난달·이번 달·다음 달이 함께 들어 있다(확장은 지난달부터 받음). 이번 달 이후에 쓰는 파일은 옮기지 않는다
-    # (2026-11-14 코덱스 검토: 지난달 줄 때문에 지금 쓰는 자금계획서까지 옮겨져 보고가 막혔음)
-    for name, ym in past.items():
-        if name not in used:
-            out.append((name, "자금계획서 지난 달 (%s)" % ym))
-    month_names = set(name for _, name, _ in res["months"])
+    month_names = set(name for _, name, _ in res["months"])   # ③ 어느 달이든 맡은 파일은 쓰인다 (지난달 '예정일 지남' 포함)
     for n in res["unused"]:
-        if n in month_names or n in used:
+        if n in month_names:
             continue
         note = " ".join(x for x in res["notes"] if x.startswith(n))
         if "더 새 파일 있음" not in note:
             continue   # 읽지 못한 파일은 사람이 확인하도록 그대로 둔다
         out.append((n, "자금계획서 같은 달 더 새 파일이 있음"))
-    return out
+    return list(dict.fromkeys(out))   # 같은 파일을 두 번 옮기려 하지 않게
 
 
 def archive_old(wehago_dir, asof, say):
