@@ -124,5 +124,32 @@ class TestConvertWritesReceivedMonths(unittest.TestCase):
         self.assertEqual([r[0] for r in got[1:]], ["2026-11", "2026-12"])
 
 
+class TestInvoiceCentsMatchPlan(unittest.TestCase):
+    """③ (2026-11-15 실제 자료): 지난해 4원 더 받은 것이 올해 계산서에 붙어 미수 9,914,726 — 자금계획서 입금 9,914,730 과
+    금액이 4원 달라 맞추지 못하고 같은 입금이 두 줄(계산서 추정 + 자금계획서)로 잡히던 것."""
+
+    def test_same_client_small_diff_is_the_same_receipt(self):
+        from ceo_report import fundplan
+        from test_code_match_1114 import ev, plan_ev
+        inv = dict(ev(D(2026, 11, 9), 9_914_726, "가상고객", source="계산서", io="in"), project="26225")
+        new, info = fundplan.apply([inv], [plan_ev("2026-11-10", 9_914_730)], D(2026, 10, 31), 7)
+        self.assertEqual([(e["source"], e["amount"]) for e in new], [("자금계획서", 9_914_730)])
+        self.assertEqual(new[0]["project"], "26225")
+
+    def test_other_client_small_diff_is_not(self):
+        from ceo_report import fundplan
+        from test_code_match_1114 import ev, plan_ev
+        inv = ev(D(2026, 11, 9), 9_914_726, "다른고객", source="계산서", io="in")
+        new, _ = fundplan.apply([inv], [plan_ev("2026-11-10", 9_914_730)], D(2026, 10, 31), 7)
+        self.assertEqual(sorted(e["source"] for e in new), ["계산서", "자금계획서"])
+
+    def test_big_diff_is_not(self):
+        from ceo_report import fundplan
+        from test_code_match_1114 import ev, plan_ev
+        inv = ev(D(2026, 11, 9), 9_900_000, "가상고객", source="계산서", io="in")
+        new, _ = fundplan.apply([inv], [plan_ev("2026-11-10", 9_914_730)], D(2026, 10, 31), 7)
+        self.assertEqual(len(new), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

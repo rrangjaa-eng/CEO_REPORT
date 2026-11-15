@@ -632,6 +632,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
 # ───────────── 보고서 계산에 반영 (calc) ─────────────
 MATCH_DAYS = 7               # 거래처가 달라도 같은 금액·이 날수 안이면 같은 건으로 본다
 DONE_DAYS = 31               # 이미 지급·입금 줄이 지우는 기존 일정은 예정일이 이 날수 안인 것만 (F18 ②, 2026-11-14)
+CENTS = 100                 # 같은 거래처 계산서 미수와 자금계획서 입금이 이만큼(원) 안에서 다르면 같은 입금 (끝전)
 FLAG_SOURCES = ("자금일정", "계산서", "프로젝트집행")   # 자금계획서에 없으면 알리는 기존 일정 (남은 예산은 원래 추정이라 알리지 않음)
 
 
@@ -707,18 +708,23 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
         done = p["state"] in ("이미 지급", "이미 입금")
         best = None
         for i, ev in enumerate(events):
-            if i in taken or ev["io"] != io or ev["amount"] != p["amount"] or ev.get("source") not in FLAG_SOURCES:
+            if i in taken or ev["io"] != io or ev["amount"] is None or ev.get("source") not in FLAG_SOURCES:
                 continue
             pc, ec = norm_code(p.get("vendor_code")), norm_code(ev.get("vendor_code"))
             if pc and ec and pc != ec:
                 continue   # 거래처코드가 다르면 금액·날짜가 같아도 다른 지급이다 (사용자 2026-11-04 '거래처는 코드로', 2026-11-14 검토)
             same = (pc == ec) if (pc and ec) else (bool(key) and norm_vendor(ev.get("desc") or "") == key)
+            if ev["amount"] != p["amount"]:
+                # 계산서 미수와 자금계획서 입금이 끝전만 다른 같은 거래처 입금 (2026-11-15: 지난해 4원 더 받은 것이 붙어 두 줄로 잡힘)
+                if not (same and ev.get("source") == "계산서" and p["amount"] is not None
+                        and abs(ev["amount"] - p["amount"]) <= CENTS):
+                    continue
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
             if not (same or (near and not done)):
                 continue
             if done and (ev["date"] is None or abs((ev["date"] - p["date"]).days) > DONE_DAYS):
                 continue   # F18 ②: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 몇 달 뒤 일정(다음 달 급여 등)을 지우지 않게
-            rank = (0 if same else 1, abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
+            rank = (0 if same else 1, ev["amount"] != p["amount"], abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, i)
         if best is None:
