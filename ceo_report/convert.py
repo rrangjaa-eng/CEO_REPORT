@@ -1118,6 +1118,16 @@ LOCK_FILE = "변환중.lock"
 LOCK_STALE_SECONDS = 15 * 60   # 이보다 오래된 잠금은 꺼진 창이 남긴 것으로 보고 치운다 (변환은 길어야 1~2분)
 
 
+def lock_age(input_dir):
+    """다른 변환이 입력 폴더를 잡고 있으면 그 잠금의 나이(초), 아니면 None (C6: 변환 중에는 보고를 만들지 않게)."""
+    import time
+    try:
+        age = time.time() - os.path.getmtime(os.path.join(input_dir, LOCK_FILE))
+    except OSError:
+        return None
+    return age if age <= LOCK_STALE_SECONDS else None
+
+
 def _take_lock(input_dir):
     """입력 폴더 잠금 (2026-11-14 K4: 창 두 개·창 + 명령 창에서 동시에 변환하면 같은 임시 파일 이름을 써서 섞인다).
     -> (잠금 파일 경로 또는 None, 다른 변환이 잡고 있으면 그 잠금의 나이(초) 또는 None).

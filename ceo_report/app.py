@@ -295,6 +295,13 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
+    if task != "변환":   # C6 (2026-11-15): 변환이 도는 중(또는 끊겨 잠금이 남은 15분 안)에는 반쯤 바뀐 자료로 보고를 만들지 않는다
+        from .convert import LOCK_FILE, lock_age
+        age = lock_age(paths.input)
+        if age is not None:
+            say("자료 변환이 아직 끝나지 않았습니다 (입력\\%s, %d분 전부터) — 변환이 끝난 뒤 다시 하세요. 창을 모두 닫았는데도 "
+                "이 글이 나오면 변환이 중간에 끊긴 것이니 '자료 변환'을 다시 하세요 (15분 뒤 저절로 풀림)" % (LOCK_FILE, int(age // 60)))
+            return 7, []
     if task == "자동":
         return run_auto(paths, say, asof, pick, payday, group, only)
     try:

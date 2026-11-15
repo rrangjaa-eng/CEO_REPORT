@@ -892,6 +892,8 @@ class Window(object):
             self.bar.stop()
             self.bar.pack_forget()
             self.merge_changed(save=False)
+            if getattr(self, "close_when_done", False):   # 작업 중에 닫기를 눌렀던 창 (C6)
+                self.root.after(300, self.close)
 
     # ───────────── 작업 ─────────────
     def report(self, kind):
@@ -1688,6 +1690,12 @@ class Window(object):
             self.open_dir(self.paths.output)
 
     def close(self):
+        if self.busy:   # C6 (2026-11-15): 작업 중에 닫으면 파일이 반쯤만 바뀌고 잠금이 남는다 → 끝난 뒤 닫는다
+            if messagebox.askyesno("작업 중", "지금 작업 중입니다. 바로 닫으면 자료 파일이 반쯤만 바뀔 수 있어 바로 닫지 않습니다.\n\n"
+                                   "작업이 끝나면 창을 저절로 닫을까요?", parent=self.root):
+                self.close_when_done = True
+                self.status.set("작업이 끝나면 창을 닫습니다 …")
+            return
         winstate.save(self.paths.input, payday=self.payday.get().strip(), pick=self.pick.get().strip())
         for s in (self.check, self.edit):
             try:

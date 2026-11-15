@@ -1115,3 +1115,32 @@ class TestDuplicateHeaders(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(rows[0]["비고"], "앞")
         self.assertIn("앞 칸 값을 씀", notes[0])
+
+
+# ───────────── C6: 변환이 도는 중(잠금)에는 보고를 만들지 않음 · 창은 작업이 끝난 뒤 닫힘 ─────────────
+class TestNoReportDuringConversion(unittest.TestCase):
+    def test_report_refused_while_lock_is_fresh(self):
+        import shutil
+        import tempfile
+        import time
+        from ceo_report import app, convert
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.input, exist_ok=True)
+        lock = os.path.join(P.input, convert.LOCK_FILE)
+        with open(lock, "w") as f:
+            f.write("1 2026-11-15")
+        said = []
+        rc, files = app.run_task("주간", P, said.append, asof="2026-11-13")
+        self.assertEqual((rc, files), (7, []))
+        self.assertIn("자료 변환이 아직 끝나지 않았습니다", said[0])
+        old = time.time() - convert.LOCK_STALE_SECONDS - 60   # 15분 지난 잠금은 끊긴 것으로 보고 막지 않음
+        os.utime(lock, (old, old))
+        self.assertIsNone(convert.lock_age(P.input))
+
+    def test_window_close_waits_for_work(self):
+        src = open(os.path.join(ROOT, "ceo_report", "gui.py"), encoding="utf-8").read()
+        body = src[src.index("    def close(self):"):src.index("    def ask_splits(self, multi):")]
+        self.assertLess(body.index("if self.busy:"), body.index("self.root.destroy()"))
+        self.assertIn("close_when_done", src[src.index("    def set_busy("):src.index("    def report(self, kind):")])
