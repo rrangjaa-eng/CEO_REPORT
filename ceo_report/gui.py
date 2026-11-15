@@ -1649,7 +1649,7 @@ class Window(object):
         self.dep_now.set(self.dep_text())
         self._flash(self.f_dep, "저장됨", lambda: "법인세 예상에 쓰임")
 
-    def make_transfer(self):
+    def make_transfer(self, override=None):
         from . import transfer
         start, end, asof = self._day(self.t_from), self._day(self.t_to), self.asof_date()
         if None in (start, end, asof):
@@ -1661,12 +1661,25 @@ class Window(object):
         self.say("──── 이체 파일 ────")
         missing, multi = [], []
         splits = getattr(self, "_splits", None) or {}
+        result = {}
         try:
             path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing,
-                                      splits=splits, multi=multi)
+                                      splits=splits, multi=multi, collect_dir=self.paths.wehago, override=override, result=result)
         except Exception as e:   # 트레이스백 대신 글로
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             return
+        if result.get("blocked") and not path and not override:
+            # 결정 f (2026-11-15): 대표 보고가 막힌 날은 이체 파일도 막는다. 급하면 이유를 적고 풀고, 그 이유는 이체기록.csv 에 남는다
+            from tkinter import simpledialog
+            why = simpledialog.askstring(
+                "이체 파일 막힘", "대표 보고와 같은 자료 확인에서 막혀 이체 파일을 만들지 않았습니다.\n\n%s\n\n"
+                "급하게 보내야 하면 이유를 적으세요 (이체기록.csv 에 남습니다). 아니면 취소하고 자료를 받아 변환한 뒤 다시 만드세요."
+                % "\n".join("· " + p for p in result["blocked"][:4]), parent=self.root)
+            if why and why.strip():
+                self.make_transfer(override=why.strip())
+            return
+        if path:
+            self._splits = {}   # P5-2: 예금주별 나눔은 이번 파일에만 (다음 지급에 다시 쓰지 않고 그때 다시 묻는다)
         if missing:
             self.ask_accounts(missing)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
         elif multi:

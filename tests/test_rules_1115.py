@@ -757,3 +757,102 @@ class TestSafety08SlipCount(unittest.TestCase):
         B = wehago.load_books(self.tmp, D(2026, 11, 5), None)
         self.assertEqual(B.state, "읽기 실패")
         self.assertIn("261105 분개장 자동수집.json", B.reason)
+
+
+# ───────────── 안전-01 (결정 f·P5-4·P5-5·P5-3): 이체 파일은 대표 보고와 같은 자료 확인을 통과해야 ─────────────
+class TestSafety01TransferGate(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.inp = os.path.join(self.tmp, "입력")
+        self.out = os.path.join(self.tmp, "출력")
+        self.col = os.path.join(self.tmp, "수집", "위하고")
+        os.makedirs(self.col)
+        shutil.copytree(os.path.join(ROOT, "입력양식", "샘플"), self.inp)
+        with open(os.path.join(self.inp, "거래처계좌.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("거래처,은행,계좌번호,예금주\n디자인스튜디오,우리은행,1002-000-000003,가상디자인\n")
+        self.conv(dt.datetime.now())
+        env = dict(os.environ)
+        env.pop("CEO_REPORT_TEST_GATE_OFF", None)
+        p = mock.patch.dict(os.environ, env, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def conv(self, when, failed=False):
+        with open(os.path.join(self.inp, "변환결과.txt"), "w", encoding="utf-8-sig") as f:
+            f.write("변환 시각 %s · 기준일 2026-10-31\n%s\n" % (when.strftime("%Y-%m-%d %H:%M:%S"),
+                                                         "변환 실패 — 가상" if failed else "WEHAGO 장부: ok"))
+
+    def make(self, gate_off=True, **kw):
+        from unittest import mock
+        from ceo_report import transfer
+        lines, result = [], {}
+        env = {"CEO_REPORT_TEST_GATE_OFF": "1"} if gate_off else {}
+        with mock.patch.dict(os.environ, env):
+            path = transfer.make_file(self.inp, self.out, D(2026, 11, 1), D(2026, 11, 30), lines.append, asof=D(2026, 10, 31),
+                                      collect_dir=self.col, result=result, **kw)
+        return path, lines, result
+
+    def test_blocked_when_ceo_report_would_be_blocked_and_override_is_logged(self):
+        from ceo_report import transfer
+        os.makedirs(self.out)
+        old = os.path.join(self.out, "신한대량이체_1101_1130.xlsx")   # 예전 이름의 같은 기간 파일
+        open(old, "w").close()
+        path, lines, result = self.make(gate_off=False)   # 샘플엔 자금계획서가 없음 → 대표 보고가 막히는 자료
+        self.assertIsNone(path)
+        self.assertTrue(any("자금계획서" in p for p in result["blocked"]))
+        self.assertFalse(os.path.exists(old))   # 막히면 같은 기간 옛 파일을 치움 (지우지 않고 옮김)
+        self.assertTrue(os.path.exists(os.path.join(self.out, transfer.OLD_DIR, "신한대량이체_1101_1130.xlsx")))
+        path, lines, result = self.make(gate_off=False, override="가상 급한 지급", now=dt.datetime(2026, 10, 31, 9, 30, 5))
+        self.assertTrue(path and path.endswith("신한대량이체_20261101_20261130_093005.xlsx"), lines)   # 연도·시각
+        log = transfer.read_log(self.inp)
+        self.assertEqual(log[0]["푼이유"], "가상 급한 지급")
+        self.assertTrue(log[0]["자료확인"].startswith("막힘: "))
+
+    def test_newer_collected_file_or_failed_conversion_blocks(self):
+        self.conv(dt.datetime.now() - dt.timedelta(hours=2))
+        open(os.path.join(self.col, "261031 분개장 자동수집.json"), "w").close()   # 변환 뒤에 받은 분개장
+        path, lines, result = self.make()
+        self.assertIsNone(path)
+        self.assertTrue(any("뒤에 새로 받은 파일" in p for p in result["blocked"]))
+        os.remove(os.path.join(self.col, "261031 분개장 자동수집.json"))
+        self.conv(dt.datetime.now(), failed=True)
+        path, lines, result = self.make()
+        self.assertIsNone(path)
+        self.assertTrue(any("변환이 실패" in p for p in result["blocked"]))
+
+    def test_zero_rows_puts_old_file_away_and_repeat_warns(self):
+        from ceo_report import transfer
+        p1, lines, _ = self.make(now=dt.datetime(2026, 10, 31, 9, 0, 0))
+        self.assertTrue(p1)
+        p2, lines, _ = self.make(now=dt.datetime(2026, 10, 31, 10, 0, 0))   # 같은 지급을 다시 담음
+        self.assertTrue(any("같은 계좌·금액이 이미 있습니다" in ln for ln in lines))
+        self.assertFalse(os.path.exists(p1))   # 같은 기간 예전 파일은 지난이체파일 로
+        self.assertEqual(transfer._period_files(self.out, D(2026, 11, 1), D(2026, 11, 30)), [os.path.basename(p2)])
+        os.remove(os.path.join(self.inp, "거래처계좌.csv"))
+        with open(os.path.join(self.inp, "거래처계좌.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("거래처,은행,계좌번호,예금주\n")
+        p3, lines, _ = self.make(now=dt.datetime(2026, 10, 31, 11, 0, 0))
+        self.assertIsNone(p3)
+        self.assertEqual(transfer._period_files(self.out, D(2026, 11, 1), D(2026, 11, 30)), [])   # 0건이면 옛 파일도 치움
+
+    def test_code_payment_never_uses_name_only_account(self):
+        from ceo_report import transfer
+        accounts = {transfer.vendor_key("가상업체"): {"거래처코드": "", "거래처": "가상업체", "은행": "우리은행", "계좌번호": "1", "예금주": "가"}}
+        acc, why = transfer.find_account(accounts, {"vendor": "가상업체", "code": "00123"})
+        self.assertIsNone(acc)
+        self.assertIn("코드 없는", why)
+        acc, why = transfer.find_account(accounts, {"vendor": "가상업체", "code": ""})
+        self.assertIsNotNone(acc)   # 코드 없는 손 일정은 이름이 한 곳과 맞을 때만 (예전 그대로)
+
+    def test_exe_ignores_test_switch(self):
+        import sys as _sys
+        from unittest import mock
+        from ceo_report import gate
+        with mock.patch.dict(os.environ, {"CEO_REPORT_TEST_GATE_OFF": "1"}):
+            self.assertTrue(gate._test_off())
+            with mock.patch.object(_sys, "frozen", True, create=True):
+                self.assertFalse(gate._test_off())

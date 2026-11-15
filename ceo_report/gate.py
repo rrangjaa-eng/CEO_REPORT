@@ -11,9 +11,15 @@ import os
 TEST_OFF = "CEO_REPORT_TEST_GATE_OFF"   # 예전 시험(자금계획서 없는 예시 자료)만 쓰는 끄개. 프로그램(exe)·창에는 끄는 방법이 없다
 
 
+def _test_off():
+    """시험용 끄개. 배포 exe(묶은 프로그램)는 이 환경변수를 읽지 않는다 (안전-04·P2-1, 2026-11-15)."""
+    import sys
+    return os.environ.get(TEST_OFF) == "1" and not getattr(sys, "frozen", False)
+
+
 def problems(R):
     """-> 막는 까닭 목록 (없으면 [])."""
-    if os.environ.get(TEST_OFF) == "1":
+    if _test_off():
         return []
     out = []
     days = max_days(R)
@@ -191,7 +197,7 @@ def stop_page(title, probs):
 def check_dir(input_dir, asof):
     """연간·예산처럼 주간 계산을 따로 하지 않는 보고용: 입력 폴더로 자금계획서·분개장 확인만 한다 -> 막는 까닭 목록.
     (2026-11-14 코덱스 검토: 연간·예산 대표용은 이 확인 없이 만들어졌음)"""
-    if os.environ.get(TEST_OFF) == "1":
+    if _test_off():
         return []
     from .calc import compute
     from .data import load
