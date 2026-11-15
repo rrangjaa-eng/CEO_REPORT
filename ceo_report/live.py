@@ -11,6 +11,46 @@ import os
 
 FILE = "지금현황.html"
 HISTORY = "현황기록.json"
+STALE_FILE = "지금현황_지난판(최신아님).html"   # 1차 E11: 새로 못 만들면 예전 화면을 이 이름으로 옮긴다
+FAIL_MARK = "— 새로 만들지 못함</title>"
+
+
+def mark_failed(output_dir, reason, now=None):
+    """1차 E11 (2026-11-15): 현황을 새로 못 만들었을 때 예전 화면이 최신인 것처럼 열리지 않게 한다.
+    예전 화면은 STALE_FILE 로 옮기고, 그 자리에 '새로 만들지 못함' 안내를 쓴다. -> 안내를 썼으면 True."""
+    now = now or dt.datetime.now()
+    path = os.path.join(output_dir, FILE)
+    moved = False
+    try:
+        if os.path.exists(path) and not is_failed_page(path):
+            os.replace(path, os.path.join(output_dir, STALE_FILE))
+            moved = True
+    except OSError:
+        pass
+    page = ("<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>지금 현황 %s"
+            "<style>body{font-family:'Malgun Gothic',sans-serif;margin:32px;line-height:1.6}"
+            "h1{color:#b00020;font-size:22px}.box{border:2px solid #b00020;padding:12px 16px;border-radius:6px}</style></head><body>"
+            "<h1>지금 현황 화면을 새로 만들지 못했습니다</h1><div class='box'>"
+            "<p>시각: %s</p><p>이유: %s</p>"
+            "<p>%s</p><p>자료 변환을 다시 하거나, 숫자는 경영관리 보고에서 확인하세요.</p></div></body></html>"
+            % (FAIL_MARK, now.strftime("%Y-%m-%d %H:%M"), html.escape(reason or "알 수 없음"),
+               ("지난 화면은 '%s'로 옮겨 두었습니다 — 최신 자료가 아닙니다." % STALE_FILE) if moved
+               else "지난 화면은 없거나 옮기지 못했습니다."))
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(page)
+        return True
+    except OSError:
+        return False
+
+
+def is_failed_page(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return FAIL_MARK in f.read(2000)
+    except (OSError, UnicodeDecodeError):
+        return False
 KEEP = 30
 REFRESH_SEC = 60
 TAX_DAYS = 120   # 이 날수 안에 낼 세금·카드·4대보험·급여만 보인다
@@ -265,6 +305,10 @@ def build(input_dir, output_dir, asof=None, now=None):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(page)
     os.replace(tmp, path)
+    try:   # 1차 E11: 새로 만들었으면 '지난판(최신아님)'은 치운다
+        os.remove(os.path.join(output_dir, STALE_FILE))
+    except OSError:
+        pass
     if not hist or {k: v for k, v in hist[-1].items() if k != "at"} != {k: v for k, v in snap.items() if k != "at"}:   # 일정까지 같으면 새로 쌓지 않음
         hist.append(snap)
     try:

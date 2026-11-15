@@ -123,6 +123,20 @@ class TestServer(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             OPEN(base + "/other", timeout=10)
 
+    def test_regenerated_original_refuses_old_page(self):
+        # P3-4·P4-3: 수정 모드를 연 뒤 원본 보고가 막힘 안내로 다시 만들어지면 열린 화면의 옛 숫자로 PDF 를 만들지 않는다
+        with OPEN(self.url, timeout=10) as r:
+            page = r.read().decode("utf-8")
+        with open(self.src, "w", encoding="utf-8") as f:
+            f.write("<!doctype html><html><body>자료 확인으로 막힘</body></html>")
+        os.utime(self.src, ns=(time.time_ns() + 5_000_000_000, time.time_ns() + 5_000_000_000))
+        base = self.url.rsplit("/", 1)[0]
+        st, _ = post(base + "/save?k=" + self.s.key, page.replace("매출 100원", "매출 120원"))
+        self.assertEqual(st, 500)
+        self.assertEqual(self.saved, [None])   # 창에 '저장하지 않음' 글 (PDF 없음)
+        self.assertFalse(os.path.exists(editmode.edited_path(self.src)))
+        self.assertFalse(os.path.exists(os.path.splitext(editmode.edited_path(self.src))[0] + ".pdf"))
+
     def test_not_html_refused(self):
         base = self.url.rsplit("/", 1)[0]
         st, r = post(base + "/save?k=" + self.s.key, "hello")

@@ -179,7 +179,7 @@ def build(d, R, team):
     # 진행·예정 프로젝트와 올해 매출·이익 예상 (2026-11-14 오후 점검 T2·T3·T5, P2·K1)
     # · 올해 매출 예상 = 누계 매출 + 프로젝트별 '아직 매출로 안 잡힌 금액'(사전견적 − 매출반영누계, calc.revenue_left —
     #   대표 월간·예산과 같은 계산). 예전엔 매출이 조금이라도 잡힌 프로젝트의 남은 매출이 통째로 빠짐 (T3)
-    # · 이익 예상에 더하는 몫 = 남은 매출 − 남은 원가. 남은 원가 = 추정 예산 − 올해 이미 장부에 잡힌 원가 (0 밑은 0, T2: 예전엔
+    # · 이익 예상에 더하는 몫 = 남은 매출 − 남은 원가. 남은 원가 = 추정 예산(등록 지출이 넘으면 그 금액, 1차 N1) − 올해 이미 장부에 잡힌 원가 (0 밑은 0, T2: 예전엔
     #   먼저 잡힌 계약금·대관료가 누계 원가와 추정 예산 양쪽에서 두 번 빠짐). 끝난 프로젝트(대표 승인)는 남은 원가 0
     # · 진행·예정 표: 끝나지 않은 올해 행사. 잔여 = 추정 예산 − 집행액 (11/9 정의 그대로), 쓸 수 있는 남은 예산 = 추정 예산 −
     #   (쓴 돈 + 요청 + 카드 미결제 + 계획) (T5, 사용자 승인)
@@ -196,11 +196,18 @@ def build(d, R, team):
         left_rev = revenue_left(P_)
         cost_done = booked.get(P_["id"], 0)
         if closed:
-            rem_cost = 0
+            # 1차 B13 (2026-11-15): 끝난 프로젝트라도 금액 미확인 원가가 있으면 이익을 모른다 — 예전엔 0으로 보고 '이익 미확인 0건'
+            rem_cost = None if P_.get("unknown_cost") else 0
         elif P_.get("budget") is None or cost_done is None:
             rem_cost = None
         else:
-            rem_cost = max(P_["budget"] - cost_done, 0)
+            # 1차 점검 N1·B2 (2026-11-15): 예산을 넘은 등록 지출(장부 전 지급요청·카드·계획)도 나갈 원가다 — 지금 예상 이익
+            # (profit_now)과 같은 식 '추정 예산과 등록 지출 중 큰 쪽'. 예전엔 예산까지만 빼 예시 A사 이익을 2,820만 크게 보였음.
+            # 금액 미확인 줄이 있으면 아는 금액까지만 더한다 (T4: 미확인 한 줄로 이익 예상이 빠지거나 커지지 않게)
+            com = P_.get("committed")
+            if com is None:
+                com = (P_.get("expected") or 0) + (P_.get("intranet_req") or 0)
+            rem_cost = max(max(P_["budget"], com) - cost_done, 0)
         if left_rev is None:
             miss_rev += 1
         else:
@@ -490,7 +497,7 @@ def render(T, today=None):
            _td(esc("목표 대비 %s" % P(T["exp_gp"], tg_)) if tg_ else "-", "c")]))
     a("</tbody></table>")
     a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
-      "남은 원가 = 추정 예산 − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
+      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s</p>"
       % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
          " · 금액을 몰라 뺀 프로젝트 %d건" % max(T["miss_rev"], T["miss_gp"]) if (T.get("miss_rev") or T.get("miss_gp")) else ""))
     a("</div>")
@@ -548,21 +555,31 @@ def write_all(d, R, out_dir, today=None):
     out = []
     asof = R.get("asof") or today or dt.date.today()
     from . import insights, insights_render
-    I = insights.for_report(R)[0] if R.get("s2") else None   # 자동 분석 (사용자 2026-11-12: 팀장 보고는 목업대로)
+    I, ierr = insights.for_report(R) if R.get("s2") else (None, "")   # 자동 분석 (사용자 2026-11-12: 팀장 보고는 목업대로)
     for team in team_names(d):
         T = build(d, R, team)
         path = os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat() if hasattr(asof, "isoformat") else asof, team))
         page = render(T, today)
         from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-14)
-        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div><div class='excl'>"
-                            % esc(gate.sources_line(R)), 1)
+        lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 한 줄
+        page = page.replace("<div class='excl'>", "<div class='src' style='font-size:11px;color:#555;margin:4px 0'>%s</div>%s<div class='excl'>"
+                            % (esc(gate.sources_line(R)), "<div class='lag' style='font-size:12px;color:#7a4f00;background:#fff8e1;"
+                               "border:1px solid #e0a000;border-radius:6px;padding:4px 8px;margin:4px 0;font-weight:700'>%s</div>" % esc(lag) if lag else ""), 1)
+        if I is None and ierr:   # 2차 P3-19 (2026-11-15): 자동 분석이 실패하면 팀장 보고에서 그 절이 말없이 빠졌다
+            page = page.replace("<div class='basis'>", "<p class='note'>※ 자동 분석 절(이익 흐름·주의할 프로젝트 등)을 만들지 못했습니다 (%s). "
+                                "경영관리에 알려 주세요.</p><div class='basis'>" % esc(ierr.split(":")[0]), 1)
         if I is not None:
             try:
                 page = page.replace("<div class='basis'>", insights_render.team_section(I, R, team) + "<div class='basis'>", 1)
             except Exception as e:   # 자동 분석 때문에 팀장 보고를 못 만들면 안 된다. 다만 빠진 것은 한 줄로 알린다 (K2)
                 page = page.replace("<div class='basis'>", "<p class='note'>※ 자동 분석 절(이익 흐름·주의할 프로젝트 등)을 붙이지 못했습니다 (%s). "
                                     "경영관리에 알려 주세요.</p><div class='basis'>" % esc(type(e).__name__), 1)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(page)
+        try:   # 2차 P4-5 (2026-11-15): 한 팀이 실패하면 나머지 팀도 안 쓰고 월간은 '완료'(0)였다 → 팀마다 쓰고 실패를 모아 알림
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                f.write(page)
+            os.replace(path + ".tmp", path)
+        except OSError as e:
+            R.setdefault("_team_failed", []).append("%s (%s)" % (team, e.strerror or type(e).__name__))
+            continue
         out.append(path)
     return out

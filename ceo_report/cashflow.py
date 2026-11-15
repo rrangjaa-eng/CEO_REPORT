@@ -15,6 +15,7 @@ import os
 import re
 
 from .util import esc
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "현금흐름.csv"
 KEYS = ["일자", "구분", "항목", "금액"]
@@ -307,7 +308,7 @@ def load(input_dir):
     if not os.path.exists(path):
         return None
     out = []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             try:
                 d = dt.date(*[int(x) for x in (r.get("일자") or "").split("-")])
@@ -395,11 +396,11 @@ def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
     return CF
 
 
-def annual(rows, year, end_balance, start_balance=None):
-    """연간: 1~12월 (또는 자료 있는 마지막 날까지)."""
+def annual(rows, year, end_balance, start_balance=None, upto=None):
+    """연간: 1~12월 (또는 자료 있는 마지막 날까지). upto = 연중 보고 기준일 (1차 C7, 2026-11-15: 6/30 보고에 12월 흐름까지 들어갔다)."""
     if not rows:
         return None
-    mine = [d for d in _flow_days(rows) if d.year == year]
+    mine = [d for d in _flow_days(rows) if d.year == year and (upto is None or d <= upto)]
     if not mine:
         return None
     last = max(mine)
@@ -415,7 +416,7 @@ def annual(rows, year, end_balance, start_balance=None):
 def _read_csv(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f))
 
 

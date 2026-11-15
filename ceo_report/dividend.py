@@ -11,6 +11,7 @@ AI 없이 규칙 계산만 한다: 배당 총액을 바꿔 가며 주주마다(�
 import csv
 import datetime as dt
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "주주.csv"
 COLUMNS = ["이름", "지분율", "미성년자", "회사급여", "다른금융소득", "그밖소득", "공제인원"]
@@ -80,7 +81,7 @@ def read(input_dir):
     path = os.path.join(input_dir, FILE)
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return [r for r in csv.DictReader(f) if (r.get("이름") or "").strip()]
 
 
@@ -99,9 +100,20 @@ def save(input_dir, name, share, minor, salaried, interest, other, delete=False,
     name = (name or "").strip()
     if not name:
         raise ValueError("이름을 넣으세요")
-    rows = [r for r in read(input_dir) if r["이름"].strip() != name]
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
+    allrows = read(input_dir)
+    old = next((r for r in allrows if r["이름"].strip() == name), None)
+    rows = [r for r in allrows if r["이름"].strip() != name]
     action = "지움" if delete else "저장"
     if not delete:
+        # 2차 P5-17 (2026-11-15): 한 사람을 다시 저장하며 비워 둔 칸이 예전 값을 지웠다 → 빈 칸은 그대로 두고 '-'만 지움
+        def keep(text, col):
+            t = str(text or "").strip()
+            if t == "" and old is not None:
+                return old.get(col) or ""
+            return "" if t == "-" else text
+        interest, other, dependents = keep(interest, "다른금융소득"), keep(other, "그밖소득"), keep(dependents, "공제인원")
         s = _num(share, "지분율")
         if s is None or not 0 < s <= 100:
             raise ValueError("지분율은 0보다 크고 100 이하 (예: 50)")
@@ -148,7 +160,7 @@ def wages(input_dir, name, asof):
     lo = (asof.replace(day=1) - dt.timedelta(days=365)).strftime("%Y-%m")
     hi = asof.strftime("%Y-%m")
     tot, months = 0, set()
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             if (r.get("사원명") or "").strip() != name or not (lo < (r.get("연월") or "") <= hi):
                 continue
@@ -204,12 +216,39 @@ def taxes_at(P, total):
     return out
 
 
+LAW_KEYS = (("금융소득기준", "FIN_LIMIT"), ("배당원천세율", "WITHHOLD"), ("건강보험료율", "HEALTH_RATE"))
+
+
+def _with_law(fn):
+    """1차 C19 (2026-11-15): '세법 기준 확인'에서 바꾼 금융소득 기준·배당 원천세율·건강보험료율이 배당 계산에 가지 않았다
+    (10%로 저장해도 추가 보험료가 그대로). 계산하는 동안만 그해 기준표 값(확인했거나 자료확인 기본값)을 쓴다."""
+    def run(input_dir, asof, *a, **k):
+        from . import taxlaw
+        saved = dict((name, globals()[name]) for _, name in LAW_KEYS)
+        try:
+            for key, name in LAW_KEYS:
+                try:
+                    v, usable, _ = taxlaw.value(input_dir, asof.year, key)
+                except Exception:
+                    continue
+                if usable and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                    globals()[name] = v
+            return fn(input_dir, asof, *a, **k)
+        finally:
+            globals().update(saved)
+    run.__doc__, run.__name__ = fn.__doc__, fn.__name__
+    return run
+
+
+@_with_law
 def plan(input_dir, asof, limit, interim=0):
     """배당 권장 -> dict 또는 None (주주 없음). limit = 배당 한도(미처분이익잉여금 ÷ 1.1, 이익준비금 10% 몫) 또는 None."""
     P = people(input_dir, asof, interim)
     if not P:
         return None
-    cap = limit if limit and limit > 0 else 300_000_000
+    if limit is not None and limit <= 0:   # 1차 점검 C17: 한도 0원이면 3억 범위로 '권장 배당'을 셈하지 않는다
+        return {"people": P, "best": 0, "limit": limit, "table": [], "share_sum": sum(p["share"] for p in P), "best_rows": []}
+    cap = limit if limit else 300_000_000
     best, steps = 0, []
     t = STEP
     while t <= cap:
@@ -246,6 +285,8 @@ def render(D, esc):
         h.append("<div class='say'>배당에 붙는 세금이 15.4%%를 넘지 않는 가장 큰 배당 총액은 <b>%s원</b>입니다. "
                  "이보다 많이 배당하면 한 사람 이상이 금융소득 2천만 원을 넘어 세금·건강보험료가 더 붙거나%s.</div>"
                  % (W(D["best"]), ", 미성년 주주가 2천만 원 기준을 넘습니다" if any(p["minor"] for p in D["people"]) else " 높은 세율이 적용됩니다"))
+    elif D["limit"] is not None and D["limit"] <= 0:
+        h.append("<div class='say'>배당 한도가 0원이라 배당할 수 있는 금액이 없습니다.</div>")
     else:
         h.append("<div class='say'>지금 조건으로는 15.4%를 넘지 않는 배당 금액이 없습니다 (아래 표 참고).</div>")
     if D["limit"] is not None:
@@ -319,7 +360,7 @@ def read_settings(input_dir):
     path = os.path.join(input_dir, SET_FILE)
     out = {}
     if os.path.exists(path):
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 k, v = (r.get("항목") or "").strip(), (r.get("값") or "").strip()
                 if k and v:
@@ -338,6 +379,8 @@ def missing_required(st):
 
 def save_settings(input_dir, values, strict=False):
     """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict."""
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, SET_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_settings(input_dir)
     spec = dict((k, (kind, opts)) for k, _, _, kind, opts, _, _ in QUESTIONS)
     for k, v in values.items():
@@ -604,6 +647,12 @@ def advise(R, S, D, input_dir=None):
     elif cash is not None and cash < 1_000_000:
         reasons.insert(0, "배당 지급일까지 나갈 큰돈(법인세·큰 지출 등)을 빼면 배당에 쓸 현금이 남지 않습니다.")
         verdict = "이월"
+    elif cash is None:
+        # 1차 점검 C18 (2026-11-15): 여유 자금을 모르면(자료 확인에서 막힘·잔액 미확인) 한도만으로 권하지 않는다 — 예전엔
+        # '한도·현금·회사 상태 모두 괜찮습니다'로 배당을 권했음
+        reasons.insert(0, "여유 자금을 계산하지 못해 배당할 현금이 있는지 모릅니다 — 판단 보류 (한도만으로는 권하지 않음). "
+                          "통장 잔액·자금계획서가 들어온 뒤 다시 보세요.")
+        verdict = "보류"
     elif amount >= 1_000_000:
         verdict = "배당"
         why = "세금이 15.4%로 끝나는 선" if D and amount == best else ("배당에 쓸 수 있는 현금" if cash is not None and amount == cash // 1_000_000 * 1_000_000 else "배당 한도")

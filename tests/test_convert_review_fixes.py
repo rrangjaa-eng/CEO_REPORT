@@ -139,7 +139,7 @@ class TestCR01AutoLinkedRequest(unittest.TestCase):
         self.assertEqual(sum(money(x) for x in rows), 300000)
         diff = [x for x in rows if "차액" in x["근거"]]
         self.assertEqual(len(diff), 1)
-        self.assertEqual(diff[0]["공급가액"], "80000")
+        self.assertEqual((diff[0]["공급가액"], diff[0]["부가세"]), ("72727", "7273"))   # 계산-12: 부가세 포함 80,000 을 나눔
         self.assertEqual(unpaid_total(t), 300000)
         d50 = [c for c in t.checks if c.label.startswith("계산서·요청 금액이 다르면 큰 쪽")][0]
         self.assertEqual((d50.source, d50.csv), (300000, 300000))
@@ -180,7 +180,7 @@ class TestCR02PaidInvoiceDiff(unittest.TestCase):
         rows = naming(r.execs, "6101")
         self.assertEqual(sorted(x["상태"] for x in rows), ["요청미지급", "지급완료"])
         diff = [x for x in rows if x["상태"] == "요청미지급"][0]
-        self.assertEqual((diff["공급가액"], diff["부가세"], diff["확정여부"]), ("500000", "", "추정"))
+        self.assertEqual((diff["공급가액"], diff["부가세"], diff["확정여부"]), ("454545", "45455", "추정"))   # 계산-12: 500,000 을 나눔
         self.assertIn("차액", diff["근거"])
         self.assertIn("계산서는 이미 지급", diff["근거"])
         # 이 요청을 가리키는 줄의 합 = 승인 화면이 일정에 넣는 금액 (D-30b schedule_amount)
@@ -235,17 +235,21 @@ def render_s8(test, table, mode="mgmt"):
 
 
 class TestCR03StatusUnknown(unittest.TestCase):
-    def test_unknown_status_requests_become_estimated_unpaid_rows(self):
+    def test_blank_status_is_an_estimated_unpaid_row_and_a_new_value_is_left_out(self):
+        # D-52: 빈칸은 수집이 칸을 놓친 것일 수 있어 요청미지급(추정)으로 넣는다.
+        # 안전-07 (2026-11-15): 처음 보는 글자('보류')는 숫자에 넣지 않고 알린다 (경영관리 대조표에는 남음)
         r = Run(UNKNOWN_JOURNAL, UNKNOWN_PAYMENTS, AUTO_PROJECTS)
         self.assertEqual([(q["번호"], q["status"], q["status_text"]) for q in r.requests],
                          [("6201", "status_unknown", ""), ("6202", "status_unknown", "보류")])
         one, two = naming(r.execs, "6201"), naming(r.execs, "6202")
         self.assertEqual(len(one), 1)
-        self.assertEqual(len(two), 1)
-        self.assertEqual((one[0]["상태"], one[0]["공급가액"], one[0]["확정여부"]), ("요청미지급", "30000000", "추정"))
+        self.assertEqual(two, [])
+        self.assertEqual((one[0]["상태"], one[0]["공급가액"], one[0]["부가세"], one[0]["확정여부"]),
+                         ("요청미지급", "27272727", "2727273", "추정"))
         self.assertIn("상태 확인 필요 (빈칸)", one[0]["근거"])
-        self.assertIn("상태 확인 필요 (보류)", two[0]["근거"])
-        self.assertEqual(unpaid_total(r.execs), 37000000)
+        self.assertIn("처음 보는 사장님승인 글자 1건 → 프로젝트집행에 넣지 않음 (규칙 안전-07, 화면 확인 필요): 6202 '보류'",
+                      r.execs.notes)
+        self.assertEqual(unpaid_total(r.execs), 30000000)
         for label, res in results(r.execs).items():
             self.assertEqual(res, "일치", label)
 

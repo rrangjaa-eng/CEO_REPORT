@@ -223,7 +223,7 @@ def load(folder):
             continue
         if s["io"] == "지급":
             s["amount"] = _outflow(iss, r, "금액", s["amount"])
-        _check(iss, r, "확정여부", r.get("확정여부", ""), ["확정", "추정"])
+        _check(iss, r, "확정여부", r.get("확정여부", ""), ["확정", "추정", "예상"])   # 2차 P2-19: 창은 예상으로 저장 — 추정과 같이 확정 아님
         if s["amount"] is None:
             iss.add(r["_file"], r["_line"], "금액 미확인 → 일정 합계에서 제외, 건수만 표시")
         d.schedule.append(s)
@@ -253,10 +253,19 @@ def load(folder):
                 d.fundplan, d.fundplan_problem = None, "확인 못한 줄 %d개" % bad
 
     d.fundplan_received = []
+    d.fundplan_received_at = {}   # 대상월 -> 그 달을 받은 파일의 자료일 (P3-2: 오래전에 받은 빈 달을 지금 받은 달로 보지 않게)
     path = os.path.join(folder, FUNDPLAN_RECEIVED_FILE)
     if d.fundplan is not None and os.path.exists(path):
-        d.fundplan_received = sorted(set((r.get("대상월") or "").strip() for r in read_csv(path, ["대상월"], iss, {})[0]
-                                         if re.match(r"^\d{4}-\d{2}$", (r.get("대상월") or "").strip())))
+        got = set()
+        for r in read_csv(path, ["대상월"], iss, {})[0]:
+            ym = (r.get("대상월") or "").strip()
+            if not re.match(r"^\d{4}-\d{2}$", ym):
+                continue
+            got.add(ym)
+            stamp = date(r.get("자료일"))
+            if stamp is not None and (d.fundplan_received_at.get(ym) is None or stamp > d.fundplan_received_at[ym]):
+                d.fundplan_received_at[ym] = stamp
+        d.fundplan_received = sorted(got)
 
     # 부서비용 (선택, 사용자 2026-11-03): 읽지 못하면 통째로 쓰지 않는다. 금액·인원 빈칸은 None (모름)
     d.dept, d.dept_problem = None, ""
@@ -319,10 +328,12 @@ def load(folder):
                            "amount": num(r.get("금액"), iss, r, "금액")} for r in rows]
 
     # 출금 상세 내역 (선택, 사용자 2026-11-03): 창에서 손으로 넣거나 인트라넷 지출결의서에서 가져옴
-    from .paydetail import read as read_details
-    d.pay_details = read_details(folder)
-    from .payreq import read as read_reqs   # 인트라넷 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05)
-    d.pay_requests = read_reqs(folder)
+    from . import paydetail, payreq   # 못 읽은 파일은 0건으로 넘기지 않고 입력 확인에 남긴다 (2026-11-15 P5-22)
+    for attr, mod, name in (("pay_details", paydetail, paydetail.DETAIL_FILE), ("pay_requests", payreq, payreq.FILE)):
+        got, why = mod.read_checked(folder)
+        if got is None:
+            iss.add(name, "-", "읽지 못해 상세 내역을 붙이지 않음 (%s)" % why)
+        setattr(d, attr, got or [])
     from .targets import read as read_targets   # 팀별 연간 목표 (사용자 2026-11-03)
     d.team_targets = read_targets(folder)
     from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)

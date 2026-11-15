@@ -10,6 +10,7 @@ import os
 import re
 
 from .util import mask_rrn
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 RECORD_DIR = "지급예정기록"
 COLUMNS = ["기준일", "예정일", "거래처·내용", "프로젝트", "구분", "금액", "확정여부"]
@@ -57,7 +58,7 @@ def load_previous(out_dir, asof):
     day, path = max(found)
     rows = []
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 amt = (r.get("금액") or "").strip()
                 rows.append({"date": dt.date.fromisoformat(r["예정일"]), "io": "out",

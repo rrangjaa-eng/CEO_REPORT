@@ -18,6 +18,7 @@ import os
 import re
 
 from .snapshot import PAYMENT_COLUMNS, PROJECT_COLUMNS
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FOLDER = "예전인트라넷"
 OLD_LAST_DAY = dt.date(2026, 3, 31)   # 예전 인트라넷을 쓴 마지막 날 (사용자 2026-11-05: 2026년 3월까지)
@@ -78,7 +79,7 @@ def approval_text(text):
 
 def _read(path, aliases, columns):
     """CSV 한 파일 -> [열 이름 -> 값] (모르는 열은 버린다). 머리글에 '번호'·'행사명'이 없으면 ValueError."""
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         rows = list(csv.reader(f))
     if not rows:
         return []

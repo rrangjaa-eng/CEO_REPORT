@@ -114,17 +114,40 @@ class TestArchiveOld(unittest.TestCase):
         return P
 
     def test_moves_only_files_the_conversion_does_not_use(self):
+        """2차 P1-12·P2-16 (2026-11-15): 가장 새 장부를 읽지 못하면(여기선 가짜 내용) 그 종류는 옮기지 않고, 지난달(10월)만 맡은
+        자금계획서도 '예정일 지남'을 찾는 데 쓰이므로 남긴다. 같은 달을 더 새 파일이 맡은 11월 옛 계획만 옮긴다."""
         P = self.folder()
         lines = []
         n = app.archive_old(P.wehago, D(2026, 11, 3), lines.append)
         moved = sorted(os.listdir(os.path.join(P.wehago, app.ARCHIVE)))
-        self.assertEqual(moved, sorted(["261001 분개장.xlsx", "260105 분개장_2025.xls", "261001 매입매출장.xlsx",
-                                        "261002 자금계획서지출입금현황_2610.xls", "261101 자금계획서지출입금현황_2611.xls"]))
-        self.assertEqual(n, 5)
+        self.assertEqual(moved, ["261101 자금계획서지출입금현황_2611.xls"])
+        self.assertEqual(n, 1)
         left = sorted(n for n in os.listdir(P.wehago) if n != app.ARCHIVE)
-        self.assertEqual(left, sorted(["261103 분개장.xls", "261103 분개장_2025.xls", "261103 매입매출장.xlsx", "메모.txt",
-                                       "261102 자금계획서지출입금현황_2611.xls"]))
+        self.assertEqual(left, sorted(["261001 분개장.xlsx", "261103 분개장.xls", "260105 분개장_2025.xls", "261103 분개장_2025.xls",
+                                       "261001 매입매출장.xlsx", "261103 매입매출장.xlsx", "메모.txt",
+                                       "261002 자금계획서지출입금현황_2610.xls", "261102 자금계획서지출입금현황_2611.xls"]))
         self.assertTrue(any("지우지 않음" in ln for ln in lines))
+
+    def test_readable_journals_by_year_and_pdf_ignored(self):
+        """읽히는 분개장: 올해는 가장 새 것, 지난해는 그 해 가장 새 것만 남긴다. 이름이 더 새 PDF 는 고르지 않는다 (P1-12 ①)."""
+        from test_journal_partial import line, write
+        P = program(self)
+        write(P.wehago, "261001 분개장.xls", "2026년 01월 01일 ~ 2026년 10월 01일", line("09/10", "1", 100, "구월"))
+        write(P.wehago, "261103 분개장.xls", "2026년 01월 01일 ~ 2026년 11월 03일", line("09/10", "1", 100, "구월"))
+        write(P.wehago, "260105 분개장_2025.xls", "2025년 01월 01일 ~ 2025년 12월 31일", line("05/10", "1", 100, "오월"))
+        write(P.wehago, "261103 분개장_2025.xls", "2025년 01월 01일 ~ 2025년 12월 31일", line("05/10", "1", 100, "오월"))
+        with open(os.path.join(P.wehago, "261104 분개장.pdf"), "wb") as f:
+            f.write(b"%PDF-1.4")
+        moved = sorted(n for n, _ in app.old_files(P.wehago, D(2026, 11, 3)))
+        self.assertEqual(moved, ["260105 분개장_2025.xls", "261001 분개장.xls"])
+
+    def test_broken_newest_journal_moves_nothing(self):
+        from test_journal_partial import line, write
+        P = program(self)
+        write(P.wehago, "261001 분개장.xls", "2026년 01월 01일 ~ 2026년 10월 01일", line("09/10", "1", 100, "구월"))
+        with open(os.path.join(P.wehago, "261103 분개장 자동수집.json"), "w", encoding="utf-8") as f:
+            f.write("{깨진")
+        self.assertEqual([n for n, _ in app.old_files(P.wehago, D(2026, 11, 3)) if "분개장" in n], [])
 
     def test_nothing_to_move_says_so(self):
         P = program(self)

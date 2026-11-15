@@ -28,7 +28,8 @@ def auto_json(journal=FAKE_JOURNAL, start="20260101", end="20261031", dept="", e
         rows.append([d.strftime("%Y%m%d"), str(r[1]).zfill(5), "일반전표", "차변" if debit else "대변", r[3], r[4],
                      debit, credit, r[7], r[8], r[9], project, dept, emp, "2026-11-05T10:00:00.000", i + 1])
     return {"종류": "분개장", "형식": 1, "수집시각": "2026-11-05 10:00:00", "회사": "가상회사",
-            "기간": {"start_date": start, "end_date": end, "gisu": "2"}, "전표수": 0, "줄수": len(rows), "열": COLS, "줄": rows}
+            "기간": {"start_date": start, "end_date": end, "gisu": "2"}, "전표수": len(set((r[0], r[1]) for r in rows)),   # 위하고 tot (N3)
+            "줄수": len(rows), "열": COLS, "줄": rows}
 
 
 def write_json(folder, name, doc):

@@ -27,11 +27,14 @@ jobs:
         run: python -m unittest discover -s tests
       - name: PyInstaller 설치
         run: python -m pip install pyinstaller==6.11.1
+      - name: 판 표시 넣기 (커밋·날짜 — 창 제목·점검 결과에 보임)
+        shell: pwsh
+        run: python tools/stamp_build.py
       - name: exe 묶기
         shell: pwsh
         run: >
           python -m PyInstaller --noconfirm --onefile --windowed --name 대표보고
-          --paths . --hidden-import 변환 --hidden-import 보고서 --hidden-import 승인검토 --hidden-import 예산
+          --paths . --hidden-import 변환 --hidden-import 보고서 --hidden-import 승인검토 --hidden-import 예산 --hidden-import ceo_report._build
           --add-data "입력양식;입력양식" 대표보고.pyw
       - name: exe 점검 (창 없이 샘플로 주간 보고 만들기)
         shell: pwsh

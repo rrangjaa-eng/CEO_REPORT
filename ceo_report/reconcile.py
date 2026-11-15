@@ -28,6 +28,7 @@ import datetime as dt
 import json
 import os
 import re
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "자료대조.csv"
 KEYS = ["구분", "항목", "비교자료", "비교값", "장부값", "차이", "기준", "판정", "할일", "대표경고"]
@@ -105,7 +106,7 @@ def _row(kind, item, src, other, book, basis, verdict, todo="", ceo=""):
 
 
 # ───────────── 위하고 원본 파일 ─────────────
-def raw_files(wehago_dir):
+def raw_files(wehago_dir, skipped=None):
     """수집\\위하고 의 결산·인사·대조 원본 -> {화면코드: [(수집시각 datetime, 연도, dict)] 늦게 받은 것 먼저}.
 
     '지금 열린 화면 받기'로 받은 파일(연도 없음)도 화면코드로 찾는다 (카드·거래처원장·국세청 비교는 조회 조건을 사용자가 고름)."""
@@ -121,11 +122,18 @@ def raw_files(wehago_dir):
             with open(os.path.join(wehago_dir, n), encoding="utf-8") as f:
                 d = json.load(f)
         except (OSError, ValueError):
+            if skipped is not None and n.endswith("자동수집.json"):   # 2차 P3-14: 깨진 원본도 '쓰지 않음'으로 남긴다
+                skipped.append(n)
             continue
         if not isinstance(d, dict) or "응답" not in d:
             continue
         code = str(d.get("화면코드") or "").upper()
         if not code:
+            continue
+        from .wehago_raw import has_data
+        if not has_data(d):   # P1-4 (2026-11-15): 조건·오류 응답만 받은 파일은 쓰지 않고 그 전에 받은 파일을 쓴다
+            if skipped is not None:
+                skipped.append(n)
             continue
         try:
             year = int(str(d.get("연도") or 0)[:4] or 0)
@@ -155,16 +163,23 @@ def journal_files(wehago_dir):
         if "분개장" not in n or not n.endswith(".json"):
             continue
         try:
-            with open(os.path.join(wehago_dir, n), encoding="utf-8-sig") as f:
+            with _open_text(os.path.join(wehago_dir, n)) as f:
                 d = json.load(f)
         except (OSError, ValueError):
             continue
         if not isinstance(d, dict) or d.get("종류") != "분개장" or not isinstance(d.get("줄"), list):
             continue
         y = str((d.get("기간") or {}).get("start_date") or "")[:4]
-        out.append((_stamp(d.get("수집시각")) or dt.datetime.min, int(y) if y.isdigit() else 0, d.get("열") or [], d["줄"]))
+        f = _JFile((_stamp(d.get("수집시각")) or dt.datetime.min, int(y) if y.isdigit() else 0, d.get("열") or [], d["줄"]))
+        f.period = (_day((d.get("기간") or {}).get("start_date")), _day((d.get("기간") or {}).get("end_date")))
+        out.append(f)
     out.sort(key=lambda t: t[0], reverse=True)
     return out
+
+
+class _JFile(tuple):
+    """(수집시각, 연도, 열, 줄) + period(조회 시작일, 끝일) — 1차 D13: 지난 수집 비교를 두 파일의 공통 조회 기간 안에서만 한다."""
+    period = (None, None)
 
 
 # ───────────── 장부 잔액 ─────────────
@@ -252,14 +267,37 @@ def _compare_balances(rows, src, other, book, same_time, basis):
 
 
 # ───────────── 제안 1·9 시산표·재무상태표·손익 ─────────────
-def balances_rows(journal, raw, jstamp):
+def _insert_times(jfile):
+    """분개장 원본 한 파일 -> 전표 입력 시각(dt_insert) 목록."""
+    if not jfile:
+        return []
+    cols, lines = jfile[2], jfile[3]
+    ix = {c: i for i, c in enumerate(cols)}
+    if "dt_insert" not in ix:
+        return []
+    k = ix["dt_insert"]
+    return [t for t in (_stamp(r[k]) for r in lines if len(r) > k) if t]
+
+
+def _same_time(when, jstamp, ins=()):
+    """분개장과 비교 화면을 '같은 때' 받았는가: 30분 안이고, 2차 P3-13 (2026-11-15) 그 사이에 장부에 들어온 전표가 없을 때.
+    예전엔 30분 안이면 그 사이 전표를 넣었어도 같은 때로 보아 거짓 '다름'이 났다 (분개장이 나중에 받은 쪽일 때 보임)."""
+    if not (jstamp and when and when != dt.datetime.min):
+        return False
+    if abs((when - jstamp).total_seconds()) > SAME_TIME_MIN * 60:
+        return False
+    lo, hi = min(when, jstamp), max(when, jstamp)
+    return not any(lo < t <= hi for t in ins or ())
+
+
+def balances_rows(journal, raw, jstamp, ins=()):
     rows = []
     tb = (raw.get("SACL0104") or [None])[0]
     if tb:
         when, year, d = tb
         other, _ = trial_balances(d)
         if other:
-            same = bool(jstamp and when and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+            same = _same_time(when, jstamp, ins)
             upto = when.date() if when != dt.datetime.min else None
             basis = "시산표 %s · 분개장 %s 받음%s" % (_hm(when), _hm(jstamp), "" if same else " (받은 시각 다름)")
             _compare_balances(rows, "합계잔액시산표", other, book_balances(journal, upto), same, basis)
@@ -270,14 +308,18 @@ def balances_rows(journal, raw, jstamp):
         if not other:
             continue
         this_year = year >= (jstamp.year if jstamp else dt.date.today().year)
-        same = (not this_year) or bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+        same = (not this_year) or _same_time(when, jstamp, ins)
         upto = dt.date(year, 12, 31) if not this_year else (when.date() if when != dt.datetime.min else None)
         basis = ("%d년 말 (결산 끝난 해)" % year) if not this_year else ("재무상태표 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)))
         _compare_balances(rows, "재무상태표 %d" % year, other, book_balances(journal, upto), same, basis)
-    pl = (raw.get("SACL0106") or [None])[0]
-    if pl:
-        when, year, d = pl
-        rows.extend(pl_rows(journal, d, when, jstamp))
+    # 1차 D13 (2026-11-15): 손익계산서는 받은 해가 아니라 자료의 회계연도로 장부와 맞춘다 (해마다 가장 늦게 받은 것 하나씩)
+    seen_years = set()
+    for when, year, d in raw.get("SACL0106") or []:
+        y = year or (when.year if when != dt.datetime.min else 0)
+        if y in seen_years:
+            continue
+        seen_years.add(y)
+        rows.extend(pl_rows(journal, d, when, jstamp, year=y, ins=ins))
     return rows
 
 
@@ -288,8 +330,9 @@ def _hm(t):
 PL_GROUPS = {"61000": ("매출액", "4"), "65000": ("판매비와 관리비", "8")}
 
 
-def pl_rows(journal, d, when, jstamp):
-    """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…)."""
+def pl_rows(journal, d, when, jstamp, year=None, ins=()):
+    """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…).
+    year: 자료의 회계연도(없으면 받은 해). 지난 해(결산 끝난 해)는 그해 12월 31일까지 장부와 맞추고 받은 시각을 따지지 않는다."""
     rows = []
     data = d.get("응답") or []
     lines = None
@@ -298,8 +341,13 @@ def pl_rows(journal, d, when, jstamp):
             lines = r.get("data")
     if not isinstance(lines, list) or when == dt.datetime.min:
         return rows
-    year = when.year
-    same = bool(jstamp and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
+    year = year or when.year
+    this_year = year >= (jstamp.year if jstamp else when.year)
+    upto = when.date() if this_year else dt.date(year, 12, 31)
+    same = (not this_year) or _same_time(when, jstamp, ins)
+    if not any(j.get("date") is not None and j["date"].year == year for j in journal or []):
+        return [_row("손익", "%d년 손익계산서" % year, "손익계산서", None, None, "손익계산서 %s 받음" % _hm(when), "참고",
+                     "읽은 장부에 %d년 전표가 없어 맞춰 보지 않았습니다." % year)]
     for ln in lines:
         gr = str(ln.get("cd_gr") or "")
         if gr not in PL_GROUPS or str(ln.get("cd_acctit") or "0") not in ("0", ""):
@@ -310,13 +358,14 @@ def pl_rows(journal, d, when, jstamp):
         for j in journal or []:
             dd = j.get("date")
             c = re.sub(r"\D", "", str(j.get("account_code") or ""))
-            if dd is None or dd.year != year or dd > when.date() or not c.startswith(first):
+            if dd is None or dd.year != year or dd > upto or not c.startswith(first):
                 continue
             book += (int(j.get("credit") or 0) - int(j.get("debit") or 0)) * (1 if first == "4" else -1)
         small = abs(other - book) < 100_000   # 2026-11-15 실제: 위하고 손익계산서 판관비가 같은 때 시산표 합보다 1,200원 큼(끝전)
         verdict = "같음" if other == book else ("다름" if same and not small else "참고")
         rows.append(_row("손익", "%d년 %s" % (year, name), "손익계산서", other, book,
-                         "손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)), verdict,
+                         ("손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp))) if this_year else "%d년 말 (결산 끝난 해)" % year,
+                         verdict,
                          "" if verdict == "같음" else ("10만 원 안쪽 끝전 차이입니다 (위하고 손익계산서 표시 차이)." if small
                                                       else "결산 대체 전표(매출원가 대체 등)나 받은 시각 차이일 수 있습니다.")))
     return rows
@@ -367,14 +416,22 @@ def diff_rows(prev, cur):
     pw, _, pc, pl = prev
     cw, _, cc, cl = cur
     a, b = _key_rows(pc, pl), _key_rows(cc, cl)
+    # 1차 D13 (2026-11-15): 두 파일의 조회 기간이 다르면(전체 뒤 일부 기간만 받음 등) 겹치는 기간 안의 줄만 비교한다
+    ps, pe = getattr(prev, "period", (None, None))
+    cs, ce = getattr(cur, "period", (None, None))
+    lo = max([x for x in (ps, cs) if x] or [None]) if (ps or cs) else None
+    hi = min([x for x in (pe, ce) if x] or [None]) if (pe or ce) else None
+
+    def inside(day):
+        return day is None or ((lo is None or day >= lo) and (hi is None or day <= hi))
     cut = pw.date()
     late = collections.defaultdict(lambda: [0, 0])
     for k in set(b) - set(a):
         d = b[k][0]
-        if d and d < cut:
+        if d and d < cut and inside(d):
             late[d.strftime("%Y-%m")][0] += 1
             late[d.strftime("%Y-%m")][1] += b[k][2]
-    gone = [k for k in set(a) - set(b)]
+    gone = [k for k in set(a) - set(b) if inside(a[k][0])]
     changed = [k for k in set(a) & set(b) if a[k][1:] != b[k][1:]]
     rows = []
     basis = "지난 수집 %s → 이번 %s" % (_hm(pw), _hm(cw))
@@ -395,18 +452,25 @@ def diff_rows(prev, cur):
 PCODE = re.compile(r"\[(\d{5})\]")
 
 
+def _is_advance_line(ln):
+    from .wehago import _is_advance
+    return _is_advance(ln)
+
+
 def intranet_rows(journal, projects):
     """인트라넷 프로젝트 '계산서'(발행액) ↔ 장부 매출(4…) 프로젝트별. 부가세 포함으로 적은 것(×1.1)도 같다고 본다."""
     if not projects:
         return []
     book = collections.defaultdict(int)
+    adv = collections.defaultdict(int)   # 1차 D14 (2026-11-15): 선수금으로 발행한 계산서(매출 계정 없음)도 발행으로 본다
     for ln in journal or []:
         c = re.sub(r"\D", "", str(ln.get("account_code") or ""))
-        if not c.startswith("4"):
+        is_adv = _is_advance_line(ln)
+        if not c.startswith("4") and not is_adv:
             continue
         m = PCODE.search(str(ln.get("project_name") or "")) or PCODE.search(str(ln.get("memo") or ""))
         if m:
-            book[m.group(1)] += int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
+            (adv if is_adv else book)[m.group(1)] += int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
     rows, n_same, n_both0 = [], 0, 0
     for p in projects:
         m = PCODE.search(str(p.get("행사명") or ""))
@@ -415,10 +479,12 @@ def intranet_rows(journal, projects):
         code = m.group(1)
         inv = _num(p.get("계산서"))
         b = book.get(code, 0)
+        a = adv.get(code, 0)
         if not inv and not b:
             n_both0 += 1
             continue
-        if abs(inv - b) <= 1000 or abs(inv - round(b * 1.1)) <= 1000:
+        # 매출만, 매출+아직 매출로 안 바뀐 선수금, 선수금만 — 어느 쪽이든 (부가세 포함 ×1.1 도) 맞으면 같다고 본다
+        if any(abs(inv - x) <= 1000 or abs(inv - round(x * 1.1)) <= 1000 for x in {b, b + a, a} if x):
             n_same += 1
             continue
         rows.append(_row("인트라넷 계산서", "[%s] %s" % (code, re.sub(r"^\s*\[\d{5}\]\s*", "", str(p.get("행사명") or ""))[:30]),
@@ -462,7 +528,7 @@ def read_maturity(input_dir):
     변환은 사용자 파일을 만들거나 고치지 않는다 (입력양식\대출만기.csv 를 입력 폴더에 복사해 고쳐 쓴다)."""
     path = os.path.join(input_dir or "", MATURITY_FILE)
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             rows = list(csv.DictReader(f))
     except OSError:
         rows = [dict(r) for r in MATURITY_DEFAULT]
@@ -583,10 +649,16 @@ def etax_rows(journal, raw):
     if not isinstance(items, list) or not items:
         return []
     book = collections.Counter()
+    slips = collections.defaultdict(list)   # 1차 D14: 한 계산서를 매출 줄 여럿(프로젝트별 등)으로 나눈 전표·선수금 발행도 맞춘다
     for ln in journal or []:
         c = re.sub(r"\D", "", str(ln.get("account_code") or ""))
-        if c.startswith("4") and ln.get("date") is not None:
-            book[(ln["date"], _code(ln.get("vendor_code")), int(ln.get("credit") or 0) - int(ln.get("debit") or 0))] += 1
+        if (c.startswith("4") or _is_advance_line(ln)) and ln.get("date") is not None:
+            amt = int(ln.get("credit") or 0) - int(ln.get("debit") or 0)
+            book[(ln["date"], _code(ln.get("vendor_code")), amt)] += 1
+            slips[(ln["date"], str(ln.get("no") or ""), _code(ln.get("vendor_code")))].append(amt)
+    for (day, _, vc), amts in slips.items():
+        if len(amts) > 1:
+            book[(day, vc, sum(amts))] += 1
     miss, miss_amt, n = 0, 0, 0
     for it in items:
         d0 = _day(it.get("da_sbook"))
@@ -787,14 +859,15 @@ def vat_notice_rows(raw):
 def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     from .convert import Table
     journal = books.journal if getattr(books, "state", "") == "ok" else []
-    raw = raw_files(wehago_dir)
+    skipped = []
+    raw = raw_files(wehago_dir, skipped)
     jfiles = journal_files(wehago_dir)
     jstamp = jfiles[0][0] if jfiles else None
     rows, notes = [], []
     if not os.path.exists(os.path.join(input_dir or "", MATURITY_FILE)):
         notes.append("대출만기.csv 없음 — 기본값(신한 기술보증기금 2건 매년 연장, 2억은 새 만기 2027-04-17, 2026-11-14 사용자)으로 계산")
     if journal:
-        rows += balances_rows(journal, raw, jstamp)
+        rows += balances_rows(journal, raw, jstamp, _insert_times(jfiles[0] if jfiles else None))
         rows += journal_rows(jfiles, asof)
         rows += intranet_rows(journal, getattr(snap, "projects", None))
         rows += asset_rows(journal, raw)
@@ -805,6 +878,9 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
         rows += opening_rows(journal, raw)
     rows += collect_rows(raw, asof)
     rows += vat_notice_rows(raw)
+    for n in sorted(skipped):   # P1-4: 화면 자료가 없는 원본 — 쓰지 않았다고 경영관리 '자료 대조'에 남긴다
+        rows.append(_row("수집", n, "위하고 원본", None, None, "", "참고",
+                         "이 파일은 깨졌거나 화면 자료 응답이 없어(조건·오류 응답만) 쓰지 않고 그 전에 받은 파일을 씀 — 확장에서 다시 받으세요"))
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)
@@ -821,16 +897,20 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
 # ───────────── 보고 쪽 ─────────────
 def load(input_dir):
     try:
-        with open(os.path.join(input_dir, FILE), encoding="utf-8-sig", newline="") as f:
+        with _open_text(os.path.join(input_dir, FILE)) as f:
             return list(csv.DictReader(f))
-    except OSError:
+    except (OSError, UnicodeDecodeError, csv.Error):
         return []
 
 
 def for_report(input_dir):
-    """-> (R['recon'] 대표 경고 목록, 경영관리 표 줄). 경고는 같은 때 받은 자료끼리 1천만 원 넘게 다를 때만."""
+    """-> (R['recon'] 대표 경고 목록, 경영관리 표 줄). 경고는 같은 때 받은 자료끼리 1천만 원 넘게 다를 때만.
+
+    P3-8 (2026-11-15): 같은 비교 자료 안에서 한 항목을 이루는 계정(단기·장기 차입금)은 더하지만, 같은 항목을 여러 자료
+    (시산표·재무상태표 …)와 맞춘 차이는 더하지 않고 가장 크게 어긋난 것 하나를 쓴다 — 예전에는 모두 더해 +2천만·−2천만이
+    0 이 되어 대표 경고가 사라졌다."""
     rows = load(input_dir)
-    warn = collections.OrderedDict()
+    per = collections.OrderedDict()   # 항목 -> {비교 자료: 차이 합}
     for r in rows:
         if r.get("대표경고") != "예":
             continue
@@ -839,8 +919,12 @@ def for_report(input_dir):
             diff = int(r.get("차이") or 0)
         except ValueError:
             continue
-        warn[what] = warn.get(what, 0) + diff
-    return [{"what": k, "diff": v} for k, v in warn.items()], rows
+        src = per.setdefault(what, collections.OrderedDict())
+        src[r.get("비교자료") or ""] = src.get(r.get("비교자료") or "", 0) + diff
+    warn = []
+    for what, by_src in per.items():
+        warn.append({"what": what, "diff": max(by_src.values(), key=abs)})
+    return warn, rows
 
 
 def _grp_name(name):

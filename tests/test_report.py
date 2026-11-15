@@ -847,22 +847,31 @@ class TestCliOutputs(unittest.TestCase):
         return html_path, pdf_path
 
     def test_stale_pdf_not_reported_as_new(self):
+        # 2차 P4-4 (2026-11-15): 실패해도 이전 PDF 는 지우지 않고 그대로 (새것으로 알리지도 않음)
         cli = load_cli()
         html_path, pdf_path = self.stale_setup()
         with mock.patch.object(cli.subprocess, "run", return_value=None):
             err = cli.to_pdf("dummy-browser", html_path, pdf_path)
         self.assertIsNotNone(err)
-        self.assertFalse(os.path.exists(pdf_path))
+        with open(pdf_path, "rb") as f:
+            self.assertEqual(f.read(), b"old")
+        self.assertEqual(sorted(os.listdir(os.path.dirname(pdf_path))), ["a.html", "a.pdf"])
 
     def test_locked_old_pdf_reported(self):
         cli = load_cli()
         html_path, pdf_path = self.stale_setup()
-        with mock.patch.object(cli.os, "remove", side_effect=PermissionError("locked")), \
-                mock.patch.object(cli.subprocess, "run", return_value=None) as run_mock:
+
+        def made(cmd, **kw):
+            with open([a for a in cmd if a.startswith("--print-to-pdf=")][0].split("=", 1)[1], "wb") as f:
+                f.write(b"%PDF-1.4\n%%EOF\n")
+        with mock.patch.object(cli.os, "replace", side_effect=PermissionError("locked")), \
+                mock.patch.object(cli.subprocess, "run", side_effect=made):
             err = cli.to_pdf("dummy-browser", html_path, pdf_path)
         self.assertIsNotNone(err)
         self.assertIn("이전 PDF", err)
-        self.assertEqual(run_mock.call_count, 0)
+        with open(pdf_path, "rb") as f:
+            self.assertEqual(f.read(), b"old")
+        self.assertEqual(sorted(os.listdir(os.path.dirname(pdf_path))), ["a.html", "a.pdf"])
 
 
 class TestUserRulesLocked(Base):
@@ -1419,8 +1428,10 @@ class TestPdfLaunch(unittest.TestCase):
         html_path, pdf_path = self.make_html()
 
         def late(cmd, **kwargs):
+            out = [a for a in cmd if a.startswith("--print-to-pdf=")][0].split("=", 1)[1]   # 작성 중 이름 (P4-4)
+
             def write():
-                with open(pdf_path, "wb") as f:
+                with open(out, "wb") as f:
                     f.write(b"%PDF-1.4\n%%EOF\n")
             threading.Timer(0.3, write).start()
             return None

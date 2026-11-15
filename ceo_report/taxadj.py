@@ -11,6 +11,7 @@
 업무와 관련 없는 비용·증빙 없는 비용은 전표마다 사람이 판단해야 해 다루지 않는다.
 """
 import re
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "세무조정.csv"
 COLUMNS = ["연도", "항목", "금액", "반영", "근거"]
@@ -162,7 +163,7 @@ def _ledger_car(input_dir, year, wehago_dir=None):
         from . import wehago_raw
         rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
     if not rows and input_dir and os.path.exists(os.path.join(input_dir, "고정자산.csv")):
-        with open(os.path.join(input_dir, "고정자산.csv"), encoding="utf-8-sig", newline="") as f:
+        with _open_text(os.path.join(input_dir, "고정자산.csv")) as f:
             rows = list(csv.DictReader(f))
     v = sum(int(r.get("당기상각") or 0) for r in rows if str(r.get("기준연도")) == str(year) and "차량" in (r.get("계정") or ""))
     return v or None
@@ -188,7 +189,7 @@ def load(input_dir):
     path = os.path.join(input_dir, FILE)
     if not os.path.exists(path):
         return None
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         rows = list(csv.DictReader(f))
     return rows or None
 

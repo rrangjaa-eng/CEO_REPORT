@@ -52,7 +52,7 @@ def main(argv=None):
         asof = now.date()
     wehago_dir = a.위하고폴더 or os.path.join(a.수집폴더, "위하고")
     try:
-        res = convert.run(a.입력, a.수집폴더, wehago_dir, asof, now)
+        res = convert.run(a.입력, a.수집폴더, wehago_dir, asof, now, ran_at=dt.datetime.now())   # 실제 시각을 남김 (R5)
     except Exception as e:   # 트레이스백을 보이지 않는다 (PATTERNS §3.5, 02-REVIEW WR-02). 글은 주민번호를 가린 한 줄
         _say("변환 중 예상하지 못한 오류 (%s): %s — 설정.csv 값과 원천 파일을 확인하고 다시 실행하세요"
              % (type(e).__name__, str(e)[:200]))

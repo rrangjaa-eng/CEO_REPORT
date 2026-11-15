@@ -74,12 +74,26 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(transfer.nbytes("A가"), 3)
 
 
+def ready_sample(tmp):
+    """샘플 입력 사본 + 변환 기록 (이체 파일은 변환 기록이 있어야 만든다, 안전-01). 샘플엔 자금계획서가 없어 자료 확인 끄개를 켠다."""
+    inp = os.path.join(tmp, "입력")
+    shutil.copytree(os.path.join(os.path.dirname(HERE), "입력양식", "샘플"), inp)
+    with open(os.path.join(inp, "변환결과.txt"), "w", encoding="utf-8-sig") as f:
+        f.write("변환 시각 %s · 기준일 2026-10-31\nWEHAGO 장부: ok\n" % dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    return inp
+
+
 class TestMakeFile(unittest.TestCase):
+    def setUp(self):
+        from unittest import mock
+        p = mock.patch.dict(os.environ, {"CEO_REPORT_TEST_GATE_OFF": "1"})
+        p.start()
+        self.addCleanup(p.stop)
+
     def test_sample_input_with_account_file(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
-        inp = os.path.join(tmp, "입력")
-        shutil.copytree(os.path.join(os.path.dirname(HERE), "입력양식", "샘플"), inp)
+        inp = ready_sample(tmp)
         with open(os.path.join(inp, transfer.ACCOUNT_FILE), "w", encoding="utf-8-sig") as f:
             f.write("거래처,은행,계좌번호,예금주\n디자인스튜디오,우리은행,1002-000-000003,가상디자인\n")
         lines = []
@@ -94,7 +108,7 @@ class TestMakeFile(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         lines = []
-        inp = os.path.join(os.path.dirname(HERE), "입력양식", "샘플")
+        inp = ready_sample(tmp)
         self.assertIsNone(transfer.make_file(inp, os.path.join(tmp, "출력"), D(2026, 11, 1), D(2026, 11, 30), lines.append,
                                              asof=D(2026, 10, 31)))
         self.assertIn("거래처계좌.csv 없음", lines[0])

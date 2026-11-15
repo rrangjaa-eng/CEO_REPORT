@@ -144,8 +144,18 @@ def monthly_presence(journal, asof, cash_codes=("10300",)):
     return out
 
 
+def last_bank_day(journal, asof, cash_codes=("10300",)):
+    """장부에 들어간 마지막 통장(보통예금 등 cash_codes) 거래일, 기준일까지 (계산-06·N1). 없으면 None."""
+    cash = set(_sq(c) for c in cash_codes)
+    days = [ln["date"] for ln in journal if ln.get("date") is not None and ln["date"] <= asof and _sq(ln.get("account_code")) in cash
+            and ((ln.get("debit") or 0) or (ln.get("credit") or 0))]
+    return max(days) if days else None
+
+
 def book_facts(journal, asof, book_date, cash_codes=("10300",)):
+    lb = last_bank_day(journal, asof, cash_codes)
     return {"asof": asof.isoformat(), "book_date": book_date.isoformat() if book_date else "",
+            "last_bank": lb.isoformat() if lb else "",
             "recurring": recurring(journal, asof, cash_codes),
             "presence": monthly_presence(journal, asof, cash_codes)}
 
@@ -362,6 +372,17 @@ def invoice_pairs(R):
         elif sold and not cost and not p.get("card_unpaid"):
             out.append((name, "행사 %s 끝, 매출 %s원은 있는데 원가 전표 없음 (매입 계산서·카드 확인)" % (ev, "{:,}".format(sold))))
     return out
+
+
+MISSING_CONTRACT = "계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 계약금액을 넣으면 나옵니다."
+
+
+def missing_contracts(R, team=None):
+    """계약금액이 없어 지금 예상 이익·이익 흐름·예상 적자 경보를 못 낸 프로젝트 수 (사용자 결정 c, 2026-11-15:
+    실제 자료 302개 모두 빈칸이라 팀장·대표는 빠진 줄 몰랐음 R3). team 을 주면 그 팀 프로젝트만. 0 은 미등록과 같이 본다
+    (profit_flow 도 0 이면 건너뜀)."""
+    return sum(1 for p in (R.get("s3") or {}).get("projects") or []
+               if not p.get("contract") and (team is None or (p.get("team") or "") == team))
 
 
 def profit_flow(R):
@@ -802,19 +823,35 @@ def compute(R, facts=None, invoices=None, prev_events=None):
 RECORD_DIR = "자동분석기록"
 
 
-def write_record(out_dir, R):
+def _frozen(path, today=None):
+    """1차 B16 (2026-11-15): 같은 기준일 보고를 며칠 뒤 다시 만들면 예측 기록을 그때 자료(이미 실제가 된 돈)로 덮어 오차가 0이 됐다.
+    지난날 남긴 기록은 그대로 두고, 같은 날 다시 만든 것만 덮어쓴다."""
+    try:
+        made = dt.date.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return False
+    return made < (today or dt.date.today())
+
+
+def _dump(path, obj):
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def write_record(out_dir, R, today=None):
     folder = os.path.join(out_dir, RECORD_DIR)
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, "일정_%s.json" % R["asof"].isoformat())
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(events_for_record(R), f, ensure_ascii=False)
+    if not _frozen(path, today):
+        _dump(path, events_for_record(R))
     try:   # 이번 달 예상 영업이익도 남긴다: 나중 장부와 견줌 (사용자 2026-11-12)
         M = month_forecast(R)
     except Exception:
         M = None
-    if M and M.get("forecast") is not None:
-        with open(os.path.join(folder, "예측_%s.json" % R["asof"].isoformat()), "w", encoding="utf-8") as f:
-            json.dump({"ym": M["ym"], "profit": M["forecast"]}, f, ensure_ascii=False)
+    pf = os.path.join(folder, "예측_%s.json" % R["asof"].isoformat())
+    if M and M.get("forecast") is not None and not _frozen(pf, today):
+        _dump(pf, {"ym": M["ym"], "profit": M["forecast"]})
     return path
 
 

@@ -120,7 +120,8 @@ def parse_auto(path):
         elif bad:
             reason = "읽지 못한 줄 %d개" % bad
         out.append(({"month": mo, "items": items[mo], "checks": [], "ok": not reason, "reason": reason,
-                     "opening": None, "settled": [], "form": "자동수집"}, stamp))
+                     "opening": None, "settled": [], "form": "자동수집",
+                     "company": str(doc.get("회사") or "").strip()}, stamp))   # 받은 SmartA 탭의 회사 (P1-1·P2-4)
     return out
 
 
@@ -356,6 +357,8 @@ def load(folder):
         _, stamp, _, _, n, res = best[month]
         ym = "%d-%02d" % month
         out["months"].append((ym, n, stamp))
+        if res.get("company"):
+            out.setdefault("companies", {})[n] = res["company"]
         if res.get("opening") is not None:
             out.setdefault("openings", []).append((month, res["opening"], n))
         if res.get("settled"):
@@ -553,6 +556,29 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
             if best is not None:
                 take([best[1]], r)
                 found[n] = [best[1]]
+        # ①-2 한 전표에 같은 거래처 채무(채권) 줄이 여럿이고 자금계획서는 그 합 한 줄 (1차 점검 자금-4, 2026-11-15:
+        #      계산서 여러 장을 한 번에 지급하면 줄마다는 금액이 달라 못 찾고 '예정일 지남'으로 남아 다음 금요일 출금 목록에
+        #      다시 올라갔음 — 실제 장부에 이런 전표 12개). 그 전표의 안 쓴 같은 거래처 채무 줄 합이 원 단위로 같으면 모두 쓴다
+        for n, r in enumerate(rows):
+            if n in found:
+                continue
+            due, lo = window(r)
+            groups = collections.defaultdict(list)
+            for i, line in enumerate(journal):
+                if i in used or line["date"] is None or line["date"] < lo or (ref is not None and line["date"] > ref):
+                    continue
+                amount, named = kind(line, r["입출금"])
+                if amount and named and same_vendor(r, line):
+                    groups[(line["date"], str(line.get("no") or i))].append((i, amount))
+            best = None
+            for k, g in groups.items():
+                if len(g) >= 2 and sum(a for _, a in g) == r["금액"]:
+                    rank = (abs((k[0] - due).days), k)
+                    if best is None or rank < best[0]:
+                        best = (rank, [i for i, _ in g])
+            if best is not None:
+                take(best[1], r)
+                found[n] = best[1]
         # ② 나눠서 나가거나 들어온 돈 (사용자 2026-11-12): 같은 거래처 2~4건의 합이 원 단위로 같으면
         for n, r in enumerate(rows):
             if n in found:
@@ -609,6 +635,10 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
                     lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"], "지급" if r["입출금"] == "지급" else "입금")
             elif len(lines) == 1:
                 r["근거"] = "분개장 %s 전표 %s %s" % (lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"])
+            elif len(set((x["date"], str(x.get("no") or "")) for x in lines)) == 1:   # ①-2: 한 전표의 같은 거래처 여러 줄
+                r["근거"] = "분개장 %s 전표 %s %s %d줄 합계 (같은 거래처 여러 건을 한 전표로 %s)" % (
+                    lines[0]["date"].isoformat(), lines[0]["no"], lines[0]["account"], len(lines),
+                    "지급" if r["입출금"] == "지급" else "입금")
             else:
                 r["근거"] = "분개장 %d건 합계로 나눠 %s: %s" % (len(lines), "지급" if r["입출금"] == "지급" else "입금", ", ".join(
                     "%s 전표 %s" % (x["date"].isoformat(), x["no"]) for x in lines))
@@ -632,6 +662,7 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
 # ───────────── 보고서 계산에 반영 (calc) ─────────────
 MATCH_DAYS = 7               # 거래처가 달라도 같은 금액·이 날수 안이면 같은 건으로 본다
 DONE_DAYS = 31               # 이미 지급·입금 줄이 지우는 기존 일정은 예정일이 이 날수 안인 것만 (F18 ②, 2026-11-14)
+DONE_AHEAD_DAYS = 15         # 1차 자금-3 (2026-11-15): 그중 이미 낸 날보다 뒤 일정은 이 날수 안만 — 다음 달 같은 금액 반복(급여 등)을 지우지 않게
 CENTS = 100                 # 같은 거래처 계산서 미수와 자금계획서 입금이 이만큼(원) 안에서 다르면 같은 입금 (끝전)
 FLAG_SOURCES = ("자금일정", "계산서", "프로젝트집행")   # 자금계획서에 없으면 알리는 기존 일정 (남은 예산은 원래 추정이라 알리지 않음)
 
@@ -666,6 +697,14 @@ def _in_balance(p, cash_date, txns):
     if hit:
         return "통장 %s %s 같은 금액 → 이미 %s (분개장 미반영)" % (min(t["date"] for t in hit).isoformat(), io, "지급" if io == "출금" else "입금")
     return "예정일이 통장 잔액 기준일 %s 이전 → 잔액에 이미 반영된 것으로 봄 (분개장은 그 전까지만 있음)" % cash_date.isoformat()
+
+
+def _done_window(ev_day, done_day):
+    """이미 지급·입금 줄(done_day)이 지울 수 있는 기존 일정(ev_day): 31일 앞(늦게 냄)부터 15일 뒤(일찍 냄)까지."""
+    if ev_day is None:
+        return False
+    gap = (ev_day - done_day).days
+    return -DONE_DAYS <= gap <= DONE_AHEAD_DAYS
 
 
 def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
@@ -722,8 +761,8 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             near = ev["date"] is not None and abs((ev["date"] - p["date"]).days) <= MATCH_DAYS
             if not (same or (near and not done)):
                 continue
-            if done and (ev["date"] is None or abs((ev["date"] - p["date"]).days) > DONE_DAYS):
-                continue   # F18 ②: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 몇 달 뒤 일정(다음 달 급여 등)을 지우지 않게
+            if done and not _done_window(ev["date"], p["date"]):
+                continue   # F18 ②·자금-3: 이미 낸 지난달 줄이 같은 거래처·같은 금액의 다음 달 일정(급여 등)을 지우지 않게
             rank = (0 if same else 1, ev["amount"] != p["amount"], abs((ev["date"] - p["date"]).days) if ev["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, i)
@@ -747,8 +786,11 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
             first = events[idx[0]]
             same = bool(key) and norm_vendor(first.get("desc") or "") == key
             near = first["date"] is not None and abs((first["date"] - p["date"]).days) <= MATCH_DAYS
-            if not (same or (near and p["state"] not in ("이미 지급", "이미 입금"))):
+            done = p["state"] in ("이미 지급", "이미 입금")
+            if not (same or (near and not done)):
                 continue
+            if done and not _done_window(first["date"], p["date"]):
+                continue   # 1차 자금-3: 나눈 계산서 합으로 맞출 때도 이미 들어온 돈이 몇 달 뒤 계산서 일정을 지우지 않게
             taken.update(idx)
             p["_by_name"] = True
             p["_split"] = [events[i] for i in idx]

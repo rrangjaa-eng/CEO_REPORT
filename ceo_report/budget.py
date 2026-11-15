@@ -12,8 +12,9 @@
 - 매출원가 = 매출 × (1 − 목표 수익률). 급여 = 지금 1달 급여 × (1 + 인상률) + 늘릴 인원 × 1인 평균 × (1 + 인상률) (입사 월부터).
 - 그 밖의 판관비 = 계정별 올해 실적(1년으로 늘림) × 기준(인원·물가·그대로). 감가상각비 = 올해 예상(직접 입력 또는 작년 장부).
 - 영업외 수익 = 이자수익만 (지원금 등은 확정 전이라 넣지 않음). 영업외 비용 = 올해 실적을 1년으로 늘림.
-- 자금: 매출 입금은 올해 계산서 평균 회수 기간, 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
+- 자금: 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
 """
+import collections
 import csv
 import datetime as dt
 import os
@@ -22,6 +23,7 @@ from collections import OrderedDict
 
 from .calc import year_revenue_left
 from .corptax import corp_tax, depreciation
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 VALUES_FILE = "예산값.csv"
 VALUES_COLUMNS = ["연도", "구분", "대상", "값"]
@@ -37,7 +39,6 @@ SALARY_WORDS = ("급여", "상여", "퇴직", "임금", "제수당")
 AP_SPLIT = (0.4, 0.6)       # 매입 지급: 행사 달, 다음 달
 DEFAULT_COST = 0.70
 COLLECT_DAYS = 60       # 매출 입금: 계산서 작성일 뒤 약 60일 (사용자 2026-11-12)
-MIN_COLLECT_N = 10      # 입금된 계산서가 이만큼 넘어야 장부 평균 수금 기간을 쓴다
 # 예산 숫자(매입·급여·판관비·세금·영업외)에 없는 정해진 지급: 자금일정·자금계획서에서 그대로 가져온다 (G2)
 FIXED_WORDS = ("원금", "상환", "보증금", "설비", "이전", "대여", "투자", "자산")
 FIXED_SKIP = ("이자", "급여", "보험", "세금", "카드", "임차료", "구독")
@@ -63,7 +64,7 @@ def read_values(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, k, who = (r.get("연도") or "").strip(), (r.get("구분") or "").strip(), (r.get("대상") or "").strip()
                 v = _num(r.get("값"))
@@ -92,6 +93,8 @@ def save_values(input_dir, year, items):
         raise ValueError("연도는 4자리 (예: 2027)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, VALUES_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_values(input_dir)
     for kind, who, text in items:
         if kind not in KINDS:
@@ -297,7 +300,7 @@ def _loan_plan(input_dir, debts, asof, until):
         return None, []
     from .wehago import norm_code, norm_vendor
     from .util import date as parse_date
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         rows = list(csv.DictReader(f))
     led_code, led_name = {}, {}
     for x in debts or []:
@@ -307,12 +310,27 @@ def _loan_plan(input_dir, debts, asof, until):
             led_code[norm_code(x["vcode"])] = led_code.get(norm_code(x["vcode"]), 0) + x["balance"]
         led_name[norm_vendor(x["vendor"])] = led_name.get(norm_vendor(x["vendor"]), 0) + x["balance"]
     pays, notes = [], []
+
+    def _key(r):
+        c = norm_code(r.get("거래처코드"))
+        return ("code", c) if c and c != "0" and c in led_code else ("name", norm_vendor((r.get("차입처") or "").strip()))
+    # 1차 C4 (2026-11-15): 같은 은행(거래처코드) 대출이 여럿이면 장부 잔액(은행 전체)을 대출마다 통째로 붙여 두 번 갚는 것으로 셌다
+    # → 같은 은행 대출끼리 원금 비율로 나눈다 (원금을 모르면 똑같이)
+    share = collections.defaultdict(list)
+    for r in rows:
+        share[_key(r)].append(int(_num(r.get("원금")) or 0))
     for r in rows:
         name = (r.get("차입처") or "").strip() or "차입처 없음"
         code = norm_code(r.get("거래처코드"))
         bal = led_code.get(code) if code and code != "0" else None
         if bal is None:
             bal = led_name.get(norm_vendor(name))
+        group = share[_key(r)]
+        if bal is not None and len(group) > 1:
+            mine, tot = int(_num(r.get("원금")) or 0), sum(group)
+            bal = int(round(bal * mine / float(tot))) if tot > 0 and mine > 0 else int(round(bal / float(len(group))))
+            notes.append("대출 %s: 같은 은행 대출 %d건 — 장부 잔액을 원금 비율로 나눠 이 대출 몫 %s원으로 봄"
+                         % (name, len(group), format(bal, ",")))
         due = parse_date(r.get("만기일"))
         how = (r.get("상환방식") or "").strip()
         src = (r.get("만기근거") or "").strip() or "차입금현황"   # H 변환: 사용자가 직접 넣은 새 만기일이면 '직접 입력' (11/14 신한 연장)
@@ -593,9 +611,9 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     bal0 = sum(b["balance"] for b in bals if b["date"] == bal_date) if bal_date else None
     restricted = sum(b.get("restricted") or 0 for b in bals if b["date"] == bal_date) if bal_date else 0
     days, n_days = _collect_days(d, base)
-    # 수금 기간: 회사 기준 작성일 뒤 약 60일 (사용자 2026-11-12). 입금된 계산서가 적으면 평균이 짧게 나와(못 받은 건은 빠짐)
-    # 입금이 앞당겨 보이므로 MIN_COLLECT_N 건 넘을 때만 장부 평균을 쓴다 (2026-11-14 오후 점검 G7)
-    days_used = days if (days is not None and n_days >= MIN_COLLECT_N) else COLLECT_DAYS
+    # 수금 기간: 가용자금과 같은 '작성일 뒤 60일' 하나로 (계산-13·사용자 결정 e, 2026-11-15). 장부 평균은 입금이 끝난 계산서만
+    # 세어 빨리 들어온 쪽으로 치우치므로(못 받은 건은 빠짐) 계산에 쓰지 않고 참고로만 보인다 (1차 C15·C10)
+    days_used = COLLECT_DAYS
     lag = max(0.0, days_used / 30.0)
     l0 = int(lag)
     frac = lag - l0
@@ -755,7 +773,7 @@ def confirm(input_dir, B, today=None):
     path = os.path.join(input_dir, CONFIRM_FILE)
     if os.path.exists(path):
         try:
-            with open(path, encoding="utf-8-sig", newline="") as f:
+            with _open_text(path) as f:
                 keep = [r for r in csv.DictReader(f) if (r.get("연도") or "").strip() != y]
         except (OSError, UnicodeDecodeError, csv.Error):
             keep = []
@@ -784,7 +802,7 @@ def read_confirmed(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, m, who = (r.get("연도") or "").strip(), (r.get("월") or "").strip(), (r.get("대상") or "").strip()
                 if not (y.isdigit() and m.isdigit() and who):

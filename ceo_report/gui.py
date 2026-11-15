@@ -49,6 +49,12 @@ def open_path(path):
     return True
 
 
+
+def _shown(text, unit):
+    """저장 안내에 보일 값: 빈 칸은 '(그대로)', '-'는 '(지움)' (2차 P5-17)."""
+    t = str(text or "").strip()
+    return "(그대로)" if not t else ("(지움)" if t in ("-", "지움") else t + unit)
+
 class Window(object):
     def __init__(self, root, paths=None, today=None):
         self.root = root
@@ -62,7 +68,8 @@ class Window(object):
         self.auto_tried = None    # 자동으로 한 번 돌린 자료 표시 (실패해도 같은 자료로 되풀이하지 않게)
         self.check = None
         self.edit = None
-        root.title(TITLE)
+        from .version import build
+        root.title("%s (판 %s)" % (TITLE, build()))
         root.configure(background=C["bg"])
         # 사용자 2026-11-04: 한 화면에 다 보이게. 글꼴을 이름 있는 Font 로 두고, 화면보다 크면 줄인다 (fit_to_screen)
         fam = "Malgun Gothic"
@@ -242,9 +249,16 @@ class Window(object):
         entry.bind("<KeyRelease>", fix)
 
     def _enter(self, widgets, cmd):
-        """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7)."""
+        """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7).
+        2차 P5-10 (2026-11-15): 작업 중에는 단추가 꺼져도 Enter 로는 저장·이체 파일 만들기가 됐다 → 작업 중엔 막고 알린다."""
+        def go(e):
+            if self.busy:
+                self.say("작업이 끝난 뒤 다시 Enter 를 누르세요 (작업 중에는 저장하지 않음)")
+                return "break"
+            cmd()
+            return "break"
         for w in widgets:
-            w.bind("<Return>", lambda e: cmd())
+            w.bind("<Return>", go)
 
     def _flash(self, card, text, keep=None):
         """카드 오른쪽 위에 '저장됨'을 잠깐 보이고 원래 글(keep 함수가 돌려주는 글)로 돌아간다."""
@@ -851,38 +865,64 @@ class Window(object):
         self.q.put(("line", text))
 
     def pump(self):
+        # 2차 P5-14 (2026-11-15): 한 건 처리 중 예외(파일 열기 실패 등)로 다음 예약이 없어져 진행 표시가 멈췄다 →
+        # 건마다 오류를 글로 남기고, 다음 예약은 언제나 한다
         try:
             while True:
-                kind, val = self.q.get_nowait()
-                if kind == "line":
-                    self.log.configure(state="normal")
-                    self.log.insert("end", val + "\n")
-                    self.log.see("end")
-                    self.log.configure(state="disabled")
-                elif kind == "done":
-                    self.finish(*val)
-                elif kind == "checks":
-                    n, text = val
-                    self.check_n.configure(text=n)
-                    self.check_now.set(text)
-                elif kind == "edited":
-                    pdf, text = val
-                    self.say(text)
-                    if pdf:
-                        open_path(pdf)
-                elif kind == "call":
-                    val()
-        except queue.Empty:
-            pass
-        self.root.after(100, self.pump)
+                try:
+                    kind, val = self.q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._pump_one(kind, val)
+                except Exception as e:
+                    try:
+                        self.log.configure(state="normal")
+                        self.log.insert("end", "화면 처리 중 오류 (%s): %s\n" % (type(e).__name__, str(e)[:150]))
+                        self.log.see("end")
+                        self.log.configure(state="disabled")
+                    except Exception:
+                        pass
+        finally:
+            self.root.after(100, self.pump)
+
+    def _pump_one(self, kind, val):
+        if kind == "line":
+            self.log.configure(state="normal")
+            self.log.insert("end", val + "\n")
+            self.log.see("end")
+            self.log.configure(state="disabled")
+        elif kind == "done":
+            self.finish(*val)
+        elif kind == "checks":
+            n, text = val
+            self.check_n.configure(text=n)
+            self.check_now.set(text)
+        elif kind == "edited":
+            pdf, text = val
+            self.say(text)
+            if pdf:
+                open_path(pdf)
+        elif kind == "call":
+            val()
 
     def set_busy(self, busy, text, ok=None):
         self.busy = busy
+        # 2차 P6-7 (2026-11-15): 닫은 보조창(세법 기준 확인 등)의 단추가 목록에 남아 다음 작업에서 오류가 나고 그 뒤 모든 단추가
+        # 안 먹었다 (다시 켜야 함) → 없어진 단추는 목록에서 빼고, 단추 하나가 실패해도 나머지는 바꾼다
+        alive = []
         for b in self.buttons:
-            if isinstance(b, ttk.Widget):
-                b.state(["disabled"] if busy else ["!disabled"])
-            else:
-                b.configure(state="disabled" if busy else "normal", background="#9db7f0" if busy else C["blue"])
+            try:
+                if not b.winfo_exists():
+                    continue
+                if isinstance(b, ttk.Widget):
+                    b.state(["disabled"] if busy else ["!disabled"])
+                else:
+                    b.configure(state="disabled" if busy else "normal", background="#9db7f0" if busy else C["blue"])
+                alive.append(b)
+            except tk.TclError:
+                continue
+        self.buttons[:] = alive
         self.status.set(text)
         self.status_lab.configure(foreground=C["text"] if ok is None else (C["green"] if ok else C["red"]))
         if busy:
@@ -892,13 +932,18 @@ class Window(object):
             self.bar.stop()
             self.bar.pack_forget()
             self.merge_changed(save=False)
+            if getattr(self, "close_when_done", False):   # 작업 중에 닫기를 눌렀던 창 (C6)
+                self.root.after(300, self.close)
 
     # ───────────── 작업 ─────────────
     def report(self, kind):
         """보고 만들기. 변환 뒤 새 자료가 있으면 변환부터 할지 묻는다 (사용자 2026-11-05 개선 9)."""
         if self.busy:
             return
-        S = getattr(self, "state", None) or winstate.steps(self.paths)
+        try:   # 2차 P5-11 (2026-11-15): 누르는 순간의 상태로 묻는다 — 예전엔 화면을 새로 그린 때의 상태라 막 들어온 새 분개장을 놓쳤다
+            S = winstate.steps(self.paths)
+        except Exception:
+            S = getattr(self, "state", None) or {"convert": None, "new_since": []}
         if S["convert"] is None or S["new_since"]:
             what = ", ".join(S["new_since"]) if S["new_since"] else "변환한 자료 없음"
             ans = messagebox.askyesnocancel(
@@ -925,9 +970,11 @@ class Window(object):
         self.root.after(AUTO_CHECK_MS, self.watch)
 
     def open_live(self):
-        from . import live
+        from . import live, winstate
         path = os.path.join(self.paths.output, live.FILE)
-        if not os.path.exists(path):
+        made, conv = winstate._mtime(path), winstate.convert_time(self.paths.input)
+        # 1차 E11 (2026-11-15): 없을 때뿐 아니라, 마지막 변환보다 오래됐거나 '못 만듦' 안내면 새로 만든 뒤 연다
+        if made is None or (conv is not None and made < conv) or live.is_failed_page(path):
             app.build_live(self.paths, self.say, self.asof.get().strip())
         if os.path.exists(path):
             open_path(path)
@@ -960,6 +1007,9 @@ class Window(object):
         if task == "주간":
             app.save_merge(self.paths, group, only)
         ev_task = task.startswith("근거")
+        if ev_task and getattr(self, "ev_asof", None) is not None and self.ev_asof != asof:
+            self.say("근거는 고른 보고의 기준일 %s 에서 뽑습니다 (기준일 칸 %s 와 다름)" % (self.ev_asof.isoformat(), asof.isoformat()))
+            asof = self.ev_asof
         if task.startswith("예산"):
             year = self.b_year.get().strip() if hasattr(self, "b_year") else ""
         else:
@@ -983,7 +1033,7 @@ class Window(object):
         winstate.remember_run(self.paths.input, task, rc == 0)
         if task in ("변환", "정합성", "자동"):
             self.refresh_checks()
-        ok, line = winstate.rc_message(task, rc)
+        ok, line = winstate.outcome(task, rc, files)
         if task == "정합성":
             self.set_busy(False, line, ok=ok)
             self.refresh_state()
@@ -991,7 +1041,12 @@ class Window(object):
             return
         if task == "자동":
             n = sum(1 for f in files if f.lower().endswith(".pdf"))
-            self.say("자동 반영 끝 — 지금 현황과 보고 PDF %d개를 새로 만들었습니다 (출력 폴더)" % n)
+            stops = winstate.blocked_reports(files)
+            if stops:
+                self.say("자동 반영 끝 — 자료 확인에서 막혀 대표 보고 %d개는 만들지 않았습니다 (보고 PDF %d개). 맨 위 경고를 확인하세요"
+                         % (len(stops), n))
+            else:
+                self.say("자동 반영 끝 — 지금 현황과 보고 PDF %d개를 새로 만들었습니다 (출력 폴더)" % n)
         elif rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
@@ -1079,7 +1134,8 @@ class Window(object):
         if not self.remember.get():
             self.pw.set("")   # 비밀번호는 쓰고 바로 비운다
             return
-        if rc == 3:   # 로그인 실패·화면 구조 변경: 틀린 계정을 기억하지 않는다
+        if rc not in (0, 7):   # 2차 P1-18: 로그인에 성공한 것이 확인될 때만 (0 완료 · 7 받은 뒤 저장 실패). 통신 실패(5) 등은 기억하지 않는다
+            self.say("로그인 성공을 확인하지 못해 이번 계정은 기억하지 않았습니다 (예전에 기억한 계정은 그대로)")
             return
         try:
             credstore.save(self.paths.input, self.uid.get(), self.pw.get())
@@ -1169,6 +1225,14 @@ class Window(object):
         threading.Thread(target=work, daemon=True).start()
 
     # ───────────── 근거자료 고르기 (사용자 2026-11-05 개선 4) ─────────────
+    @staticmethod
+    def _day_of(name):
+        """'2026-10-31_주간_경영관리보고.html' -> 2026-10-31 (못 읽으면 None)."""
+        try:
+            return dt.date.fromisoformat(str(name or "")[:10])
+        except ValueError:
+            return None
+
     def pick_evidence(self):
         rep = winstate.latest_reports(self.paths.output)
         kind = rep.get("kind") or "주간"
@@ -1182,12 +1246,14 @@ class Window(object):
         r.pack(fill="x")
         body = ttk.Frame(frm)
         vars_ = []
+        shown = {}
 
         def load():
             for w in body.winfo_children():
                 w.destroy()
             vars_.clear()
             name, rows = winstate.evidence_choices(self.paths.output, kv.get(), self.asof_date())
+            shown["name"] = name
             if not rows:
                 ttk.Label(body, text="%s 경영관리 보고가 없습니다. 먼저 %s 보고를 만드세요." % (kv.get(), kv.get())).pack(anchor="w")
                 return
@@ -1205,6 +1271,8 @@ class Window(object):
             if not nums:
                 return
             self.ev_nums = ", ".join(nums)
+            # 2차 P4-15 (2026-11-15): 화면에 보여 준 보고(그 기준일)에서 뽑는다 — 예전엔 기준일 칸 날짜로 실행해 다른 날 보고를 찾다 멈췄음
+            self.ev_asof = self._day_of(shown.get("name"))
             top.destroy()
             self.start("근거" + kv.get())
         b = ttk.Frame(frm)
@@ -1356,6 +1424,10 @@ class Window(object):
         from . import transfer
         code = self.a_code.get().strip()
         name = self.a_name.get().strip() if code else ""
+        if not delete and not (self.a_bank.get().strip() or self.a_no.get().strip()):
+            # 2차 P5-1 (2026-11-15): 저장 뒤 칸이 비었는데 '저장'(또는 Enter)을 다시 누르면 그 거래처 계좌가 모두 지워졌다
+            self.say("은행·계좌번호를 넣으세요 — 계좌를 지우려면 '지우기'를 누르세요 (아무것도 바꾸지 않음)")
+            return
         try:
             if delete:
                 action, n = transfer.save_account(self.paths.input, code, name, "", "", self.a_holder.get())
@@ -1386,6 +1458,11 @@ class Window(object):
         self._flash(self.f_goal, "저장됨", lambda: "월간 누적 실적에 쓰임")
 
     def _save_budget(self, items, what):
+        # 2차 P5-17 (2026-11-15): 칸은 저장된 값을 미리 보여 주지 않으므로 비운 칸이 예전 값을 지웠다 → 빈 칸은 그대로, '-'만 지움
+        items = [(k, w, "" if str(t).strip() in ("-", "지움") else t) for k, w, t in items if str(t or "").strip()]
+        if not items:
+            self.say("바꿀 값을 넣으세요 — 비운 칸은 그대로 두고, 지우려면 '-'를 넣으세요 (아무것도 바꾸지 않음)")
+            return
         try:
             n = app.save_budget_values(self.paths.input, self.b_year.get(), items)
         except (ValueError, OSError) as e:
@@ -1399,18 +1476,20 @@ class Window(object):
         t = self.b_team.get().strip()
         if self.b_add.get().strip() and not self.b_mon.get().strip():
             self.b_mon.set("1")
-        self._save_budget([("성장률", t, self.b_grow.get()), ("늘릴인원", t, self.b_add.get()), ("입사월", t, self.b_mon.get() if self.b_add.get().strip() else "")],
-                          "%s 성장률 %s%% · 인원 %s" % (t, self.b_grow.get().strip() or "(비움)", self.b_add.get().strip() or "변동 없음"))
+        add = self.b_add.get().strip()
+        mon = "-" if add in ("-", "지움") else (self.b_mon.get() if add else "")
+        self._save_budget([("성장률", t, self.b_grow.get()), ("늘릴인원", t, self.b_add.get()), ("입사월", t, mon)],
+                          "%s 성장률 %s · 인원 %s" % (t, _shown(self.b_grow.get(), "%"), _shown(add, "")))
 
     def save_budget_co(self):
         self._save_budget([("급여인상률", "", self.b_raise.get()), ("물가인상률", "", self.b_infl.get())],
-                          "급여 인상률 %s%% · 물가 인상률 %s%%" % (self.b_raise.get().strip() or "(비움)", self.b_infl.get().strip() or "(비움)"))
+                          "급여 인상률 %s · 물가 인상률 %s" % (_shown(self.b_raise.get(), "%"), _shown(self.b_infl.get(), "%")))
 
     def confirm_budget(self):
         if self.busy:
             return
         y = self.b_year.get().strip()
-        if not messagebox.askyesno("예산 확정", "%s년 예산을 지금 값으로 확정할까요?\n\n확정한 숫자는 월간 보고 '예산 대비'에 쓰입니다.\n"
+        if not messagebox.askyesno("예산 확정", "%s년 예산을 지금 값으로 확정할까요?\n\n확정한 숫자는 월간 경영관리 보고 '예산 대비'에 쓰입니다.\n"
                                    "나중에 값을 바꾸고 다시 확정하면 새 숫자로 바뀝니다." % y, parent=self.root):
             return
         self.start("예산확정")
@@ -1532,9 +1611,16 @@ class Window(object):
         end = 2 + half
         src = ttk.Frame(body, style="Card.TFrame")
         src.grid(row=end, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        # 결정 h (2026-11-15): 기본값으로 채우지 않는다 — 실제로 확인한 곳·사람·시행일을 남김
         ttk.Label(src, text="확인한 곳").pack(side="left")
-        self.law_src = tk.StringVar(value="세무사")
-        ttk.Entry(src, textvariable=self.law_src, width=16).pack(side="left", padx=(4, 8))
+        self.law_src = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_src, width=12).pack(side="left", padx=(4, 8))
+        ttk.Label(src, text="확인한 사람").pack(side="left")
+        self.law_who = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_who, width=8).pack(side="left", padx=(4, 8))
+        ttk.Label(src, text="시행일").pack(side="left")
+        self.law_eff = tk.StringVar(value="")
+        ttk.Entry(src, textvariable=self.law_eff, width=11).pack(side="left", padx=(4, 8))
         self._btn(src, "체크한 항목 확인함으로 저장", self.law_save)
         self._btn(src, "닫기", w.destroy)
         self.law_msg = tk.StringVar(value="빨간 항목은 미확인 — 확인 전에는 그 값을 쓰는 계산을 합계에 넣지 않습니다.")
@@ -1570,8 +1656,12 @@ class Window(object):
         if not pick:
             self.law_msg.set("체크한 항목이 없습니다.")
             return
+        if not self.law_src.get().strip() or not self.law_who.get().strip():
+            self.law_msg.set("'확인한 곳'(예: 세무사 사무소·고시)과 '확인한 사람'을 넣어 주세요. 시행일은 아는 경우만 (YYYY-MM-DD).")
+            return
         try:
-            n = taxlaw.confirm(self.paths.input, self.today.year, pick, self.law_src.get().strip())
+            n = taxlaw.confirm(self.paths.input, self.today.year, pick, self.law_src.get().strip(),
+                               who=self.law_who.get().strip(), effective=self.law_eff.get().strip())
         except (ValueError, OSError) as e:
             self.law_msg.set("저장하지 못함: %s" % e)
             return
@@ -1638,8 +1728,11 @@ class Window(object):
         self.dep_now.set(self.dep_text())
         self._flash(self.f_dep, "저장됨", lambda: "법인세 예상에 쓰임")
 
-    def make_transfer(self):
+    def make_transfer(self, override=None):
         from . import transfer
+        if self.busy:   # P5-10: 열어 둔 보조창에서도 작업 중엔 만들지 않는다 (반쯤 바뀐 자료로 이체 파일이 나가지 않게)
+            self.say("작업이 끝난 뒤 이체 파일을 만드세요")
+            return
         start, end, asof = self._day(self.t_from), self._day(self.t_to), self.asof_date()
         if None in (start, end, asof):
             self.say("날짜 형식 오류 (예: 2026-11-30)")
@@ -1650,12 +1743,25 @@ class Window(object):
         self.say("──── 이체 파일 ────")
         missing, multi = [], []
         splits = getattr(self, "_splits", None) or {}
+        result = {}
         try:
             path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing,
-                                      splits=splits, multi=multi)
+                                      splits=splits, multi=multi, collect_dir=self.paths.wehago, override=override, result=result)
         except Exception as e:   # 트레이스백 대신 글로
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             return
+        if result.get("blocked") and not path and not override:
+            # 결정 f (2026-11-15): 대표 보고가 막힌 날은 이체 파일도 막는다. 급하면 이유를 적고 풀고, 그 이유는 이체기록.csv 에 남는다
+            from tkinter import simpledialog
+            why = simpledialog.askstring(
+                "이체 파일 막힘", "대표 보고와 같은 자료 확인에서 막혀 이체 파일을 만들지 않았습니다.\n\n%s\n\n"
+                "급하게 보내야 하면 이유를 적으세요 (이체기록.csv 에 남습니다). 아니면 취소하고 자료를 받아 변환한 뒤 다시 만드세요."
+                % "\n".join("· " + p for p in result["blocked"][:4]), parent=self.root)
+            if why and why.strip():
+                self.make_transfer(override=why.strip())
+            return
+        if path:
+            self._splits = {}   # P5-2: 예금주별 나눔은 이번 파일에만 (다음 지급에 다시 쓰지 않고 그때 다시 묻는다)
         if missing:
             self.ask_accounts(missing)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
         elif multi:
@@ -1664,6 +1770,12 @@ class Window(object):
             self.open_dir(self.paths.output)
 
     def close(self):
+        if self.busy:   # C6 (2026-11-15): 작업 중에 닫으면 파일이 반쯤만 바뀌고 잠금이 남는다 → 끝난 뒤 닫는다
+            if messagebox.askyesno("작업 중", "지금 작업 중입니다. 바로 닫으면 자료 파일이 반쯤만 바뀔 수 있어 바로 닫지 않습니다.\n\n"
+                                   "작업이 끝나면 창을 저절로 닫을까요?", parent=self.root):
+                self.close_when_done = True
+                self.status.set("작업이 끝나면 창을 닫습니다 …")
+            return
         winstate.save(self.paths.input, payday=self.payday.get().strip(), pick=self.pick.get().strip())
         for s in (self.check, self.edit):
             try:
@@ -1807,6 +1919,33 @@ def self_check(log_path):
     """exe 점검 (빌드 확인용): app.self_check 로 (창 없이 시험할 수 있게 옮김, 2026-11-15)."""
     return app.self_check(log_path)
 
+
+
+# 2차 P2-2·P6-5 (2026-11-15): 다른 창·창 없는 실행이 자료 변환 중이면(입력\변환중 잠금) 손으로 저장·정리하지 않는다 — 반쯤 바뀐 자료와 섞였다
+_SAVE_METHODS = ("save_bank", "archive", "add_schedule", "save_card", "save_account", "save_target", "save_budget_team",
+                 "save_budget_co", "save_questions", "save_holder", "save_dep", "make_transfer")
+
+
+def _while_converting_wait(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        try:
+            from .convert import LOCK_FILE, lock_age
+            age = lock_age(self.paths.input)
+        except Exception:
+            age = None
+        if age is not None:
+            self.say("자료 변환이 아직 끝나지 않았습니다 (입력\\%s, %d분 전부터) — 변환이 끝난 뒤 다시 저장하세요" % (LOCK_FILE, int(age // 60)))
+            return None
+        return fn(self, *a, **k)
+    return wrapper
+
+
+for _name in _SAVE_METHODS:
+    if hasattr(Window, _name):
+        setattr(Window, _name, _while_converting_wait(getattr(Window, _name)))
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv

@@ -18,6 +18,7 @@ import os
 import re
 
 from .util import esc
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "잉여금.csv"
 KEYS = ["연도", "항목", "금액", "상태", "근거"]
@@ -263,7 +264,7 @@ def load(input_dir):
     if not os.path.exists(path):
         return None
     out = collections.defaultdict(dict)
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             try:
                 y = int(r.get("연도") or "")
@@ -278,13 +279,17 @@ def load(input_dir):
     return dict(out) or None
 
 
-def for_report(input_dir, year, R=None):
+def for_report(input_dir, year, R=None, strict=False):
     """보고서용: 그 해(없으면 가장 최근 해) 계산서 + 앞 해들 + 배당 계산(주주 있을 때) + 이번 시기 제안(월간 보고 R 있을 때).
-    -> dict 또는 None."""
+    strict = 그 해보다 뒤 해는 쓰지 않음 (연중 연간 보고가 연말 잉여금을 미리 쓰던 것, 1차 C7). -> dict 또는 None."""
     S = load(input_dir)
     if not S:
         return None
     ys = sorted(S)
+    if strict:
+        ys = [k for k in ys if k <= year]
+        if not ys:
+            return None
     y = year if year in S else ys[-1]
     out = {"year": y, "cur": S[y], "years": [(k, S[k]) for k in ys if k <= y], "input_dir": input_dir}
     from . import dividend

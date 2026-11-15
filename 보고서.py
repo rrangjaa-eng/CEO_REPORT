@@ -58,8 +58,19 @@ def _write_help(folder, e):
             % (folder, e.strerror or type(e).__name__))
 
 
+def _user_browsers(env=None):
+    """2차 P6-14 (2026-11-15): 사용자별로 설치한 크롬·엣지(%LOCALAPPDATA%·%ProgramFiles%가 다른 드라이브) 경로도 본다."""
+    env = os.environ if env is None else env
+    out = []
+    for base in (env.get("LOCALAPPDATA"), env.get("ProgramFiles"), env.get("ProgramFiles(x86)"), env.get("ProgramW6432")):
+        if base:
+            out += [os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
+                    os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")]
+    return out
+
+
 def find_browser():
-    for p in BROWSERS:
+    for p in BROWSERS + _user_browsers():
         if os.path.exists(p):
             return p
     for name in ("msedge", "chrome", "chromium", "chromium-browser", "google-chrome"):
@@ -106,14 +117,34 @@ def _wait_pdf(pdf_path, limit=None):
         time.sleep(0.3)
 
 
-def to_pdf(browser, html_path, pdf_path):
-    # 이전 실행의 PDF가 남아 있으면 새로 만든 것으로 착각하므로 먼저 지운다.
-    # Windows에서 PDF 뷰어가 열려 있으면 지울 수 없다.
-    if os.path.exists(pdf_path):
+def _write_page(path, text):
+    """보고 HTML 을 '<이름>.tmp' 에 다 쓴 뒤 바꿔 넣는다 (2차 P4-4, 2026-11-15: 쓰다 실패하면 이전 HTML 이 몇 바이트만 남았다).
+    실패하면 OSError 를 그대로 올린다 (부르는 쪽이 알림)."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except OSError:
         try:
-            os.remove(pdf_path)
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def to_pdf(browser, html_path, pdf_path):
+    """html -> pdf_path. -> 실패 까닭 글 또는 None.
+
+    2차 P4-4·P4-8 (2026-11-15): 새 PDF 는 '<이름>.작성중' 에 끝까지 만든 뒤에 바꿔 넣는다. 예전에는 이전 PDF 를 먼저 지우고
+    그 자리에 바로 써서, 실패하면 이전 PDF(수정 모드의 '_수정.pdf' 등)를 잃고 시간 초과로 반쯤 쓴 PDF 가 최근 보고로 잡혔다."""
+    tmp = pdf_path + ".작성중"
+    # 지난 실행이 남긴 작성 중 파일을 새로 만든 것으로 착각하지 않게 먼저 지운다.
+    if os.path.exists(tmp):
+        try:
+            os.remove(tmp)
         except OSError as e:
-            return "PDF 실패: 이전 PDF를 지우지 못함 (PDF 파일을 닫고 다시 실행): %s" % e
+            return "PDF 실패: 지난번에 만들다 남은 파일을 지우지 못함 (%s)" % e
     # 이미 열려 있는 Edge/Chrome이 있으면 새 창 요청을 그쪽에 넘기고 끝나 PDF가 안 만들어진다.
     # 이번 실행 전용 프로필 폴더를 따로 주어 독립된 브라우저로 실행하고, 끝나면 지운다.
     url = pathlib.Path(html_path).resolve().as_uri()  # 공백·#·%·UNC 경로도 올바른 file 주소로
@@ -122,27 +153,33 @@ def to_pdf(browser, html_path, pdf_path):
     cmd = [browser, "--headless", "--disable-gpu", "--user-data-dir=" + profile, "--no-first-run",
            "--disable-field-trial-config", "--no-pdf-header-footer",
            "--generate-pdf-document-outline",   # PDF 왼쪽 책갈피 = 장 제목 (사용자 2026-11-11 영역별 보기). 모르는 브라우저는 무시
-           "--print-to-pdf=" + os.path.abspath(pdf_path), url]
+           "--print-to-pdf=" + os.path.abspath(tmp), url]
     if not _is_windows():
         cmd.insert(3, "--no-sandbox")  # Windows에서는 필요 없고, 리눅스(루트 실행·시험 환경)에서만 쓴다
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=PDF_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return "PDF 실패: 브라우저가 %d초 안에 끝나지 않음" % PDF_TIMEOUT
-    except Exception as e:  # noqa: BLE001  명령 줄(임시 프로필 경로)은 보이지 않는다
-        return "PDF 실패: 브라우저를 실행하지 못함 (%s)" % (getattr(e, "strerror", None) or type(e).__name__)
-    else:
-        _wait_pdf(pdf_path)
-    finally:
-        shutil.rmtree(profile, ignore_errors=True)
-    if _pdf_ready(pdf_path):
-        return None
-    if os.path.exists(pdf_path):  # 0바이트 파일은 성공이 아니다
         try:
-            os.remove(pdf_path)
-        except OSError:
-            pass
-    return "PDF 실패 (브라우저가 파일을 만들지 않음)"
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=PDF_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return "PDF 실패: 브라우저가 %d초 안에 끝나지 않음" % PDF_TIMEOUT
+        except Exception as e:  # noqa: BLE001  명령 줄(임시 프로필 경로)은 보이지 않는다
+            return "PDF 실패: 브라우저를 실행하지 못함 (%s)" % (getattr(e, "strerror", None) or type(e).__name__)
+        else:
+            _wait_pdf(tmp)
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+        if not _pdf_ready(tmp):   # 0바이트·반쯤 쓴 파일은 성공이 아니다
+            return "PDF 실패 (브라우저가 파일을 만들지 않음)"
+        try:
+            os.replace(tmp, pdf_path)
+        except OSError as e:   # Windows 에서 PDF 뷰어가 열고 있으면 바꾸지 못한다 — 이전 PDF 는 그대로
+            return "PDF 실패: 이전 PDF를 바꾸지 못함 (PDF 파일을 닫고 다시 실행): %s" % e
+        return None
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 CEO_PAGES = {"주간": 2, "월간": 3}   # 대표 보고 쪽 수 상한 (사용자 2026-11-03)
@@ -225,15 +262,31 @@ def _evidence(a, kind, asof):
         return 2
     with open(src, encoding="utf-8") as f:
         mg = f.read()
+    # 2차 P4-1 (2026-11-15): 같은 기준일 보고를 다시 만들면 경영관리 HTML 은 마지막 판으로 바뀐다 — 대표에게 낸 판과 다를 수 있음을 알린다
+    notes = []
+    ceo_pdfs = sorted(pdfname.same_report(os.path.join(a.출력, "%s_%s_대표보고" % (asof.isoformat(), label))), key=pdfname._made_at)
+    if len(ceo_pdfs) > 1:
+        notes.append("이 기준일 %s 대표 보고를 %d번 만들었습니다 (%s) — 이 근거자료는 마지막으로 만든 판(보고 작성 %s)의 숫자입니다. "
+                     "대표에게 낸 보고의 작성 시각이 이와 다르면 숫자가 다를 수 있으니, 그 시각에 만든 경영관리 보고 PDF 에서 근거를 찾으세요"
+                     % (label, len(ceo_pdfs), ", ".join(dt.datetime.fromtimestamp(pdfname._made_at(p)).strftime("%m-%d %H:%M") for p in ceo_pdfs),
+                        evidence.made_at(mg) or "알 수 없음"))
+        _say("[확인] " + notes[0])
+    # 2차 P4-2 (2026-11-15): 대표 보고를 손으로 고친 판(_수정)이 쓰이면, 근거자료(고치기 전 계산)와 다른 곳을 알린다
+    from ceo_report import editmode
+    fixed = editmode.edits_for(os.path.join(a.출력, "%s_%s_대표보고.html" % (asof.isoformat(), label)))
+    if fixed:
+        shown = " / ".join("‘%s’ → ‘%s’" % (x[:40] or "(없음)", y[:40] or "(지움)") for x, y in fixed[:5])
+        notes.append("대표 보고를 손으로 고친 판(_수정)이 있습니다 — 고친 곳 %d곳%s: %s. 이 근거자료의 숫자는 고치기 전 계산 그대로입니다"
+                     % (len(fixed), " (앞 5곳)" if len(fixed) > 5 else "", shown))
+        _say("[확인] " + notes[-1])
     try:
-        doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label))
+        doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label), notes=notes)
     except ValueError as e:
         _say(str(e))
         return 2
     base = os.path.join(a.출력, "%s_%s_근거자료_%s" % (asof.isoformat(), label, "_".join(nums)))
     try:
-        with open(base + ".html", "w", encoding="utf-8") as f:
-            f.write(doc)
+        _write_page(base + ".html", doc)
     except OSError as e:
         _say(_write_help(a.출력, e))
         return 7
@@ -291,8 +344,7 @@ def _annual(a):
         base = os.path.join(a.출력, "%d_연간_%s" % (year, who))
         if mode == "ceo" and stop:
             try:
-                with open(base + ".html", "w", encoding="utf-8") as f:
-                    f.write(gate.stop_page("%d년 연간 대표보고" % year, stop))
+                _write_page(base + ".html", gate.stop_page("%d년 연간 대표보고" % year, stop))
             except OSError as e:
                 _say(_write_help(a.출력, e))
                 return 7
@@ -301,8 +353,7 @@ def _annual(a):
         if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
-            with open(base + ".html", "w", encoding="utf-8") as f:
-                f.write(page)
+            _write_page(base + ".html", page)
         except OSError as e:
             _say(_write_help(a.출력, e))
             return 7
@@ -348,6 +399,10 @@ def main(argv=None):
     ap.add_argument("--연도", default=None, help="연간: 보고할 해 (기본: 기준일의 해, 1~3월이면 지난해)")
     a = ap.parse_args(argv)
     if a.유형 == "연간":
+        if a.근거 is not None:   # 2차 P4-14 (2026-11-15): 예전엔 말없이 연간 보고 전체를 다시 만들었다
+            _say("연간 보고는 근거자료만 따로 뽑기를 지원하지 않습니다 — 근거는 연간 경영관리 보고에서 그 번호를 찾아 보세요 "
+                 "(근거만 뽑기는 주간·월간 보고에서 됩니다)")
+            return 2
         return _annual(a)
     kind = "weekly" if a.유형 in ("주간", "weekly") else "monthly"
     asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
@@ -457,16 +512,14 @@ def main(argv=None):
         base = os.path.join(a.출력, "%s_%s_%s" % (asof.isoformat(), label, who))
         if mode == "ceo" and stop:
             try:   # 같은 이름의 예전 보고가 최신처럼 남지 않게 '만들지 않음' 안내로 덮는다. PDF 는 만들지 않는다
-                with open(base + ".html", "w", encoding="utf-8") as f:
-                    f.write(gate.stop_page("%s %s" % (label, who), stop))
+                _write_page(base + ".html", gate.stop_page("%s %s" % (label, who), stop))
             except OSError as e:
                 _say(_write_help(a.출력, e))
                 return 7
             continue
         page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
         try:
-            with open(base + ".html", "w", encoding="utf-8") as f:
-                f.write(page)
+            _write_page(base + ".html", page)
         except OSError as e:
             _say(_write_help(a.출력, e))
             return 7
@@ -479,8 +532,7 @@ def main(argv=None):
                 # 출금 목록이 길어 글자를 줄여도 넘치면 '계산서 발행 기한' 표를 두어 줄로 줄여 다시 만든다 (2026-11-13 실제 21건에서 주간 4쪽)
                 R["_issue_compact"] = True
                 try:
-                    with open(base + ".html", "w", encoding="utf-8") as f:
-                        f.write(render(R, mode))
+                    _write_page(base + ".html", render(R, mode))
                     err = fit_pdf(browser, base + ".html", pdf, limit)
                 finally:
                     R.pop("_issue_compact", None)
@@ -489,6 +541,10 @@ def main(argv=None):
                 pdf_failed = True
             else:
                 made.append(pdf)
+                got = pdf_pages(pdf) if limit else None
+                if got and got > limit:   # 2차 P4-9 (2026-11-15): 글자를 줄여도 쪽 수가 넘치면 알린다 (예전엔 말없이 넘친 PDF)
+                    _say("[확인] 대표 보고 PDF가 %d쪽입니다 (정한 쪽 수 %d쪽 — 글자를 줄여도 넘침): %s — 출금 목록이 길면 '합칠 거래처'로 줄여 보세요"
+                         % (got, limit, os.path.basename(pdf)))
                 for gone in pdfname.prune(base):
                     _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and a.팀장용 == "만듦" and stop:
@@ -497,8 +553,7 @@ def main(argv=None):
         try:
             os.makedirs(folder, exist_ok=True)
             for team in team_names(data):
-                with open(os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat(), team)), "w", encoding="utf-8") as f:
-                    f.write(gate.stop_page("월간 팀장 보고 · %s" % team, stop))
+                _write_page(os.path.join(folder, "%s_월간_팀장_%s.html" % (asof.isoformat(), team)), gate.stop_page("월간 팀장 보고 · %s" % team, stop))
         except OSError as e:
             _say(_write_help(folder, e))
     elif kind == "monthly" and a.팀장용 == "만듦":
@@ -509,6 +564,10 @@ def main(argv=None):
         except OSError as e:
             _say(_write_help(os.path.join(a.출력, "팀장용"), e))
             team_pages = []
+            R.setdefault("_team_failed", []).append("팀장용 폴더")
+        if R.get("_team_failed"):
+            _say("팀장 보고를 쓰지 못한 팀: %s — 그 팀 문서는 예전 것이 남아 있을 수 있습니다. 출력\\팀장용 파일이 열려 있으면 닫고 다시 만드세요"
+                 % ", ".join(R["_team_failed"]))
         for page_path in team_pages:
             made.append(page_path)
             if browser:
@@ -582,6 +641,8 @@ def main(argv=None):
             _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다.")
         else:
             _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
+    if R.get("_team_failed"):
+        return 7   # 팀장 보고 일부를 못 씀 (P4-5): 대표·경영관리는 만들었지만 '완료'로 끝내지 않는다
     return 0
 
 

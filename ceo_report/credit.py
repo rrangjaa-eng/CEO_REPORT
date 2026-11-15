@@ -17,6 +17,7 @@ import os
 import re
 
 from .util import esc
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "계정잔액.csv"
 KEYS = ["연월", "계정코드", "계정", "차변", "대변"]
@@ -142,7 +143,7 @@ def build_table(books):
 def _read(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f))
 
 
@@ -153,6 +154,8 @@ def read_inputs(input_dir):
 
 def save_inputs(input_dir, values):
     """입력/신용평가.csv 를 values(dict) 로 바꾼다 (빈 값은 지움). INPUT_ITEMS 순서, 모르는 항목은 뒤에 그대로."""
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, INPUT_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_inputs(input_dir)
     cur.update(dict((k, (v or "").strip()) for k, v in values.items()))
     order = [k for k, _ in INPUT_ITEMS] + sorted(k for k in cur if k not in dict(INPUT_ITEMS))
@@ -487,8 +490,12 @@ def _fin_values(L, y, mon, cf_op=None, collect_days=None, inp=None, maturity_shi
         E["loans"] = LD
         if maturity_shift and LD:
             # 단기차입금(260)·유동성장기부채(264)는 이미 유동부채라 장기 대출(291·293)만 옮긴다 (코덱스 검토 2026-11-14)
-            long_v = set(x[2] for x in L.get("loans", []) if str(x[1]).startswith(("291", "293")))
-            mv = sum(cur for v, bal, m_, k, cur, st in LD if v in long_v and not v.startswith(("가수", "대표")))
+            long_bal = collections.defaultdict(int)   # 1차 C4 (2026-11-15): 같은 은행에 단기·장기가 함께 있으면 장기 몫까지만 옮긴다
+            for d_, code, v, *_rest in L.get("loans", []):
+                if d_ is not None and d_ <= asof and str(code).startswith(("291", "293")):
+                    long_bal[v] += _rest[-1] - _rest[-2]   # 대변 − 차변
+            mv = sum(min(cur, max(long_bal.get(v, 0), 0)) for v, bal, m_, k, cur, st in LD
+                     if long_bal.get(v, 0) > 0 and not v.startswith(("가수", "대표")))
             if mv:
                 cl += mv   # 결산일부터 1년 안에 갚을 장기 대출 → 결산 재무상태표에서 유동부채(유동성장기부채)
                 E["moved"] = mv

@@ -45,11 +45,12 @@ def next_friday(asof):
 
 
 def transfer_range(payday, asof=None):
-    """이체 파일 기간: 출금일이 끝인 한 주 (출금일-6일 ~ 출금일). 기준일이 그 안이면 기준일 다음 날부터 (이미 지난 날은 뺌)."""
-    start = payday - dt.timedelta(days=6)
-    if asof is not None and asof >= start:
-        start = min(asof + dt.timedelta(days=1), payday)
-    return start, payday
+    """이체 파일 기간 = 주간 보고의 출금 목록 기간: 기준일 다음 날 ~ 출금일.
+    2차 P5-7 (2026-11-15): 출금일을 한 주보다 멀리 잡으면 보고 목록은 기준일 다음 날부터인데 이체 파일은 출금일 앞 7일만이라
+    그 사이 지급이 이체 파일에서 빠졌다. 기준일을 모르면 출금일이 끝인 한 주 (출금일-6일 ~ 출금일)."""
+    if asof is None:
+        return payday - dt.timedelta(days=6), payday
+    return min(asof + dt.timedelta(days=1), payday), payday
 
 
 def money(text):
@@ -64,11 +65,26 @@ def money(text):
 
 
 # ───────────── 창 입력값 기억 ─────────────
+def _clean(data):
+    """2차 P5-15 (2026-11-15): 값 모양이 틀린 칸(날짜 칸에 숫자, 기록 칸에 글자 등)은 버린다 — 예전엔 창이 오류로 멈췄다."""
+    out = dict(data)
+    for k in ("payday", "pick"):
+        if k in out and not isinstance(out[k], str):
+            del out[k]
+    if "auto" in out and not isinstance(out["auto"], bool):
+        del out["auto"]
+    if "runs" in out:
+        runs = out["runs"] if isinstance(out["runs"], dict) else {}
+        out["runs"] = {t: r for t, r in runs.items()
+                       if isinstance(r, dict) and isinstance(r.get("at"), str) and isinstance(r.get("ok"), bool)}
+    return out
+
+
 def load(input_dir):
     try:
         with open(os.path.join(input_dir, STATE_FILE), encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        return _clean(data) if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -186,14 +202,70 @@ def sources(paths):
     ]
 
 
+_READ_OK = {}   # (경로, 바뀐 시각, 크기) -> 읽히는가 (창이 자주 다시 그려도 같은 파일은 한 번만 읽음)
+
+
+def _readable(path, kind):
+    """2차 P1-14 (2026-11-15): 받은 시각이 최신이어도 파일이 깨졌으면 초록으로 두지 않는다. kind: 'json'(위하고 자동수집)·'snapshot'."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    key = (path, st.st_mtime, st.st_size)
+    if key not in _READ_OK:
+        ok = True
+        try:
+            if kind == "snapshot":
+                from . import snapshot
+                snapshot.read_snapshot(path)
+            elif path.lower().endswith(".json"):
+                with open(path, encoding="utf-8-sig") as f:
+                    ok = isinstance(json.load(f), dict)
+        except Exception:
+            ok = False
+        if len(_READ_OK) > 50:
+            _READ_OK.clear()
+        _READ_OK[key] = ok
+    return _READ_OK[key]
+
+
+def _broken_newest(paths, name):
+    """분개장·인트라넷 중 가장 최근 파일이 읽히지 않으면 True."""
+    from . import snapshot, wehago
+    try:
+        if name == "분개장":
+            wf = [p for p in _files(paths.wehago) if wehago._kind_of(os.path.basename(p))[0] == "분개장"]
+            newest = max(wf, key=lambda p: _mtime(p) or dt.datetime.min) if wf else None
+            return bool(newest) and not _readable(newest, "json")
+        if name.startswith("인트라넷"):
+            newest = snapshot.latest_snapshot(paths.collect)
+            return bool(newest) and not _readable(newest, "snapshot")
+    except Exception:
+        return False
+    return False
+
+
 def freshness(paths, asof):
     """[{name, when, text, level, note}] — 창 오른쪽 '자료가 얼마나 최신인가' 표."""
-    return [{"name": n, "when": w, "text": when_text(w, asof), "level": level(w, asof), "note": note}
-            for n, w, note in sources(paths)]
+    out = []
+    for n, w, note in sources(paths):
+        row = {"name": n, "when": w, "text": when_text(w, asof), "level": level(w, asof), "note": note}
+        if w is not None and _broken_newest(paths, n):
+            row["text"] += " · 파일 깨짐(읽지 못함)"
+            row["level"] = "r"
+            row["note"] = "가장 최근 파일을 읽지 못합니다 — 다시 받으세요"
+        out.append(row)
+    return out
 
 
 def convert_time(input_dir):
     from . import checklist
+    try:   # 2차 P5-12 (2026-11-15): 초까지 적은 시작 시각이 있으면 그것 — 변환 도중 들어온 자료를 다음 자동 실행이 놓치지 않게
+        with open(os.path.join(input_dir, checklist.CONVERT_FILE), encoding="utf-8") as f:
+            started = (json.load(f) or {}).get("_시작") or ""
+        return dt.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     _, when = checklist._load_convert_items(input_dir)
     exact = _mtime(os.path.join(input_dir, checklist.CONVERT_FILE))
     try:
@@ -212,6 +284,19 @@ def _is_stop_page(path):
             return "— 만들지 않음</title>" in f.read(4000)
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def _edited_or(path, stem, ext):
+    """2차 P4-6 (2026-11-15): 수정 모드로 저장한 '_수정' 보고가 원래 것보다 새것이면 그것 — 예전엔 수정본을 저장한 뒤
+    '대표 보고 열기'를 누르면 원본이 열렸다."""
+    from .editmode import SUFFIX
+    ed = stem + SUFFIX + ext
+    try:
+        if os.path.isfile(ed) and os.path.getmtime(ed) >= os.path.getmtime(path):
+            return ed
+    except OSError:
+        pass
+    return path
 
 
 def latest_reports(output_dir):
@@ -234,21 +319,45 @@ def latest_reports(output_dir):
             # PDF 는 이름에 만든 시각이 붙는다 (사용자 2026-11-12): 같은 보고 중 가장 새로 만든 것
             p = pdfname.newest("%s_%s" % (base, who)) if ext == ".pdf" else "%s_%s%s" % (base, who, ext)
             if p and os.path.isfile(p):
-                return p
+                return _edited_or(p, "%s_%s" % (base, who), ext)
         return None
     # 경영관리용은 HTML 을 먼저: 브라우저에서 영역별로 나눠 보고 골라 인쇄 (사용자 2026-11-11). 전체 PDF 는 같은 폴더에 그대로
     return {"대표": best("대표보고"), "경영관리": best("경영관리보고", (".html", ".pdf")), "at": at, "kind": kind,
             "name": os.path.basename(base)}
 
 
-def steps(paths):
+OTHER_WEHAGO = "위하고 결산·인사·카드 등 자료"
+_DATA_EXT = (".json", ".xls", ".xlsx", ".csv")
+
+
+def other_wehago_time(paths):
+    """분개장·자금계획서 말고 수집\위하고 에 받은 자료(시산표·재무상태표·급여·원천징수·카드·차입금 등) 중 가장 새로 받은 때.
+    2차 P3-16 (2026-11-15): 이것들도 변환에 쓰이는데 '다시 변환' 판단에서 빠져, 새로 받아도 다시 변환하라는 말이 없었다."""
+    from . import fundplan, wehago
+    out = []
+    for p in _files(paths.wehago):
+        n = os.path.basename(p)
+        if not n.lower().endswith(_DATA_EXT):
+            continue
+        if wehago._kind_of(n)[0] == "분개장" or fundplan.is_fundplan_name(p) or fundplan.is_auto_plan_name(p):
+            continue
+        out.append(p)
+    return _newest(out)
+
+
+PENDING = "다운로드 폴더에 받아 둔 위하고 자료"
+
+
+def steps(paths, dirs=None):
     """세 단계 상태. -> {'collect': 시각, 'convert': 시각, 'new_since': 변환 뒤 새로 받은 자료 이름들, 'report': latest_reports,
-    'now': 지금 할 차례 단계 번호 (1~3)}."""
-    src = sources(paths)
-    collected = [w for n, w, _ in src[:4] if isinstance(w, dt.datetime)]
+    'now': 지금 할 차례 단계 번호 (1~3)}. dirs: 크롬 다운로드 폴더 (시험용, 없으면 이 PC 크롬에서 찾음)."""
+    from . import app as _app   # 2차 P1-11: 다운로드 폴더에 받아만 둔 자동수집 파일도 (변환 때 가져온다)
+    pend = [w for _, w in _app.pending_downloads(dirs)]
+    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
+    collected = [w for n, w, _ in src if isinstance(w, dt.datetime)]
     last_collect = max(collected) if collected else None
     conv = convert_time(paths.input)
-    new_since = [n for n, w, _ in src[:4] if isinstance(w, dt.datetime) and (conv is None or w > conv)]
+    new_since = [n for n, w, _ in src if isinstance(w, dt.datetime) and (conv is None or w > conv)]
     rep = latest_reports(paths.output)
     if last_collect is None:
         now = 1
@@ -326,12 +435,34 @@ def evidence_choices(output_dir, kind, asof=None):
 
 
 # ───────────── 종료 코드를 말로 ─────────────
+def blocked_reports(files):
+    """만든 파일 중 자료 확인(게이트)에 막혀 '만들지 않음' 안내만 쓴 대표·팀장 보고 HTML (gate.stop_page)."""
+    return [f for f in files or [] if f.lower().endswith(".html") and _is_stop_page(f)]
+
+
+def outcome(task, rc, files):
+    """-> (완료인가, 한 줄). 2차 C11·C12·P5-23, 1차 E10 (2026-11-15): 종료 코드가 0이어도 대표 보고가 자료 확인에서 막혔거나
+    PDF가 하나도 없으면 'PDF를 열었습니다'·'자동 완료, 다시 만들었습니다' 대신 그 사실을 말한다."""
+    ok, line = rc_message(task, rc)
+    if rc != 0 or task not in ("주간", "월간", "연간", "예산", "자동"):
+        return ok, line
+    stops = blocked_reports(files)
+    pdfs = [f for f in files or [] if f.lower().endswith(".pdf")
+            and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
+    if stops:
+        return False, ("%s 끝 — 자료 확인에서 막혀 대표 보고는 만들지 않았습니다 (%d개). 연 안내 화면의 까닭을 확인하세요"
+                       % (task, len(stops)))
+    if not pdfs:
+        return False, "%s 끝 — 대표 보고 PDF를 찾지 못했습니다. 아래 글을 확인하세요" % task
+    return ok, line
+
+
 def rc_message(task, rc):
     """-> (완료인가, 한 줄). 진행 글 맨 위에 크게 보인다."""
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
                "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다",
-               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 보고부터 '예산 대비'가 붙습니다",
+               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
                "자동": "새 자료로 지금 현황·주간·월간 보고를 다시 만들었습니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
     if rc == 2:

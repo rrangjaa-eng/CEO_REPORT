@@ -51,8 +51,9 @@ def _read(path):
     return read_xls(path)
 
 
-def parse_rows(rows, name=""):
-    """엑셀 행 목록 -> (방향 '매출'/'매입'/None, [계산서 dict]). 머리글 줄은 '승인번호'·'합계금액'이 있는 첫 줄."""
+def parse_rows(rows, name="", info=None):
+    """엑셀 행 목록 -> (방향 '매출'/'매입'/None, [계산서 dict]). 머리글 줄은 '승인번호'·'합계금액'이 있는 첫 줄.
+    info(dict)를 주면 info['bad'] = 날짜·합계금액을 읽지 못해 뺀 줄 수 (2차 P1-19: 예전엔 말없이 버렸음 — 빈 줄·합계 줄은 세지 않음)."""
     head_i = None
     for i, r in enumerate(rows[:40]):
         cells = [_cell(c) for c in r]
@@ -70,11 +71,14 @@ def parse_rows(rows, name=""):
     names = [i for i, h in enumerate(head) if h == "상호"]
     sup_reg, buy_reg = (regs + [None, None])[:2]
     sup_name, buy_name = (names + [None, None])[:2]
-    out = []
+    out, bad = [], 0
     for r in rows[head_i + 1:]:
         get = lambda i: r[i] if i is not None and i < len(r) else ""
         day, total = _day(get(col["작성일자"])), _num(get(col["합계금액"]))
         if day is None or total is None:
+            cells = [_cell(c) for c in r]
+            if any(cells) and not any(re.sub(r"\s", "", c) in ("합계", "소계", "총계", "총합계") for c in cells):
+                bad += 1
             continue
         out.append({"date": day, "no": _cell(get(col["승인번호"])), "total": total, "supply": _num(get(col["공급가액"])) or 0,
                     "vat": _num(get(col["세액"])) or 0, "sup_reg": _cell(get(sup_reg)), "buy_reg": _cell(get(buy_reg)),
@@ -90,6 +94,8 @@ def parse_rows(rows, name=""):
     for x in out:
         x["vendor"] = x["buy_name"] if side == "매출" else x["sup_name"]
         x["vendor_norm"] = norm_vendor(x["vendor"])
+    if info is not None:
+        info["bad"] = bad
     return side, out
 
 
@@ -102,18 +108,40 @@ def load(collect_dir):
     except OSError:
         return got, notes
     for n in names:
+        info = {}
         try:
-            side, rows = parse_rows(_read(os.path.join(folder, n)), n)
+            side, rows = parse_rows(_read(os.path.join(folder, n)), n, info)
         except (XlsError, WehagoError, ValueError, OSError) as e:
             notes.append("홈택스 %s 읽지 못함: %s" % (n, e if isinstance(e, ValueError) else type(e).__name__))
             continue
         if side is None:
             notes.append("홈택스 %s: 매출·매입을 알 수 없음 — 파일 이름에 '매출' 또는 '매입'을 넣어 주세요" % n)
             continue
-        new = [r for r in rows if r["no"] not in seen]
-        seen.update(r["no"] for r in new)
+        # 2차 P1-20: 같은 파일 안의 같은 승인번호도 한 번만 · 승인번호가 빈 계산서는 서로 다른 것으로 둔다 (예전엔 둘째부터 빠졌음)
+        #   빈 승인번호는 (날짜·금액·두 사업자번호)로 다른 파일과만 맞춰 본다 (겹치게 받은 파일에서 두 번 세지 않게)
+        new, dup, blank = [], 0, set()
+        for r in rows:
+            if r["no"]:
+                if r["no"] in seen:
+                    dup += 1
+                    continue
+                seen.add(r["no"])
+            else:
+                k = ("", r["date"], r["total"], r["sup_reg"], r["buy_reg"])
+                if k in seen:
+                    dup += 1
+                    continue
+                blank.add(k)
+            new.append(r)
+        seen.update(blank)
         got[side].extend(new)
-        notes.append("홈택스 %s: %s %d건 %s원" % (n, side, len(new), "{:,}".format(sum(r["total"] for r in new))))
+        extra = []
+        if dup:
+            extra.append("같은 승인번호 %d건은 한 번만" % dup)
+        if info.get("bad"):
+            extra.append("날짜·합계금액을 읽지 못한 줄 %d건 뺌 — 엑셀에서 확인하세요" % info["bad"])
+        notes.append("홈택스 %s: %s %d건 %s원%s" % (n, side, len(new), "{:,}".format(sum(r["total"] for r in new)),
+                                                 (" (%s)" % " · ".join(extra)) if extra else ""))
     return got, notes
 
 

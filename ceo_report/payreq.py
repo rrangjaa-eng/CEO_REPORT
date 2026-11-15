@@ -22,8 +22,7 @@ _PID = re.compile(r"(?<![0-9])([0-9]{5})(?![0-9])")
 # 목록의 승인 칸 글자는 상태가 아니라 버튼 글자다 (2026-11-05 실제 화면 100건 확인, 관리팀 계정으로 볼 때):
 #   관리팀승인 '승인'(승인 버튼) = 관리팀 아직 안 함 · '반려'(반려 버튼) = 관리팀 승인 끝, 사장님 전 · '수락완료' = 모두 끝
 #   사장님승인 '미승인' 또는 '수락완료'
-ADMIN_DONE_WAITING = ("반려",)
-CEO_DONE = ("수락완료", "승인")
+from .screen_values import ADMIN_DONE_WAITING, CEO_APPROVED as CEO_DONE  # noqa: E402  글자 목록은 한 곳 (안전-07)
 
 
 def wanted(p):
@@ -124,23 +123,31 @@ def write(folder, rows):
     return path
 
 
-def read(folder):
-    """-> [{'key','project','vendor','amount','note'}]. 없거나 머리글이 다르면 []."""
+def read_checked(folder):
+    """-> (줄 목록, None) 또는 (None, 못 읽은 까닭). 파일이 없으면 ([], None).
+
+    2026-11-15 P5-22: 예전에는 못 읽은 파일(엑셀 저장 CP949·머리글 다름)도 '0건'으로 돌려줘, 변환이 그 0건을 입력 폴더에 써서
+    있던 상세를 지웠다. 이제 UTF-8·CP949 를 모두 읽고, 그래도 못 읽으면 None 과 까닭을 돌려준다.
+    """
     path = os.path.join(folder, FILE)
     if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
-    except (OSError, UnicodeDecodeError, csv.Error):
-        return []
+        return [], None
+    from .util import Issues, read_csv
+    iss, info = Issues(), {}
+    rows, ok = read_csv(path, COLUMNS, iss, info)
+    if not ok or info.get("missing"):
+        return None, "; ".join(m for _, _, m in iss.items) or "읽지 못함"
     out = []
     for r in rows:
-        if any(c not in r for c in COLUMNS):
-            return []
         out.append({"key": (r["키"] or "").strip(), "project": pid_of(r["프로젝트"]), "vendor": (r["업체명"] or "").strip(),
                     "amount": _amount(r["금액"]), "note": (r["세부사항"] or "").strip()})
-    return out
+    return out, None
+
+
+def read(folder):
+    """-> [{'key','project','vendor','amount','note'}]. 없거나 못 읽으면 [] (까닭이 필요하면 read_checked)."""
+    rows, _ = read_checked(folder)
+    return rows or []
 
 
 # ---------------------------------------------------------------------------
@@ -173,13 +180,17 @@ def attach(events, reqs):
         cands = [i for i, r in enumerate(pool) if i not in used and pid_of(r["project"]) == pid]
         if not cands:
             continue
-        pick = [i for i in cands if pool[i]["amount"] == e["amount"]]
+        # 2차 P5-21 (2026-11-15): 두 이름이 다 있으면 같은 거래처여야 붙인다 — 같은 프로젝트·같은 금액이라는 것만으로
+        # 음향 요청 상세가 조명 지급에 붙었다. 틀린 상세보다 빈 상세가 낫다 (이름을 모르는 쪽이 있으면 예전처럼 금액으로).
+        named = bool(_vn(e.get("desc")))
+        fits = [i for i in cands if not (named and _vn(pool[i]["vendor"])) or _same_vendor(pool[i]["vendor"], e.get("desc"))]
+        pick = [i for i in fits if pool[i]["amount"] == e["amount"]]
         if len(pick) > 1:
             pick = [i for i in pick if _same_vendor(pool[i]["vendor"], e.get("desc"))]
         if len(pick) != 1:
             pick = []
             same_v = [i for i in cands if _same_vendor(pool[i]["vendor"], e.get("desc"))]
-            for group in (same_v, cands):
+            for group in ((same_v,) if named else (same_v, cands)):
                 if len(group) > 1 and sum(pool[i]["amount"] for i in group) == e["amount"]:
                     pick = group
                     break

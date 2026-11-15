@@ -11,6 +11,7 @@ import re
 import tempfile
 
 from . import convert, wehago
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 
 def _won(v):
@@ -56,7 +57,8 @@ def _journal_checks(books, out):
         out.append("- %d년 말 계정 첫자리별 차변−대변 합: %s (합 %s)" % (y, dict(sorted(cls.items())), _won(sum(cls.values()))))
     sorts = collections.Counter((ln.get("sort") or "").strip() for ln in J)
     out.append("- 전표 유형: %s" % dict(sorts.most_common()))
-    return start
+    # 1차 D18 (2026-11-15): 차변≠대변을 찾아도 점검이 '성공(0)'으로 끝났다 → 맞지 않으면 3 (확인할 것 화면을 엶)
+    return start and not bad and total == 0
 
 
 def _convert_checks(res, temp_input, out):
@@ -98,7 +100,7 @@ def _cross_checks(temp_input, out):
         p = os.path.join(temp_input, name)
         if not os.path.exists(p):
             return None
-        with open(p, encoding="utf-8-sig", newline="") as f:
+        with _open_text(p) as f:
             return list(csv.DictReader(f))
     pl, ev = rows("손익.csv"), rows("증빙월별.csv")
     if pl is not None and ev is not None:
@@ -142,6 +144,7 @@ def _report_checks(tmp, temp_input, asof, out):
     out.append("## 보고서 만들기 (임시 폴더)")
     P = app.Paths(tmp)
     month_end = _month_end(asof)
+    ok = True
     for task, day in (("주간", asof), ("월간", month_end)):
         lines = []
         try:
@@ -149,12 +152,15 @@ def _report_checks(tmp, temp_input, asof, out):
         except Exception as e:   # 점검은 멈추지 않는다
             rc, files = "예외 %s" % type(e).__name__, []
         out.append("- %s %s: 종료 코드 %s, 파일 %d개" % (task, day, rc, len(files)))
+        if rc != 0:   # 2차 P5-25 (2026-11-15): 보고를 못 만들어도 점검 종료 코드는 0이었다
+            ok = False
         for ln in lines:
             if "보고서 7번" in ln:
                 continue   # 점검 보고서는 임시 폴더라 남지 않는다: 아래에 내용을 바로 적는다 (사용자 2026-11-05 '7번이 어딨는데')
             if "확인 필요" in ln or "오류" in ln:
                 out.append("  · " + ln[:200])
     out += issue_summary(temp_input, month_end)
+    return ok
 
 
 def issue_summary(temp_input, day):
@@ -185,7 +191,7 @@ def _num_csv(path, col, where=None):
     from .util import num
     import csv
     total = 0
-    with open(path, encoding="utf-8-sig") as f:
+    with _open_text(path) as f:
         for r in csv.DictReader(f):
             if where is None or where(r):
                 total += num(r.get(col)) or 0
@@ -206,7 +212,7 @@ def key_numbers(temp_input, asof, res):
 
     def bank():
         import csv
-        with open(p("장부잔액.csv"), encoding="utf-8-sig") as f:
+        with _open_text(p("장부잔액.csv")) as f:
             rows = list(csv.DictReader(f))
         last = max(r["기준일"] for r in rows)
         return sum(int(r["잔액"] or 0) for r in rows if r["기준일"] == last)
@@ -280,14 +286,75 @@ def compare_keys(app_dir, keys, out):
         out.append("- 핵심 숫자를 저장하지 못함 (%s)" % type(e).__name__)
 
 
+def _csv_rows(path):
+    """CSV -> 줄 묶음(시각 칸·'…시각' 줄은 뺌). 없거나 못 읽으면 None."""
+    import csv
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    if not rows:
+        return collections.Counter()
+    keep = [i for i, h in enumerate(rows[0]) if "시각" not in h]
+    out = collections.Counter()
+    for r in rows:
+        if r and "시각" in r[0]:
+            continue
+        out[tuple(r[i] if i < len(r) else "" for i in keep)] += 1
+    return out
+
+
+def _input_drift(input_dir, temp_input, res, out):
+    """2차 P3-20 (2026-11-15): 보고가 실제로 읽는 입력 파일 ↔ 지금 자료로 새로 변환한 사본을 직접 비교한다.
+    예전엔 사본만 점검해서, 입력 폴더의 파일이 손으로 고쳐졌거나 깨졌어도 점검은 문제 없음으로 끝났다. -> 같으면 True."""
+    out.append("## 보고가 쓰는 입력 파일 ↔ 지금 자료로 새로 변환한 결과")
+    diff = []
+    for t in getattr(res, "tables", None) or []:
+        if not getattr(t, "written", False):
+            continue
+        a, b = _csv_rows(os.path.join(input_dir, t.name)), _csv_rows(os.path.join(temp_input, t.name))
+        if a == b:
+            continue
+        n = sum(((a or collections.Counter()) - (b or collections.Counter())).values()) + \
+            sum(((b or collections.Counter()) - (a or collections.Counter())).values())
+        diff.append("%s — %s" % (t.name, "입력 폴더에 없음" if a is None else "다른 줄 %d개" % n))
+    if not diff:
+        out.append("- 같음 (변환 뒤 바뀌거나 손댄 입력 파일 없음)")
+        return True
+    for d in diff:
+        out.append("- 확인 필요: " + d)
+    out.append("- 확인 필요: 보고는 입력 폴더의 파일을 씁니다. 위하고·인트라넷 자료가 새로 들어왔으면 '자료 변환'을 다시 하고, "
+               "손으로 고친 파일이면 고친 까닭을 확인하세요 (지난 변환과 기준일이 다르면 그 때문에 다를 수도 있음)")
+    return False
+
+
+WORK_DIR = "_점검임시"
+
+
+def _work_dir(app_dir):
+    """2차 C9·P2-17·P3-7·P5-26·P6-4 (2026-11-15): 입력 사본(급여·계좌가 든 파일 포함)을 회사 PC 의 임시 폴더가 아니라 프로그램 폴더
+    (외장하드) 안에 만든다 — 중간에 끊겨도 회사 PC 에 남지 않고, 다음 점검 때 남은 것을 지운다. -> 이번 실행 폴더."""
+    work = os.path.join(app_dir, WORK_DIR)
+    try:
+        if os.path.isdir(work):
+            for n in os.listdir(work):   # 지난번에 끊겨 남은 사본
+                shutil.rmtree(os.path.join(work, n), True)
+        os.makedirs(work, exist_ok=True)
+        return tempfile.mkdtemp(prefix="점검_", dir=work)
+    except OSError:
+        return tempfile.mkdtemp(prefix="ceo_report_check_")
+
+
 def run(app_dir, out_path, asof=None):
+    from . import credstore, transfer
     asof = asof or dt.date.today()
     now = dt.datetime.now()
     out = ["# 자료 정합성 점검 %s (기준일 %s)" % (now.strftime("%Y-%m-%d %H:%M"), asof)]
     input_dir = os.path.join(app_dir, "입력")
     collect = os.path.join(app_dir, "수집")
     wehago_dir = os.path.join(collect, "위하고")
-    tmp = tempfile.mkdtemp()
+    tmp = _work_dir(app_dir)
     rc = 0
     try:
         books = wehago.load_books(wehago_dir, asof, None)
@@ -299,22 +366,30 @@ def run(app_dir, out_path, asof=None):
             rc = 3   # 장부를 못 읽으면 점검 실패로 남긴다 (2026-11-14 코덱스 검토: 성공으로 기록됐음)
         temp_input = os.path.join(tmp, "입력")
         if os.path.isdir(input_dir):
-            shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns("이전"))
+            # 점검에 쓰지 않는 계정·계좌 파일은 베끼지 않는다
+            shutil.copytree(input_dir, temp_input, ignore=shutil.ignore_patterns(
+                "이전", credstore.CRED_FILE, transfer.ACCOUNT_FILE, transfer.LOG_FILE, "*.tmp", "~$*"))
         os.makedirs(os.path.join(tmp, "출력"), exist_ok=True)
-        res = convert.run(temp_input, collect, wehago_dir, asof, now)
+        res = convert.run(temp_input, collect, wehago_dir, asof, now, ran_at=dt.datetime.now())
         if getattr(res, "code", 0):
             rc = rc or 3
         _convert_checks(res, temp_input, out)
+        _input_drift(input_dir, temp_input, res, out)
         _cross_checks(temp_input, out)
         if os.path.isdir(os.path.join(tmp, "수집")) is False:
             os.makedirs(os.path.join(tmp, "수집"), exist_ok=True)
-        _report_checks(tmp, temp_input, asof, out)
+        if not _report_checks(tmp, temp_input, asof, out):
+            rc = rc or 3
         compare_keys(app_dir, key_numbers(temp_input, asof, res), out)
     except Exception as e:
         out.append("점검 오류 (%s): %s" % (type(e).__name__, str(e)[:300]))
         rc = 8
     finally:
         shutil.rmtree(tmp, True)
+        try:
+            os.rmdir(os.path.join(app_dir, WORK_DIR))   # 비었으면 치운다
+        except OSError:
+            pass
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\nrc=%s\n" % rc)
     return rc

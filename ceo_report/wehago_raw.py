@@ -59,9 +59,41 @@ def birth_from_social(no):
 
 YEARLESS = ("인사_사원등록",)
 
+# P1-4 (2026-11-15): 화면마다 프로그램이 읽는 자료 응답 (2026-11-13 실제 원본·읽는 코드 기준). 확장이 [조회] 뒤 조건 응답
+# (미승인 전표 확인·init 등)이나 오류 응답만 받아 저장한 파일은 이 응답이 없다 → 그 파일은 쓰지 않고 그 전에 받은 파일을 쓴다.
+NEED = {"SACL0105": r"/sacl0105/main$", "SACL0108": r"/sacl0108/plusforw$", "SAAS0107": r"/allfixlist$",
+        "SWPM0108": r"/swpm0108/condition$", "SWSA0105": r"/swsa0105/total$", "SWBU0103": r"/swbu0103/tab1$",
+        "SWET0107": r"/swet0107/other/tab01$", "SWYM0107": r"/emp/income$", "SWYM0102": r"/swym0102$",
+        "SACL0104": r"/sacl0104/account$", "SAFM0109": r"/safm0109$", "SAFM0107": r"/safm0107/balance/statement$",
+        "SACL0106": r"/sacl0106/0", "SAAC0103": r"/saac0103/jungsang$", "SAFM0108": r"/safm0108/\d+$",
+        "SABM0109": r"/sabm0109/bsflist", "SAAC0110": r"/collectingdata/", "SAVF0119": r"/savf0119/top$",
+        "SWTA0101": r"/swta0101/sglist$"}
 
-def files(wehago_dir):
-    """-> {(종류_화면, 연도): (수집시각, 경로, dict)} 화면·연도마다 가장 늦게 받은 것."""
+
+def is_error(data):
+    """위하고 오류 응답 모양: status 400 이상, 또는 오류 글(error)과 status 를 함께 둔 것 ('/main' 의 error_str 칸은 정상에도 있음)."""
+    if not isinstance(data, dict):
+        return False
+    st = data.get("status")
+    if isinstance(st, int) and not isinstance(st, bool) and st >= 400:
+        return True
+    return isinstance(data.get("error"), str) and bool(data.get("error")) and "status" in data
+
+
+def has_data(d):
+    """원본 파일에 그 화면의 자료 응답(오류 아님)이 있는가. 모르는 화면은 오류 아닌 응답이 하나라도 있으면 됨."""
+    code = str(d.get("화면코드") or "").upper()
+    need = NEED.get(code)
+    for r in d.get("응답") or []:
+        if is_error(r.get("data")):
+            continue
+        if need is None or re.search(need, str(r.get("path") or "").rstrip("/").lower()):
+            return True
+    return False
+
+
+def files(wehago_dir, skipped=None):
+    """-> {(종류_화면, 연도): (수집시각, 경로, dict)} 화면·연도마다 가장 늦게 받은 것 (자료 응답이 없는 파일은 빼고 skipped 에 이름)."""
     out = {}
     try:
         names = os.listdir(wehago_dir)
@@ -75,8 +107,14 @@ def files(wehago_dir):
             with open(path, encoding="utf-8") as f:
                 d = json.load(f)
         except (OSError, ValueError):
+            if skipped is not None:   # 2차 P2-6: 깨진 파일도 이름을 남겨 '그 전 것을 씀'을 알린다
+                skipped.append(n)
             continue
         if not isinstance(d, dict) or "응답" not in d:
+            continue
+        if not has_data(d):   # P1-4: 조건·오류 응답만 있는 파일
+            if skipped is not None:
+                skipped.append(n)
             continue
         kind = (d.get("종류") or "").replace("원본", "")
         screen = "%s_%s" % (kind, d.get("화면") or "")
@@ -330,14 +368,31 @@ def build_tables(wehago_dir):
     """자료 변환에 붙는 표 (원본이 없으면 '만들지 않음' — 기존 파일 그대로)."""
     from .convert import Table
     from .payroll import EMP_FILE, PAY_FILE, YE_FILE
-    F = files(wehago_dir)
+    skipped = []
+    F = files(wehago_dir, skipped)
     out = []
     for name, cols, rows, what in ((EMP_FILE, EMP_COLUMNS, employees(F), "인사_사원등록"),
                                    (PAY_FILE, PAY_COLUMNS, pay_rows(F), "인사_월별급상여수당지급현황"),
                                    (YE_FILE, YE_COLUMNS, yearend_rows(F), "연말정산_연말정산현황"),
                                    (ASSET_FILE, ASSET_COLUMNS, asset_rows(F), "결산_고정자산관리대장")):
+        # 2차 P2-6·P1-13 (2026-11-15): 깨진·자료 없는 새 원본, 읽었는데 0줄, 원본 없음을 구별해 알린다 (예전엔 모두 '원본 없음'이거나
+        # 말없이 그 전 날 원본을 썼다)
+        used = [v[1] for (sc, _), v in F.items() if sc == what]
+        used_day = max((os.path.basename(u)[:6] for u in used), default="")
+        bad = sorted(n for n in skipped if what in n and n[:6] > used_day)
+        newer = ("가장 최근 받은 원본(%s)이 깨졌거나 자료가 없어 %s" % (", ".join(bad), "그 전(%s) 원본을 씀" % used_day if used
+                                                               else "쓸 원본이 없음")) if bad else ""
         if rows:
-            out.append(Table(name, cols, rows, notes=["위하고 %s 원본으로 %d줄" % (what, len(rows))]))
+            notes = ["위하고 %s 원본으로 %d줄" % (what, len(rows))]
+            if newer:
+                notes.append("[확인] 위하고 %s: %s — 위하고에서 다시 받으세요" % (what, newer))
+            out.append(Table(name, cols, rows, notes=notes))
+        elif used:
+            out.append(Table(name, cols, [], written=False, reason="위하고 %s 원본(%s 받음)에서 읽은 줄 0건%s — 기존 파일 그대로 "
+                             "(정말 0건이면 위하고 화면에서 확인하세요)" % (what, used_day, " · " + newer if newer else "")))
+        elif bad:
+            out.append(Table(name, cols, [], written=False, reason="위하고 %s %s — 기존 파일 그대로, 위하고에서 다시 받으세요"
+                             % (what, newer)))
         else:
             out.append(Table(name, cols, [], written=False, reason="위하고 %s 원본 없음 (기존 파일 그대로)" % what))
     return out

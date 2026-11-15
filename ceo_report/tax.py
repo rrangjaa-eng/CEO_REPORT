@@ -219,20 +219,30 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
             by_month[k] = by_month.get(k, 0) + ln["credit"]
     filled = sorted(k for k, v in by_month.items() if v)
     recent = by_month[filled[-1]] if filled else None
+    def side(ln):   # 국세(세무서)·지방세(구청·시청·군청)는 따로 낸다
+        return "세무서" if "세무서" in _sq(ln.get("vendor")) else "지자체"
     rows = []
     for label, start, end, due in periods:
         if not _recent(due, asof):
             continue
-        if any(end < ln["date"] <= asof and (ln.get("debit") or 0) > 0 for ln in mine):
-            continue   # 이 기간분을 이미 냄 (납부일 뒤 늦게 낸 것도 포함 — 잔액에 반영됨)
         lines = [ln for ln in mine if start <= ln["date"] <= end]
+        paid_sides = set(side(ln) for ln in mine if end < ln["date"] <= asof and (ln.get("debit") or 0) > 0)
+        part = ""
+        if paid_sides:
+            owed = set(side(ln) for ln in lines if (ln.get("credit") or 0) > 0) or {"세무서", "지자체"}
+            if owed <= paid_sides:
+                continue   # 이 기간분을 이미 냄 (납부일 뒤 늦게 낸 것도 포함 — 잔액에 반영됨)
+            # 1차 점검 자금-6 (2026-11-15): 세무서분만 냈으면 지방소득세(구청 등)는 아직 나갈 돈 — 예전엔 줄 전체가 사라졌음
+            lines = [ln for ln in lines if side(ln) not in paid_sides]
+            part = " · %s분은 냄, 남은 %s분만" % ("·".join(sorted(paid_sides & owed)), "·".join(sorted(owed - paid_sides)))
         # 떼어 둔 금액(대변)만 더한다. 차변은 앞 기간분 납부라 이 기간에 넣지 않는다 (반기납부 7월 납부가 하반기에 섞이지 않게)
         vals = [ln.get("credit") for ln in lines if ln.get("credit") is not None or ln.get("debit") is None]
         unknown = sum(1 for v in vals if v is None)
         got = sum(v for v in vals if v is not None)
         basis = "예수금 중 %s 거래처 대변 합계, %s납부" % ("·".join(vendors[:2]), "반기" if mode == "반기" else "매월 ")
-        # 기간 안에서 아직 급여 전표가 없는 달 (마지막으로 뗀 달 뒤): 최근 달 금액으로 채운다
-        ahead = [(yy, mm) for (yy, mm) in _months(start, end) if filled and (yy, mm) > filled[-1]]
+        basis += part
+        # 기간 안에서 아직 급여 전표가 없는 달 (마지막으로 뗀 달 뒤): 최근 달 금액으로 채운다 (일부 낸 기간은 지난 기간이라 없음)
+        ahead = [(yy, mm) for (yy, mm) in _months(start, end) if filled and (yy, mm) > filled[-1]] if not part else []
         if not got and not unknown and not ahead:
             continue   # 이 기간에 뗀 금액도, 앞으로 뗄 달도 없음 (앞 기간분 납부 줄만 있음)
         from_screen = [k for k in ahead if (screen or {}).get(k)]
@@ -281,6 +291,9 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
     납부일 전에 그 달분 납부 전표(공단 거래처 예수금 차변)가 기준일까지 있으면 이미 나간 것이라 넣지 않는다."""
     codes = set(map(_sq, codes))
     ins = lambda ln: any(v in _sq(ln.get("vendor")) for v in vendors)
+
+    def who(ln):   # 어느 공단인가 (공단마다 따로 낸다)
+        return next((v for v in vendors if v in _sq(ln.get("vendor"))), "")
     mine = [ln for ln in journal if ln["date"] is not None and ins(ln)]
     withheld = [ln for ln in mine if _sq(ln["account_code"]) in codes]
     if not withheld:
@@ -296,7 +309,8 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
         cost = sum((x.get("debit") or 0) for x in lines if ins(x) and _sq(x["account_code"]).startswith("8"))
         if emp:
             accr = sum((x.get("debit") or 0) for x in lines if ins(x) and _sq(x["account_code"]).startswith(ACCRUED))
-            pays.append((day, emp, cost + accr))
+            pays.append((day, emp, cost + accr,
+                         frozenset(who(x) for x in lines if ins(x) and _sq(x["account_code"]) in codes and (x.get("debit") or 0))))
         elif cost and not _from_bank(lines):
             accrued[(day.year, day.month)] = accrued.get((day.year, day.month), 0) + cost
     rows = []
@@ -312,6 +326,16 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
             continue
         before = [p for p in pays if p[0] <= asof]
         last = before[-1] if before else None
+        # 1차 점검 자금-6 (2026-11-15): 한 공단만 냈으면 나머지 공단분은 아직 나갈 돈 — 예전엔 그 달 줄 전체가 사라졌음
+        paid_who = set().union(*[p[3] for p in pays if end < p[0] <= asof]) if any(end < p[0] <= asof for p in pays) else set()
+        month_lines = [ln for ln in withheld if start <= ln["date"] <= end and (ln.get("credit") is not None or ln.get("debit") is None)]
+        owed_who = set(who(ln) for ln in month_lines if ln.get("credit"))
+        part = None
+        # 낸 직원분이 그 달 뗀 직원분에 못 미칠 때만 '일부 납부' — 여러 공단분을 한 공단 거래처로 몰아 낸 전표는 다 낸 것
+        paid_emp = sum(p[1] for p in pays if end < p[0] <= asof)
+        month_emp = sum((ln.get("credit") or 0) for ln in month_lines)
+        if paid_who and owed_who and not owed_who <= paid_who and paid_emp < month_emp:
+            part = [ln.get("credit") for ln in month_lines if who(ln) not in paid_who]
         state = "예상"
         if accrued.get((y, m)):
             ratio = None
@@ -330,7 +354,16 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
             recent = ((y, m), amount)
         if not _recent(due, asof):
             continue
-        if any(end < day <= asof for day, _, _ in pays):
+        if part is not None:   # 일부 공단만 냄: 남은 공단의 직원분 + 그 몫의 회사분
+            left = sum(v for v in part if v is not None)
+            share = (left / emp) if emp else 0
+            amt = None if any(v is None for v in part) or amount is None else left + int(round(company * share))
+            rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, amt, state,
+                             "%s 납부 확인 — 남은 %s 직원분 %s원 + 같은 비율의 회사분 (%s)"
+                             % ("·".join(sorted(paid_who & owed_who)), "·".join(sorted(owed_who - paid_who)),
+                                "{:,}".format(left), note), vcodes))
+            continue
+        if any(end < p[0] <= asof for p in pays):
             continue   # 이 달분을 이미 냄 (납부일 뒤 늦게 낸 것 포함)
         rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, amount, state,
                          "예수금 중 공단 거래처 대변(직원분) %s원 + %s" % ("{:,}".format(emp), note), vcodes))
@@ -342,7 +375,7 @@ def social(journal, asof, codes=("25400",), vendors=INSURERS):
     while recent and recent[1] is not None and (y, m) < until:
         due = _after(dt.date(*_next_month(y, m), 10))
         end = dt.date(*_next_month(y, m), 1) - dt.timedelta(days=1)
-        if _recent(due, asof) and not any(end < day <= asof for day, _, _ in pays):
+        if _recent(due, asof) and not any(end < p[0] <= asof for p in pays):
             rows.append(_row("4대보험", "%d년 %d월분" % (y, m), due, recent[1], "예상",
                              "급여 전표 전 → %d-%02d 납부액(직원분+회사분)으로 봄" % recent[0], vcodes))
         y, m = _next_month(y, m)
@@ -664,7 +697,12 @@ def _actual_for(actual, upto, card, lines, bill, pay, start):
     end = _period_end(bill, start)
     if end > upto:
         return None   # 이용기간이 아직 안 끝남: 받은 날 뒤 사용을 몰라 평균 규칙 그대로
-    return sum(a for d, a in items if card_due(d, pay, start) == bill)
+    got = [a for d, a in items if card_due(d, pay, start) == bill]
+    if not got:
+        # 1차 D5 (2026-11-15): 화면을 좁은 기간으로 조회해 받으면 그 이용기간 줄이 하나도 없다 — 예전엔 '실제 사용 0'으로 보고
+        # 평균 채우기까지 건너뛰어 카드대금 예상이 사라졌음. 한 건도 없으면 모르는 것으로 보고 평균 규칙 그대로
+        return None
+    return sum(got)
 CARD_MIN_AVG = 100000    # 최근 3달 평균이 이보다 적은 카드는 평균으로 채우지 않음
 
 
@@ -753,6 +791,80 @@ def deposits(journal, asof, codes=("10500",), words=("정기예금",)):
         if due < asof:
             due, note = _after(asof), note + " — 만기가 지났는데 해지 전표 없음"
         rows.append(_row(DEPOSIT_IN, "%s 가입분" % d.isoformat(), due, a, "예상", "원금만 (이자 제외). " + note, vcodes))
+    return _stamp(rows, journal)
+
+
+FIXED_KIND = "고정 지출"
+FIXED_MONTHS = 3          # 최근 이만큼 이어진 달마다 통장에서 나갔으면 매달 나가는 돈으로 본다
+FIXED_TOL = 0.15          # 그 달들 금액이 가운데 값의 ±15% 안 (이자처럼 조금씩 다른 것 포함)
+# 미지급금·미지급비용·외상매입금·예수금·부가세예수금·미지급세금을 갚는 지급은 계산서·급여·카드·세금으로 이미 일정에 들어간다
+SETTLE_PREFIX = ("251", "252", "253", "254", "255", "261", "262")
+
+
+def fixed_costs(journal, asof, skip_codes=(), months_ahead=AHEAD_MONTHS):
+    """매달 같은 금액으로 통장에서 바로 나가는 지출 (사용자 2026-11-15 결정 g, 계산-05: 자금계획서에 없어도 꼭 나갈 정기 지출).
+
+    실제 예: 하나캐피탈 할부(원금+이자 153만), 기술보증기금 대출 이자 2건(약 90만·51만), 지식재산공제부금 30만 — 자금계획서에 없어
+    가용자금 큰 숫자에서 빠졌다 (R7). 장부에서 찾는다:
+      · 통장 출금 전표의 통장이 아닌 차변 줄을 거래처코드별로 더한다 (거래처코드가 없으면 보지 않음 — 이름으로 묶지 않는다, 계산-01).
+      · 미지급금·미지급비용·예수금 등을 갚는 줄은 뺀다 (계산서·급여·카드·세금 일정에 이미 있음). 정기예금 계정 줄은 공제부금·적금만
+        (정기예금 가입·만기는 deposits()). 다른 세금 줄(급여·4대보험·카드·정기예금 등)이 쓰는 거래처코드도 뺀다 (skip_codes).
+      · 최근 FIXED_MONTHS 달이 끊김 없이 이어지고(마지막 달이 기준일 달 또는 그 전 달) 그 달들 금액이 가운데 값의 ±15% 안이면 매달 나가는 돈.
+    마지막으로 나간 달 다음 달부터 기준일 달 + months_ahead 달까지 '예상' 줄: 금액 = 마지막 달 금액, 날짜 = 최근 달들 중 가장 이른 날(쉬는 날이면 다음 영업일).
+    자금계획서·자금일정에 같은 거래처코드 지급이 ±7일 안에 있으면 보고서가 그 줄을 쓰고 이 줄은 넣지 않는다 (merge ⓪, 두 번 빼지 않음)."""
+    skip = set(_code(c) for c in skip_codes if _code(c))
+    slips = {}
+    for x in journal:
+        if x["date"] is not None:
+            slips.setdefault((x["date"], x.get("no")), []).append(x)
+    per = {}     # 거래처코드 -> {(연, 월): [(날짜, 금액)]}
+    names = {}
+    for (day, _), lines in slips.items():
+        if day > asof or not _from_bank(lines):
+            continue
+        by = {}
+        for x in lines:
+            acct = _sq(x["account_code"])
+            if acct.startswith(BANK_PREFIX) or acct.startswith(SETTLE_PREFIX) or not (x.get("debit") or 0):
+                continue
+            if acct == "10500" and not any(w in _sq(x.get("memo")) + _sq(x.get("vendor")) for w in OTHER_SAVINGS):
+                continue
+            c = _code(x.get("vendor_code"))
+            name = str(x.get("vendor") or "")
+            if not c or c in skip or CARD_PREFIX.match(name.strip()) or any(w in _sq(name) for w in INSURERS + ("세무서", "구청", "시청", "군청")):
+                continue
+            by[c] = by.get(c, 0) + x["debit"]
+            names[c] = name.strip() or names.get(c, "")
+        for c, a in by.items():
+            per.setdefault(c, {}).setdefault((day.year, day.month), []).append((day, a))
+    rows = []
+    prev_m = _next_month(asof.year, asof.month, -1)
+    until = _next_month(asof.year, asof.month, months_ahead)
+    for c, M in sorted(per.items()):
+        last = max(M)
+        if last < prev_m:
+            continue   # 지난달·이번 달에 안 나갔으면 끝난 지출로 본다
+        run = [last]
+        while len(run) < FIXED_MONTHS and _next_month(*run[-1], -1) in M:
+            run.append(_next_month(*run[-1], -1))
+        if len(run) < FIXED_MONTHS:
+            continue
+        amts = [sum(a for _, a in M[ym]) for ym in run]
+        mid = sorted(amts)[len(amts) // 2]
+        if mid <= 0 or any(abs(a - mid) > FIXED_TOL * mid for a in amts):
+            continue
+        day_of = min(d.day for ym in run for d, _ in M[ym])
+        amount = amts[0]
+        lo, hi = min(amts), max(amts)
+        span = format(lo, ",") if lo == hi else "%s~%s" % (format(lo, ","), format(hi, ","))
+        basis = ("장부 최근 %d달(%d-%02d~%d-%02d) 매달 %d일쯤 통장에서 나감 (%s원) — 자금계획서에 없으면 꼭 나갈 정기 지출로 봄 (결정 g). "
+                 "금액은 마지막 달 금액" % (FIXED_MONTHS, run[-1][0], run[-1][1], last[0], last[1], day_of, span))
+        ym = _next_month(*last)
+        while ym <= until:
+            due = _after(_day_in(ym[0], ym[1], day_of))
+            if _recent(due, asof):
+                rows.append(_row(FIXED_KIND, "%s %d년 %d월분" % (names.get(c) or "거래처 %s" % c, ym[0], ym[1]), due, amount, "예상", basis, (c,)))
+            ym = _next_month(*ym)
     return _stamp(rows, journal)
 
 

@@ -11,9 +11,15 @@ import os
 TEST_OFF = "CEO_REPORT_TEST_GATE_OFF"   # 예전 시험(자금계획서 없는 예시 자료)만 쓰는 끄개. 프로그램(exe)·창에는 끄는 방법이 없다
 
 
+def _test_off():
+    """시험용 끄개. 배포 exe(묶은 프로그램)는 이 환경변수를 읽지 않는다 (안전-04·P2-1, 2026-11-15)."""
+    import sys
+    return os.environ.get(TEST_OFF) == "1" and not getattr(sys, "frozen", False)
+
+
 def problems(R):
     """-> 막는 까닭 목록 (없으면 [])."""
-    if os.environ.get(TEST_OFF) == "1":
+    if _test_off():
         return []
     out = []
     days = max_days(R)
@@ -27,6 +33,32 @@ def problems(R):
         out.append("분개장 자료일을 모름 (자료 변환을 다시 하세요)")
     elif (R["asof"] - bd).days > days:
         out.append("분개장 자료일 %s — 기준일보다 %d일 전 (허용 %d일)" % (bd.isoformat(), (R["asof"] - bd).days, days))
+    if R.get("tax_missing"):
+        out.append("세금예상.csv 가 없거나 읽지 못함 — 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠져 여유 자금이 크게 보임 "
+                   "(자료 변환을 다시 하세요)")
+    out.extend(company_problems(R))
+    return out
+
+
+def company_problems(R):
+    """P1-1·P2-4 (2026-11-15): 위하고 SmartA 탭이 여러 회사로 열려 있으면 확장이 다른 회사 자료를 받을 수 있었다.
+    받은 분개장·자금계획서에 적힌 회사가 설정 회사명이나 서로와 다르면 막는다. 회사 이름을 모르면(예전 파일·빈 설정) 막지 않는다."""
+    from .wehago import same_company
+    facts = R.get("auto_facts") or {}
+    mine = str((R.get("settings") or {}).get("회사명") or "").strip()
+    if mine in ("", "회사명"):   # 설정 기본값(빈 칸 '회사명')은 이름을 모르는 것
+        mine = ""
+    book = str(facts.get("book_company") or "").strip()
+    plans = [str(c).strip() for c in facts.get("plan_companies") or [] if str(c).strip()]
+    out = []
+    if mine and book and not same_company(mine, book):
+        out.append("분개장이 다른 회사(%s) 장부임 — 설정 회사명은 %s. 위하고에서 이 회사 SmartA 화면을 앞에 띄우고 다시 받으세요 "
+                   "(이름만 다르게 적은 것이면 설정.csv 회사명을 위하고 회사 이름과 같게 고치세요)" % (book, mine))
+    for c in plans:
+        ref = book or mine
+        if ref and not same_company(ref, c):
+            out.append("자금계획서가 다른 회사(%s) 자료임 — %s %s. 위하고에서 이 회사 SmartA 화면을 앞에 띄우고 다시 받으세요"
+                       % (c, "분개장은" if book else "설정 회사명은", ref))
     return out
 
 
@@ -66,6 +98,18 @@ def blank_funds(R):
             for k in ("bal", "low", "low_date", "avail"):
                 if k in r:
                     r[k] = None
+    # 1차 점검 자금-1·E6 (2026-11-15): 구간별 계산 잔액 표·위험표의 '최저 계산 잔액 …원' 줄에도 숫자가 남았다 (예시 5.43억·5,175만)
+    for b in s2.get("buckets") or []:
+        if isinstance(b, dict):
+            for k in ("bal_firm", "bal_all"):
+                if k in b:
+                    b[k] = None
+    rs = R.get("risks")
+    if isinstance(rs, list):
+        kept = [r for r in rs if not (isinstance(r, dict) and r.get("area") == "자금" and "최저 계산 잔액" in str(r.get("fact") or ""))]
+        kept.insert(0, {"level": "높음", "area": "자금", "fact": "자료 확인에서 막혀 앞으로의 잔액·여유 자금을 판단하지 않음: %s" % probs[0],
+                        "action": "맨 위 경고의 자료를 받아 넣고 다시 만드세요."})
+        R["risks"] = kept
     R["_gate_hidden"] = hidden
     R["_gate_probs"] = probs
     return probs
@@ -126,11 +170,43 @@ def book_date(R):
     return book[0]["date"] if book and book[0].get("date") else None
 
 
+WRONG_TERM_DAYS = 45   # 이보다 오래 통장 거래가 없으면 지난 기수 장부를 받은 것으로 의심 (실제 입력 지연은 90%가 17일 안)
+BANK_LAG_DAYS = 7   # 계산-06 (N1): 장부의 마지막 통장 거래일이 기준일보다 이만큼 넘게 앞서면 경고 (실제: 통장→장부 중간 3일, 90%는 17일 안)
+
+
+def last_bank_date(R):
+    """장부에 들어간 마지막 통장 거래일 (변환이 입력\\자동분석.json 에 적은 것). 모르면 None."""
+    v = (R.get("auto_facts") or {}).get("last_bank")
+    try:
+        return dt.date.fromisoformat(str(v)[:10]) if v else None
+    except ValueError:
+        return None
+
+
+def bank_lag_note(R):
+    """계산-06 (N1, 2026-11-15): 받은 날만 보면 장부가 최신처럼 보여도 통장 거래 입력이 늦을 수 있다 (R6).
+    마지막 통장 거래일이 기준일보다 7일 넘게 앞서면 대표·팀장 보고에 한 줄 (막지는 않음). 모르면 빈 글."""
+    lb = last_bank_date(R)
+    if lb is None:
+        return ""
+    gap = (R["asof"] - lb).days
+    if gap <= BANK_LAG_DAYS:
+        return ""
+    if gap > WRONG_TERM_DAYS:   # 2차 C14 (2026-11-15): 지난 기수 화면을 오늘 받으면 받은 날만 보고 최신으로 통과했다 — 막지는 않되 크게 알림
+        return ("장부의 마지막 통장 거래가 %s (기준일보다 %d일 전)입니다 — 지난 기수(작년) 분개장을 받았거나 장부 입력이 크게 밀렸습니다. "
+                "위하고에서 올해 기수 분개장을 다시 받기 전에는 이 보고의 실적·잔액을 믿지 마세요." % (lb.isoformat(), gap))
+    return ("장부에 들어간 마지막 통장 거래가 %s (기준일보다 %d일 전)입니다 — 그 뒤 통장 입출금은 아직 장부에 없어 실적·지급에 빠졌을 수 있습니다."
+            % (lb.isoformat(), gap))
+
+
 def sources_line(R):
     """보고에 쓴 자료와 날짜 한 줄."""
     parts = []
     bd = book_date(R)
-    parts.append("분개장 %s" % bd.isoformat() if bd else "분개장 날짜 모름")
+    lb = last_bank_date(R)
+    # 1차 점검 N13 (2026-11-15): 분개장 날짜는 위하고에서 받은 날이라 입력이 밀려도 최신처럼 보였다 — 마지막 통장 거래일도 함께
+    parts.append(("분개장 %s" % bd.isoformat() + (" (통장 거래 %s까지 입력)" % lb.isoformat() if lb and lb < bd else ""))
+                 if bd else "분개장 날짜 모름")
     fp = R.get("fundplan")
     if fp and fp.get("used"):
         months = fp.get("months") or []
@@ -166,7 +242,7 @@ def stop_page(title, probs):
 def check_dir(input_dir, asof):
     """연간·예산처럼 주간 계산을 따로 하지 않는 보고용: 입력 폴더로 자금계획서·분개장 확인만 한다 -> 막는 까닭 목록.
     (2026-11-14 코덱스 검토: 연간·예산 대표용은 이 확인 없이 만들어졌음)"""
-    if os.environ.get(TEST_OFF) == "1":
+    if _test_off():
         return []
     from .calc import compute
     from .data import load

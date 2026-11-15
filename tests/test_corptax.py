@@ -25,18 +25,18 @@ class TestDepreciation(unittest.TestCase):
     acc = [{"ym": "2025-12", "name": "감가상각비(판)", "amount": 12_000_000},
            {"ym": "2026-03", "name": "복리후생비(판)", "amount": 5}]
 
-    def test_last_year_full_amount_by_default(self):   # 사용자 2026-11-04: 작년 금액 전부
+    def test_last_year_prorated_by_default(self):   # 결정 M5 (2026-11-15): 지난 달 수만큼 (11/4 '작년 금액 전부'를 바꿈)
         d = corptax.depreciation(self.acc, {}, "2026-10")
-        self.assertEqual((d["annual"], d["extra"], d["cur"], d["source"]), (12_000_000, 12_000_000, None, "작년 장부"))
+        self.assertEqual((d["annual"], d["extra"], d["cur"], d["source"], d["mode"]), (12_000_000, 10_000_000, None, "작년 장부", "prorate"))
 
-    def test_prorate_mode(self):
-        d = corptax.depreciation(self.acc, {}, "2026-10", "prorate")
-        self.assertEqual((d["extra"], d["cur"]), (10_000_000, 1_000_000))
+    def test_full_mode_still_available(self):
+        d = corptax.depreciation(self.acc, {}, "2026-10", "full")
+        self.assertEqual((d["extra"], d["cur"]), (12_000_000, None))   # 이번 달 표에는 어느 쪽이든 넣지 않음
 
     def test_manual_wins_and_booked_not_double_counted(self):
         acc = self.acc + [{"ym": "2026-06", "name": "감가상각비(판)", "amount": 4_000_000}]
         d = corptax.depreciation(acc, {"2026": 24_000_000}, "2026-10")
-        self.assertEqual((d["annual"], d["booked"], d["extra"], d["source"]), (24_000_000, 4_000_000, 20_000_000, "직접 입력"))
+        self.assertEqual((d["annual"], d["booked"], d["extra"], d["source"]), (24_000_000, 4_000_000, 16_000_000, "직접 입력"))   # 24 × 10/12 − 4
 
     def test_unknown(self):
         self.assertIsNone(corptax.depreciation([], {}, "2026-10")["extra"])
@@ -75,10 +75,10 @@ class TestFromJournal(unittest.TestCase):
         cfg = dict(convert.DEFAULT_CONFIG)
         rows, note = corptax.from_journal(j, cfg, D(2026, 11, 4), {})
         ct, lt = rows
-        # 300 − 100 − 50 + 10 = 160, − 감가상각 12 = 148 (백만) → 14.8 − 선납 4 = 10.8
-        self.assertEqual((ct["과세표준"], ct["산출세액"], ct["기납부"], ct["금액"]), ("148000000", "14800000", "4000000", "10800000"))
+        # 300 − 100 − 50 + 10 = 160, − 감가상각 12 × 10/12 = 150 (백만, 결정 M5 월할) → 15 − 선납 4 = 11
+        self.assertEqual((ct["과세표준"], ct["산출세액"], ct["기납부"], ct["금액"]), ("150000000", "15000000", "4000000", "11000000"))
         self.assertEqual((ct["납부예정일"], ct["상태"], lt["세목"], lt["금액"], lt["납부예정일"]),
-                         ("2027-03-31", "예상", "법인지방소득세", "1480000", "2027-04-30"))
+                         ("2027-03-31", "예상", "법인지방소득세", "1500000", "2027-04-30"))
         self.assertIn("1월~10월", ct["대상기간"])
 
 
@@ -121,7 +121,7 @@ class TestClosingSlips(unittest.TestCase):
     def test_last_year_dep_from_closing_slip(self):
         from ceo_report import convert
         rows, _ = corptax.from_journal(self.journal(), dict(convert.DEFAULT_CONFIG), dt.date(2026, 11, 4), {})
-        self.assertIn("감가상각비 예상 6,000,000", rows[0]["근거"])
+        self.assertIn("감가상각비 예상 5,000,000", rows[0]["근거"])   # 작년 6백만 × 10/12 (결정 M5)
 
 
 class TestReport(unittest.TestCase):
@@ -135,18 +135,19 @@ class TestReport(unittest.TestCase):
             self.assertNotIn("영업외 수익 뺀 세전 이익 기준", h)   # 사용자 2026-11-04: 최종 세전 이익 기준만
             # 두 판 모두 한 줄 (월간 3쪽, 사용자 2026-11-04), 표는 경영관리용에만
             # 2026-11-14 P3: 지금까지 이익 기준이라 밝히고 법인세 3/31·지방소득세 4/30 나눔 (지방세까지 3/31 납부처럼 보이던 것)
-            self.assertIn("1월~10월 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · 법인세 13,500,000 − 중간예납 등 기납부 4,000,000 = 9,500,000 "
-                          "(2027-03-31) · 지방소득세 1,350,000 (2027-04-30)", h)
+            # 결정 M5 (2026-11-15): 감가상각비 작년 12백만 × 10/12 = 10백만 → 세전 1.37억 (샘플 세금예상.csv 도 같은 규칙으로)
+            self.assertIn("1월~10월 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · 법인세 13,700,000 − 중간예납 등 기납부 4,000,000 = 9,700,000 "
+                          "(2027-03-31) · 지방소득세 1,370,000 (2027-04-30)", h)
             if ed == "mgmt":
                 self.assertIn("법인세 예상 (1월~10월 이익 기준 · 연말 이익에 따라 바뀜)", h)
                 row = h.split("<table class='pt tx'>")[1].split("</table>")[0]
-                for v in ("135,000,000", "13,500,000", "4,000,000", "9,500,000", "1,350,000", "10,850,000"):
+                for v in ("137,000,000", "13,700,000", "4,000,000", "9,700,000", "1,370,000", "11,070,000"):
                     self.assertIn(v, row)
             else:
                 self.assertNotIn("<table class='pt tx'>", h)
-            self.assertIn("− 감가상각비 (예상, 작년 연간 12,000,000)", h)
+            self.assertIn("− 감가상각비 (예상, 작년 12,000,000 × 10/12)", h)
         ev = [(e["date"], e["amount"]) for e in R["events"] if e["cat"].startswith("법인")]
-        self.assertEqual(ev, [(dt.date(2027, 3, 31), 9_500_000), (dt.date(2027, 4, 30), 1_350_000)])   # 지급 예상에 들어감
+        self.assertEqual(ev, [(dt.date(2027, 3, 31), 9_700_000), (dt.date(2027, 4, 30), 1_370_000)])   # 지급 예상에 들어감
 
 
 if __name__ == "__main__":

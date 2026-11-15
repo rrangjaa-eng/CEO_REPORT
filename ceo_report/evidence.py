@@ -42,8 +42,28 @@ def _block(mgmt_html, target):
     return _unlabel(m.group(0))
 
 
-def build(mgmt_html, nums, who="대표", when=""):
-    """뽑은 근거 문서 HTML. 모르는 번호는 ValueError (있는 번호를 알려 준다)."""
+# 보고 맨 위의 자료 경고 (render.py 가 만드는 모양 그대로, 글은 모두 이스케이프돼 '<' 가 없다)
+_WARN = re.compile(
+    r"<style>[^<]*</style><div class='gate'>[^<]*(?:<ul>(?:<li>[^<]*</li>)*</ul>)?</div>"   # 자금계획서·분개장 미반영(목록) · 빠진 달(한 줄)
+    r"|<div class='gate-lag'[^>]*>[^<]*</div>"                                                # 장부의 통장 거래 입력이 늦음
+    r"|<div class='ins-alert'>(?:자동 분석을 못 했습니다|자료 대조 경고)[^<]*"                  # 자동 분석 실패 · 자료 대조 경고
+    r"(?:<div class='mgonly'>[^<]*</div><!-- /mgonly -->)?</div>")
+
+
+def warnings(mgmt_html):
+    """경영관리 보고에 달린 자료 경고 조각들 (나온 차례, 같은 것은 한 번)."""
+    return list(dict.fromkeys(m.group(0) for m in _WARN.finditer(mgmt_html or "")))
+
+
+def made_at(mgmt_html):
+    """경영관리 보고 머리의 '작성' 시각 (없으면 빈 글)."""
+    m = re.search(r"<th>작성</th><td>([^<]*)</td>", mgmt_html or "")
+    return _html.unescape(m.group(1)).strip() if m else ""
+
+
+def build(mgmt_html, nums, who="대표", when="", notes=()):
+    """뽑은 근거 문서 HTML. 모르는 번호는 ValueError (있는 번호를 알려 준다).
+    notes: 맨 위에 붙일 주의 글 (2차 P4-1: 같은 기준일 보고를 여러 번 만들었으면 어느 판의 숫자인지)."""
     idx = {n: (t, w) for n, t, w in index_of(mgmt_html)}
     bad = [n for n in nums if n not in idx]
     if bad:
@@ -53,13 +73,16 @@ def build(mgmt_html, nums, who="대표", when=""):
     name = title.group(1).replace("경영관리 보고", "근거자료") if title else "근거자료"
     head = re.sub(r"<title>.*?</title>", "<title>%s</title>" % name, head, flags=re.S)
     rows = "".join("<tr><td><b>근거 %s</b></td><td>%s</td></tr>" % (n, _html.escape(idx[n][0])) for n in nums)
-    parts = ["<div class='wrap'><h1>%s</h1><div class='meta'>요청: %s%s · 제출: 경영관리</div>" % (
-        _html.escape(name), _html.escape(who), (" · " + _html.escape(when)) if when else ""),
+    made = made_at(mgmt_html)   # 2차 P4-1: 어느 판(작성 시각)의 숫자인지 — 대표에게 낸 보고의 '작성'과 맞춰 볼 수 있게
+    parts = ["<div class='wrap'><h1>%s</h1><div class='meta'>요청: %s%s · 제출: 경영관리%s</div>" % (
+        _html.escape(name), _html.escape(who), (" · " + _html.escape(when)) if when else "",
+        (" · 보고 작성 " + _html.escape(made)) if made else ""),
         "<table class='pt evt' style='margin:10px 0 16px'><thead><tr><th>번호</th><th>대표용 항목</th></tr></thead><tbody>%s</tbody></table>" % rows]
-    # 경영관리 보고가 자료 미반영 경고를 달고 있으면 근거자료에도 그대로 붙인다 (2026-11-14 코덱스 검토: 떼어 낸 근거엔 경고가 없었음)
-    warn = re.search(r"<style>[^<]*</style><div class='gate'>.*?</ul></div>", mgmt_html, re.S)
-    if warn:
-        parts.append(warn.group(0))
+    # 경영관리 보고가 자료 경고를 달고 있으면 근거자료에도 그대로 붙인다 (2026-11-14 코덱스 검토: 떼어 낸 근거엔 경고가 없었음)
+    # 2026-11-15 P3-17: 미반영 경고만 옮겼음 → 맨 위 자료 경고를 모두 (장부 입력 늦음·빠진 달·자동 분석 실패·자료 대조 경고)
+    parts.extend(warnings(mgmt_html))
+    parts.extend("<div class='gate-lag' style='border:2px solid #e0a000;background:#fff8e1;color:#7a4f00;border-radius:8px;"
+                 "padding:8px 12px;margin:8px 0;font-weight:700'>%s</div>" % _html.escape(t) for t in notes if t)
     seen = set()
     for n in nums:
         t, w = idx[n]

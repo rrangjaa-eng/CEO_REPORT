@@ -6,6 +6,7 @@
     분개장이 회사 처음부터가 아니면 잔액을 모르므로 계산하지 않는다.
   · 날마다 통장 잔액: 2장 자금 일정과 같은 숫자 (s2 start + dated). 확정분만 / 예상 지급 포함 두 가지.
   · 갚는 날 후보: 이번 주 금요일, 다음 주 금요일, 이번 달·다음 달·다다음 달 마지막 평일 (자금계획서가 닿는 날까지).
+  · 자금계획서가 기준일부터 60일 넘게 닿지 않으면 판단하지 않는다 (P3-3, 계획 없는 날을 '안전'으로 보지 않게).
   · '안전' = 그날 전부 갚아도 그 뒤 어느 날도 최소 보유현금(설정, 기본 1억) 아래로 내려가지 않음.
   · 자금계획서·분개장이 빠졌거나 오래됐으면 계산하지 않는다 (사용자 2026-11-12: 자금계획서 없는 숫자 금지).
 AI 없이 정해진 규칙과 문장만.
@@ -17,7 +18,7 @@ import datetime as dt
 from .util import won, esc, d2s
 
 CODE = "257"          # 가수금
-MIN_DAYS = 60         # 자금계획서가 짧아도 최소 이만큼은 본다
+MIN_DAYS = 60         # 자금계획서가 기준일부터 이만큼은 닿아야 판단한다 (P3-3: 모자라면 늘리지 않고 판단을 미룸)
 
 
 def balance(input_dir, asof):
@@ -55,15 +56,28 @@ def candidates(asof, end):
     return sorted(res, key=lambda x: x[1])
 
 
+def _plan_end(R):
+    """자금계획서가 닿는 마지막 날 -> 날짜 또는 None. 받은 달(자금계획받은달.csv, 줄 없는 달 포함)과 계획 줄의 마지막 달 중 늦은 달의 끝."""
+    months = []
+    for m in (R.get("fundplan") or {}).get("received") or []:
+        try:
+            y, mm = (int(x) for x in str(m).split("-")[:2])
+            months.append(dt.date(y, mm, calendar.monthrange(y, mm)[1]))
+        except (TypeError, ValueError):
+            continue
+    for e in (R.get("s2") or {}).get("dated") or []:
+        if e.get("source") == "자금계획서" and e.get("date"):
+            d = e["date"]
+            months.append(dt.date(d.year, d.month, calendar.monthrange(d.year, d.month)[1]))
+    return max(months) if months else None
+
+
 def _end(R):
-    s2 = R["s2"]
+    """계산 끝날 = 자금계획서가 닿는 날 (2장 보는 기간까지). 2026-11-15 P3-3: 예전에는 계획이 짧아도 기준일 + 60일까지 늘려,
+    계획이 없는 날(지급이 안 보이는 날)까지 '안전'으로 보았다."""
     asof = R["asof"]
-    plan = [e["date"] for e in s2.get("dated") or [] if e.get("source") == "자금계획서"]
-    end = max(plan) if plan else asof
-    if plan:   # 자금계획서 마지막 달의 끝까지
-        end = dt.date(end.year, end.month, calendar.monthrange(end.year, end.month)[1])
-    end = max(end, asof + dt.timedelta(MIN_DAYS))
-    h = s2.get("horizon")
+    end = _plan_end(R) or asof
+    h = R["s2"].get("horizon")
     return min(end, h) if h else end
 
 
@@ -149,6 +163,9 @@ def compute(input_dir, R):
     if rest <= 0:
         G["cases"] = []
         return G
+    if end < asof + dt.timedelta(MIN_DAYS):
+        return {"ok": False, "why": "자금계획서가 %s까지만 있어 갚은 뒤 %d일을 볼 수 없어 판단하지 않음 — 확장에서 자금계획을 더 길게 받은 뒤 "
+                "다시 보세요 (계획이 없는 날은 지급이 안 보여 '안전'으로 잘못 나옴)" % (end.isoformat(), MIN_DAYS)}
     base = {k: path(R, k == "firm", end) for k in ("firm", "all")}
     G["base"] = dict((k, _look(p, floor)) for k, p in base.items())
     cases = []

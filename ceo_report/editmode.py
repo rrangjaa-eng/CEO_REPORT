@@ -60,6 +60,15 @@ align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#ff
 </script>""" + END
 
 
+def _sig(path):
+    """파일의 (바뀐 시각, 크기) — 없으면 None."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def edited_path(html_path):
     base, ext = os.path.splitext(html_path)
     return base + SUFFIX + ext
@@ -70,12 +79,54 @@ def original_path(html_path):
     return base[:-len(SUFFIX)] + ext if base.endswith(SUFFIX) else html_path
 
 
+def _texts(page):
+    """보이는 글 조각들 (style·script 빼고, 공백 하나로)."""
+    import html as _h
+    page = strip(page or "")
+    page = re.sub(r"<(style|script)[^>]*>.*?</\1>", "", page, flags=re.S | re.I)
+    page = page.split("<body", 1)[-1]
+    out = []
+    for t in re.findall(r">([^<]+)<", page):
+        t = re.sub(r"\s+", " ", _h.unescape(t)).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def changes(orig_page, edited_page, limit=30):
+    """손으로 고친 곳 [(원래 글, 고친 글)] — 2차 P4-2 (2026-11-15): 고친 대표 보고와 근거자료(고치기 전 계산)가 다를 때 알리려고."""
+    import difflib
+    a, b = _texts(orig_page), _texts(edited_page)
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op != "equal":
+            out.append((" ".join(a[i1:i2]), " ".join(b[j1:j2])))
+    return out[:limit]
+
+
+def edits_for(orig_html_path):
+    """원래 대표 보고 HTML 경로 -> 쓰이는 _수정 판이 있으면 고친 곳 목록, 없으면 None (원래보다 오래된 _수정 은 쓰이지 않으니 None)."""
+    ed = edited_path(orig_html_path)
+    try:
+        if not os.path.isfile(ed) or os.path.getmtime(ed) < os.path.getmtime(orig_html_path):
+            return None
+        with open(orig_html_path, encoding="utf-8") as f:
+            a = f.read()
+        with open(ed, encoding="utf-8") as f:
+            b = f.read()
+    except (OSError, ValueError):
+        return None
+    return changes(a, b)
+
+
 def latest_report(output_dir, kind):
     """kind(주간·월간)의 가장 최근 대표 보고 HTML. (원래 파일, 고칠 파일) — 원래보다 새 _수정 이 있으면 그걸 이어서 고친다."""
-    found = sorted(glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind)))
+    found = glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind))
     if not found:
         return None, None
-    orig = found[-1]
+    # 2차 P4-7 (2026-11-15): '방금 만든 보고'(winstate.latest_reports)와 같게 가장 최근에 만든 것 — 예전엔 이름(기준일) 순이라
+    # 11/8 보고를 방금 다시 만들어도 11/15 보고를 열었다
+    orig = max(found, key=lambda p: (os.path.getmtime(p), p))
     ed = edited_path(orig)
     if os.path.isfile(ed) and os.path.getmtime(ed) >= os.path.getmtime(orig):
         return orig, ed
@@ -113,6 +164,10 @@ class Session(object):
         self.key = secrets.token_urlsafe(16)
         self.server = None
         self.lock = threading.Lock()
+        # P3-4·P4-3 (2026-11-15): 수정 모드를 연 뒤 원본 보고가 다시 만들어지면(막힘 안내로 바뀐 것 포함) 열린 화면의 옛 숫자로
+        # PDF 를 만들지 않는다 — 원본 파일의 바뀐 시각·크기를 기억해 저장 때 견준다.
+        self.orig = original_path(save_html)
+        self.orig_sig = _sig(self.orig)
 
     @property
     def url(self):
@@ -171,6 +226,11 @@ class Session(object):
         page = strip(page)
         if "</html>" not in page.lower():
             return False, "보고서 내용이 아님", None
+        if _sig(self.orig) != self.orig_sig:
+            msg = ("원본 보고가 수정 모드를 연 뒤 다시 만들어져(또는 자료 확인으로 막혀) 이 화면의 숫자가 예전 것일 수 있어 저장하지 않음 "
+                   "— 이 창을 닫고 수정 모드를 다시 여세요")
+            self.on_saved(None, msg)
+            return False, msg, None
         with self.lock:
             tmp = self.dst + ".tmp"
             try:

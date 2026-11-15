@@ -15,6 +15,18 @@ function stamp(d = new Date()) {
           iso: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`};
 }
 
+// 분개장 기간이 올해 1월 1일부터가 아니면 파일 이름에 기간을 붙인다 (2026-11-15 P1-3: 같은 날 다른 해·기간을 받으면
+// 같은 이름이라 앞서 받은 원본을 덮었다). 지난해는 '_2025'(프로그램이 그 해 파일로 알아봄), 일부 기간은 '_기간YYYYMMDD-YYYYMMDD'
+// ('_' 바로 뒤 8자리 숫자는 프로그램이 받은 날로 읽으므로 '기간'을 앞에 둔다).
+function periodTag(kind, params, d = new Date()) {
+  if (kind !== "분개장" || !params) return "";
+  const s = String(params.start_date || ""), e = String(params.end_date || "");
+  if (!/^\d{8}$/.test(s) || !/^\d{8}$/.test(e)) return "";
+  const y = d.getFullYear(), ey = e.slice(0, 4);
+  if (+ey < y) return `_${ey}` + (s === `${ey}0101` && e === `${ey}1231` ? "" : `_기간${s}-${e}`);
+  return s === `${y}0101` ? "" : `_기간${s}-${e}`;
+}
+
 async function sha(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -57,10 +69,29 @@ async function writeOut(fname, text) {
   return "다운로드 폴더 (저장 폴더를 아직 고르지 않음)";
 }
 
+// 2차 P1-6 (2026-11-15): 저장 기록만 보고 건너뛰지 않는다 — 지난번 파일이 실제로 있는지 본다 (지웠거나 옮겼으면 다시 저장).
+// 폴더 허용이 없어 확인할 수 없으면 예전처럼 기록을 믿는다 (같은 내용 때문에 저장 창을 띄우지 않게).
+async function fileThere(prev, dir) {
+  try {
+    if (prev.where === "위하고 폴더" && dir) {
+      if ((await dir.queryPermission({mode: "readwrite"})) !== "granted") return true;
+      await dir.getFileHandle(prev.file);
+      return true;
+    }
+    if (String(prev.where || "").startsWith("다운로드")) {
+      const items = await chrome.downloads.search({query: [prev.file], exists: true});
+      return items.some((d) => String(d.filename || "").endsWith(prev.file));
+    }
+  } catch (e) {
+    return false;
+  }
+  return true;
+}
+
 // 내용(hashSource)이 지난번과 같고, 오늘 이미 지금 저장 폴더에 저장했으면 다시 저장하지 않는다.
 // 날이 바뀌면 같은 내용이라도 하루 한 번은 새로 저장한다 (2026-11-14 코덱스 검토: 자금계획 내용이 7일 동안 안 바뀌면
 // 프로그램은 파일의 받은 날짜만 보고 '오래된 자료'로 보고를 막았다). 저장 폴더를 바꿨으면 같은 내용도 새 폴더에 저장한다.
-async function saveFile(kind, file, hashSource, summary) {
+async function saveFile(kind, file, hashSource, summary, tag = "") {
   const s = stamp();
   const hash = await sha(hashSource);
   const key = "last_" + kind;
@@ -70,25 +101,26 @@ async function saveFile(kind, file, hashSource, summary) {
   const dirName = dir ? (dir.name || "") : "";
   const placed = prev && (dir ? prev.where === "위하고 폴더" && (prev.dirName || "") === dirName : !!prev.where && prev.where !== "허용 기다림");
   const sameDay = prev && String(prev.saved || "").slice(0, 10) === s.iso.slice(0, 10);
-  if (prev && prev.hash === hash && placed && sameDay) {
+  if (prev && prev.hash === hash && placed && sameDay && await fileThere(prev, dir)) {
     const info = Object.assign({}, prev, {checked: s.iso, changed: false});
     await chrome.storage.local.set({[key]: info});
-    await setStatus({[kind]: info, error: ""});
+    await setStatus({[kind]: info});
     return {saved: false, same: true};
   }
   file["수집시각"] = s.iso;
-  const fname = `${s.ymd6} ${kind} 자동수집.json`;
+  const fname = `${s.ymd6} ${kind}${tag} 자동수집.json`;
   const where = await writeOut(fname, JSON.stringify(file));
   const info = Object.assign({hash, saved: s.iso, checked: s.iso, file: fname, where, dirName, changed: !!prev && prev.hash !== hash}, summary);
   await chrome.storage.local.set({[key]: info});
-  await setStatus({[kind]: info, error: ""});
+  await setStatus({[kind]: info});
   return {saved: true, file: fname, where};
 }
 
 async function saveJournal(msg) {
   const file = {"종류": msg.kind, "형식": 1, "수집시각": "", "회사": msg.company, "기간": msg.params,
                 "전표수": msg.tot, "줄수": msg.rows.length, "열": msg.columns, "줄": msg.rows};
-  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot});
+  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot},
+                  periodTag(msg.kind, msg.params));
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
@@ -136,6 +168,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (closingRun && sender.tab && closingRun.tabId === sender.tab.id) closingRun.got.push({path: msg.path, data: msg.data});
     return;
   }
+  // 2차 P1-5: 사용자가 받기를 새로 누르면 지난 오류 표시를 비운다 (저장 성공이 오류를 지우지 않으므로 여기서)
+  if (/^collect(Closing|Hr|YearEnd|Recon|Books|Now|All|Plan)$/.test(String(msg.type || ""))) setStatus({error: ""});
   if (msg.type === "collectClosing" || msg.type === "collectHr" || msg.type === "collectYearEnd") {
     const prefix = {collectHr: "인사", collectYearEnd: "연말정산"}[msg.type] || "결산";
     collectClosing(prefix).then(reply, (e) => reply({error: String(e.message || e)}));
@@ -164,9 +198,24 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
 });
 
+// 회사 번호 (SmartA 주소의 cno 값)
+function cnoOf(url) {
+  const m = String(url || "").match(/[?&]cno=([^&#]+)/);
+  return m ? m[1] : "";
+}
+
+// 받을 SmartA 탭 (P1-1·P2-4, 2026-11-15): 예전에는 열린 SmartA 탭 중 첫 탭을 골라, 여러 회사를 열어 두면 지금 보는 회사가 아닌
+// 다른 회사 자료를 받을 수 있었다. 지금 보고 있는 탭이 SmartA 면 그 탭을 쓰고, 아니면 열린 SmartA 탭이 모두 같은 회사일 때만 쓴다.
 async function findSmartaTab() {
-  const tabs = await chrome.tabs.query({url: "https://smarta.wehago.com/*"});
-  return tabs.find((t) => /[?&]cno=/.test(t.url)) || null;
+  const tabs = (await chrome.tabs.query({url: "https://smarta.wehago.com/*"})).filter((t) => cnoOf(t.url));
+  if (!tabs.length) return null;
+  const [act] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  const mine = act && tabs.find((t) => t.id === act.id);
+  if (mine) return mine;
+  if (new Set(tabs.map((t) => cnoOf(t.url))).size > 1) {
+    throw new Error("위하고 SmartA 탭이 여러 회사로 열려 있음 — 받을 회사의 SmartA 탭을 앞에 띄운 뒤 다시 누르세요.");
+  }
+  return tabs[0];
 }
 
 // 자금계획은 searchDate 없이 열어야 '0. 계획월' 보기(달 단위 조회)로 열린다.
@@ -198,7 +247,9 @@ function waitLoaded(tabId, ms) {
 }
 
 async function sourceTab() {
-  const src = await findSmartaTab();
+  let src;
+  try { src = await findSmartaTab(); }
+  catch (e) { await setStatus({error: String(e.message || e), badge: "!"}); throw e; }
   if (!src) {
     await setStatus({error: "위하고 SmartA 화면이 열려 있지 않음", badge: "!"});
     throw new Error("위하고에 로그인한 뒤 SmartA(회계) 화면을 한 번 열어 두세요.");
@@ -299,11 +350,15 @@ async function collectPlan(months) {
 // 대조 화면(합계잔액시산표 등)은 분개장 바로 뒤에 받는다: 같은 때 받은 것끼리 맞춰 봐야 그 사이 들어간 전표 때문에 다르게 보이지 않는다
 // (2026-11-13 실제: 재무상태표를 받은 7분 뒤 지급 전표 11건이 들어가 통장·미지급금이 3,561만 달라 보였음)
 async function collectAll(months) {
+  // 2차 P1-5 (2026-11-15): 오류 표시는 받기를 시작할 때 비우고, 끝나면 단계 중 하나라도 실패했으면 다시 적는다
+  // (예전엔 뒤 단계 저장 성공이 앞 단계 실패를 지워, 팝업을 다시 열면 실패가 안 보였음)
+  await setStatus({error: ""});
   const out = {};
   for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
+  if (errs.length) await setStatus({error: errs.join(" / "), badge: "!"});
   return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
 }
 
@@ -334,6 +389,7 @@ async function collectClosing(prefix = "결산") {
   await new Promise((r) => setTimeout(r, CLOSING_MS));
   const run = closingRun; closingRun = null;
   if (!run.got.length) return {error: `${ack.screen || "이 화면"}: 응답이 오지 않음 (조회 조건을 고른 뒤 다시 눌러 보세요)`};
+  if (!hasData({code: ack.code}, run.got)) return {error: `${ack.screen || "이 화면"}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음, 조회 조건을 고른 뒤 다시 눌러 보세요)`};
   const name = (ack.screen || ack.code || "화면").replace(/[\\/:*?"<>|\s]+/g, "");
   const safe = name.replace(/전자세금계산서/g, "전자계산서").replace(/분개장/g, "분개").replace(/자금계획/g, "자금");   // 프로그램이 장부·자금계획서 파일로 잘못 알아보지 않게
   const file = {"종류": prefix + "원본", "형식": 1, "수집시각": "", "화면": ack.screen, "화면코드": ack.code, "응답수": run.got.length, "응답": run.got};
@@ -364,6 +420,20 @@ const AUTO_SCREENS = [
   // 연말정산현황: 작년 해로 열면 '계속근무자' 쪽이 정산년월(작년 1월~올해 2월)을 스스로 채워 조회한다 (2026-11-13 실제 화면 확인)
   {prefix: "연말정산", mod: "humanresource", code: "SWYM0102", name: "연말정산현황", years: [-1], tab: "계속근무자 연말정산현황"},
 ];
+// P1-4 (2026-11-15): 화면마다 프로그램이 읽는 자료 응답 (프로그램 wehago_raw.NEED 와 같은 글 — 시험이 둘을 맞춰 봄).
+// 이 응답이 오지 않고 조건 응답(미승인 전표 확인·init 등)이나 오류 응답만 오면 '받음'으로 치지 않고 저장하지 않는다.
+const NEED = {"SACL0105": "/sacl0105/main$", "SACL0108": "/sacl0108/plusforw$", "SAAS0107": "/allfixlist$", "SWPM0108": "/swpm0108/condition$", "SWSA0105": "/swsa0105/total$", "SWBU0103": "/swbu0103/tab1$", "SWET0107": "/swet0107/other/tab01$", "SWYM0107": "/emp/income$", "SWYM0102": "/swym0102$", "SACL0104": "/sacl0104/account$", "SAFM0109": "/safm0109$", "SAFM0107": "/safm0107/balance/statement$", "SACL0106": "/sacl0106/0", "SAAC0103": "/saac0103/jungsang$", "SAFM0108": "/safm0108/\\d+$", "SABM0109": "/sabm0109/bsflist", "SAAC0110": "/collectingdata/", "SAVF0119": "/savf0119/top$", "SWTA0101": "/swta0101/sglist$"};
+// 오류 응답: status 400 이상, 또는 오류 글(error)과 status 를 함께 둔 것 (재무상태표 '/main' 의 error_str 칸은 정상에도 있음)
+function isErrResp(d) {
+  return !!d && typeof d === "object" && !Array.isArray(d) &&
+    ((typeof d.status === "number" && d.status >= 400) || (typeof d.error === "string" && d.error !== "" && "status" in d));
+}
+function hasData(sc, got) {
+  const need = NEED[String((sc && sc.code) || "").toUpperCase()];
+  const re = need ? new RegExp(need) : null;
+  return (got || []).some((g) => !isErrResp(g.data) && (!re || re.test(String(g.path || "").replace(/\/+$/, "").toLowerCase())));
+}
+
 const SCREEN_MS = 15000;   // 응답을 기다리는 시간 (사원 줄 누르기는 따로 사원당 8초까지)
 let booksRun = false;
 
@@ -405,6 +475,7 @@ async function collectRecon() {
       catch (e) { r = null; }
       if (!r || (r.v || 0) < 8) { fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"); break; }
       if (!r.ok) { fails.push(`${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : "")); continue; }
+      if (!hasData(sc, r.got)) { fails.push(`${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
       const kind = `${sc.prefix}_${sc.name}`;
       const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
                     "자동": true, "응답수": r.got.length, "응답": r.got};
@@ -450,6 +521,7 @@ async function collectBooks() {
           break;
         }
         if (!r.ok) { fails.push(`${year} ${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : (sc.onOpen || r.clicked ? "" : (sc.tab ? ` ('${sc.tab}' 못 찾음)` : " ([조회] 버튼 못 찾음)")))); continue; }
+        if (!hasData(sc, r.got)) { fails.push(`${year} ${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
         const kind = `${sc.prefix}_${sc.name}` + (dy ? `_${year}` : "");
         const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
                       "자동": true, "응답수": r.got.length, "응답": r.got};

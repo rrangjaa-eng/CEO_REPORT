@@ -151,6 +151,16 @@ def lights(R, I=None):
         st = X.get("state")
         if st == "ok":
             lv, num, sub, facts = OK, "대조함", "위하고 원가·계산서와 인트라넷 대조", []
+            # 2차 P3-15 (2026-11-15): 대조는 했는데 차이가 있으면 '양호'가 아니다 — 거래처 미지급 차이·보통예금 차이를 신호에 잇는다
+            vs = X.get("vendor_summary") or {}
+            if vs.get("diff_count"):
+                facts.append("위하고 대조: 거래처 미지급 차이 %d곳%s." % (vs["diff_count"], " (합 %s원)" % "{:,}".format(vs["diff_sum"])
+                                                                   if vs.get("diff_sum") is not None else ""))
+            cdiff = (X.get("cash") or {}).get("balance_diff")
+            if cdiff:
+                facts.append("위하고 대조: 보통예금 장부 잔액과 계좌잔액.csv 합계 차이 %s원." % "{:,}".format(cdiff))
+            if facts:
+                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (부록 B-8)"
         else:
             lv, num, sub = WA, st or "자료 없음", "대조 자료 확인 필요"
             facts = ["위하고 대조: %s." % (X.get("reason") or st or "자료 없음")]
@@ -463,6 +473,9 @@ def track_suggest(K):
         if o["all"] and o["all"] - o["actual"] > o["all"] * 0.3:
             out.append("예상 포함 출금이 실제보다 %.0f%% 많았습니다 → 끝난 프로젝트의 남은 예산·겹친 예상 지급을 정리하면 ‘예상 포함 여유 자금’이 실제에 가까워집니다."
                        % ((o["all"] - o["actual"]) * 100.0 / o["all"]))
+        if i["all"] and i["all"] - i["actual"] > i["all"] * 0.3:   # 1차 B15 (2026-11-15): 예상 입금이 80% 빗나가도 '믿고 써도 됨'이었다
+            out.append("예상 포함 입금이 실제보다 %.0f%% 덜 들어왔습니다 → 입금 날짜가 불확실한 거래처는 자금 일정에서 ‘예상’으로 두고, "
+                       "그 돈 없이도 버틸 수 있는지 ‘확정만’ 숫자로 보세요." % ((i["all"] - i["actual"]) * 100.0 / i["all"]))
         if i["firm"] and i["firm"] - i["actual"] > i["firm"] * 0.1:
             out.append("확정이라던 입금이 %.0f%% 덜 들어왔습니다 → 입금 예정 거래처에 날짜를 다시 확인하고, 늦는 곳은 자금 일정에서 ‘예상’으로 내리세요."
                        % ((i["firm"] - i["actual"]) * 100.0 / i["firm"]))
@@ -640,7 +653,7 @@ def docs_section(R, I, L):
     else:
         add("위하고 대조·현금흐름표", esc("월간 경영관리 보고 부록 B-8·B-9"), esc("월간에만"), [], EXPLAIN["s9"])
     add("법인세 예상", here("sum", "부록 A-1 누적 절") if mon else esc("월간 보고 A-1"), yes if mon else esc("월간에만"), [],
-        "올해 장부 이익으로 미리 계산한 법인세입니다 (감가상각비·대손충당금 예상 반영).")
+        "올해 장부 이익으로 미리 계산한 법인세입니다 (감가상각비 예상 반영. 대손충당금은 세무사 확인 전이라 빼지 않고 '쌓으면 세금 −X'로만 보임).")
     for code, area, nm, lab, gone in (("q", "c1", "세무조정 예상", "부록 C-1", "분기(3·6·9·12월)"),
                                       ("q", "c2", "신고 일정·신고 도우미", "부록 C-2", "분기(3·6·9·12월)"),
                                       ("q", "c3", "급여 점검·연말정산 예상", "부록 C-3", "분기(3·6·9·12월)"),

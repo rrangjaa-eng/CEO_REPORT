@@ -7,6 +7,7 @@ import datetime as dt
 import re
 
 from .calc import compute
+from .screen_values import ceo_status
 from .util import Issues, is_blank, mask_rrn, num, setting_num, ssum, ssum_or_none, won
 from .util import date as parse_date
 
@@ -136,11 +137,9 @@ def _day_index(date, monday):
 
 
 def _status(text):
-    if text == "승인":
-        return "approved"
-    if text in ("미승인", "수락요청중"):
-        return "pending"
-    return "status_unknown"
+    """'사장님승인' 글자 -> approved | pending | status_unknown. 글자 목록은 screen_values 한 곳 (규칙 안전-07, 2026-11-15:
+    '수락완료' = 대표 승인 끝)."""
+    return ceo_status(text)
 
 
 def _read_settings(d, issues):
@@ -250,7 +249,7 @@ def _regular_missing(events, regular, cutoff, horizon):
 def _projects(projects, req_all):
     """A-6: 프로젝트별 실행가와 요청 누계 (P-4, P-5). 미요청 실행가는 참고용이며 일정에 넣지 않는다 (D-04, D-06).
 
-    프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·미승인·수락요청중인 것.
+    프로젝트 키 = 행사명 맨 앞 [ ] 안의 숫자, 없으면 번호. 요청 누계 = 연결된 요청 중 사장님승인이 승인·수락완료·미승인·수락요청중인 것 (screen_values, 안전-07).
     실행가가 비었거나 누계에 금액 미확인이 있거나 키가 겹치면 판단 불가이고, 0으로 두지 않는다.
     """
     keyed = [(project_code(p.get("행사명", "")) or norm_project(p.get("번호", "")), p) for p in projects]
@@ -349,11 +348,14 @@ def _match_plan(req_all, events, F, norm_vendor):
         for ev in plan:
             if id(ev) in taken or ev["amount"] not in amounts:
                 continue
-            same = bool(key) and norm_vendor(ev["desc"]) == key
+            evk = norm_vendor(ev["desc"])
+            same = bool(key) and evk == key
             proj = bool(rq["code"]) and "".join(ch for ch in (ev.get("project") or "") if ch.isdigit()) == rq["code"]
             near = rq["date"] is not None and abs((ev["date"] - rq["date"]).days) <= 7
             if not (same or proj or near):
                 continue
+            if key and evk and not same and not proj:
+                continue   # 2차 P5-28 (2026-11-15): 거래처가 둘 다 적혀 있고 다르면 날짜·금액만으로 잇지 않음 — 다른 거래처의 확정 지급이 사라졌다
             rank = (0 if same else 1 if proj else 2, abs((ev["date"] - rq["date"]).days) if rq["date"] else 999)
             if best is None or rank < best[0]:
                 best = (rank, ev)
@@ -475,7 +477,8 @@ def _link_costs(books, req_all, snap, input_dir, issues, asof=None, now=None):
     if input_dir:
         from . import convert
         overrides, notes = linking.read_links(input_dir)
-        _link_notes(notes, issues)
+        overrides, more = linking.check_links(books.journal, overrides)   # P2-10
+        _link_notes(list(notes) + more, issues)
         cfg, cfg_notes = convert.read_config(input_dir)
         for note in cfg_notes:
             if note.startswith("설정 "):   # '설정.csv 없음 / 읽지 못함'은 화면이 따로 알린다 (01.1 건수를 바꾸지 않음)

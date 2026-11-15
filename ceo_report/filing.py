@@ -15,6 +15,7 @@ import datetime as dt
 import re
 
 from .surplus import FOUNDED
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "신고일정.csv"
 COLUMNS = ["기한", "신고", "대상", "장부 근거", "어디서", "상태"]
@@ -190,7 +191,7 @@ def load(input_dir):
     path = os.path.join(input_dir, FILE)
     if not os.path.exists(path):
         return None
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with _open_text(path) as f:
         return list(csv.DictReader(f)) or None
 
 

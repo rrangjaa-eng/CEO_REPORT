@@ -569,10 +569,10 @@ class TestP3CorpTaxLine(unittest.TestCase):
         from ceo_report.render import render
         for mode in ("ceo", "mgmt"):
             h = render(self.M, mode)
-            self.assertIn("1월~10월 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · 법인세 13,500,000 − 중간예납 등 기납부 4,000,000"
-                          " = 9,500,000 (2027-03-31) · 지방소득세 1,350,000 (2027-04-30)", h, mode)
-            self.assertNotIn("= 납부 10,850,000 (2027-03-31 예상)", h, mode)
-            self.assertIn("지금까지 이익 기준 법인세·지방소득세 −14,850,000", h, mode)
+            self.assertIn("1월~10월 이익 기준 세금 예상 (연말 이익에 따라 바뀜) · 법인세 13,700,000 − 중간예납 등 기납부 4,000,000"
+                          " = 9,700,000 (2027-03-31) · 지방소득세 1,370,000 (2027-04-30)", h, mode)   # 감가상각 월할 (결정 M5)
+            self.assertNotIn("= 납부 11,070,000 (2027-03-31 예상)", h, mode)
+            self.assertIn("지금까지 이익 기준 법인세·지방소득세 −15,070,000", h, mode)
 
     def test_same_base_as_the_fund_schedule(self):
         """세무조정으로 과세표준이 세전 이익과 다르면 자금 일정(변환 때 계산)과 같은 과세표준으로."""
@@ -583,11 +583,11 @@ class TestP3CorpTaxLine(unittest.TestCase):
         row["base"] = 150_000_000   # 세무조정 +1,500만
         h = render(R, "ceo")
         self.assertIn("법인세 15,000,000 − 중간예납 등 기납부 4,000,000 = 11,000,000 (2027-03-31) · 지방소득세 1,500,000", h)
-        self.assertIn("118,500,000", h)   # 당기순이익 예상 = 세전 1.35억 − 1,650만
+        self.assertIn("120,500,000", h)   # 당기순이익 예상 = 세전 1.37억 − 1,650만
         row["period"] = "2026년 (1월~9월 장부 기준)"   # 기간이 다르면 이 표의 세전 이익으로 (세무조정 미반영이라고 적음)
         R.pop("_ins", None)
         m = render(R, "mgmt")
-        self.assertIn("법인세 13,500,000 − 중간예납 등 기납부 4,000,000", m)
+        self.assertIn("법인세 13,700,000 − 중간예납 등 기납부 4,000,000", m)
         self.assertIn("세무조정 미반영", m)
 
 

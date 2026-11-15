@@ -111,10 +111,18 @@ def rq(amount, note, project="26101", vendor="가상상사(주)"):
 
 
 class TestAttach(unittest.TestCase):
-    def test_project_and_amount_even_if_vendor_name_differs(self):
+    def test_project_and_amount_with_a_different_vendor_name_is_left_blank(self):
+        # 2차 P5-21 (2026-11-15): 두 이름이 다 있는데 다르면 붙이지 않는다 (음향 요청 상세가 조명 지급에 붙었음 — '애매하면 비움')
         e = ev(1650000, desc="주식회사 전혀다른이름")
+        self.assertEqual(payreq.attach([e], [rq(1650000, "목공 잔금")]), 0)
+        self.assertNotIn("detail", e)
+
+    def test_project_and_amount_when_one_side_has_no_name(self):
+        e = ev(1650000, desc="")
         self.assertEqual(payreq.attach([e], [rq(1650000, "목공 잔금")]), 1)
         self.assertEqual((e["detail"], e["detail_source"]), ("목공 잔금", "지출결의서"))
+        e = ev(1650000, desc="가상상사")
+        self.assertEqual(payreq.attach([e], [rq(1650000, "목공 잔금", vendor="(주)가상상사 본점")]), 1)
 
     def test_other_project_or_amount_not_attached(self):
         a, b = ev(1650000, project="26102"), ev(1650001)

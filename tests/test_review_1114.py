@@ -145,7 +145,8 @@ class TestConvert(unittest.TestCase):
         from ceo_report import wehago_raw
         with tempfile.TemporaryDirectory() as t:
             for n, year in (("a 결산_고정자산관리대장 자동수집.json", None), ("b 결산_고정자산관리대장 자동수집.json", 2026)):
-                d = {"종류": "결산원본", "화면": "고정자산관리대장", "수집시각": "2026-11-13", "응답": []}
+                d = {"종류": "결산원본", "화면": "고정자산관리대장", "수집시각": "2026-11-13",
+                     "응답": [{"path": "/smarta/saas0107/allfixlist/", "data": []}]}   # P1-4: 자료 응답이 있는 파일
                 if year:
                     d["연도"] = year
                 with open(os.path.join(t, n), "w", encoding="utf-8") as f:

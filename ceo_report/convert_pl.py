@@ -440,7 +440,9 @@ def build_dept(books, cfg, prev_rows=()):
             source += amount
         if is_salary:
             if ln.get("employee"):
-                c["names"].add(ln["employee"])
+                # 1차 B11 (2026-11-15): 사람마다 그 달 그 부서 급여 합을 본다 — 정정(+300만·−300만)으로 0이 된 부서엔 세지 않음
+                got = c["names"].get(ln["employee"], 0)
+                c["names"][ln["employee"]] = None if (got is None or amount is None) else got + amount
             else:
                 c["nameless"] += 1
     for ln in nonop:   # 영업외: 수익 = 대변−차변, 비용 = 차변−대변. 팀 순수익에는 넣지 않는다 (사용자 2026-11-03)
@@ -459,7 +461,8 @@ def build_dept(books, cfg, prev_rows=()):
     months = set(k[0] for k in cells)
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept), c in sorted(cells.items()):
-        heads = "" if c["nameless"] or not c["names"] else str(len(c["names"]))
+        paid = [n for n, v in c["names"].items() if v is None or v > 0]   # 합을 모르는 사람(None)은 센다
+        heads = "" if c["nameless"] or not paid else str(len(paid))
         rows.append(dict(zip(DEPT_COLUMNS, [ym, dept, cell_amount(_cell(c["salary"])), cell_amount(_cell(c["sga"])), heads,
                                             cell_amount(_cell(c["nonop_in"])), cell_amount(_cell(c["nonop_out"]))])))
     csv_sum = 0
@@ -565,7 +568,7 @@ def build_dept_accounts(books, cfg, prev_rows=()):
 
 
 def _dept_cell():
-    return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": set(), "nameless": 0}
+    return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": {}, "nameless": 0}
 
 
 ACCOUNT_GROUPS = (("direct", "원가"), ("common", "판매비와관리비"), ("common_unmarked", "판매비와관리비"), ("nonop_out", "영업외비용"))

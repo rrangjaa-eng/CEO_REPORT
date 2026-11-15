@@ -368,6 +368,9 @@ def run_collect(a, asof, now):
     write_structure_log(a.출력, collected_at, diag, rc)
     if rc is not None:
         return rc
+    for x in diag:   # 2차 P1-15: 수집은 끝났지만 놓친 쪽이 있을 수 있다는 알림은 화면에도
+        if str(x).startswith("[확인]"):
+            _say(x)
     if result.project_skipped:
         _say("[확인] 프로젝트 목록에서 칸 수가 다른 줄 %d건은 읽지 않고 건너뜀 — 그 프로젝트의 계산서는 미연결로 남습니다 "
              "(모양: 출력\\인트라넷_구조점검.txt)" % result.project_skipped)
@@ -376,11 +379,14 @@ def run_collect(a, asof, now):
         time.monotonic() - started))
     where = a.수집폴더
     try:
-        snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
-                                   pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages})
+        put_requests = None
         if result.requests is not None:   # 지급 요청서 세부사항 첫 줄 (사용자 2026-11-05)
             from ceo_report import payreq
-            payreq.write(snap_path, result.requests)
+            put_requests = lambda folder: payreq.write(folder, result.requests)   # noqa: E731 — 완성 표시 전에 함께 씀 (C20·P1-16)
+        snap_path = write_snapshot(a.수집폴더, collected_at, result.payments, result.projects,
+                                   pages={"지급요청": result.payment_pages, "프로젝트": result.project_pages},
+                                   extra=put_requests, skipped=result.project_skipped)
+        if result.requests is not None:
             _say("지급 요청서(관리팀 승인·사장님 승인 전) %d건 읽음 · 세부사항 있음 %d건"
                  % (len(result.requests), sum(1 for r in result.requests if r["note"])))
         else:

@@ -173,6 +173,11 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     if B["missing"]:
         h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 성장률 0%%, 목표 수익률은 기본 원가율 설정으로 계산했습니다.</div>"
                  % ", ".join(B["missing"]))
+    fixed_m = None if Y.get("sal") is None or Y.get("sga") is None else (Y["sal"] + Y["sga"]) / 12.0
+    if mg and c.get("min_cash") and fixed_m:   # 가정 표시 (사용자 11/15 카드: 최소 보유현금은 매년 예산 만들 때 다시 정함, 그 전엔 1억)
+        h.append("<div class='note' style='color:#9a5a00'>%s</div>" % esc(
+            "최소 보유현금 %s = 이 예산의 한 달 고정 지출(급여·판관비, 감가상각 뺌) %s의 %.1f달 치 — 예산을 확정할 때 몇 달 치로 둘지 다시 정하세요 "
+            "(설정 '위험_최소보유현금', 다시 정하기 전에는 지금 값 그대로)." % (won(c["min_cash"]), won(int(round(fixed_m))), c["min_cash"] / fixed_m)))
     # 1. 정할 값
     h.append("<div class='sec'><div class='q'>1. 정해야 할 값%s</div>" % S("in", "입력값"))
     cols = "".join("<th>%s</th>" % esc(t) for t in teams)
@@ -310,11 +315,9 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
             ct.append("<tr class='tot'><td>1년</td><td>%s</td><td>%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>−%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
                       % (won(c["start"]), won(sum(c["cin"])), won(sum(c["cpay"])), won(Y["sal"]), won(sum(c["sga_pay"])), won(sum(c["tax"])), won(sum(c["fixed"])),
                          _sgn(sum(c["nio"])) if sum(c["nio"]) else "—", won(c["bal"][-1])))
-            if c["days_used"] == c["days"]:
-                dtext = "%d년 계산서 %d건 평균 %.0f일" % (base, c["n_days"], c["days"])
-            else:
-                dtext = "회사 기준 작성일 뒤 %d일%s" % (c["days_used"], (" (입금된 계산서 %d건 평균 %.0f일은 건수가 적어 쓰지 않음)" % (c["n_days"], c["days"]))
-                                                   if c["days"] is not None else " (입금된 계산서 자료 없음)")
+            # 결정 e (2026-11-15): 가용자금과 같은 작성일 뒤 60일. 장부 평균은 입금 끝난 계산서만 세어 짧게 나오므로 참고로만
+            dtext = "작성일 뒤 %d일, 가용자금과 같은 기준%s" % (c["days_used"], (" — 입금된 계산서 %d건 평균 %.0f일은 아직 못 받은 계산서가 빠져 짧게 나와 쓰지 않음" % (c["n_days"], c["days"]))
+                                                       if c["days"] is not None else "")
             if c.get("avail0") is not None:
                 start_text = "%s 쓸 수 있는 돈 %s (은행 잔액 날짜 뒤 통장 입출금 반영, 사용 제한 뺌, 주간 보고와 같은 값)" % (B["asof"].isoformat(), won(c["avail0"]))
             else:
@@ -354,7 +357,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
             h.append("<div class='note' style='color:#9a5a00'>· %s</div>" % esc(x))
         h.append("</div></div>")
     h.append("<div class='evid'>%s<span class='doc-end'>끝.</span></div></div></div></body></html>"
-             % ("확정 %s — 월간 보고 '예산 대비'에 쓰입니다." % confirmed if confirmed else "초안 — 창에서 '예산 확정'을 누르면 월간 보고 '예산 대비'에 쓰입니다."))
+             % ("확정 %s — 월간 경영관리 보고 '예산 대비'에 쓰입니다." % confirmed if confirmed else "초안 — 창에서 '예산 확정'을 누르면 월간 경영관리 보고 '예산 대비'에 쓰입니다."))
     page = "".join(h)
     return _areas(page) if mg else page
 

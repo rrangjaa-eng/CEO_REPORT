@@ -567,7 +567,8 @@ class TestLinkingManual(unittest.TestCase):
             raw = f.read()
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
         rows = list(csv.reader(raw.decode("utf-8-sig").splitlines()))
-        self.assertEqual(rows, [mod("linking").LINK_COLUMNS])
+        self.assertEqual(rows, [mod("linking").LINK_TEMPLATE])   # P2-10: 거래처코드·금액 확인 칸 (선택)
+        self.assertTrue(set(mod("linking").LINK_COLUMNS) <= set(rows[0]))
 
 
 # ───────────── Task 3: 매출 줄, 스냅숏 없음, 가리기 ─────────────

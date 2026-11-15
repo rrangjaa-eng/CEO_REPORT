@@ -23,6 +23,36 @@ class Issues:
 TITLE_ROWS = 5  # 머리글 위 제목 줄을 이만큼까지 건너뛴다
 
 
+def read_text(path):
+    """파일 글자를 읽는다: UTF-8(BOM 포함) → CP949 순서 (엑셀에서 다시 저장한 파일, 2026-11-15 C5).
+    둘 다 아니면 UnicodeDecodeError, 열 수 없으면 OSError."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp949")
+
+
+def open_text(path):
+    """open(path, encoding="utf-8-sig", newline="") 대신 쓰는 읽기 전용 글자 파일 (CP949 도 읽음)."""
+    return io.StringIO(read_text(path), newline="")
+
+
+def guard_save(path):
+    """저장 전에 지금 파일을 끝까지 읽어 본다 -> 못 읽으면 ValueError (C5: 못 읽은 파일을 '0줄'로 보고 새 줄만으로 덮어
+    있던 내용을 지우지 않게). 파일이 없으면 그냥 돌아간다."""
+    if not os.path.exists(path):
+        return
+    name = os.path.basename(path)
+    try:
+        list(csv.reader(open_text(path)))
+    except OSError as e:
+        raise ValueError("%s 을 열 수 없어 저장하지 않음 (%s) — 엑셀에서 열려 있으면 닫고 다시 하세요" % (name, e.strerror or type(e).__name__))
+    except (UnicodeDecodeError, csv.Error):
+        raise ValueError("%s 을 읽지 못해 저장하지 않음 (UTF-8·CP949 가 아님) — 파일을 다른 이름으로 옮긴 뒤 다시 하세요. 지금 파일은 그대로 둠" % name)
+
+
 def read_csv(path, required, issues, info=None):
     """엑셀에서 저장한 CSV를 읽는다. UTF-8(BOM 포함)과 CP949를 모두 받는다.
 
@@ -73,13 +103,27 @@ def read_csv(path, required, issues, info=None):
     missing = [c for c in required if c not in header]
     if info is not None:
         info["missing"] = missing
+        info["header"] = list(header)   # 다시 쓸 때 사용자가 더한 열도 남기게 (2차 C8)
     if missing:
         issues.add(name, 1, "필수 열 없음: " + ", ".join(missing))
+    # P2-13 (2026-11-15): 같은 머리글이 두 번이면 예전에는 뒤 칸이 앞 칸 값을 말없이 덮었다 (앞 100만 대신 뒤 10만).
+    # 꼭 필요한 열이 두 번이면 어느 값이 맞는지 몰라 파일을 읽지 않고, 그 밖의 열은 앞 칸을 쓰고 알린다.
+    dups = [h for h in dict.fromkeys(header) if h and header.count(h) > 1]
+    if dups:
+        hard = [h for h in dups if h in required]
+        if hard:
+            issues.add(name, 1, "머리글이 두 번 있음: %s — 어느 칸 값을 쓸지 몰라 이 파일을 읽지 않음 (하나를 지우고 다시 저장)"
+                       % ", ".join(hard))
+            if info is not None:
+                info["missing"] = list(hard)
+            return [], False
+        issues.add(name, 1, "머리글이 두 번 있음: %s — 앞 칸 값을 씀" % ", ".join(dups))
     out = []
     for line, cells in records:
         clean = {}
         for k, v in zip(header, cells):  # 헤더보다 많은 칸은 버린다 (DictReader와 같음)
-            clean[k] = (v or "").strip()
+            if k not in clean:   # 같은 머리글은 앞 칸 (P2-13)
+                clean[k] = (v or "").strip()
         for k in header[len(cells):]:
             clean.setdefault(k, "")
         if not any(clean.values()):

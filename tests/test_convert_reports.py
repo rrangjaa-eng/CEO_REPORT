@@ -185,19 +185,17 @@ class TestConvertedNoDouble(unittest.TestCase):
 
     def test_calc_events_name_each_payment_request_number_at_most_once(self):
         seen = collections.Counter(n for ev in self.exec_events() for n in request_numbers(ev["basis"]))
-        self.assertEqual(sorted(seen), ["1201", "5102", "5103", "5104", "5105", "5106", "5107", "5108"])
+        self.assertEqual(sorted(seen), ["1201", "5102", "5103", "5104", "5105", "5106", "5108"])   # 5107 '반려' = 처음 보는 글자 (안전-07)
         self.assertEqual([n for n, c in seen.items() if c > 1], [])
 
-    def test_requests_already_paid_are_not_events_and_unknown_state_is_an_estimate(self):
+    def test_requests_already_paid_are_not_events_and_a_new_status_value_is_left_out(self):
         named = set(n for ev in self.exec_events() for n in request_numbers(ev["basis"]))
         self.assertNotIn("5109", named)   # 장부에서 이미 지급
-        # 02-REVIEW CR-03 / D-52: 사장님승인 '반려'(읽지 못한 상태)는 버리지 않고 추정 지급으로 남긴다 (예전: 일정에 없음)
-        unknown = [ev for ev in self.exec_events() if "5107" in request_numbers(ev["basis"])]
-        self.assertEqual([(ev["amount"], ev["firm"]) for ev in unknown], [(1100000, False)])
-        self.assertIn("상태 확인 필요 (반려)", unknown[0]["basis"])
-        # 승인 화면은 01.1 규칙대로 그 요청을 '확인 필요'로 세고, 입력 줄은 번호가 같아도 대신하지 않고 남긴다
+        # 안전-07 (2026-11-15): 사장님승인 '반려'는 처음 보는 글자라 숫자(일정)에 넣지 않는다 (빈칸이면 D-52대로 추정 지급)
+        self.assertNotIn("5107", named)
+        # 승인 화면은 그 요청을 '확인 필요'로 세어 따로 보이고 일정에는 넣지 않는다
         self.assertEqual([r["번호"] for r in self.A["status_unknown"]], ["5107"])
-        self.assertIn(["5107"], [request_numbers(ev["basis"]) for ev in self.A["number_kept"]])
+        self.assertNotIn(["5107"], [request_numbers(ev["basis"]) for ev in self.A["number_kept"]])
 
     def test_events_naming_5103_sum_to_the_larger_invoice_amount(self):
         events = [ev for ev in self.exec_events() if "5103" in request_numbers(ev["basis"])]

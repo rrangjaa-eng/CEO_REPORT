@@ -10,6 +10,7 @@ import csv
 import datetime as dt
 import io
 import os
+import re
 import shutil
 import sys
 import time
@@ -17,6 +18,7 @@ import time
 from . import fundplan, wehago
 from .data import SCHEMA
 from .util import date as parse_date
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 ARCHIVE = "지난자료"
 SCHED_FILE = "자금일정.csv"
@@ -118,6 +120,7 @@ def _module(name):
 
 BACKUP_DIR = "입력_백업"
 BACKUP_KEEP = 10
+_BACKUP_NAME = re.compile(r"^\d{8}_\d{6}(_\d+)?$")   # 다 만든 백업만 (반쯤 만든 '_실패'는 세지도 지우지도 않음)
 
 
 def backup_input(paths, say=None, keep=BACKUP_KEEP, now=None):
@@ -137,10 +140,17 @@ def backup_input(paths, say=None, keep=BACKUP_KEEP, now=None):
         os.makedirs(base, exist_ok=True)
         shutil.copytree(paths.input, dest, ignore=shutil.ignore_patterns("이전", credstore.CRED_FILE, "*.tmp", "~$*"))
     except OSError as e:
+        # 2차 P6-10 (2026-11-15): 반쯤 만든 백업이 남아 다음 번 '최근 10개'에 끼면 멀쩡한 옛 백업이 지워졌다 — 치우거나 '_실패'로
+        shutil.rmtree(dest, ignore_errors=True)
+        if os.path.exists(dest):
+            try:
+                os.replace(dest, dest + "_실패")
+            except OSError:
+                pass
         if say:
             say("입력 폴더 백업을 못 함 (%s) — 변환은 계속합니다" % (e.strerror or type(e).__name__))
         return None
-    olds = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)) and n[:8].isdigit())
+    olds = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)) and _BACKUP_NAME.match(n))
     for n in olds[:-keep] if keep and len(olds) > keep else []:
         shutil.rmtree(os.path.join(base, n), ignore_errors=True)
     if say:
@@ -204,9 +214,67 @@ def chrome_download_dirs(env=None):
     return out
 
 
+def _same_file(a, b):
+    """두 파일 내용이 같은가 (크기가 같을 때만 바이트 비교)."""
+    import filecmp
+    try:
+        return os.path.getsize(a) == os.path.getsize(b) and filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
+def _json_info(path):
+    """자동수집 파일 -> (끝까지 읽히는 JSON 인가, 확장이 적은 '수집시각' 또는 '')."""
+    import json
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False, ""
+    return True, (str(d.get("수집시각") or "").strip() if isinstance(d, dict) else "")
+
+
+def _json_ok(path):
+    """자동수집 파일이 끝까지 읽히는 JSON 인가 (받다 끊긴 파일·깨진 파일은 False)."""
+    return _json_info(path)[0]
+
+
+def _in_archive(paths, name, src):
+    """수집/위하고/지난자료 에 src 와 내용이 같은 같은 이름(또는 이름_2 꼴) 파일이 있으면 그 경로."""
+    arch = os.path.join(paths.wehago, ARCHIVE)
+    base, ext = os.path.splitext(name)
+    try:
+        cands = [n for n in os.listdir(arch) if n == name or (n.startswith(base + "_") and n.endswith(ext))]
+    except OSError:
+        return None
+    for n in sorted(cands):
+        if _same_file(src, os.path.join(arch, n)):
+            return os.path.join(arch, n)
+    return None
+
+
+def _to_archive(paths, src, name):
+    """src 를 수집/위하고/지난자료 로 옮긴다 (같은 이름이 있으면 이름_2 …). -> 옮긴 경로."""
+    dest = os.path.join(paths.wehago, ARCHIVE)
+    os.makedirs(dest, exist_ok=True)
+    target = os.path.join(dest, name)
+    base, ext = os.path.splitext(name)
+    k = 2
+    while os.path.exists(target):
+        target = os.path.join(dest, "%s_%d%s" % (base, k, ext))
+        k += 1
+    shutil.move(src, target)
+    return target
+
+
 def import_auto(paths, say, dirs=None):
-    """크롬 다운로드 폴더의 위하고자동수집/*자동수집.json 을 수집/위하고 로 복사한다 (원본은 그대로). -> 복사한 파일 수.
-    같은 이름 파일이 이미 있으면 더 새로 받은 것만 덮어쓴다."""
+    """크롬 다운로드 폴더의 위하고자동수집/*자동수집.json 을 수집/위하고 로 옮긴다. -> 새로 가져온 파일 수.
+
+    안전-05 (2026-11-15, R4·C10): 장부에는 급여 같은 개인정보가 있어 PC 다운로드 폴더에 남기지 않는다. 외장하드로 복사해
+    내용이 같은 것을 확인한 뒤에만 다운로드 쪽을 지운다. 예전엔 복사만 해서, 지난자료로 옮긴 옛 파일이 다음 변환 때 다시
+    들어왔다 — 이제 지난자료에 같은 내용이 있으면 다시 가져오지 않는다. 지우는 것은 외장하드에 같은 내용이 있을 때뿐이고,
+    그 밖의 옛 파일(같은 이름의 더 새 파일이 이미 있음)은 지난자료로 옮긴다. 같은 이름의 예전 파일을 새 파일로 바꿀 때는
+    예전 파일을 지난자료로 먼저 옮긴다 (덮어써 잃지 않게)."""
     n = 0
     for base in (chrome_download_dirs() if dirs is None else dirs):
         src_dir = os.path.join(base, AUTO_DIR)
@@ -217,15 +285,42 @@ def import_auto(paths, say, dirs=None):
         for name in names:
             src, dst = os.path.join(src_dir, name), os.path.join(paths.wehago, name)
             try:
-                if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+                kept = _in_archive(paths, name, src)
+                if kept or (os.path.exists(dst) and _same_file(src, dst)):
+                    os.remove(src)   # 외장하드에 같은 내용이 이미 있음 → 다운로드 쪽만 지움
+                    say("다운로드 폴더의 자동수집 파일 정리: %s (이미 %s에 있음 — 다시 가져오지 않음)"
+                        % (name, "수집\\위하고\\" + ARCHIVE if kept else "수집\\위하고"))
+                    continue
+                s_ok, s_at = _json_info(src)
+                if not s_ok:   # 2차 P1-10·P2-3: 깨진 파일이 '가져옴'으로 들어와 멀쩡한 같은 이름 원본을 밀어냈다
+                    moved = _to_archive(paths, src, name)
+                    say("[확인] 다운로드 폴더의 자동수집 파일이 깨져(받다 끊김 등) 가져오지 않고 지난자료로 옮김: %s — "
+                        "지금 쓰는 원본은 그대로 둠, 위하고 확장에서 다시 받으세요" % os.path.basename(moved))
+                    continue
+                d_ok, d_at = _json_info(dst) if os.path.exists(dst) else (False, "")
+                # 2차 P1-9·P6-6: 어느 쪽이 새것인지는 확장이 적은 수집시각으로 (다른 크롬 프로필에서 늦게 복사돼 파일 시각만 새로운
+                # 옛 수집이 새 수집을 밀어냈다). 수집시각이 없을 때만 파일 시각. 지금 것이 깨졌으면 새 파일로 바꾼다
+                if d_ok and ((s_at <= d_at) if (s_at and d_at) else os.path.getmtime(dst) >= os.path.getmtime(src)):
+                    moved = _to_archive(paths, src, name)
+                    say("다운로드 폴더의 옛 자동수집 파일을 지난자료로 옮김: %s (같은 이름의 더 새 수집이 이미 있음%s)"
+                        % (os.path.basename(moved), " — 수집시각 %s ≤ %s" % (s_at, d_at) if (s_at and d_at) else ""))
                     continue
                 os.makedirs(paths.wehago, exist_ok=True)
-                shutil.copy2(src, dst)
+                tmp = dst + ".가져오는중"
+                shutil.copy2(src, tmp)
+                if not _same_file(src, tmp):
+                    os.remove(tmp)
+                    raise OSError(0, "복사한 내용이 원본과 다름")
+                if os.path.exists(dst):
+                    old = _to_archive(paths, dst, name)   # 같은 이름의 예전 파일은 잃지 않게 지난자료로
+                    say("같은 이름의 예전 파일을 지난자료로 옮김: %s" % os.path.basename(old))
+                os.replace(tmp, dst)
+                os.remove(src)
             except OSError as e:
                 say("자동수집 파일을 가져오지 못함: %s (%s)" % (name, e.strerror or type(e).__name__))
                 continue
             n += 1
-            say("크롬 자동수집 파일 가져옴: %s" % name)
+            say("크롬 자동수집 파일 가져옴: %s (다운로드 폴더에서 옮김)" % name)
     return n
 
 
@@ -234,6 +329,13 @@ def run_task(task, paths, say, asof="", pick="", collect=False, credentials=None
 
     승인검토에서 collect=True 면 인트라넷에서 새로 읽는다. credentials() -> (ID, 비밀번호): 창의 입력칸에서 받는다.
     비밀번호는 글로 찍지 않는다 (승인검토가 오류 글에서도 가림)."""
+    if task != "변환":   # C6 (2026-11-15): 변환이 도는 중(또는 끊겨 잠금이 남은 15분 안)에는 반쯤 바뀐 자료로 보고를 만들지 않는다
+        from .convert import LOCK_FILE, lock_age
+        age = lock_age(paths.input)
+        if age is not None:
+            say("자료 변환이 아직 끝나지 않았습니다 (입력\\%s, %d분 전부터) — 변환이 끝난 뒤 다시 하세요. 창을 모두 닫았는데도 "
+                "이 글이 나오면 변환이 중간에 끊긴 것이니 '자료 변환'을 다시 하세요 (15분 뒤 저절로 풀림)" % (LOCK_FILE, int(age // 60)))
+            return 7, []
     if task == "자동":
         return run_auto(paths, say, asof, pick, payday, group, only)
     try:
@@ -276,7 +378,11 @@ def build_live(paths, say, asof=""):
     try:
         path, diff = live.build(paths.input, paths.output, parse_date(asof) if asof else None)
     except Exception as e:   # 현황 화면 때문에 변환을 실패로 만들지 않는다
-        say("지금 현황 화면을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:150]))
+        why = "%s: %s" % (type(e).__name__, str(e)[:150])
+        # 1차 E11 (2026-11-15): 예전엔 실패해도 다시 만들지 않은 예전 화면이 그대로 열렸다 — 예전 화면은 옮기고 '못 만듦' 안내로 바꾼다
+        live.mark_failed(paths.output, why)
+        say("[확인] 지금 현황 화면을 새로 만들지 못함 (%s) — 예전 현황 화면은 '%s'로 옮김(최신 자료 아님). "
+            "자료 변환은 끝났으니 숫자는 보고서에서 확인하세요" % (why, live.STALE_FILE))
         return None
     say("지금 현황 화면 새로 씀 (%s) · 지난 현황 뒤 바뀐 것 %d건" % (os.path.basename(path), len(diff)))
     for name, a, b in diff[:8]:
@@ -286,18 +392,55 @@ def build_live(paths, say, asof=""):
 
 AUTO_KINDS = ("분개장", "자금계획서")   # 이 자료가 새로 들어오면 자동으로 변환·보고 (사용자 2026-11-12)
 AUTO_SETTLE_SEC = 20                    # 파일을 다 쓴 뒤 이만큼 지나야 읽는다 (쓰는 중인 파일을 읽지 않게)
+AUTO_QUIET_SEC = 90                     # 2차 C13: 마지막으로 어떤 위하고 자료든 들어온 뒤 이만큼 조용해야 자동으로 돈다
 
 
-def auto_signature(paths, now=None):
+def pending_downloads(dirs=None):
+    """크롬 다운로드 폴더(위하고자동수집)에 아직 가져오지 않은 자동수집 파일 -> [(경로, 받은 시각)].
+    2차 P1-11·P5-13·P6-9 (2026-11-15): 예전엔 수집\위하고 만 봐서, 확장이 다운로드 폴더에 받은 새 자료를 자동 실행·새 자료 목록이 놓쳤다."""
+    out = []
+    for base in (chrome_download_dirs() if dirs is None else dirs):
+        folder = os.path.join(base, AUTO_DIR)
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for n in names:
+            if not n.endswith(AUTO_SUFFIX):
+                continue
+            try:
+                out.append((os.path.join(folder, n), dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(folder, n)))))
+            except OSError:
+                continue
+    return out
+
+
+def auto_signature(paths, now=None, dirs=None):
     """새 분개장·자금계획서가 들어와 자동으로 돌릴 차례면 그 자료의 표시(받은 시각 글자), 아니면 None.
 
-    마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다."""
+    마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다.
+    2차 C13 (2026-11-15): '모두 받기'는 분개장을 먼저, 자금계획서를 나중에 받는다. 예전엔 분개장만 들어온 20초 뒤에 자동 보고가
+    끼어들어 새 분개장 + 옛 자금계획서로 PDF 가 먼저 나왔다 → 수집\위하고·다운로드 폴더 어디든 마지막 자료가 들어온 뒤
+    AUTO_QUIET_SEC 초 동안 새 파일이 없을 때만 돈다. 다운로드 폴더에 받아만 둔 분개장·자금계획서도 새 자료로 본다 (P1-11)."""
     from . import winstate
     now = now or dt.datetime.now()
     src = dict((n, w) for n, w, _ in winstate.sources(paths) if n in AUTO_KINDS)
     conv = winstate.convert_time(paths.input)
     new = dict((n, w) for n, w in src.items() if isinstance(w, dt.datetime) and (conv is None or w > conv))
-    if not new or any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()):
+    pend = pending_downloads(dirs)
+    for p, w in pend:
+        kind = "분개장" if "분개장" in os.path.basename(p) else ("자금계획서" if "자금계획" in os.path.basename(p) else None)
+        if kind and (conv is None or w > conv):
+            k = "%s(다운로드 폴더)" % kind
+            new[k] = max(new.get(k, w), w)
+    if not new:
+        return None
+    latest = [w for w in new.values()] + [w for _, w in pend]
+    other = winstate.other_wehago_time(paths)
+    if other:
+        latest.append(other)
+    if any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()) or \
+            (now - max(latest)).total_seconds() < AUTO_QUIET_SEC:
         return None
     return "|".join("%s %s" % (n, w.strftime("%Y-%m-%d %H:%M:%S")) for n, w in sorted(new.items()))
 
@@ -328,23 +471,56 @@ def headless(paths, log_path, asof="", today=None):
     2026-11-14 밤 통합: 사용자가 자는 동안 새 exe 로 실제 자료 보고를 만들어 보려고 (대표보고.exe --자동 결과.txt [기준일]).
     창에서 '자동'을 누른 것과 같게: 기준일은 비우면 오늘, 출금일·가용자금 날짜·출금 목록 합침은 창을 열 때 칸 값 그대로."""
     from . import winstate
-    lines = []
-    day = parse_date(asof) if asof else (today or dt.date.today())
-    vals = winstate.start_values(paths.input, day) if day else {"payday": "", "pick": ""}
-    group, only = load_merge(paths)
+    from .version import build
+    lines = ["판: %s" % build()]
+    # 2차 P5-24·P6-15 (2026-11-15): 지난번 결과 파일이 이번 결과처럼 남지 않게 먼저 '돌고 있음'으로 바꾸고, 준비 단계 오류도 결과에 남긴다
     try:
+        _write_log(log_path, lines + ["돌고 있음 (이 줄이 남아 있으면 끝나지 못한 것)"], "진행 중")
+    except OSError:
+        pass
+    day, rc = None, 7
+    try:
+        day = parse_date(asof) if asof else (today or dt.date.today())
+        if day is None:   # 창에서처럼 날짜 오류(2)로 끝낸다
+            lines.append("기준일 형식 오류: %s (예: 2026-11-13)" % asof)
+            rc = 2
+            raise _Stop()
+        vals = winstate.start_values(paths.input, day)
+        group, only = load_merge(paths)
         rc, files = run_auto(paths, lines.append, asof=asof or day.isoformat(), pick=vals["pick"], payday=vals["payday"],
                              group=group, only=only)
         if files:
             lines.append("만든 파일: %s" % ", ".join(os.path.basename(f) for f in files))
+        stops = winstate.blocked_reports(files)
+        if stops:   # 2차 C12 (2026-11-15): 막혀도 '자동 완료'처럼 보였다 → 결과 글에 남긴다
+            lines.append("대표 보고: 자료 확인에서 막혀 만들지 않음 (%s)" % ", ".join(os.path.basename(f) for f in stops))
+    except _Stop:
+        pass
     except Exception as e:   # 트레이스백 대신 한 줄
         lines.append("예상하지 못한 오류 (%s): %s" % (type(e).__name__, str(e)[:200]))
         rc = 7
     if day:   # 창도 날짜가 틀리면 돌리지 않아 기록을 남기지 않는다
-        winstate.remember_run(paths.input, "자동", rc == 0)
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+        try:
+            winstate.remember_run(paths.input, "자동", rc == 0)
+        except OSError:
+            lines.append("창 상태(마지막 자동 실행)를 남기지 못함")
+    try:
+        _write_log(log_path, lines, rc)
+    except OSError as e:   # 결과 파일을 못 쓰면 표준 출력으로라도 (원격 실행이 받아 봄)
+        print("\n".join(lines + ["결과 파일을 쓰지 못함 (%s): %s" % (type(e).__name__, log_path), "rc=%s" % rc]))
+        return rc or 7
     return rc
+
+
+class _Stop(Exception):
+    """headless 를 더 돌리지 않고 결과만 남긴다."""
+
+
+def _write_log(log_path, lines, rc):
+    tmp = log_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\nrc=%s\n" % rc)
+    os.replace(tmp, log_path)
 
 
 CHECK_ASOF = "2026-10-31"   # 점검 기준일 (샘플 자료일)
@@ -369,7 +545,8 @@ def self_check(log_path, base=None):
     base = base or getattr(sys, "_MEIPASS", program_dir())
     sample = os.path.join(base, "입력양식", "샘플")
     tmp = tempfile.mkdtemp()
-    lines = []
+    from .version import build
+    lines = ["판: %s" % build()]
     try:
         shutil.copytree(sample, os.path.join(tmp, "입력"))
         os.makedirs(os.path.join(tmp, "수집", "위하고"))
@@ -383,6 +560,9 @@ def self_check(log_path, base=None):
         if rc == 0 and any(f.endswith("_주간_대표보고.html") and winstate._is_stop_page(f) for f in files):
             lines.append("대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘")
             rc = 10
+        # 2차 P6-13 (2026-11-15): PDF 를 못 만들어도 점검이 통과로만 끝났다 — 결과에 한 줄 남긴다 (CI 처럼 화면 없는 곳에선 못 만들 수 있어 실패로는 보지 않음)
+        pdfs = [os.path.basename(f) for f in files if f.lower().endswith(".pdf")]
+        lines.append("PDF: %s" % (", ".join(pdfs) if pdfs else "못 만듦 (보고 HTML 은 있음 — 이 PC 에서 PDF 만들기를 확인하세요)"))
     except Exception as e:
         lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
         rc = 8
@@ -398,7 +578,7 @@ MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' �
 
 def load_merge(paths):
     try:
-        with open(os.path.join(paths.input, MERGE_FILE), encoding="utf-8-sig") as f:
+        with _open_text(os.path.join(paths.input, MERGE_FILE)) as f:
             lines = f.read().splitlines()
     except (OSError, UnicodeDecodeError):
         return "건별", ""
@@ -414,7 +594,9 @@ def save_merge(paths, group, only):
         pass
 
 
-def new_files(folder, since):
+def new_files(folder, since, depth=1):
+    """since 뒤에 바뀐 파일. 1차 E10 (2026-11-15): 예산(출력/예산)·팀장(출력/팀장용) 보고는 한 단계 아래 폴더에 있어
+    예전엔 찾지 못한 채 '대표용 PDF를 열었습니다'라고 했다 → 한 단계 아래 폴더까지 본다."""
     out = []
     try:
         names = os.listdir(folder)
@@ -422,8 +604,13 @@ def new_files(folder, since):
         return out
     for n in names:
         p = os.path.join(folder, n)
-        if os.path.isfile(p) and os.path.getmtime(p) >= since:
-            out.append(p)
+        try:
+            if os.path.isfile(p) and os.path.getmtime(p) >= since:
+                out.append(p)
+            elif depth > 0 and os.path.isdir(p):
+                out += new_files(p, since, depth - 1)
+        except OSError:
+            continue
     return sorted(out, key=os.path.getmtime)
 
 
@@ -465,8 +652,11 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
     path = os.path.join(input_dir, SCHED_FILE)
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    empty = False
     if os.path.exists(path):
         enc, raw = _encoding(path)
+        empty = not raw.decode(enc).strip()   # 2차 P5-19 (2026-11-15): 빈 파일에 머리글 없이 더해 다음에 0줄로 읽혔다 → 새 파일처럼 씀
+    if os.path.exists(path) and not empty:
         text_now = raw.decode(enc)
         first = next(csv.reader([text_now.splitlines()[0]])) if text_now.strip() else []
         cols = [c.strip() for c in first] or header
@@ -502,7 +692,11 @@ def old_files(wehago_dir, asof):
     """[(파일 이름, 까닭)] — 변환이 쓰지 않는 예전 파일.
 
     WEHAGO 장부(분개장·매입매출장·전자세금계산서(매입)): 종류마다 가장 새 파일과, 지난해 장부는 해마다 가장 새 파일 하나만 남긴다.
-    자금계획서: 이번 달 이후 달만 쓴다. 같은 달 파일이 여럿이면 가장 새 것만 남긴다. 읽지 못한 파일은 옮기지 않는다 (확인하도록)."""
+    자금계획서: 같은 달을 더 새 파일이 맡아 쓰이지 않는 파일만 옮긴다. 읽지 못한 파일은 옮기지 않는다 (확인하도록).
+
+    2차 P1-12·P2-16 (2026-11-15): ① 변환이 읽지 않는 모양(PDF 등)이 '가장 새 파일'로 잡혀 멀쩡한 장부를 옮겼다 → 변환과 같은
+    확장자 규칙으로만 고른다. ② 가장 새 장부가 깨졌으면 그 종류는 아무것도 옮기지 않는다 (예전엔 깨진 것만 남기고 멀쩡한 것을 옮겼음).
+    ③ 지난달만 맡은 자금계획서도 변환이 '예정일 지남'(아직 안 나간 지급)을 찾는 데 쓰므로 옮기지 않는다 (예전엔 옮겨 그 줄이 사라졌음)."""
     try:
         names = sorted(n for n in os.listdir(wehago_dir) if os.path.isfile(os.path.join(wehago_dir, n)) and not n.startswith("~$"))
     except OSError:
@@ -513,10 +707,17 @@ def old_files(wehago_dir, asof):
         kind, readable = wehago._kind_of(n)
         if kind is None or not readable or fundplan.is_fundplan_name(n):
             continue
+        ext = os.path.splitext(n)[1].lower()
+        if not (ext == ".xlsx" or (ext in (".xls", ".json") and kind == "분개장")):   # 변환(wehago.load)이 읽는 모양만 (①)
+            continue
         groups.setdefault(kind, []).append(n)
     for kind, files in groups.items():
         ranked = sorted(files, key=lambda n: (wehago._rank_date(n) or dt.date.min, wehago._mtime(os.path.join(wehago_dir, n)), n))
         newest = ranked[-1]
+        try:   # ② 가장 새 파일을 변환처럼 읽어 본다 — 못 읽으면 이 종류는 그대로 둔다
+            wehago.read_book(os.path.join(wehago_dir, newest), kind, wehago._file_date(newest), None)
+        except Exception:
+            continue
         top = (wehago._rank_date(newest) or dt.date.min).year
         keep_year = {}
         for n in ranked:
@@ -530,28 +731,15 @@ def old_files(wehago_dir, asof):
             if n not in keep:
                 out.append((n, "%s 더 새 파일이 있음" % kind))
     res = fundplan.load(wehago_dir)
-    month_now = (asof.year, asof.month)
-    used, past = set(), {}
-    for ym, name, _ in res["months"]:
-        y, m = int(str(ym)[:4]), int(str(ym)[5:7])
-        if (y, m) < month_now:
-            past.setdefault(name, ym)
-        else:
-            used.add(name)
-    # 한 파일에 지난달·이번 달·다음 달이 함께 들어 있다(확장은 지난달부터 받음). 이번 달 이후에 쓰는 파일은 옮기지 않는다
-    # (2026-11-14 코덱스 검토: 지난달 줄 때문에 지금 쓰는 자금계획서까지 옮겨져 보고가 막혔음)
-    for name, ym in past.items():
-        if name not in used:
-            out.append((name, "자금계획서 지난 달 (%s)" % ym))
-    month_names = set(name for _, name, _ in res["months"])
+    month_names = set(name for _, name, _ in res["months"])   # ③ 어느 달이든 맡은 파일은 쓰인다 (지난달 '예정일 지남' 포함)
     for n in res["unused"]:
-        if n in month_names or n in used:
+        if n in month_names:
             continue
         note = " ".join(x for x in res["notes"] if x.startswith(n))
         if "더 새 파일 있음" not in note:
             continue   # 읽지 못한 파일은 사람이 확인하도록 그대로 둔다
         out.append((n, "자금계획서 같은 달 더 새 파일이 있음"))
-    return out
+    return list(dict.fromkeys(out))   # 같은 파일을 두 번 옮기려 하지 않게
 
 
 def archive_old(wehago_dir, asof, say):
@@ -601,13 +789,20 @@ def save_card(input_dir, company, pay_day, start_day=1):
     current, notes = tax.read_card_days(input_dir)
     if notes and os.path.exists(os.path.join(input_dir, tax.CARD_FILE)) and not current:
         raise ValueError("%s 머리글이 양식과 다릅니다 — 파일을 확인하세요" % tax.CARD_FILE)
+    # 2차 P2-9·P5-18·P6-2 (2026-11-15): 날짜를 못 읽은 다른 카드 줄이 저장 때 조용히 사라졌다 → 먼저 고치게 하고 저장하지 않음
+    bad = [n for n in notes if "줄 날짜를 읽지 못함" in n and (" %s 줄" % co) not in n]
+    if bad:
+        raise ValueError("%s 에 날짜를 못 읽은 다른 카드 줄이 있어 저장하면 그 줄이 사라집니다 — 그 줄부터 고치세요: %s"
+                         % (tax.CARD_FILE, "; ".join(bad)))
     current[co] = tuple(days)
     rows = sorted((c, p, s) for c, (p, s) in current.items())
-    with open(os.path.join(input_dir, tax.CARD_FILE), "w", encoding="utf-8-sig", newline="") as f:
+    path = os.path.join(input_dir, tax.CARD_FILE)
+    with open(path + ".tmp", "w", encoding="utf-8-sig", newline="") as f:   # 쓰다 실패해도 원래 파일은 그대로 (머리글만 남지 않게)
         w = csv.writer(f, lineterminator="\r\n")
         w.writerow(tax.CARD_COLUMNS)
         for r in rows:
             w.writerow(r)
+    os.replace(path + ".tmp", path)
     return rows
 
 
@@ -707,5 +902,11 @@ def law_check(input_dir, year):
     from . import lawwatch
     rows = lawwatch.check(input_dir, year)
     bad = [r for r in rows if r[2] in ("개정됨", "못 찾음", "실패") or "안 보임" in r[4]]
-    head = "법령 조문 %d개 받음 — 다시 볼 것 %d개" % (len(rows), len(bad))
+    got = [r for r in rows if r[2] not in ("못 찾음", "실패")]
+    if not got:   # R11 (2026-11-15): 모두 실패해도 'N개 받음'으로 보였음 — 받은 수 그대로, 못 받으면 '못 받음'
+        why = next((r[4] for r in rows if r[4]), "")
+        head = ("법령 조문을 하나도 받지 못함 (%d개 모두 실패) — 인터넷 연결과 아이디(OC)를 확인하고 다시 받아 주세요%s"
+                % (len(rows), (". 이유: " + why[:120]) if why else ""))
+    else:
+        head = "법령 조문 %d개 중 %d개 받음 — 다시 볼 것 %d개" % (len(rows), len(got), len(bad))
     return [head] + ["%s: %s%s · %s" % (tag, st, (" (시행 %s)" % eff) if eff else "", note) for _, tag, st, eff, note in rows]

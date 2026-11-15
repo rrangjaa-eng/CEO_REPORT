@@ -15,12 +15,14 @@ import html
 import io
 import json
 import os
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from . import util
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 CONVERT_FILE = "확인할것.json"
 STORE = "확인결정.csv"
@@ -71,23 +73,40 @@ def convert_items(tables, cross, notes):
             out.append({"id": "원천대조|%s" % _h(n), "kind": "세금 대조", "date": "", "amount": None, "vendor": "",
                         "title": "장부 %s가 위하고 화면과 다름" % ("원천세" if "원천세" in n[:12] else "4대보험 직원분"),
                         "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "차이 원인 확인함"]})
+        if n.startswith("[확인] 지급요청 짝짓기"):   # 계산-01·계산-15 (2026-11-15): 후보가 둘 이상이면 확인할 것에
+            out.append({"id": "요청짝|%s" % _h(n), "kind": "변환 대조", "date": "", "amount": None, "vendor": "",
+                        "title": "지급요청을 장부 원가 줄과 짝지을 때 후보가 둘 이상이던 요청이 있음 (합계는 같음)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["확인함", "고칠 것"]})
         if n.startswith("[확인] 통장 줄만 있는 전표"):   # 2026-11-14: 적요 대신 계정으로 판단하려면 상대 계정 줄이 필요
             out.append({"id": "통장만|%s" % _h(n), "kind": "전표 입력", "date": "", "amount": None, "vendor": "",
                         "title": "통장 줄만 있는 전표가 있음 (상대 계정 줄을 넣어 주세요)",
                         "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
+        elif n.startswith("[확인] ") and not n.startswith(_HANDLED):
+            # 2차 P2-15 (2026-11-15): 그 밖의 [확인] 알림(장부 빈 기간·다른 회사 장부·깨진 위하고 원본 등)도 확인할 것에
+            body = n.replace("[확인] ", "", 1)
+            out.append({"id": "변환알림|%s" % _h(n), "kind": "변환 알림", "date": "", "amount": None, "vendor": "",
+                        "title": body.split(" — ")[0][:120], "detail": body, "choices": ["다시 받음·고침", "확인함"]})
     return out
 
 
+_HANDLED = ("[확인] 카드 전표 입력 전", "[확인] 원천세 장부·위하고", "[확인] 4대보험 직원분 장부·위하고", "[확인] 지급요청 짝짓기",
+            "[확인] 통장 줄만 있는 전표")
+
+
 def save_convert_items(input_dir, items, now=None, trace=None):
-    """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀)."""
-    data = {"_시각": (now or dt.datetime.now()).strftime("%Y-%m-%d %H:%M"), "items": items, "trace": trace or {}}
+    """trace: 거래처코드별 미지급금 장부 풀이 글 (review_checks.payable_trace 의 text, 보고 때 '미지급금 예정 > 장부' 판단에 씀).
+    -> 썼는가."""
+    when = now or dt.datetime.now()
+    # "_시작": 변환을 시작한 시각(초) — 2차 P5-12: 이것보다 뒤에 받은 자료는 이번 변환에 없을 수 있으니 '새 자료'로 본다
+    data = {"_시각": when.strftime("%Y-%m-%d %H:%M"), "_시작": when.strftime("%Y-%m-%d %H:%M:%S"), "items": items, "trace": trace or {}}
     path = os.path.join(input_dir, CONVERT_FILE)
     try:
         with open(path + ".tmp", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1, default=str)
         os.replace(path + ".tmp", path)
-    except OSError:
-        pass
+        return True
+    except OSError:   # 2차 P2-14: 실패를 알리게 돌려준다 (변환이 알림)
+        return False
 
 
 def _load_trace(input_dir):
@@ -115,7 +134,7 @@ def read_decisions(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 if r.get("항목ID"):
                     out[r["항목ID"]] = r
@@ -124,10 +143,21 @@ def read_decisions(input_dir):
     return out
 
 
+_DECISION_LOCK = threading.Lock()   # 2차 C22·P3-5 (2026-11-15): 거의 동시에 두 번 저장하면 먼저 한 결정이 사라졌다
+
+
 def save_decision(input_dir, item_id, choice, memo="", content=""):
-    """결정 한 줄을 넣거나 고친다. choice 를 비우면 결정을 지운다 (다시 '결정할 것'으로)."""
+    """결정 한 줄을 넣거나 고친다. choice 를 비우면 결정을 지운다 (다시 '결정할 것'으로).
+    읽고-고치고-쓰기를 한 번에 하나씩 (확인할 것 화면은 요청마다 따로 돈다)."""
     if not item_id:
         raise ValueError("항목이 없음")
+    with _DECISION_LOCK:
+        return _save_decision(input_dir, item_id, choice, memo, content)
+
+
+def _save_decision(input_dir, item_id, choice, memo, content):
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, STORE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_decisions(input_dir)
     if choice:
         cur[item_id] = {"항목ID": item_id, "결정": choice.strip(), "메모": (memo or "").strip()[:500],
@@ -155,6 +185,8 @@ def save_bank(input_dir, day, amount, memo=""):
     t = str(amount or "").replace(",", "").replace("원", "").strip()
     if not t.lstrip("-").isdigit():
         raise ValueError("통장 잔액은 숫자 (예: 364,912,852)")
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, BANK_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     rows = read_bank(input_dir)
     rows[d] = (int(t), (memo or "").strip())
     path = os.path.join(input_dir, BANK_FILE)
@@ -173,7 +205,7 @@ def read_bank(input_dir):
     if not os.path.exists(path):
         return out
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 d = util.date((r.get("날짜") or "").strip())
                 v = util.num(r.get("통장잔액"))
@@ -190,7 +222,7 @@ def book_balance(input_dir, day):
     bal_path, mov_path = os.path.join(input_dir, "장부잔액.csv"), os.path.join(input_dir, "장부입출금.csv")
     snaps = {}
     try:
-        with open(bal_path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(bal_path) as f:
             for r in csv.DictReader(f):
                 d, v = util.date(r.get("기준일")), util.num(r.get("잔액"))
                 if d is not None and v is not None:
@@ -200,7 +232,7 @@ def book_balance(input_dir, day):
         return None, None
     moves = []
     try:
-        with open(mov_path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(mov_path) as f:
             for r in csv.DictReader(f):
                 d, v = util.date(r.get("일자")), util.num(r.get("금액"))
                 if d is not None and v is not None:
@@ -325,6 +357,19 @@ def _report_items(input_dir, asof):
     return out
 
 
+def _integrity_warn(s):
+    """정합성 점검 줄이 결정할 경고인가. 2차 P3-12 (2026-11-15): 예전엔 줄 어디에든 '0건'·'0개'가 있으면 버려
+    '확인 필요 10건'·'차변≠대변 3개 확인 필요, 금액 빈 줄 0개' 같은 실제 경고도 사라졌다. 이제 '확인 필요·불일치' 바로 뒤 건수만 본다."""
+    if "← 바뀜" in s:
+        return True
+    if "확인 필요" not in s and "불일치" not in s:
+        return False
+    m = re.search(r"(?:확인 필요|불일치)\s*:?\s*([\d,]+)\s*(?:건|개)", s)
+    if m:
+        return int(m.group(1).replace(",", "")) > 0
+    return not re.search(r"(?:확인 필요|불일치)\s*(?:없음|0(?![\d,]))", s)
+
+
 def _integrity_items(app_dir):
     path = os.path.join(app_dir, "정합성점검.txt")
     out = []
@@ -336,7 +381,7 @@ def _integrity_items(app_dir):
         return out
     for ln in text:
         s = ln.strip().lstrip("-·").strip()
-        if "← 바뀜" in s or (("확인 필요" in s or "불일치" in s) and "0건" not in s and "0개" not in s and "OK" not in s):
+        if _integrity_warn(s):
             out.append({"id": "정합성|%s" % _h(s), "kind": "정합성 점검", "date": when[:10], "amount": None, "vendor": "",
                         "title": "정합성 점검 (%s): %s" % (when, s[:140]), "detail": s,
                         "choices": ["이유 앎 — 괜찮음", "확인 필요"]})
@@ -475,6 +520,28 @@ def render(G, key="", mask=False):
     return "".join(h)
 
 
+def _sources_sig(app_dir, input_dir):
+    """확인할 것을 모으는 자료 파일들의 (이름·바뀐 시각·크기) — 결정 파일은 뺀다 (이 화면이 쓰므로).
+    2차 P3-11 (2026-11-15): 열어 둔 화면은 새 변환 뒤에도 옛 항목을 보였다 → 자료가 바뀌었으면 일반 새로고침에도 다시 모은다."""
+    import stat as _st
+    sig = []
+    for folder in (input_dir, os.path.join(app_dir, "출력"), app_dir):
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            continue
+        for n in names:
+            if n == STORE or n.endswith(".tmp"):
+                continue
+            try:
+                st = os.stat(os.path.join(folder, n))
+            except OSError:
+                continue
+            if _st.S_ISREG(st.st_mode):
+                sig.append((folder, n, st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
 class Session(object):
     """확인할 것 화면 한 번. start() -> 주소. 결정을 저장할 때마다 on_saved(글)."""
 
@@ -485,6 +552,7 @@ class Session(object):
         self.server = None
         self.lock = threading.Lock()
         self.G = None
+        self.G_sig = None
 
     @property
     def url(self):
@@ -492,8 +560,10 @@ class Session(object):
 
     def page(self, fresh=False):
         with self.lock:
-            if self.G is None or fresh:
+            sig = _sources_sig(self.app_dir, self.input_dir)
+            if self.G is None or fresh or sig != self.G_sig:   # P3-11: 새 변환 등으로 자료가 바뀌었으면 다시 모은다
                 self.G = gather(self.app_dir, self.input_dir, self.asof)
+                self.G_sig = sig
             else:   # 결정만 다시 붙인다 (계산은 다시 안 함)
                 dec = read_decisions(self.input_dir)
                 for it in self.G["items"]:

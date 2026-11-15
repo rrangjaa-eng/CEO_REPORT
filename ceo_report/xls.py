@@ -177,6 +177,10 @@ def _rk(v):
     return x / 100 if v & 1 else x
 
 
+XLS_MAX_COLS = 256          # 엑셀 97(BIFF8) 한 시트의 열 한도
+XLS_MAX_CELLS = 8_000_000   # 장부 수만 줄 × 수십 열은 넉넉히 들어가는 크기
+
+
 def read_xls(path):
     """첫 시트의 칸 -> 행 목록(각 행은 칸 목록, 글자 str·숫자 float·빈 칸 ''). 표 모양으로 맞춰 돌려준다."""
     with open(path, "rb") as f:
@@ -252,4 +256,7 @@ def _first_sheet(wb):
         return []
     nrows = max(r for r, _ in cells) + 1
     ncols = max(c for _, c in cells) + 1
+    # 2차 P2-18 (2026-11-15): 칸 좌표만 큰 비정상 파일이 수십억 칸 표를 만들어 멈출 수 있었다 → 엑셀 97 한도(256열)와 칸 수 상한
+    if ncols > XLS_MAX_COLS or nrows * ncols > XLS_MAX_CELLS:
+        raise XlsError("표가 지나치게 큼 (%d행 × %d열) — 엑셀에서 열어 확인하세요" % (nrows, ncols))
     return [[cells.get((r, c), "") for c in range(ncols)] for r in range(nrows)]

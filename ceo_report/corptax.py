@@ -3,11 +3,12 @@
 - 두 가지를 따로 낸다: 영업외 수익을 뺀 세전 이익 기준, 영업외 수익을 넣은 세전 이익 기준.
 - 감가상각비는 장부에 12월 결산 때 한 번에 들어가므로(2025년 실제), 연간 예상을 결산 줄에서 비용으로 먼저 빼고 남은 것이 세전 이익.
   연간 감가상각비 = 대표보고 창 '⑨ 감가상각비'로 넣은 값(입력/감가상각비.csv), 없으면 작년 계정별비용의 감가상각비 합계.
-  올해 이미 장부에 들어간 감가상각비는 세전 이익에 빠져 있으므로 그만큼은 다시 빼지 않는다.
+  누적에는 지난 달 수만큼만 뺀다 (결정 M5, 2026-11-15: 연간 × 달 수 ÷ 12). 올해 이미 장부에 들어간 감가상각비는 다시 빼지 않는다.
 - 세무조정(접대비 한도 등)·세액공제·감면·이월결손금·중간예납과 원천징수 선납세금은 반영하지 않는다 (어림값).
 """
 import csv
 import os
+from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 DEP_FILE = "감가상각비.csv"
 DEP_COLUMNS = ["연도", "연간감가상각비"]
@@ -68,7 +69,7 @@ def read_ledger(input_dir, wehago_dir=None):
         rows = wehago_raw.asset_rows(wehago_raw.files(wehago_dir))
     if not rows and input_dir and os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
         try:
-            with open(os.path.join(input_dir, LEDGER_FILE), encoding="utf-8-sig", newline="") as f:
+            with _open_text(os.path.join(input_dir, LEDGER_FILE)) as f:
                 rows = list(csv.DictReader(f))
         except (OSError, UnicodeDecodeError, csv.Error):
             rows = []
@@ -85,7 +86,7 @@ def read(input_dir):
     path = os.path.join(input_dir, DEP_FILE)
     out = {}
     try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
+        with _open_text(path) as f:
             for r in csv.DictReader(f):
                 y, v = (r.get("연도") or "").strip(), _int(r.get("연간감가상각비"))
                 if y.isdigit() and v is not None:
@@ -104,6 +105,8 @@ def save(input_dir, year, amount):
         raise ValueError("연도는 4자리 (예: 2026)")
     if not os.path.isdir(input_dir):
         raise ValueError("입력 폴더가 없습니다: %s" % input_dir)
+    from .util import guard_save
+    guard_save(os.path.join(input_dir, DEP_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = dict((k, v) for k, v in read(input_dir).items() if isinstance(k, str))   # 대장 값은 파일에 쓰지 않음
     if str(amount or "").strip():
         v = _int(amount)
@@ -127,20 +130,22 @@ def _dep_rows(accounts, year):
     return [r for r in (accounts or []) if r["ym"][:4] == str(year) and "감가상각비" in (r.get("name") or "")]
 
 
-# 누적에서 미리 뺄 감가상각비: 'prorate' = 연간 × 지난 달 수 ÷ 12, 'full' = 연간 전액 (사용자 2026-11-04 결정: full. 이번 달 표에는 넣지 않음)
-DEP_MODE = "full"
+# 누적에서 미리 뺄 감가상각비: 'prorate' = 연간 × 지난 달 수 ÷ 12, 'full' = 연간 전액.
+# 결정 M5 (2026-11-15, 계산-14): 월할(prorate). 11/4 '연간 전액을 먼저 뺀다'를 바꿈 — 1~10월 이익에서 12달 치를 빼면 이익·법인세가 작게 나옴.
+# 이번 달 표에는 넣지 않는다 (11/4 그대로, M5는 누적만).
+DEP_MODE = "prorate"
 
 
 def depreciation(accounts, manual, ym, mode=None, ledger=None):
     """-> {"annual", "source", "booked", "extra"(누적), "cur"(이번 달), "months"}. annual None = 모름 (extra·cur 도 None).
 
-    감가상각비는 연말 결산 때 한 번에 들어가므로 작년 금액을 올해 예상으로 보고 비용으로 먼저 뺀다 (사용자 2026-11-04).
+    감가상각비는 연말 결산 때 한 번에 들어가므로 연간 예상(직접 입력·고정자산대장·작년 장부)을 비용으로 먼저 뺀다 (사용자 2026-11-04).
+    결정 M5 (2026-11-15): 누적에는 지난 달 수만큼만 (연간 × 달 수 ÷ 12).
     올해 이미 장부에 들어간 감가상각비는 세전 이익에 빠져 있으므로 그만큼은 다시 빼지 않는다."""
     mode = mode or DEP_MODE
     year, months = ym[:4], int(ym[5:7])
     booked_rows = [r for r in _dep_rows(accounts, year) if r["ym"] <= ym]
     booked = sum(r["amount"] or 0 for r in booked_rows)
-    booked_cur = sum(r["amount"] or 0 for r in booked_rows if r["ym"] == ym)
     if manual.get(year) is not None:
         annual, source = manual[year], "직접 입력"
     elif (ledger or {}).get(year) is not None or manual.get(("대장", year)) is not None:
@@ -151,7 +156,7 @@ def depreciation(accounts, manual, ym, mode=None, ledger=None):
         source = "작년 장부" if last else ""
     share = months if mode == "prorate" else 12
     extra = None if annual is None else max(int(round(annual * share / 12.0)) - booked, 0)
-    cur = None if annual is None else max(int(round(annual / 12.0)) - booked_cur, 0) if mode == "prorate" else None
+    cur = None   # 이번 달 표에는 넣지 않음 (11/4, 결정 M5도 누적만)
     return {"annual": annual, "source": source, "booked": booked, "extra": extra, "cur": cur, "months": months, "mode": mode}
 
 
@@ -218,6 +223,24 @@ def bad_debt(journal, cfg, ym, input_dir=None):
     if not rate_ok:
         note += " (한도율이 '세법 기준 확인'에서 확인되지 않아 기본 %g%%로 봄)" % (BAD_DEBT_RATE * 100)
     return {"receivable": rec, "allowance": allow, "amount": amount, "partial": partial, "note": note}
+
+
+def bad_debt_saving(base, amount, year, input_dir=None):
+    """대손충당금 amount 를 결산에 넣으면 줄어드는 법인세·지방소득세 (과세표준 base 기준) -> 원. 모르면 None."""
+    nat, corp, _ = national(base, year, input_dir)
+    nat2, corp2, _ = national(base - amount, year, input_dir)
+    if None in (nat, corp, nat2, corp2):
+        return None
+    return (nat + int(corp * LOCAL_RATE)) - (nat2 + int(corp2 * LOCAL_RATE))
+
+
+BAD_DEBT_HINT = "대손충당금 예상 %s원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −%s원)"
+BAD_DEBT_HINT_RE = r"대손충당금 예상 ([\d,]+)원은 세무사 확인 전이라 빼지 않음 \(쌓으면 세금 −([\d,]+|모름)원\)"
+
+
+def bad_debt_hint(amount, saving):
+    """세금예상.csv 법인세 줄 근거에 붙이는 글 (보고서가 BAD_DEBT_HINT_RE 로 다시 읽는다)."""
+    return BAD_DEBT_HINT % ("{:,}".format(amount), "모름" if saving is None else "{:,}".format(saving))
 
 
 # ───────────── 변환 쪽: 분개장으로 법인세 납부 예상 (사용자 2026-11-04: 지급 예상에 넣고, 중간예납 등 선납세금은 뺀다) ─────────────
@@ -298,20 +321,24 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     dep = depreciation(dep_lines, manual or {}, ym, ledger=read_ledger(input_dir, wehago_dir))
     bd = bad_debt(journal, cfg, ym, input_dir)
     adj = adjust_for(journal, cfg, asof, input_dir, wehago_dir)
-    base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
+    # 규칙 계산-08 (사용자 결정 d, 2026-11-15): 법인세 예상에서는 장부에 실제로 넣은 비용만 뺀다. 대손충당금은 결산 때 넣을지
+    # 세무사 답이 오기 전이라 빼지 않고, 쌓으면 세금이 얼마 줄어드는지만 따로 적는다 (예전: 빼서 세금이 약 103만 작게 잡힘, R10)
+    base = pretax - (dep["extra"] or 0) + adj["total"]
     nat, corp, C = national(base, year, input_dir)
     local = int(corp * LOCAL_RATE)
     pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
-    basis = ("세전 이익 %s − 감가상각비 예상 %s − 대손충당금 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
-             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
+    basis = ("세전 이익 %s − 감가상각비 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
+             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(base),
                 "{:,}".format(corp), "{:,}".format(prepaid)))
     if C:
         basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
                               % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
     if adj["total"]:
         basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
+    if bd["amount"]:
+        basis += " · " + bad_debt_hint(bd["amount"], bad_debt_saving(base, bd["amount"], year, input_dir))
     basis += " · 대손충당금 = " + bd["note"]
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
