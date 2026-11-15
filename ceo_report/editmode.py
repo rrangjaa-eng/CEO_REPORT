@@ -79,6 +79,46 @@ def original_path(html_path):
     return base[:-len(SUFFIX)] + ext if base.endswith(SUFFIX) else html_path
 
 
+def _texts(page):
+    """보이는 글 조각들 (style·script 빼고, 공백 하나로)."""
+    import html as _h
+    page = strip(page or "")
+    page = re.sub(r"<(style|script)[^>]*>.*?</\1>", "", page, flags=re.S | re.I)
+    page = page.split("<body", 1)[-1]
+    out = []
+    for t in re.findall(r">([^<]+)<", page):
+        t = re.sub(r"\s+", " ", _h.unescape(t)).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def changes(orig_page, edited_page, limit=30):
+    """손으로 고친 곳 [(원래 글, 고친 글)] — 2차 P4-2 (2026-11-15): 고친 대표 보고와 근거자료(고치기 전 계산)가 다를 때 알리려고."""
+    import difflib
+    a, b = _texts(orig_page), _texts(edited_page)
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op != "equal":
+            out.append((" ".join(a[i1:i2]), " ".join(b[j1:j2])))
+    return out[:limit]
+
+
+def edits_for(orig_html_path):
+    """원래 대표 보고 HTML 경로 -> 쓰이는 _수정 판이 있으면 고친 곳 목록, 없으면 None (원래보다 오래된 _수정 은 쓰이지 않으니 None)."""
+    ed = edited_path(orig_html_path)
+    try:
+        if not os.path.isfile(ed) or os.path.getmtime(ed) < os.path.getmtime(orig_html_path):
+            return None
+        with open(orig_html_path, encoding="utf-8") as f:
+            a = f.read()
+        with open(ed, encoding="utf-8") as f:
+            b = f.read()
+    except (OSError, ValueError):
+        return None
+    return changes(a, b)
+
+
 def latest_report(output_dir, kind):
     """kind(주간·월간)의 가장 최근 대표 보고 HTML. (원래 파일, 고칠 파일) — 원래보다 새 _수정 이 있으면 그걸 이어서 고친다."""
     found = glob.glob(os.path.join(output_dir, "*_%s_대표보고.html" % kind))

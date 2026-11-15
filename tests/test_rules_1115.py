@@ -2543,3 +2543,40 @@ class TestEvidenceSaysWhichVersion(unittest.TestCase):
         doc = evidence.build(page, ["1-1"])
         self.assertNotIn("번 만들었습니다", doc)
         self.assertNotIn("보고 작성", doc)
+
+
+# ───────────── 2차 P4-2: 손으로 고친 대표 보고와 근거자료가 다르면 근거자료에 알림 ─────────────
+class TestEvidenceNamesHandEdits(unittest.TestCase):
+    def test_edit_listed(self):
+        import shutil
+        import tempfile
+        import time
+        from ceo_report import app, editmode
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        P = app.Paths(tmp)
+        os.makedirs(P.output, exist_ok=True)
+        mg = ("<html><head><title>주간 경영관리 보고</title></head><body>"
+              "<table><tr><td><b>근거 1-1</b></td><td>여유 자금</td><td><a href='#ev-1-1'>보기</a></td></tr></table>"
+              "<div class='evb' id='ev-1-1'>여유 자금 100</div><!-- /ev-1-1 --></body></html>")
+        ceo = "<html><head><style>p{}</style></head><body><div>여유 자금</div><td>100</td></body></html>"
+        with open(os.path.join(P.output, "2026-11-13_주간_경영관리보고.html"), "w", encoding="utf-8") as f:
+            f.write(mg)
+        orig = os.path.join(P.output, "2026-11-13_주간_대표보고.html")
+        with open(orig, "w", encoding="utf-8") as f:
+            f.write(ceo)
+        ed = editmode.edited_path(orig)
+        with open(ed, "w", encoding="utf-8") as f:
+            f.write("<!doctype html>" + ceo.replace("<td>100</td>", "<td>120</td>"))
+        t = time.time()
+        os.utime(orig, (t - 60, t - 60))
+        lines = []
+        rc, files = app.run_task("근거주간", P, lines.append, asof="2026-11-13", nums="1-1")
+        self.assertEqual(rc, 0, lines)
+        with open([f for f in files if f.endswith("_근거자료_1-1.html")][0], encoding="utf-8") as f:
+            doc = f.read()
+        self.assertIn("손으로 고친 판", doc)
+        self.assertIn("‘100’ → ‘120’", doc)
+        # 원래 보고를 다시 만들어 _수정 이 더 오래되면 (쓰이지 않으니) 알리지 않는다
+        os.utime(ed, (t - 120, t - 120))
+        self.assertIsNone(editmode.edits_for(orig))

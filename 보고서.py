@@ -260,6 +260,14 @@ def _evidence(a, kind, asof):
                      % (label, len(ceo_pdfs), ", ".join(dt.datetime.fromtimestamp(pdfname._made_at(p)).strftime("%m-%d %H:%M") for p in ceo_pdfs),
                         evidence.made_at(mg) or "알 수 없음"))
         _say("[확인] " + notes[0])
+    # 2차 P4-2 (2026-11-15): 대표 보고를 손으로 고친 판(_수정)이 쓰이면, 근거자료(고치기 전 계산)와 다른 곳을 알린다
+    from ceo_report import editmode
+    fixed = editmode.edits_for(os.path.join(a.출력, "%s_%s_대표보고.html" % (asof.isoformat(), label)))
+    if fixed:
+        shown = " / ".join("‘%s’ → ‘%s’" % (x[:40] or "(없음)", y[:40] or "(지움)") for x, y in fixed[:5])
+        notes.append("대표 보고를 손으로 고친 판(_수정)이 있습니다 — 고친 곳 %d곳%s: %s. 이 근거자료의 숫자는 고치기 전 계산 그대로입니다"
+                     % (len(fixed), " (앞 5곳)" if len(fixed) > 5 else "", shown))
+        _say("[확인] " + notes[-1])
     try:
         doc = evidence.build(mg, nums, when="%s %s 보고" % (asof.isoformat(), label), notes=notes)
     except ValueError as e:
