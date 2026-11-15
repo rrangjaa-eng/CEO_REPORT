@@ -1763,6 +1763,29 @@ class TestFitPdfPages(unittest.TestCase):
         self.assertEqual(self.cli.pdf_pages(self.pdf), 3)
         self.assertEqual(len(calls), 1 + len(self.cli.FIT_ZOOMS))
 
+    def test_overflow_notice_hint_only_for_weekly(self):
+        # 2026-11-16: 월간엔 출금 목록이 없는데 '합칠 거래처' 안내가 나왔다 → 주간에만
+        import contextlib
+        import io
+        import shutil
+        import tempfile
+
+        def fit(browser, h, p, limit=None):
+            with open(p, "wb") as f:
+                f.write(b"%PDF-1.4\n" + b"<< /Type /Page >>\n" * 5 + b"<< /Type /Pages >>\n%%EOF")
+            return None
+        for kind, hint in (("주간", True), ("월간", False)):
+            with self.subTest(kind):
+                out = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, out, True)
+                buf = io.StringIO()
+                with mock.patch.object(self.cli, "find_browser", return_value="b"), \
+                        mock.patch.object(self.cli, "fit_pdf", side_effect=fit), contextlib.redirect_stdout(buf):
+                    self.cli.main([kind, "--기준일", "2026-11-02", "--입력", SAMPLE, "--출력", out, "--pdf", "만듦"])
+                said = [ln for ln in buf.getvalue().splitlines() if "글자를 줄여도 넘침" in ln]
+                self.assertTrue(said, buf.getvalue()[-2000:])
+                self.assertEqual(any("합칠 거래처" in ln for ln in said), hint, said)
+
     def test_no_retry_when_it_fits(self):
         to_pdf, calls = self.fake(lambda page: 2)
         with mock.patch.object(self.cli, "to_pdf", side_effect=to_pdf):
