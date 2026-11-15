@@ -3,7 +3,7 @@
 - 두 가지를 따로 낸다: 영업외 수익을 뺀 세전 이익 기준, 영업외 수익을 넣은 세전 이익 기준.
 - 감가상각비는 장부에 12월 결산 때 한 번에 들어가므로(2025년 실제), 연간 예상을 결산 줄에서 비용으로 먼저 빼고 남은 것이 세전 이익.
   연간 감가상각비 = 대표보고 창 '⑨ 감가상각비'로 넣은 값(입력/감가상각비.csv), 없으면 작년 계정별비용의 감가상각비 합계.
-  올해 이미 장부에 들어간 감가상각비는 세전 이익에 빠져 있으므로 그만큼은 다시 빼지 않는다.
+  누적에는 지난 달 수만큼만 뺀다 (결정 M5, 2026-11-15: 연간 × 달 수 ÷ 12). 올해 이미 장부에 들어간 감가상각비는 다시 빼지 않는다.
 - 세무조정(접대비 한도 등)·세액공제·감면·이월결손금·중간예납과 원천징수 선납세금은 반영하지 않는다 (어림값).
 """
 import csv
@@ -127,20 +127,22 @@ def _dep_rows(accounts, year):
     return [r for r in (accounts or []) if r["ym"][:4] == str(year) and "감가상각비" in (r.get("name") or "")]
 
 
-# 누적에서 미리 뺄 감가상각비: 'prorate' = 연간 × 지난 달 수 ÷ 12, 'full' = 연간 전액 (사용자 2026-11-04 결정: full. 이번 달 표에는 넣지 않음)
-DEP_MODE = "full"
+# 누적에서 미리 뺄 감가상각비: 'prorate' = 연간 × 지난 달 수 ÷ 12, 'full' = 연간 전액.
+# 결정 M5 (2026-11-15, 계산-14): 월할(prorate). 11/4 '연간 전액을 먼저 뺀다'를 바꿈 — 1~10월 이익에서 12달 치를 빼면 이익·법인세가 작게 나옴.
+# 이번 달 표에는 넣지 않는다 (11/4 그대로, M5는 누적만).
+DEP_MODE = "prorate"
 
 
 def depreciation(accounts, manual, ym, mode=None, ledger=None):
     """-> {"annual", "source", "booked", "extra"(누적), "cur"(이번 달), "months"}. annual None = 모름 (extra·cur 도 None).
 
-    감가상각비는 연말 결산 때 한 번에 들어가므로 작년 금액을 올해 예상으로 보고 비용으로 먼저 뺀다 (사용자 2026-11-04).
+    감가상각비는 연말 결산 때 한 번에 들어가므로 연간 예상(직접 입력·고정자산대장·작년 장부)을 비용으로 먼저 뺀다 (사용자 2026-11-04).
+    결정 M5 (2026-11-15): 누적에는 지난 달 수만큼만 (연간 × 달 수 ÷ 12).
     올해 이미 장부에 들어간 감가상각비는 세전 이익에 빠져 있으므로 그만큼은 다시 빼지 않는다."""
     mode = mode or DEP_MODE
     year, months = ym[:4], int(ym[5:7])
     booked_rows = [r for r in _dep_rows(accounts, year) if r["ym"] <= ym]
     booked = sum(r["amount"] or 0 for r in booked_rows)
-    booked_cur = sum(r["amount"] or 0 for r in booked_rows if r["ym"] == ym)
     if manual.get(year) is not None:
         annual, source = manual[year], "직접 입력"
     elif (ledger or {}).get(year) is not None or manual.get(("대장", year)) is not None:
@@ -151,7 +153,7 @@ def depreciation(accounts, manual, ym, mode=None, ledger=None):
         source = "작년 장부" if last else ""
     share = months if mode == "prorate" else 12
     extra = None if annual is None else max(int(round(annual * share / 12.0)) - booked, 0)
-    cur = None if annual is None else max(int(round(annual / 12.0)) - booked_cur, 0) if mode == "prorate" else None
+    cur = None   # 이번 달 표에는 넣지 않음 (11/4, 결정 M5도 누적만)
     return {"annual": annual, "source": source, "booked": booked, "extra": extra, "cur": cur, "months": months, "mode": mode}
 
 

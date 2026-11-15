@@ -288,7 +288,7 @@ class TestReportIsADocument(unittest.TestCase):
             self.assertEqual(ytd[3][7:11], ["7.0명", "18,857,143", "0.6배", ""])   # 회사 줄엔 공통비 나눈 뒤 칸 없음 (사용자 2026-11-04)   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
             # 누적 결산 끝: 세전 이익 − 법인세 예상(지방세 포함) = 당기순이익 예상 (사용자 2026-11-04). 2026-11-14 P3: '지금까지 이익 기준'
             self.assertEqual([[c for c in r if c] for r in ytd[-3:]], [
-                ["세전 이익", "135,000,000"], ["− 법인세·지방소득세 (지금까지 이익 기준 예상)", "14,850,000"], ["당기순이익 (예상)", "120,150,000"]])
+                ["세전 이익", "137,000,000"], ["− 법인세·지방소득세 (지금까지 이익 기준 예상)", "15,070,000"], ["당기순이익 (예상)", "121,930,000"]])   # 감가상각 월할 (결정 M5)
             self.assertNotIn("당기순이익", tables[0])   # 이번 달 표에는 넣지 않음
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
@@ -476,9 +476,9 @@ class TestMonthlyMonthAndYearApart(unittest.TestCase):
         self.assertNotIn("올해 누적", part_month)   # 이번 달 칸에는 누적 숫자를 섞지 않는다
         part_year = fs.split(heads[year])[1]
         # 누적도 이번 달처럼 큰 숫자 칸 + 흰 카드 표 (사용자 2026-11-04)
-        self.assertIn("<div class='lab'>1월~10월 당기순이익 (예상)</div><div class='big'>120,150,000</div>", part_year)
-        self.assertIn("<div class='lab'>1월~10월 세전 이익</div><div class='big'>135,000,000</div>", part_year)
-        self.assertIn("<div class='card brk'><div class='lab'>1월~10월</div>", part_year)   # 작년 감가상각비 12,000,000 먼저 뺌 (사용자 2026-11-04)
+        self.assertIn("<div class='lab'>1월~10월 당기순이익 (예상)</div><div class='big'>121,930,000</div>", part_year)
+        self.assertIn("<div class='lab'>1월~10월 세전 이익</div><div class='big'>137,000,000</div>", part_year)
+        self.assertIn("<div class='card brk'><div class='lab'>1월~10월</div>", part_year)   # 작년 감가상각비 12,000,000 × 10/12 먼저 뺌 (결정 M5)
         self.assertIn("+ 영업외 수익 (경영관리 2,000,000)", part_month)
         self.assertNotIn("<td>경영관리", part_month)
 
