@@ -2849,3 +2849,24 @@ class TestLawPartialAndOverlap(unittest.TestCase):
             return good(url, timeout)
         lawwatch.check(d, 2026, D(2026, 7, 2), opener)
         self.assertEqual(lawwatch.load(d)["oc"], "new")
+
+
+# ───────────── 2차 P2-18: 구형 엑셀의 칸 좌표가 비정상으로 크면 멈추지 않고 읽기 오류 ─────────────
+class TestXlsHugeGridRefused(unittest.TestCase):
+    def test_far_cells(self):
+        import shutil
+        import tempfile
+        from ceo_report import xls
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import xls_fixture as X
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        p = X.write_xls(os.path.join(d, "a.xls"), [X.number(0, 0, 1.0), X.number(0, 60000, 2.0)], [])
+        with self.assertRaises(xls.XlsError) as cm:
+            xls.read_xls(p)
+        self.assertIn("지나치게 큼", str(cm.exception))
+        p = X.write_xls(os.path.join(d, "b.xls"), [X.number(0, 0, 1.0), X.number(65000, 200, 2.0)], [])
+        with self.assertRaises(xls.XlsError):
+            xls.read_xls(p)
+        p = X.write_xls(os.path.join(d, "c.xls"), [X.number(0, 0, 1.0), X.number(3, 2, 2.0)], [])
+        self.assertEqual(len(xls.read_xls(p)), 4)
