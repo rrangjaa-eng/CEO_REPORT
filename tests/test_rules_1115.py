@@ -1196,3 +1196,44 @@ class TestReconWarningsDoNotCancel(unittest.TestCase):
         warn = self.write([["잔액", "단기차입금", "합계잔액시산표", "0", "15000000", "15000000", "", "다름", "", "예"],
                            ["잔액", "장기차입금", "합계잔액시산표", "15000000", "0", "-15000000", "", "다름", "", "예"]])
         self.assertEqual([(w["what"], w["diff"]) for w in warn], [("차입금", 0)])   # 차입금 합계는 같음
+
+
+# ───────────── P1-4: 조건·오류 응답만 받은 위하고 화면 파일은 쓰지 않고 그 전 파일을 씀 ─────────────
+class TestRawFilesNeedTheDataResponse(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.t, True)
+
+    def put(self, name, when, responses):
+        import json
+        d = {"종류": "결산원본", "화면": "재무상태표", "화면코드": "SACL0105", "연도": 2026, "수집시각": when,
+             "응답": [{"path": p, "data": x} for p, x in responses]}
+        with open(os.path.join(self.t, name), "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+
+    def test_condition_or_error_only_file_is_skipped(self):
+        from ceo_report import reconcile, wehago_raw
+        good = {"error_str": "", "error_view": "", "main": [{"cd_acctit": "10300", "mn_bungae_left": "100"}]}   # 실제: 정상에도 error_str 칸
+        self.put("261113 결산_재무상태표 자동수집.json", "2026-11-13 10:00:00",
+                 [("/smarta/sacl0105/check_unapproved_slip/", {"data_count": 0}), ("/smarta/sacl0105/main/", good)])
+        self.put("261115 결산_재무상태표 자동수집.json", "2026-11-15 10:00:00",
+                 [("/smarta/sacl0105/check_unapproved_slip/", {"data_count": 0})])            # 조건 응답만
+        self.put("261116 결산_재무상태표 자동수집.json", "2026-11-16 10:00:00",
+                 [("/smarta/sacl0105/main/", {"status": 500, "error": "Internal Server Error"})])   # 오류 응답만
+        skipped = []
+        raw = reconcile.raw_files(self.t, skipped)
+        self.assertEqual([w.day for w, _, _ in raw["SACL0105"]], [13])   # 그 전에 받은 정상 파일
+        self.assertEqual(sorted(skipped), ["261115 결산_재무상태표 자동수집.json", "261116 결산_재무상태표 자동수집.json"])
+        F = wehago_raw.files(self.t)
+        self.assertTrue(F[("결산_재무상태표", 2026)][1].endswith("261113 결산_재무상태표 자동수집.json"))
+
+    def test_extension_counts_only_the_data_response_as_success(self):
+        import json
+        from ceo_report.wehago_raw import NEED
+        src = open(os.path.join(ROOT, "chrome_extension", "background.js"), encoding="utf-8").read()
+        self.assertEqual(src.count("hasData(sc, r.got)"), 2)   # 결산·인사급여 모두 받기, 대조 화면
+        self.assertIn("hasData({code: ack.code}, run.got)", src)   # 지금 열린 화면 받기
+        js = json.loads(re.search(r"const NEED = (\{.*?\});", src).group(1))
+        self.assertEqual(js, NEED)   # 확장과 프로그램이 같은 자료 응답을 본다

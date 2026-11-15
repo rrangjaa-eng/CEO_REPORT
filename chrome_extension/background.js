@@ -347,6 +347,7 @@ async function collectClosing(prefix = "결산") {
   await new Promise((r) => setTimeout(r, CLOSING_MS));
   const run = closingRun; closingRun = null;
   if (!run.got.length) return {error: `${ack.screen || "이 화면"}: 응답이 오지 않음 (조회 조건을 고른 뒤 다시 눌러 보세요)`};
+  if (!hasData({code: ack.code}, run.got)) return {error: `${ack.screen || "이 화면"}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음, 조회 조건을 고른 뒤 다시 눌러 보세요)`};
   const name = (ack.screen || ack.code || "화면").replace(/[\\/:*?"<>|\s]+/g, "");
   const safe = name.replace(/전자세금계산서/g, "전자계산서").replace(/분개장/g, "분개").replace(/자금계획/g, "자금");   // 프로그램이 장부·자금계획서 파일로 잘못 알아보지 않게
   const file = {"종류": prefix + "원본", "형식": 1, "수집시각": "", "화면": ack.screen, "화면코드": ack.code, "응답수": run.got.length, "응답": run.got};
@@ -377,6 +378,20 @@ const AUTO_SCREENS = [
   // 연말정산현황: 작년 해로 열면 '계속근무자' 쪽이 정산년월(작년 1월~올해 2월)을 스스로 채워 조회한다 (2026-11-13 실제 화면 확인)
   {prefix: "연말정산", mod: "humanresource", code: "SWYM0102", name: "연말정산현황", years: [-1], tab: "계속근무자 연말정산현황"},
 ];
+// P1-4 (2026-11-15): 화면마다 프로그램이 읽는 자료 응답 (프로그램 wehago_raw.NEED 와 같은 글 — 시험이 둘을 맞춰 봄).
+// 이 응답이 오지 않고 조건 응답(미승인 전표 확인·init 등)이나 오류 응답만 오면 '받음'으로 치지 않고 저장하지 않는다.
+const NEED = {"SACL0105": "/sacl0105/main$", "SACL0108": "/sacl0108/plusforw$", "SAAS0107": "/allfixlist$", "SWPM0108": "/swpm0108/condition$", "SWSA0105": "/swsa0105/total$", "SWBU0103": "/swbu0103/tab1$", "SWET0107": "/swet0107/other/tab01$", "SWYM0107": "/emp/income$", "SWYM0102": "/swym0102$", "SACL0104": "/sacl0104/account$", "SAFM0109": "/safm0109$", "SAFM0107": "/safm0107/balance/statement$", "SACL0106": "/sacl0106/0", "SAAC0103": "/saac0103/jungsang$", "SAFM0108": "/safm0108/\\d+$", "SABM0109": "/sabm0109/bsflist", "SAAC0110": "/collectingdata/", "SAVF0119": "/savf0119/top$", "SWTA0101": "/swta0101/sglist$"};
+// 오류 응답: status 400 이상, 또는 오류 글(error)과 status 를 함께 둔 것 (재무상태표 '/main' 의 error_str 칸은 정상에도 있음)
+function isErrResp(d) {
+  return !!d && typeof d === "object" && !Array.isArray(d) &&
+    ((typeof d.status === "number" && d.status >= 400) || (typeof d.error === "string" && d.error !== "" && "status" in d));
+}
+function hasData(sc, got) {
+  const need = NEED[String((sc && sc.code) || "").toUpperCase()];
+  const re = need ? new RegExp(need) : null;
+  return (got || []).some((g) => !isErrResp(g.data) && (!re || re.test(String(g.path || "").replace(/\/+$/, "").toLowerCase())));
+}
+
 const SCREEN_MS = 15000;   // 응답을 기다리는 시간 (사원 줄 누르기는 따로 사원당 8초까지)
 let booksRun = false;
 
@@ -418,6 +433,7 @@ async function collectRecon() {
       catch (e) { r = null; }
       if (!r || (r.v || 0) < 8) { fails.push("확장 파일이 예전 것임 — chrome://extensions 에서 이 확장의 새로고침(↻)을 누르고 위하고 탭도 새로고침하세요"); break; }
       if (!r.ok) { fails.push(`${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : "")); continue; }
+      if (!hasData(sc, r.got)) { fails.push(`${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
       const kind = `${sc.prefix}_${sc.name}`;
       const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
                     "자동": true, "응답수": r.got.length, "응답": r.got};
@@ -463,6 +479,7 @@ async function collectBooks() {
           break;
         }
         if (!r.ok) { fails.push(`${year} ${sc.name}: 응답이 오지 않음` + (r.error ? ` (${r.error})` : (sc.onOpen || r.clicked ? "" : (sc.tab ? ` ('${sc.tab}' 못 찾음)` : " ([조회] 버튼 못 찾음)")))); continue; }
+        if (!hasData(sc, r.got)) { fails.push(`${year} ${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
         const kind = `${sc.prefix}_${sc.name}` + (dy ? `_${year}` : "");
         const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
                       "자동": true, "응답수": r.got.length, "응답": r.got};

@@ -59,9 +59,41 @@ def birth_from_social(no):
 
 YEARLESS = ("인사_사원등록",)
 
+# P1-4 (2026-11-15): 화면마다 프로그램이 읽는 자료 응답 (2026-11-13 실제 원본·읽는 코드 기준). 확장이 [조회] 뒤 조건 응답
+# (미승인 전표 확인·init 등)이나 오류 응답만 받아 저장한 파일은 이 응답이 없다 → 그 파일은 쓰지 않고 그 전에 받은 파일을 쓴다.
+NEED = {"SACL0105": r"/sacl0105/main$", "SACL0108": r"/sacl0108/plusforw$", "SAAS0107": r"/allfixlist$",
+        "SWPM0108": r"/swpm0108/condition$", "SWSA0105": r"/swsa0105/total$", "SWBU0103": r"/swbu0103/tab1$",
+        "SWET0107": r"/swet0107/other/tab01$", "SWYM0107": r"/emp/income$", "SWYM0102": r"/swym0102$",
+        "SACL0104": r"/sacl0104/account$", "SAFM0109": r"/safm0109$", "SAFM0107": r"/safm0107/balance/statement$",
+        "SACL0106": r"/sacl0106/0", "SAAC0103": r"/saac0103/jungsang$", "SAFM0108": r"/safm0108/\d+$",
+        "SABM0109": r"/sabm0109/bsflist", "SAAC0110": r"/collectingdata/", "SAVF0119": r"/savf0119/top$",
+        "SWTA0101": r"/swta0101/sglist$"}
 
-def files(wehago_dir):
-    """-> {(종류_화면, 연도): (수집시각, 경로, dict)} 화면·연도마다 가장 늦게 받은 것."""
+
+def is_error(data):
+    """위하고 오류 응답 모양: status 400 이상, 또는 오류 글(error)과 status 를 함께 둔 것 ('/main' 의 error_str 칸은 정상에도 있음)."""
+    if not isinstance(data, dict):
+        return False
+    st = data.get("status")
+    if isinstance(st, int) and not isinstance(st, bool) and st >= 400:
+        return True
+    return isinstance(data.get("error"), str) and bool(data.get("error")) and "status" in data
+
+
+def has_data(d):
+    """원본 파일에 그 화면의 자료 응답(오류 아님)이 있는가. 모르는 화면은 오류 아닌 응답이 하나라도 있으면 됨."""
+    code = str(d.get("화면코드") or "").upper()
+    need = NEED.get(code)
+    for r in d.get("응답") or []:
+        if is_error(r.get("data")):
+            continue
+        if need is None or re.search(need, str(r.get("path") or "").rstrip("/").lower()):
+            return True
+    return False
+
+
+def files(wehago_dir, skipped=None):
+    """-> {(종류_화면, 연도): (수집시각, 경로, dict)} 화면·연도마다 가장 늦게 받은 것 (자료 응답이 없는 파일은 빼고 skipped 에 이름)."""
     out = {}
     try:
         names = os.listdir(wehago_dir)
@@ -77,6 +109,10 @@ def files(wehago_dir):
         except (OSError, ValueError):
             continue
         if not isinstance(d, dict) or "응답" not in d:
+            continue
+        if not has_data(d):   # P1-4: 조건·오류 응답만 있는 파일
+            if skipped is not None:
+                skipped.append(n)
             continue
         kind = (d.get("종류") or "").replace("원본", "")
         screen = "%s_%s" % (kind, d.get("화면") or "")

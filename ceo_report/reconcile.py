@@ -106,7 +106,7 @@ def _row(kind, item, src, other, book, basis, verdict, todo="", ceo=""):
 
 
 # ───────────── 위하고 원본 파일 ─────────────
-def raw_files(wehago_dir):
+def raw_files(wehago_dir, skipped=None):
     """수집\\위하고 의 결산·인사·대조 원본 -> {화면코드: [(수집시각 datetime, 연도, dict)] 늦게 받은 것 먼저}.
 
     '지금 열린 화면 받기'로 받은 파일(연도 없음)도 화면코드로 찾는다 (카드·거래처원장·국세청 비교는 조회 조건을 사용자가 고름)."""
@@ -127,6 +127,11 @@ def raw_files(wehago_dir):
             continue
         code = str(d.get("화면코드") or "").upper()
         if not code:
+            continue
+        from .wehago_raw import has_data
+        if not has_data(d):   # P1-4 (2026-11-15): 조건·오류 응답만 받은 파일은 쓰지 않고 그 전에 받은 파일을 쓴다
+            if skipped is not None:
+                skipped.append(n)
             continue
         try:
             year = int(str(d.get("연도") or 0)[:4] or 0)
@@ -788,7 +793,8 @@ def vat_notice_rows(raw):
 def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     from .convert import Table
     journal = books.journal if getattr(books, "state", "") == "ok" else []
-    raw = raw_files(wehago_dir)
+    skipped = []
+    raw = raw_files(wehago_dir, skipped)
     jfiles = journal_files(wehago_dir)
     jstamp = jfiles[0][0] if jfiles else None
     rows, notes = [], []
@@ -806,6 +812,9 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
         rows += opening_rows(journal, raw)
     rows += collect_rows(raw, asof)
     rows += vat_notice_rows(raw)
+    for n in sorted(skipped):   # P1-4: 화면 자료가 없는 원본 — 쓰지 않았다고 경영관리 '자료 대조'에 남긴다
+        rows.append(_row("수집", n, "위하고 원본", None, None, "", "참고",
+                         "이 파일에는 화면 자료 응답이 없어(조건·오류 응답만) 쓰지 않고 그 전에 받은 파일을 씀 — 확장에서 다시 받으세요"))
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)
