@@ -3477,3 +3477,25 @@ class TestPdfOverPagesSaid(unittest.TestCase):
         with open(os.path.join(ROOT, "보고서.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("[확인] 대표 보고 PDF가 %d쪽입니다", src)
+
+
+# ───────────── 2차 P1-14: 최신이어도 깨진 분개장은 초록이 아님 ─────────────
+class TestFreshnessSeesBrokenFile(unittest.TestCase):
+    def test_broken_journal(self):
+        import tempfile
+        from ceo_report import app, winstate
+        tmp = tempfile.mkdtemp()
+        P = app.Paths(tmp)
+        os.makedirs(P.wehago, exist_ok=True)
+        os.makedirs(P.input, exist_ok=True)
+        path = os.path.join(P.wehago, "261115 분개장 자동수집.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"종류": "분개장", "줄": [[1,2')   # 받다 끊김
+        today = dt.date.today()
+        row = [r for r in winstate.freshness(P, today) if r["name"] == "분개장"][0]
+        self.assertEqual(row["level"], "r")
+        self.assertIn("파일 깨짐", row["text"])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"종류": "분개장", "줄": []}')
+        row = [r for r in winstate.freshness(P, today) if r["name"] == "분개장"][0]
+        self.assertEqual(row["level"], "g")

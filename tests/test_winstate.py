@@ -22,7 +22,7 @@ class Base(unittest.TestCase):
     def touch(self, path, when):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            f.write("x")
+            f.write("{}" if path.endswith(".json") else "x")   # 2차 P1-14: 깨진 json 은 창에서 빨강이라 읽히는 json 으로
         t = time.mktime(when.timetuple())
         os.utime(path, (t, t))
 

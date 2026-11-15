@@ -202,10 +202,60 @@ def sources(paths):
     ]
 
 
+_READ_OK = {}   # (경로, 바뀐 시각, 크기) -> 읽히는가 (창이 자주 다시 그려도 같은 파일은 한 번만 읽음)
+
+
+def _readable(path, kind):
+    """2차 P1-14 (2026-11-15): 받은 시각이 최신이어도 파일이 깨졌으면 초록으로 두지 않는다. kind: 'json'(위하고 자동수집)·'snapshot'."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    key = (path, st.st_mtime, st.st_size)
+    if key not in _READ_OK:
+        ok = True
+        try:
+            if kind == "snapshot":
+                from . import snapshot
+                snapshot.read_snapshot(path)
+            elif path.lower().endswith(".json"):
+                with open(path, encoding="utf-8-sig") as f:
+                    ok = isinstance(json.load(f), dict)
+        except Exception:
+            ok = False
+        if len(_READ_OK) > 50:
+            _READ_OK.clear()
+        _READ_OK[key] = ok
+    return _READ_OK[key]
+
+
+def _broken_newest(paths, name):
+    """분개장·인트라넷 중 가장 최근 파일이 읽히지 않으면 True."""
+    from . import snapshot, wehago
+    try:
+        if name == "분개장":
+            wf = [p for p in _files(paths.wehago) if wehago._kind_of(os.path.basename(p))[0] == "분개장"]
+            newest = max(wf, key=lambda p: _mtime(p) or dt.datetime.min) if wf else None
+            return bool(newest) and not _readable(newest, "json")
+        if name.startswith("인트라넷"):
+            newest = snapshot.latest_snapshot(paths.collect)
+            return bool(newest) and not _readable(newest, "snapshot")
+    except Exception:
+        return False
+    return False
+
+
 def freshness(paths, asof):
     """[{name, when, text, level, note}] — 창 오른쪽 '자료가 얼마나 최신인가' 표."""
-    return [{"name": n, "when": w, "text": when_text(w, asof), "level": level(w, asof), "note": note}
-            for n, w, note in sources(paths)]
+    out = []
+    for n, w, note in sources(paths):
+        row = {"name": n, "when": w, "text": when_text(w, asof), "level": level(w, asof), "note": note}
+        if w is not None and _broken_newest(paths, n):
+            row["text"] += " · 파일 깨짐(읽지 못함)"
+            row["level"] = "r"
+            row["note"] = "가장 최근 파일을 읽지 못합니다 — 다시 받으세요"
+        out.append(row)
+    return out
 
 
 def convert_time(input_dir):
