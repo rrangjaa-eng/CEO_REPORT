@@ -358,8 +358,10 @@ def check_items(out_dir):
     out = []
     for k, it in items.items():
         out.append({"id": k, "kind": "보고 할 일", "date": d.isoformat(), "amount": None, "vendor": "",
-                    "title": "보고 할 일 (%s · %s): %s" % (TOPIC_NAME.get(it.get("topic"), ""), it.get("owner", ""), it.get("text", "")),
-                    "detail": "%s%s" % (it.get("fact", ""), (" · %d번째 보고에 걸림" % it["n"]) if it.get("n", 1) > 1 else ""),
+                    # 편의성 17 (2026-11-16): 제목마다 '보고 할 일 (자금 · 경영관리):' 를 되풀이하지 않는다 — 주제·맡은 곳은 설명 앞에
+                    "title": it.get("text", ""),
+                    "detail": " · ".join(x for x in (TOPIC_NAME.get(it.get("topic"), ""), it.get("owner", ""), it.get("fact", ""),
+                                                      ("%d번째 보고에 걸림" % it["n"]) if it.get("n", 1) > 1 else "") if x),
                     "choices": ["처리함", "진행 중 — 확인 필요", "안 해도 됨 (이유를 메모에)"]})
     return out
 
@@ -696,7 +698,7 @@ def build(R, mode_css_mon, parts):
              "담당 = 프로젝트 팀(프로젝트 일이면), 아니면 경영관리. 기한 = 다음 보고 날. 상태·메모는 창의 ‘확인할 것’ 화면(보고 할 일)에서 "
              "건마다 넣은 결정이 그대로 붙고, 처리하지 않은 것은 다음 보고에 ‘이월 n번째’로 남습니다.</div>")
     fl = parts.get("filing") or []
-    h.append("<div class='tp-note'>이번 달 기한 신고: %s</div>" % (esc(" · ".join(fl)) + " (신고 도우미는 창에서 엶)" if fl else "해당 없음"))
+    h.append("<div class='tp-note'>이번 달 기한 신고: %s</div>" % (esc(" · ".join(fl)) + esc(" (%s)" % digest.filing_where(R)) if fl else "해당 없음"))
     K = (I or {}).get("track") or {}
     tl = digest._track_line(K)
     h.append("<div class='tp-note'>지난 예상 대비 실제 오차(매번): %s → <a href='#auto15'>1. 자금 ③</a></div>"

@@ -491,12 +491,15 @@ def _conv_time(input_dir):
     return when, failed
 
 
-def ready_problems(R, input_dir, collect_dir=None):
+def ready_problems(R, input_dir, collect_dir=None, downloads=None):
     """이체 파일을 만들기 전 확인 (안전-01·결정 f·P5-4, 2026-11-15) -> 막는 까닭 목록.
 
     ① 대표 보고와 같은 자료 확인(gate): 대표 보고가 막힌 날은 이체 파일도 막는다.
     ② 마지막 자료 변환이 실패했거나 기록이 없으면 막는다 (입력 CSV 가 예전 그대로라 이미 낸 지급이 다시 들어갈 수 있음).
-    ③ 변환 뒤에 새로 받은 분개장·자금계획 파일이 있으면 막는다 (이미 지급한 전표를 받았는데 변환 전이면 그 지급이 다시 들어감, P5-4)."""
+    ③ 변환 뒤에 새로 받은 분개장·자금계획 파일이 있으면 막는다 (이미 지급한 전표를 받았는데 변환 전이면 그 지급이 다시 들어감, P5-4).
+    ④ 편의성 13 (2026-11-16): 크롬 다운로드 폴더(위하고자동수집)에 받아만 둔 새 분개장·자금계획도 ③과 같게 막는다 — 확장의 저장
+       폴더를 정하지 않은 PC 에서는 새 자료가 거기 먼저 쌓이고, 보고 단추는 이미 그걸 '새 자료'로 본다.
+       downloads: 크롬 다운로드 폴더 목록 (None 이면 collect_dir 를 줄 때만 이 PC 크롬에서 찾음)."""
     from . import gate
     out = list(gate.problems(R))
     when, failed = _conv_time(input_dir)
@@ -517,6 +520,18 @@ def ready_problems(R, input_dir, collect_dir=None):
         if newer:
             out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
                        % (when.strftime("%m-%d %H:%M"), ", ".join(newer[:3]) + (" 외 %d개" % (len(newer) - 3) if len(newer) > 3 else "")))
+    if when is not None and (downloads is not None or collect_dir):
+        from . import app as _app
+        try:
+            pend = _app.pending_downloads(downloads)
+        except Exception:   # 다운로드 폴더를 못 읽어도 이체 확인은 계속
+            pend = []
+        waiting = sorted(os.path.basename(p) for p, t in pend
+                         if ("분개장" in os.path.basename(p) or "자금계획" in os.path.basename(p))
+                         and t > when + dt.timedelta(seconds=60))
+        if waiting:
+            out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
+                       % (when.strftime("%m-%d %H:%M"), ", ".join(waiting[:3]) + (" 외 %d개" % (len(waiting) - 3) if len(waiting) > 3 else "")))
     return out
 
 
@@ -558,7 +573,7 @@ def read_log(input_dir):
 def _log(input_dir, when, start, end, rows, path, gate_text, reason):
     import csv
     p = os.path.join(input_dir, LOG_FILE)
-    new = not os.path.exists(p)
+    new = not os.path.exists(p) or os.path.getsize(p) == 0   # 쓸 수 있는지 미리 열어 본 빈 파일도 새 파일
     with open(p, "a", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         if new:
@@ -583,8 +598,18 @@ def repeats(log_rows, rows, now, days=REPEAT_DAYS):
     return out
 
 
+def _log_writable(input_dir):
+    """이체기록.csv 에 덧붙여 쓸 수 있는가 (엑셀로 열어 둔 파일은 Windows 에서 쓰기가 막힌다). -> 못 쓰는 까닭 또는 ''."""
+    try:
+        with open(os.path.join(input_dir, LOG_FILE), "a", encoding="utf-8-sig"):
+            pass
+    except OSError as e:
+        return e.strerror or type(e).__name__
+    return ""
+
+
 def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, splits=None, multi=None,
-              collect_dir=None, override=None, result=None, now=None):
+              collect_dir=None, override=None, result=None, now=None, downloads=None):
     """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None.
     missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게).
     splits·multi: 예금주가 다른 계좌가 여럿인 거래처의 사람별 금액 (build 참고).
@@ -592,16 +617,20 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     안전-01·결정 f (2026-11-15): 대표 보고와 같은 자료 확인을 통과해야 만든다 (ready_problems). 막히면 만들지 않고
     result["blocked"] 에 까닭을 남긴다. 급하면 override 에 이유를 적어 다시 부르면 만들고 그 이유를 이체기록.csv 에 남긴다.
     collect_dir 를 주면 변환 뒤 새로 받은 자료가 있는지도 본다 (P5-4). 0건이거나 막히면 같은 기간의 예전 파일을 치운다 (P5-5).
-    만들 때마다 이체기록.csv 에 줄마다 남기고, 최근에 같은 계좌·금액을 담은 적이 있으면 알린다. 파일 이름에 연도·시각."""
+    만들 때마다 이체기록.csv 에 줄마다 남기고, 최근에 같은 계좌·금액을 담은 적이 있으면 알린다. 파일 이름에 연도·시각.
+
+    편의성 11·16 (2026-11-16): result["summary"] = {n, total, rows, blocked[(거래처, 금액, 까닭)], repeats[(예금주, 금액, 예전 시각, 예전 파일)]}
+    (만들지 않았으면 None) — 창이 이체 칸에 남긴다. 이체기록.csv 를 쓰지 못하면 파일을 내보내지 않는다 (result["log_failed"])."""
     from .calc import compute
     from .data import load
     from . import insights
     now = now or dt.datetime.now()
     result = result if result is not None else {}
+    result["summary"] = None
     d = load(input_dir)
     R = compute(d, "weekly", asof or start - dt.timedelta(days=1))
     R["auto_facts"] = insights.read_facts(input_dir)   # 대표 보고와 같은 자료 확인 (분개장 받은 날)
-    probs = ready_problems(R, input_dir, collect_dir)
+    probs = ready_problems(R, input_dir, collect_dir, downloads)
     result["blocked"] = probs
     if probs and not (override or "").strip():
         say("이체 파일을 만들지 않음 — 대표 보고와 같은 자료 확인에서 막힘:")
@@ -632,7 +661,13 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         say("파일에 넣을 줄이 없어 만들지 않았습니다")
         _put_away(output_dir, start, end, say, "이번에 넣을 줄 0건")
         return None
-    for r, when, fname in repeats(read_log(input_dir), rows, now):
+    why = _log_writable(input_dir)
+    if why:   # 편의성 16: 기록을 못 남기면 다음 주 '같은 계좌·금액' 경고와 급한 이체 이유가 빠진다 → 파일을 내보내지 않는다
+        result["log_failed"] = True
+        say("이체 파일을 만들지 않음 — 입력\\%s 에 기록을 남기지 못함 (%s). 그 파일을 엑셀 등에서 닫고 다시 만드세요" % (LOG_FILE, why))
+        return None
+    again = repeats(read_log(input_dir), rows, now)
+    for r, when, fname in again:
         say("[주의] %s %s원 — %s에 만든 이체 파일(%s)에 같은 계좌·금액이 이미 있습니다. 두 번 보내지 않게 확인하세요"
             % (r[2], "{:,}".format(int(r[3])), when, fname))
     os.makedirs(output_dir, exist_ok=True)
@@ -642,7 +677,16 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     try:
         _log(input_dir, now, start, end, rows, path, "막힘: " + " / ".join(probs) if probs else "통과", override)
     except OSError as e:
-        say("[주의] 이체기록.csv 에 남기지 못함 (%s) — 만든 파일을 따로 기록해 두세요" % (e.strerror or type(e).__name__))
+        result["log_failed"] = True
+        try:
+            os.remove(path)
+        except OSError:
+            say("[주의] 방금 만든 %s 을 지우지 못함 — 그 파일로 이체하지 마세요" % os.path.basename(path))
+        say("이체 파일을 만들지 않음 — 입력\\%s 에 기록을 남기지 못함 (%s). 그 파일을 엑셀 등에서 닫고 다시 만드세요"
+            % (LOG_FILE, e.strerror or type(e).__name__))
+        return None
+    result["summary"] = {"n": len(rows), "total": sum(int(r[3]) for r in rows), "rows": rows, "blocked": list(blocked),
+                         "repeats": [(r[2], int(r[3]), when, fname) for r, when, fname in again]}
     say("이체 파일: %s — 신한은행 기업뱅킹 대량이체에서 불러오기 전에 금액·계좌를 한 번 더 확인하세요" % path)
     return path
 
