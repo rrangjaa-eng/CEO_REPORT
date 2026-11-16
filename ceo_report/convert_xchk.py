@@ -401,6 +401,36 @@ def _source_total(books, cfg, kind):
     return _known_sum([_net(line, kind) for line in books.journal if _classify(line, cfg) == kind])[0]
 
 
+PRIOR_LINK = "지난해이음"            # 작년 프로젝트: '참고' 줄을 옛 번호로 모은 합 (사용자 2026-11-16, 이익 비교에만 씀)
+PRIOR_LINK_LEFT = "지난해못이음"       # 옛 번호가 없거나 프로젝트 목록에 없는 '참고' 줄 합계
+
+
+def _prior_code(ln):
+    return ln.get("slip_code") or ln.get("code") or ""
+
+
+def _prior_link_rows(projects, costs, revenue):
+    """'참고'(지난해) 원가·매출 줄을 옛 프로젝트 번호로 모은다. 연결(project)은 바꾸지 않는다 — 이익 비교 표에만 쓴다.
+    번호는 분개장 프로젝트명·적요의 [코드] (앞 0 뗌, 인트라넷 번호와 같은 모양). 번호가 없거나 목록에 없는 줄은 '못 이음' 한 줄."""
+    rows, left = [], []
+    for item, lines in (("원가", costs["lines"]), ("매출", revenue["lines"])):
+        groups, miss = collections.OrderedDict(), []
+        for ln in lines:
+            if not ln.get("prior") or ln["project"] is not None:
+                continue
+            code = _prior_code(ln)
+            (groups.setdefault(code, []) if code and code in projects else miss).append(ln)
+        for code, mine in groups.items():
+            total, unknown = _known_sum([ln["amount"] for ln in mine])
+            rows.append(_row(PRIOR_LINK, code, projects[code]["name"], item, total, len(mine), _unknown_note(unknown, "줄")))
+        total, unknown = _known_sum([ln["amount"] for ln in miss])
+        coded = sum(1 for ln in miss if _prior_code(ln))
+        left.append(_row(PRIOR_LINK_LEFT, "합계", "", item, total, len(miss),
+                         " · ".join(x for x in (_unknown_note(unknown, "줄"),
+                                                ("번호 있으나 목록에 없음 %d줄" % coded) if coded else "") if x)))
+    return rows + left
+
+
 def build_xchk(books, costs, revenue, projects, requests, match, project_rows, meta, cfg, bank, card_vat=None):
     """위하고대조.csv 표. 입력은 바꾸지 않고 파일은 열지 않는다 (bank: {"balances": 줄 또는 None, "transactions": 줄 또는 None})."""
     bank = bank or {}
@@ -423,6 +453,7 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     rows.extend(_vendor_rows(books, requests, match))
     rows.extend(revenue_rows)
     rows.extend(unlinked_revenue)
+    rows.extend(_prior_link_rows(projects, costs, revenue))
     cash_rows, cash_notes, move_total = _cash_rows(books, cfg, bank)
     rows.extend(cash_rows)
 
@@ -462,7 +493,8 @@ def _blank_result(state, reason):
             "vendor_summary": dict.fromkeys(("compared", "note", "diff_sum", "diff_count", "diff_note", "unknown_count",
                                              "unknown_note")),
             "revenue": [], "revenue_unlinked": _fact(None), "revenue_unlinked_lines": [],
-            "cash": _blank_cash(), "cash_months": [], "totals": dict.fromkeys(TOTAL_KEYS)}
+            "cash": _blank_cash(), "cash_months": [], "totals": dict.fromkeys(TOTAL_KEYS),
+            "prior_link": collections.OrderedDict(), "prior_left": {}}
 
 
 TOTAL_KEYS = ("contract_sum", "contract_registered", "contract_unregistered", "budget_sum", "budget_known", "budget_blank",
@@ -589,6 +621,10 @@ def _load_rows(rows):
         elif kind == "매출미연결줄":
             out["revenue_unlinked_lines"].append({"key": row["대상"], "vendor": row["이름"], "label": row["항목"],
                                                   "amount": row["_amount"], "memo": row["비고"]})
+        elif kind == PRIOR_LINK:
+            out["prior_link"].setdefault(row["대상"], {})[item] = (row["_amount"], row["_count"])
+        elif kind == PRIOR_LINK_LEFT:
+            out["prior_left"][item] = {"amount": row["_amount"], "count": row["_count"], "note": row["비고"]}
         elif kind == "미연결원가":
             out["unlinked"] = _fact(row)
         elif kind == "미연결원가줄":
