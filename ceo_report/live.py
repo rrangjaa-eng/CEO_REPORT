@@ -117,6 +117,26 @@ def changes(prev, now):
     return out
 
 
+OUT_NAMES = ("곧 낼 ",)   # 나갈 돈: 늘면 나쁨 (편의성 30, 2026-11-16 — 예전엔 무엇이든 늘면 초록이었다)
+
+
+def change_class(name, d):
+    """바뀐 것 한 줄의 색: 'up'(초록, 좋아짐) · 'down'(빨강, 나빠짐). 나갈 돈은 늘면 나빠진 것."""
+    good = d > 0
+    if any(name.startswith(x) for x in OUT_NAMES):
+        good = not good
+    return "up" if good else "down"
+
+
+def tax_card(total):
+    """'곧 낼 세금·카드·보험·급여' 카드 -> (이름, 값 글, 아래 글, 값 색).
+    합계가 음수면 낼 돈이 아니라 돌려받을 돈으로 계산된 것 — 빨강 음수 대신 '환급 예상 — 확인 필요'로 따로 보인다."""
+    name = "곧 낼 세금·카드·보험·급여"
+    if total is not None and total < 0:
+        return name, "환급 예상 %s" % _won(-total), "낼 돈보다 돌려받을 돈이 많게 계산됨 — 확인 필요 (%d일 안)" % TAX_DAYS, "est"
+    return name, _won(total), "%d일 안" % TAX_DAYS, ""
+
+
 def _read_history(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -170,7 +190,7 @@ def render(R, now_snap, diff, meta, auto_html=""):
         h.append("<section class='chg'><h2>지난 현황 뒤 바뀐 것</h2><ul>")
         for name, a, b in diff[:15]:
             d = None if a is None or b is None else b - a
-            cls = "" if d is None else ("up" if d > 0 else "down")
+            cls = "" if not d else change_class(name, d)
             h.append("<li>%s: %s → <b>%s</b> %s</li>" % (_e(name), _won(a), _won(b),
                                                           "" if d is None else "<span class='%s'>(%s%s)</span>" % (cls, "+" if d > 0 else "", _eok(d))))
         if len(diff) > 15:
@@ -184,11 +204,13 @@ def render(R, now_snap, diff, meta, auto_html=""):
         cards.append(("여유 자금 (%s까지)" % last["label"], last["firm"]["avail"],
                       "확정된 돈과 급여·세금·카드 예상 · 최소 보유현금 %s원 뺌" % _won(s2.get("min_cash")), True))
         cards.append(("프로젝트 지급 예상 등까지 빼면", last["spend"]["avail"], "확정 안 된 지급까지 (예상 입금은 넣지 않음)", False))
-    cards.append(("곧 낼 세금·카드·보험·급여", now_snap.get("tax_total"), "%d일 안" % TAX_DAYS, False))
     h.append("<div class='cards'>")
     for k, v, s, main in cards:
         h.append("<div class='card%s'><div class='k'>%s</div><div class='v%s'>%s</div><div class='s'>%s</div></div>"
                  % (" main" if main else "", _e(k), " neg" if (v or 0) < 0 else "", _won(v), _e(s)))
+    k, v, s, cls = tax_card(now_snap.get("tax_total"))
+    h.append("<div class='card'><div class='k'>%s</div><div class='v%s'>%s</div><div class='s'>%s</div></div>"
+             % (_e(k), " " + cls if cls else "", _e(v), _e(s)))
     h.append("</div>")
     if per:
         h.append("<section><h2>주별 여유 자금</h2><table><tr><th>기간</th><th>끝나는 날</th><th class='n'>들어올 돈</th>"

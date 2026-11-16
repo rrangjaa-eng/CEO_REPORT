@@ -526,13 +526,16 @@ def _periodic(R, P):
         else:
             body += _na("세무조정 예상 자료 없음 (자료 변환을 하면 세무조정.csv 가 생김)")
         out.append(("c1", "C-1 법인세·세무조정 (분기)", body))
-        body = "<h2 id='c2'>C-2 신고 일정 · 신고 도우미 (분기)</h2>"
+    if "q" in P or "f" in P:   # 편의성 31: 분기 달 + 이번 달 기한 신고가 있는 달
+        tag = "분기" if "q" in P else "이번 달 신고 있음"
+        body = "<h2 id='c2'>C-2 신고 일정 · 신고 도우미 (%s)</h2>" % tag
         if R.get("filing") or R.get("filing_help"):
             from . import filing
             body += "<h3>신고 일정 (장부 기준)</h3>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or "")
         else:
             body += _na("신고 일정 자료 없음")
-        out.append(("c2", "C-2 신고 일정·도우미 (분기)", body))
+        out.append(("c2", "C-2 신고 일정·도우미 (%s)" % tag, body))
+    if "q" in P:
         body = "<h2 id='c3'>C-3 급여 점검 · 연말정산 예상 (분기)</h2>" + (R.get("payroll") or _na("위하고 인사·급여 자료가 없어 만들지 않음"))
         out.append(("c3", "C-3 급여 점검·연말정산 (분기)", body))
     if "h" in P:
@@ -3839,12 +3842,214 @@ def _xk_final_table(X, R):
         "판정 밑 줄은 장부에서 알 수 있는 차이 까닭." % (len(rows), (", " + per) if per else ""))
 
 
+# ───────────── 프로젝트 이익 차이: 인트라넷 ↔ 장부 (사용자 2026-11-16) ─────────────
+# 원인 이름 · 장부를 다 정리한 뒤에도 남는지 · 할 일. 순서 = 표의 줄 순서.
+PROFIT_CAUSES = (
+    ("prior", "작년 프로젝트인데 장부에서 옛 번호로 못 찾음", "고치면 없어짐",
+     "작년 전표는 옛 번호([093] 꼴)로 이 표에 이어 견줌. 못 찾은 것은 전표 프로젝트명·적요에 옛 번호가 없거나 다른 번호로 들어간 것 — "
+     "아래 '작년 전표 중 번호로 못 이은 것' 참고"),
+    ("before", "행사 전 · 아직 전표 없음", "시간이 지나면 없어짐", "행사가 끝나고 계산서·원가 전표가 들어오면 맞춰짐"),
+    ("missing_book", "행사 지났는데 장부에 전표 없음", "고치면 없어짐", "계산서 발행·원가 전표 입력이 빠졌는지 확인"),
+    ("intranet_blank", "인트라넷 값이 덜 들어감 (견적·실행가 빈칸이거나 너무 작음)", "고치면 없어짐",
+     "인트라넷 견적금액·실행가를 채우거나 고침"),
+    ("revenue_not_yet", "매출 계산서 아직 안 끊음 (장부 매출 0)", "시간이 지나면 없어짐", "계산서를 발행하면 맞춰짐"),
+    ("revenue_diff", "견적과 실제 계산서 금액이 다름", "마감 뒤에도 남음",
+     "할인·추가 작업이거나, 계산서 1장을 여러 프로젝트에 나눠 적지 않아 한 프로젝트에 몰린 것. 몰린 것이면 전표 프로젝트를 나눔"),
+    ("card_vat", "카드 부가세 (인트라넷 실행가엔 포함, 장부엔 뺌)", "마감 뒤에도 남음",
+     "장부는 공제받을 부가세를 원가에서 빼므로 정상. 인트라넷 실행가에 부가세 포함으로 올린 카드 사용분"),
+    ("cost_less", "장부 원가가 실행가보다 적음", "일부는 남음",
+     "아직 안 들어온 증빙, 프로젝트 번호가 안 붙은 전표, 또는 실행가보다 덜 쓴 돈. 장부를 다 정리한 뒤에도 남으면 덜 쓴 돈"),
+    ("cost_more", "장부 원가가 실행가보다 많음", "마감 뒤에도 남음",
+     "실행가에 없는 지출(추가 비용), 또는 다른 프로젝트 원가가 이 번호로 들어감. 실행가를 고치거나 전표 프로젝트를 고침"),
+)
+PRIOR_STATE = "완료(예전 인트라넷)"
+
+
+def _profit_rows(X, R):
+    """프로젝트마다 인트라넷 이익(견적 − 실행가)과 장부 이익(장부 매출 − 장부 원가)을 견주고, 차이를 원인별 금액으로 나눈다.
+    차이 = 장부 이익 − 인트라넷 이익 = (장부 매출 − 인트라넷 매출) − (장부 원가 − 실행가). 원인별 금액을 더하면 차이와 같다.
+    인트라넷 매출 = 견적금액, 없거나 0이면 사전견적. 장부 원가는 부가세 뺀 금액 (사용자 2026-11-11)."""
+    ps = dict((P["id"], P) for P in ((R or {}).get("s3") or {}).get("projects", []))
+    asof = (R or {}).get("asof")
+    revenue = dict((c["key"], c) for c in X.get("revenue", []))
+    keys = [p["key"] for p in X.get("projects", [])] + [k for k in revenue if k not in set(p["key"] for p in X.get("projects", []))]
+    costs = dict((p["key"], p) for p in X.get("projects", []))
+    rows = []
+    for k in keys:
+        p, c, P = costs.get(k) or {}, revenue.get(k) or {}, ps.get(k) or {}
+        if p.get("out_of_period") or c.get("out_of_period"):
+            continue   # 분개장 기간 밖 이력이 있으면 장부 값을 다 알 수 없음 → 견주지 않음 (아래 글에 건수)
+        quote, est = P.get("quote"), P.get("estimate")
+        irev = quote if quote else (est if est else (c.get("quote") or None))
+        ib = p.get("budget") if p.get("has_budget") else P.get("exec_budget")
+        brev, bcost = c.get("wehago"), p.get("cost")
+        if brev is None and c and c.get("wehago_lines") is None and not c.get("wehago_note"):
+            brev = 0
+        if bcost is None and p and p.get("cost_lines") is None and not p.get("cost_note"):
+            bcost = 0
+        lines = (c.get("wehago_lines") or 0) + (p.get("cost_lines") or 0)
+        linked_prior = False
+        if P.get("state") == PRIOR_STATE:   # 작년 프로젝트: '참고' 줄을 옛 번호로 모은 합을 더함 (사용자 2026-11-16)
+            got = (X.get("prior_link") or {}).get(k) or {}
+            pc, pr = got.get("원가"), got.get("매출")
+            if pc or pr:
+                linked_prior = True
+                if bcost is not None and pc:
+                    bcost = None if pc[0] is None else bcost + pc[0]
+                if brev is not None and pr:
+                    brev = None if pr[0] is None else brev + pr[0]
+                lines += (pc[1] or 0 if pc else 0) + (pr[1] or 0 if pr else 0)
+        ev = _event_date(P.get("event_date"))
+        r = {"key": k, "name": P.get("name") or p.get("name") or c.get("name") or "", "approval": P.get("approval") or "",
+             "event": ev, "irev": irev, "ib": ib, "brev": brev, "bcost": bcost, "parts": OrderedDict(), "known": True,
+             "prior": P.get("state") == PRIOR_STATE, "linked_prior": linked_prior}
+        if irev is not None and ib is not None:
+            r["iprofit"] = irev - ib
+        else:
+            r["iprofit"] = None
+        r["bprofit"] = None if brev is None or bcost is None else brev - bcost
+        if brev is None or bcost is None:
+            r["known"] = False
+            rows.append(r)
+            continue
+        diff = r["bprofit"] - (r["iprofit"] or 0) if r["iprofit"] is not None else None
+        r["diff"] = diff
+        if r["iprofit"] is None or not ib or (irev and ib < irev * 0.01):
+            r["parts"]["prior" if (P.get("state") == PRIOR_STATE and not lines) else "intranet_blank"] = diff
+        elif not lines:
+            if P.get("state") == PRIOR_STATE:
+                cause = "prior"
+            elif ev is None or asof is None or ev >= asof:
+                cause = "before"
+            else:
+                cause = "missing_book"
+            r["parts"][cause] = diff
+        else:
+            dr = brev - irev
+            if dr:
+                r["parts"]["revenue_not_yet" if brev == 0 else "revenue_diff"] = dr
+            gap = ib - bcost   # + 면 장부 원가가 적음 (장부 이익이 큼)
+            used = max(0, min(p.get("card_vat") or 0, gap))
+            if used:
+                r["parts"]["card_vat"] = used
+            rest = gap - used
+            if rest:
+                r["parts"]["cost_less" if rest > 0 else "cost_more"] = rest
+        rows.append(r)
+    return rows
+
+
+def _profit_why(r):
+    names = dict((k, n) for k, n, _, _ in PROFIT_CAUSES)
+    out = []
+    for k, v in r["parts"].items():
+        out.append("%s %s" % (names[k], ("+" if v > 0 else "") + won(v)))
+    return " · ".join(out)
+
+
+def _xk_profit_causes(X, R):
+    """프로젝트 이익 차이 (인트라넷 ↔ 장부) 원인별 요약과 프로젝트별 까닭 (사용자 2026-11-16, 경영관리용).
+    맨 위 = 원인별 건수·금액과 '장부를 다 정리한 뒤에도 남는지', 그 밑 = 장부 영업이익과 다른 구조적 까닭, 프로젝트별 줄."""
+    if not ((R or {}).get("s3") or {}).get("projects"):
+        return "<div class='note'>%s</div>" % esc("인트라넷 프로젝트 자료 없음 — 인트라넷 자료를 받은 뒤 '자료 변환'을 하면 채워짐")
+    rows = _profit_rows(X, R)
+    sums = OrderedDict((k, [0, 0, 0, 0]) for k, _, _, _ in PROFIT_CAUSES)   # 건수, 금액, 대표 승인 건수, 대표 승인 금액
+    known = [r for r in rows if r["known"] and r.get("diff") is not None]
+    for r in known:
+        ceo = r["approval"] == "대표이사"
+        for k, v in r["parts"].items():
+            s = sums[k]
+            s[0] += 1
+            s[1] += v
+            if ceo:
+                s[2] += 1
+                s[3] += v
+    s_i = sum(r["iprofit"] for r in known)
+    s_b = sum(r["bprofit"] for r in known)
+    ceo_rows = [r for r in known if r["approval"] == "대표이사"]
+    c_i, c_b = sum(r["iprofit"] for r in ceo_rows), sum(r["bprofit"] for r in ceo_rows)
+    sign = lambda v: esc(("+" if v > 0 else "") + won(v))
+    body = []
+    for k, name, stays, todo in PROFIT_CAUSES:
+        n, v, cn, cv = sums[k]
+        if not n:
+            continue
+        body.append([esc(name), esc("%d건" % n), sign(v), esc("%d건 %s" % (cn, ("+" if cv > 0 else "") + won(cv))) if cn else _xk_none(),
+                     esc(stays), esc(todo)])
+    total = ["합계 (장부 이익 − 인트라넷 이익)", esc("%d건" % len(known)), sign(s_b - s_i),
+             esc("%d건 %s" % (len(ceo_rows), ("+" if c_b - c_i > 0 else "") + won(c_b - c_i))), "", ""]
+    out = [_idt("xchk-profit-causes", table(["원인", "프로젝트 수", "이익 차이", "그중 대표이사 승인 끝", "장부를 다 정리한 뒤", "읽는 법 · 할 일"],
+                                            body, num_cols=(1, 2, 3), total=total))]
+    out.append("<div class='note'>%s</div>" % esc(
+        "인트라넷 이익 = 견적금액(없으면 사전견적) − 실행가, 장부 이익 = 프로젝트 번호가 붙은 장부 매출 − 장부 원가(부가세 뺀 금액). "
+        "견준 프로젝트 %d건: 인트라넷 이익 %s, 장부 이익 %s. 대표이사 승인까지 끝난 %d건: 인트라넷 %s, 장부 %s. "
+        "한 프로젝트에 원인이 여럿이면 금액을 나눠 각 원인에 넣음(프로젝트 수는 겹침). 원인별 금액을 더하면 합계 차이와 같음."
+        % (len(known), won(s_i), won(s_b), len(ceo_rows), won(c_i), won(c_b))))
+    old = [r for r in known if r.get("prior")]
+    if old:
+        lk = [r for r in old if r.get("linked_prior")]
+        left = X.get("prior_left") or {}
+        miss = []
+        for item in ("원가", "매출"):
+            f = left.get(item)
+            if f and f.get("count"):
+                miss.append("%s %d줄 %s%s" % (item, f["count"], won(f["amount"]) if f["amount"] is not None else "금액 모름",
+                                              (" (" + f["note"] + ")") if f.get("note") else ""))
+        out.append("<div class='note'>%s</div>" % esc(
+            "작년(예전 인트라넷) 프로젝트 %d건: 장부의 작년 전표('참고' 줄)를 옛 번호로 이어 견줌 — 이은 것 %d건, 인트라넷 이익 %s, 장부 이익 %s, 차이 %s. "
+            "작년 전표 중 번호로 못 이은 것: %s. (이은 금액은 이 비교에만 쓰고, 다른 보고의 프로젝트 원가·매출은 그대로)"
+            % (len(old), len(lk), won(sum(r["iprofit"] for r in old)), won(sum(r["bprofit"] for r in old)),
+               won(sum(r["diff"] for r in old)), " · ".join(miss) if miss else "없음")))
+    skipped = len(rows) - len(known)
+    if skipped:
+        out.append("<div class='note'>%s</div>" % esc("장부 값을 다 알 수 없거나 인트라넷 이익을 계산할 수 없어 빼고 견준 프로젝트 %d건" % skipped))
+    # 장부를 다 정리해도 장부 영업이익과 다른 까닭 (구조): 금액은 월간 '실적'·결산 표
+    lines = X.get("unlinked_lines") or []
+    loose = [ln for ln in lines if ln.get("amount") is not None and "지난해" not in (ln.get("label") or "")]
+    loose_sum = sum(ln["amount"] for ln in loose)
+    rlines = X.get("revenue_unlinked_lines") or []
+    rloose = [ln for ln in rlines if ln.get("amount") is not None and "지난해" not in (ln.get("label") or "")]
+    rloose_sum = sum(ln["amount"] for ln in rloose)
+    struct = [
+        [esc("판관비 (급여·사무실·공통 경비)"), esc("인트라넷 이익에는 없음. 장부 영업이익은 프로젝트 이익에서 이것을 더 뺀 돈 → 장부가 다 맞아도 인트라넷 이익이 늘 더 큼"),
+         esc("월간 보고 실적·결산 표의 판매비와관리비")],
+        [esc("프로젝트에 안 붙은 원가·매출"), esc("장부 전체에는 있지만 프로젝트별 이익에서는 빠짐 (프로젝트 번호 없는 전표). 작년 프로젝트 '참고' 줄은 뺀 금액"),
+         (esc("회사 이익에 주는 영향 ") + sign(rloose_sum - loose_sum)
+          + esc(" (원가 %d줄 · 매출 %d줄, 아래 '프로젝트 미연결' 표)" % (len(loose), len(rloose)))) if (loose or rloose) else _xk_none()],
+        [esc("기간"), esc("인트라넷은 프로젝트 전체를 한 번에, 장부는 전표 날짜의 달·해에 넣음 → 해를 넘긴 프로젝트는 그 해만 보면 다름"), _xk_none()],
+        [esc("장부에만 있는 손익"), esc("프로젝트가 아닌 매출·원가, 감가상각, 이자 같은 것은 인트라넷에 없음"), esc("월간 보고 결산 표")],
+    ]
+    out.append("<h3>장부를 다 정리해도 인트라넷 이익과 장부 영업이익이 다른 까닭</h3>")
+    out.append(_idt("xchk-profit-struct", table(["무엇", "왜 다른가", "금액 · 볼 곳"], struct, num_cols=())))
+    # 프로젝트별 까닭: 차이가 있는 것만, 차이 큰 순
+    det = sorted([r for r in known if r["diff"]], key=lambda r: -abs(r["diff"]))
+    drow = []
+    for r in det:
+        drow.append(([esc(r["key"]), esc(r["name"]), esc(r["approval"] + " 승인" if r["approval"] else "승인 전"),
+                      W(r["iprofit"]), W(r["bprofit"]), sign(r["diff"])], _profit_why(r)))
+    if drow:
+        head = ["번호", "프로젝트", "승인 단계", "인트라넷 이익", "장부 이익", "차이 (장부−인트라넷)"]
+        nums = (3, 4, 5)
+        td = lambda i, c: '<td class="n">%s</td>' % c if i in nums else "<td>%s</td>" % c
+        b = []
+        for cells, why in drow:
+            b.append("<tr class='xmain'>%s</tr>" % "".join(td(i, c) for i, c in enumerate(cells)))
+            b.append("<tr class='xsub'><td></td><td colspan='%d'>%s</td></tr>" % (len(head) - 1, esc(why)))
+        style = ("<style>#xchk-profit-rows tr.xsub td{border-top:0;padding-top:0;color:#444;font-size:.92em;line-height:1.45;white-space:normal}"
+                 "#xchk-profit-rows tr.xmain td{border-bottom:0}</style>")
+        out.append("<h3>프로젝트별 이익 차이와 까닭 (차이 큰 순 %d건)</h3>" % len(drow))
+        out.append(style + '<div class="tw"><table id="xchk-profit-rows"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (
+            "".join('<th class="n">%s</th>' % esc(c) if i in nums else "<th>%s</th>" % esc(c) for i, c in enumerate(head)), "".join(b)))
+    return "".join(out)
+
+
 def _xk_detail(X, R=None):
     """경영관리용에만 붙는 상세 묶음. 시험의 numbers_of 가 이 표지 사이를 뺀다 (REP-02: 요약 숫자는 두 판이 같다)."""
     h = ["<div id='xchk-detail'>",
          "<div class='note'>상세 (경영관리용). 값은 위하고대조.csv의 사실이며, 차이는 두 값을 모두 알 때만 계산 (모르면 ‘판단 불가’).</div>",
          "<h3>지급요청 대조 (상태별)</h3>", _xk_status_table(X),
          "<h3>상태 확인 필요 지급요청 (사장님승인 빈칸·알 수 없는 값, 요청 누계·프로젝트밖요청에 포함)</h3>", _xk_status_check_table(X),
+         "<h3>프로젝트 이익 차이: 인트라넷 ↔ 장부 (원인별)</h3>", _xk_profit_causes(X, R),
          "<h3>최종 실행가 차이 (팀장 승인 ~ 대표이사 승인 프로젝트)</h3>", _xk_final_table(X, R),
          "<h3>프로젝트별 (도)원가 · 실행가 · 요청 누계</h3>", _xk_projects_table(X),
          "<h3>프로젝트 밖 지급요청</h3>", _xk_outside_table(X),
