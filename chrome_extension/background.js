@@ -349,15 +349,38 @@ async function collectPlan(months) {
 // 모두 받기: 분개장 → 대조 화면 → 자금계획 차례로 (하나가 실패해도 다음 것은 받는다).
 // 대조 화면(합계잔액시산표 등)은 분개장 바로 뒤에 받는다: 같은 때 받은 것끼리 맞춰 봐야 그 사이 들어간 전표 때문에 다르게 보이지 않는다
 // (2026-11-13 실제: 재무상태표를 받은 7분 뒤 지급 전표 11건이 들어가 통장·미지급금이 3,561만 달라 보였음)
+// 받기 표시 (편의성 27, 2026-11-16): '모두 받기'를 시작할 때 '받는 중', 끝날 때 '끝'을 저장 폴더의 받기상태.txt 에 남긴다.
+// 대표보고 프로그램은 '받는 중'인 동안 자동 반영을 미루고, '끝' 뒤에 시작한다 (반쪽 자료로 보고가 먼저 나오지 않게).
+// 표시는 자료가 아니다 (받은 내용 없음). 폴더 허용을 기다리는 중이면 '끝'만 다른 파일과 함께 나중에 쓴다. 표시를 못 써도 받기는 그대로.
+const MARK = "받기상태.txt";
+async function writeMark(state, fail = 0) {
+  const text = JSON.stringify({"상태": state, "때": new Date().toISOString(), "못받음": fail});
+  try {
+    const r = await writeToFolder(MARK, text);
+    if (r === "ok") return;
+    if (r === "need") {
+      if (state !== "끝") return;
+      const {pendingSaves = []} = await chrome.storage.local.get("pendingSaves");
+      const rest = pendingSaves.filter((p) => p.name !== MARK);
+      rest.push({name: MARK, text});
+      await chrome.storage.local.set({pendingSaves: rest});
+      return;
+    }
+    await chrome.downloads.download({url: toDataUrl(text), filename: `${FOLDER}/${MARK}`, conflictAction: "overwrite", saveAs: false});
+  } catch (e) { /* 표시는 도움말일 뿐 */ }
+}
+
 async function collectAll(months) {
   // 2차 P1-5 (2026-11-15): 오류 표시는 받기를 시작할 때 비우고, 끝나면 단계 중 하나라도 실패했으면 다시 적는다
   // (예전엔 뒤 단계 저장 성공이 앞 단계 실패를 지워, 팝업을 다시 열면 실패가 안 보였음)
   await setStatus({error: ""});
+  await writeMark("받는 중");
   const out = {};
   for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
+  await writeMark("끝", errs.length);
   if (errs.length) await setStatus({error: errs.join(" / "), badge: "!"});
   return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
 }

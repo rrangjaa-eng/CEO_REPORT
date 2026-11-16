@@ -719,3 +719,33 @@ def rc_message(task, rc, locked=False):
     else:
         why = "오류가 있습니다 (코드 %s). 아래 글을 확인하세요" % rc
     return False, "%s 실패. %s" % (task, why)
+
+
+# ───────────── 자동 반영 표시 (편의성 27·28, 2026-11-16) ─────────────
+def auto_line(state, failed="", running=False):
+    """자동 반영 옆 한 줄 -> (글, 종류 idle|wait|now|bad, '다시 하기' 단추를 보일지).
+    state = app.auto_state(...) 결과. failed = 지난 자동 반영이 실패한 까닭(없으면 '')."""
+    if running:
+        return "자동 반영: 반영 중", "now", False
+    if failed:
+        return "자동 반영: 실패 — %s" % failed, "bad", True
+    st = state or {"state": "none", "text": "새 자료 없음"}
+    kind = {"none": "idle", "collecting": "wait", "wait": "wait", "ready": "now"}.get(st.get("state"), "idle")
+    return "자동 반영: %s" % st.get("text", ""), kind, False
+
+
+LIVE_INPUTS = ("자금일정.csv", "통장잔액.csv", "카드결제일.csv")   # 창에서 넣는 값 중 지금 현황의 숫자를 바꾸는 것
+
+
+def live_stale(paths):
+    """'지금 현황' 화면을 새로 만들어야 하는가: 없거나, 못 만듦 안내이거나, 마지막 변환·창에서 넣은 값보다 오래됐을 때.
+    편의성 33 (2026-11-16): 예전엔 변환 시각만 봐서, 지급·입금 예정을 넣은 뒤에도 예전 화면을 열었다."""
+    from . import live
+    path = os.path.join(paths.output, live.FILE)
+    made = _mtime(path)
+    if made is None or live.is_failed_page(path):
+        return True
+    conv = convert_time(paths.input)
+    if conv is not None and made < conv:
+        return True
+    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))

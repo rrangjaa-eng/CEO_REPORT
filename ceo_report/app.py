@@ -416,13 +416,45 @@ def pending_downloads(dirs=None):
     return out
 
 
-def auto_signature(paths, now=None, dirs=None):
-    """새 분개장·자금계획서가 들어와 자동으로 돌릴 차례면 그 자료의 표시(받은 시각 글자), 아니면 None.
+MARK_FILE = "받기상태.txt"     # 위하고 확장 '모두 받기'가 시작·끝에 남기는 표시 (편의성 27, 2026-11-16). 자료가 아니다
+MARK_FRESH_SEC = 20 * 60       # '받는 중' 표시를 이만큼만 믿는다 (크롬이 꺼져 표시가 남아도 영영 멈추지 않게)
+MARK_SLACK_SEC = 5             # '끝' 표시와 마지막 파일의 시각 차이 허용
+
+
+def collect_mark(paths, dirs=None):
+    """확장이 남긴 받기 표시 중 가장 새것 -> {'state': '받는 중'|'끝', 'at': 시각, 'fail': 못 받은 수} 또는 None.
+    저장 폴더(수집\\위하고)와 크롬 다운로드 폴더의 위하고자동수집 둘 다 본다. 시각은 파일을 쓴 때."""
+    import json
+    best = None
+    folders = [paths.wehago] + [os.path.join(b, AUTO_DIR) for b in (chrome_download_dirs() if dirs is None else dirs)]
+    for folder in folders:
+        p = os.path.join(folder, MARK_FILE)
+        try:
+            at = dt.datetime.fromtimestamp(os.path.getmtime(p))
+            with open(p, encoding="utf-8-sig") as f:
+                d = json.load(f)
+            state = str(d.get("상태") or "")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if state in ("받는 중", "끝") and (best is None or at > best["at"]):
+            try:
+                fail = int(d.get("못받음") or 0)
+            except (TypeError, ValueError):
+                fail = 0
+            best = {"state": state, "at": at, "fail": fail}
+    return best
+
+
+def auto_state(paths, now=None, dirs=None):
+    """자동 반영이 지금 무엇을 기다리는지 -> {'state': none|collecting|wait|ready, 'sig': 표시 또는 None, 'text': 창에 보일 글}.
 
     마지막 변환 뒤 받은 것만 보고, 받은 지 AUTO_SETTLE_SEC 초가 안 됐으면 아직 기다린다.
     2차 C13 (2026-11-15): '모두 받기'는 분개장을 먼저, 자금계획서를 나중에 받는다. 예전엔 분개장만 들어온 20초 뒤에 자동 보고가
     끼어들어 새 분개장 + 옛 자금계획서로 PDF 가 먼저 나왔다 → 수집\위하고·다운로드 폴더 어디든 마지막 자료가 들어온 뒤
-    AUTO_QUIET_SEC 초 동안 새 파일이 없을 때만 돈다. 다운로드 폴더에 받아만 둔 분개장·자금계획서도 새 자료로 본다 (P1-11)."""
+    AUTO_QUIET_SEC 초 동안 새 파일이 없을 때만 돈다. 다운로드 폴더에 받아만 둔 분개장·자금계획서도 새 자료로 본다 (P1-11).
+    편의성 27 (2026-11-16): 받기 중간에 90초 넘게 멈추면(저장 허용 대기 등) 그 규칙으로도 반쪽 자료로 PDF 가 먼저 나올 수 있다
+    → 확장이 '받는 중'이라고 적어 둔 동안(20분까지)은 기다리고, '끝' 표시가 마지막 파일 뒤에 있으면 90초를 기다리지 않는다.
+    표시가 없거나 지난번 것이면(분개장만 따로 받기·예전 확장) 지금처럼 90초 조용할 때."""
     from . import winstate
     now = now or dt.datetime.now()
     src = dict((n, w) for n, w, _ in winstate.sources(paths) if n in AUTO_KINDS)
@@ -434,16 +466,32 @@ def auto_signature(paths, now=None, dirs=None):
         if kind and (conv is None or w > conv):
             k = "%s(다운로드 폴더)" % kind
             new[k] = max(new.get(k, w), w)
+    mark = collect_mark(paths, dirs)
+    collecting = bool(mark and mark["state"] == "받는 중" and 0 <= (now - mark["at"]).total_seconds() < MARK_FRESH_SEC)
+    if collecting:
+        return {"state": "collecting", "sig": None,
+                "text": "위하고 확장이 받는 중 (%s 시작) — 다 받으면 반영" % mark["at"].strftime("%H:%M")}
     if not new:
-        return None
+        return {"state": "none", "sig": None, "text": "새 자료 없음"}
     latest = [w for w in new.values()] + [w for _, w in pend]
     other = winstate.other_wehago_time(paths)
     if other:
         latest.append(other)
-    if any((now - w).total_seconds() < AUTO_SETTLE_SEC for w in new.values()) or \
-            (now - max(latest)).total_seconds() < AUTO_QUIET_SEC:
-        return None
-    return "|".join("%s %s" % (n, w.strftime("%Y-%m-%d %H:%M:%S")) for n, w in sorted(new.items()))
+    last = max(latest)
+    ended = bool(mark and mark["state"] == "끝" and (mark["at"] - last).total_seconds() >= -MARK_SLACK_SEC)
+    settle = AUTO_SETTLE_SEC - min((now - w).total_seconds() for w in new.values())
+    quiet = 0 if ended else AUTO_QUIET_SEC - (now - last).total_seconds()
+    left = max(settle, quiet)
+    if left > 0:
+        return {"state": "wait", "sig": None,
+                "text": "새 자료 받음 — %s %d초 기다림" % ("파일을 다 쓰는지" if ended else "다른 자료가 더 오는지", int(left) + 1)}
+    sig = "|".join("%s %s" % (n, w.strftime("%Y-%m-%d %H:%M:%S")) for n, w in sorted(new.items()))
+    return {"state": "ready", "sig": sig, "text": "새 자료 받음 — 반영 시작"}
+
+
+def auto_signature(paths, now=None, dirs=None):
+    """새 분개장·자금계획서가 들어와 자동으로 돌릴 차례면 그 자료의 표시(받은 시각 글자), 아니면 None. (판단은 auto_state)"""
+    return auto_state(paths, now, dirs)["sig"]
 
 
 def run_auto(paths, say, asof="", pick="", payday="", group="", only=""):

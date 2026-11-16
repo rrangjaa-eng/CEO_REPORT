@@ -526,13 +526,16 @@ def _periodic(R, P):
         else:
             body += _na("세무조정 예상 자료 없음 (자료 변환을 하면 세무조정.csv 가 생김)")
         out.append(("c1", "C-1 법인세·세무조정 (분기)", body))
-        body = "<h2 id='c2'>C-2 신고 일정 · 신고 도우미 (분기)</h2>"
+    if "q" in P or "f" in P:   # 편의성 31: 분기 달 + 이번 달 기한 신고가 있는 달
+        tag = "분기" if "q" in P else "이번 달 신고 있음"
+        body = "<h2 id='c2'>C-2 신고 일정 · 신고 도우미 (%s)</h2>" % tag
         if R.get("filing") or R.get("filing_help"):
             from . import filing
             body += "<h3>신고 일정 (장부 기준)</h3>" + filing.render(R.get("filing"), esc) + (R.get("filing_help") or "")
         else:
             body += _na("신고 일정 자료 없음")
-        out.append(("c2", "C-2 신고 일정·도우미 (분기)", body))
+        out.append(("c2", "C-2 신고 일정·도우미 (%s)" % tag, body))
+    if "q" in P:
         body = "<h2 id='c3'>C-3 급여 점검 · 연말정산 예상 (분기)</h2>" + (R.get("payroll") or _na("위하고 인사·급여 자료가 없어 만들지 않음"))
         out.append(("c3", "C-3 급여 점검·연말정산 (분기)", body))
     if "h" in P:

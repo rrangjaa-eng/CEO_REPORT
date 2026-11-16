@@ -56,7 +56,18 @@ def periodic(R):
         out.add("h")
     if m == 9:
         out.add("prep")
+    # 편의성 31 (2026-11-16): 신고 도우미는 분기 달에만 붙어, 원천세처럼 매달 하는 신고 때 볼 곳이 없었다
+    # → 분기 달이 아니어도 이번 달 기한 신고가 있으면 신고 일정·도우미(C-2)만 붙인다 ('f')
+    if "q" not in out and R.get("asof") and filing_line(R):
+        out.add("f")
     return out
+
+
+def filing_where(R):
+    """신고 도우미(홈택스·위하고 칸별 값)가 실제로 있는 곳. 창에는 그 단추가 없다 (예전 안내 '창에서 엶'은 틀린 말)."""
+    if periodic(R) & {"q", "f"}:
+        return "칸별 값은 이 보고 부록 C-2 ‘신고 도우미’"
+    return "칸별 값은 신고 있는 달의 월간 경영관리 보고 부록 C-2 ‘신고 도우미’"
 
 
 def _risk_level(R, names):
@@ -391,7 +402,7 @@ def render(R, I, L, todo, filing, prev):
     if not todo:
         h.append("<li>위험 분석에 걸린 것 없음</li>")
     h.append("</ol></div>")
-    h.append("<div class='note'>이번 달 기한 신고: %s</div>" % (esc(" · ".join(filing)) + " (신고 도우미는 창에서 엶)" if filing else "해당 없음"))
+    h.append("<div class='note'>이번 달 기한 신고: %s</div>" % (esc(" · ".join(filing)) + esc(" (%s)" % filing_where(R)) if filing else "해당 없음"))
     h.append("<div class='note'>고르는 규칙: 위험 분석 ‘높음’ → 자동 분석 경보 ‘높음’ → 위험 분석 ‘중간’ 순으로 3가지. 나머지 해결방안은 %s.</div>"
              % _go("risk", "부록 A-3"))
     opened = [x for x in L if x["open"]]
@@ -555,7 +566,7 @@ def suggest(key, R, I=None, L=None):
             ["자료 변환을 하면 세무조정 예상(세무조정.csv)이 생깁니다."]
     if key == "c2":
         f = filing_line(R)
-        return (["기한이 다가온 신고: %s → 창 ‘신고 도우미’를 열어 칸별 값대로 넣으세요." % " · ".join(f)] if f else
+        return (["기한이 다가온 신고: %s → %s대로 넣으세요." % (" · ".join(f), filing_where(R))] if f else
                 ["한 달 안에 기한인 신고가 없습니다. 다음 신고는 아래 일정 표의 맨 위 줄입니다."])
     if key == "c3":
         return ["‘이상’ 표시가 있는 직원은 급여 담당과 그달 급여명세를 다시 맞춰 보세요."] if R.get("payroll") else \
@@ -655,7 +666,7 @@ def docs_section(R, I, L):
     add("법인세 예상", here("sum", "부록 A-1 누적 절") if mon else esc("월간 보고 A-1"), yes if mon else esc("월간에만"), [],
         "올해 장부 이익으로 미리 계산한 법인세입니다 (감가상각비 예상 반영. 대손충당금은 세무사 확인 전이라 빼지 않고 '쌓으면 세금 −X'로만 보임).")
     for code, area, nm, lab, gone in (("q", "c1", "세무조정 예상", "부록 C-1", "분기(3·6·9·12월)"),
-                                      ("q", "c2", "신고 일정·신고 도우미", "부록 C-2", "분기(3·6·9·12월)"),
+                                      ("f" if "f" in P else "q", "c2", "신고 일정·신고 도우미", "부록 C-2", "신고 있는 달"),
                                       ("q", "c3", "급여 점검·연말정산 예상", "부록 C-3", "분기(3·6·9·12월)"),
                                       ("h", "c4", "이익잉여금처분계산서·배당 판단·감면 후보", "부록 C-4", "반기(6·12월)"),
                                       ("prep", "c5", "기업신용평가 미리보기·결산 전 할 일", "부록 C-5", "결산 준비(9월)")):
@@ -663,7 +674,6 @@ def docs_section(R, I, L):
         if area == "c5" and R.get("credit_brief"):   # 신용평가 최근 결과 한 줄 (사용자 2026-11-13)
             sg = ["최근 결과: " + R["credit_brief"]] + list(sg)
         add(nm, w, yes if code in P else st, sg[:1] if area != "c5" else sg[:2], EXPLAIN[area])
-    add("신고 도우미 (홈택스·위하고 칸별 값)", esc("창 ‘신고 도우미’"), esc("창에서 늘"), suggest("c2", R, I, L), EXPLAIN["c2"])
     add("연간 보고 (이익잉여금 8장·신용평가 9장 포함)", file("annual", "마지막 연간 경영관리 보고") or esc("창 3단계 ‘연간 보고’로 만듦"),
         esc("따로 만듦 (결산 뒤)"), [], "한 해 손익·현금흐름·처분계산서·신용평가를 결산 숫자로 묶은 보고입니다.")
     add("내년 예산 (대표용·경영관리용)", file("budget", "마지막 예산 경영관리용") or esc("창 ‘예산 초안 만들기’로 만듦"),
