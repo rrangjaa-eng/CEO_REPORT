@@ -1706,8 +1706,8 @@ class TestSavedValuesNotLost(unittest.TestCase):
 
     def test_account_resave_with_blank_fields_does_not_delete(self):
         src = _read(os.path.join(ROOT, "ceo_report", "gui.py"))   # 시험 PC에 tkinter 가 없어 글로 본다
-        src = src[src.find("    def save_account(self, delete=False):"):]
-        i, j = src.find("계좌를 지우려면 '지우기'"), src.find("transfer.save_account(")
+        src = src[src.find("    def save_account(self, delete=False, all_=False):"):]
+        i, j = src.find("계좌를 지우려면 '이 계좌 지우기'"), src.find("transfer.save_account(")
         self.assertTrue(0 <= i < j, "빈 칸 '저장'은 지우기 전에 막아야 함")
 
 
@@ -2957,6 +2957,7 @@ class TestRememberOnlyVerifiedLogin(unittest.TestCase):
 
         class Fake(object):
             remember, uid, pw = V(True), V("가상"), V("비번")
+            remember_info = V("")
             paths = type("P", (), {"input": "/없는곳"})()
             said = []
 
