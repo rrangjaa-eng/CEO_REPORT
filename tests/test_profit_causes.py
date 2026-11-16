@@ -140,5 +140,60 @@ class TestPriorYearLink(unittest.TestCase):
         self.assertEqual(X["prior_left"]["매출"]["count"], 0)
 
 
+class TestPriorFixItems(unittest.TestCase):
+    """고칠 전표: 작년 줄 번호 못 이음·원가 0 작년 프로젝트를 '확인할 것'에 (사용자 2026-11-16)."""
+
+    def ln(self, code, amount, day="2025-11-11", no="50003", line=2, index=0, prior=True):
+        import datetime as dt
+        return {"prior": prior, "project": None, "code": code, "slip_code": None, "amount": amount,
+                "date": dt.date.fromisoformat(day), "no": no, "line": line, "index": index,
+                "vendor": "가상상사", "account": "행사외주비(도)", "account_code": "61100"}
+
+    def items(self, costs, revenue=(), projects=None, journal=None):
+        from ceo_report import convert_xchk
+
+        class B(object):
+            pass
+        b = B()
+        b.journal = journal or [{"vendor_code": "00123"}]
+        projects = projects if projects is not None else {
+            "129": {"name": "가상 129", "old": True, "budget": 10_000_000},
+            "82": {"name": "가상 82", "old": True, "budget": 3_200_000},
+            "26001": {"name": "올해", "old": False, "budget": 5}}
+        return convert_xchk.prior_fix_items(b, projects, {"lines": list(costs)}, {"lines": list(revenue)})
+
+    def test_big_line_with_unknown_code_is_one_item(self):
+        got = self.items([self.ln("108", 10_000_000), self.ln("129", 91_770, line=1)])
+        big = [i for i in got if i["id"].startswith("작년번호|")]
+        self.assertEqual(len(big), 1)
+        self.assertEqual(big[0]["id"], "작년번호|2025-11-11|50003|2")
+        self.assertIn("[108]", big[0]["title"])
+        self.assertEqual(big[0]["vendor"], "가상상사 [00123]")
+        self.assertEqual(big[0]["kind"], "전표 프로젝트 번호")
+        self.assertIn("[129]로 고칠 것으로 추정", big[0]["detail"])   # 같은 전표 다른 줄이 129
+
+    def test_small_lines_are_grouped(self):
+        got = self.items([self.ln(None, 300_000, line=1), self.ln(None, 200_000, line=3), self.ln("129", 5, line=4)])
+        small = [i for i in got if i["id"] == "작년번호묶음|원가"]
+        self.assertEqual(len(small), 1)
+        self.assertEqual(small[0]["amount"], 500_000)
+        self.assertIn("2줄", small[0]["title"])
+
+    def test_old_project_without_cost_lines(self):
+        got = self.items([self.ln("129", 10_000_000)])
+        zero = [i["id"] for i in got if i["id"].startswith("작년원가0|")]
+        self.assertEqual(zero, ["작년원가0|82"])   # 129는 원가 줄 있음, 올해 프로젝트는 대상 아님
+
+    def test_linked_and_this_year_lines_are_ignored(self):
+        linked = dict(self.ln(None, 9_000_000), project="26001")
+        got = self.items([linked, self.ln(None, 9_000_000, prior=False), self.ln("129", 10_000_000)],
+                         projects={"129": {"name": "x", "old": True, "budget": 1}})
+        self.assertEqual(got, [])
+
+    def test_items_reach_checklist_order(self):
+        from ceo_report import checklist
+        self.assertIn("전표 프로젝트 번호", checklist.ORDER)
+
+
 if __name__ == "__main__":
     unittest.main()

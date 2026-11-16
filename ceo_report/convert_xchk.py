@@ -431,6 +431,76 @@ def _prior_link_rows(projects, costs, revenue):
     return rows + left
 
 
+PRIOR_FIX_KIND = "전표 프로젝트 번호"
+PRIOR_FIX_MIN = 1000000   # 이 금액 이상인 줄은 한 줄씩, 작은 줄은 묶어서 '확인할 것'에 (사용자 2026-11-16 '고칠 전표 목록')
+
+
+def _won(v):
+    return "-" if v is None else "{:,}".format(int(v))
+
+
+def prior_fix_items(books, projects, costs, revenue):
+    """작년 전표 중 프로젝트 번호로 못 이은 줄과 원가가 0인 작년 프로젝트 -> '확인할 것' 항목 (사용자 2026-11-16).
+
+    ① 번호가 없거나 목록에 없는 번호가 붙은 작년 원가·매출 줄: 100만 원 이상은 한 줄씩, 나머지는 한 항목으로 묶음.
+       같은 전표의 다른 줄이 모두 한 번호(목록에 있는 번호)이면 그 번호를 '추정'으로 적는다 (확실도 중간).
+    ② 예전 인트라넷 실행가가 있는데 장부 원가 줄이 하나도 없는 작년 프로젝트: 원가가 다른 번호에 들어갔을 수 있음.
+    판단은 계정·전표번호·프로젝트 번호로만 한다 (적요 낱말은 보지 않음)."""
+    from .checklist import vendor_label
+    journal = getattr(books, "journal", None) or []
+    items = []
+    slip_codes = collections.defaultdict(set)   # (날짜, 전표번호) -> 그 전표에서 목록에 있는 번호들
+    for lines in (costs["lines"], revenue["lines"]):
+        for ln in lines:
+            code = _prior_code(ln)
+            if ln.get("prior") and code and code in projects:
+                slip_codes[(ln["date"], ln["no"])].add(code)
+    for item, lines in (("원가", costs["lines"]), ("매출", revenue["lines"])):
+        miss = [ln for ln in lines if ln.get("prior") and ln["project"] is None
+                and not (_prior_code(ln) and _prior_code(ln) in projects)]
+        small = []
+        for ln in sorted(miss, key=lambda x: -abs(x["amount"] or 0)):
+            if ln["amount"] is None or abs(ln["amount"]) < PRIOR_FIX_MIN:
+                small.append(ln)
+                continue
+            row = journal[ln["index"]] if 0 <= ln.get("index", -1) < len(journal) else {}
+            code = _prior_code(ln)
+            guess = slip_codes.get((ln["date"], ln["no"])) or set()
+            if len(guess) == 1:
+                g = next(iter(guess))
+                hint = "같은 전표의 다른 줄이 모두 [%s] %s → [%s]로 고칠 것으로 추정 (확실도 중간)" % (g, projects[g]["name"], g)
+            else:
+                hint = "근거 없음 — 지급요청·계산서를 보고 번호를 정해 주세요"
+            now = ("번호 [%s] (인트라넷 목록에 없는 번호)" % code) if code else "번호 없음"
+            day = ln["date"].isoformat() if ln["date"] else "날짜 없음"
+            items.append({
+                "id": "작년번호|%s|%s|%s" % (day, ln["no"], ln.get("line")), "kind": PRIOR_FIX_KIND, "date": day,
+                "amount": ln["amount"], "vendor": vendor_label(ln.get("vendor"), row.get("vendor_code")),
+                "title": "작년 %s 줄이 프로젝트에 안 이어짐: %s" % (item, now),
+                "detail": "%s 전표 %s번 %s번째 줄 · %s [%s] · %s원. %s. 위하고 분개장에서 이 줄의 프로젝트 칸을 고치면 "
+                          "프로젝트 이익 비교에 들어갑니다." % (day, ln["no"], ln.get("line"), ln.get("account") or "",
+                                                     ln.get("account_code") or "", _won(ln["amount"]), hint),
+                "choices": ["위하고에서 고침", "일부러 둠 (리저브 등)", "확인함"]})
+        if small:
+            total, unknown = _known_sum([ln["amount"] for ln in small])
+            items.append({
+                "id": "작년번호묶음|%s" % item, "kind": PRIOR_FIX_KIND, "date": "", "amount": total, "vendor": "",
+                "title": "작년 %s 줄 중 프로젝트에 안 이어진 100만 원 미만 %d줄" % (item, len(small)),
+                "detail": "합계 %s원%s. 금액이 작아 묶었습니다. 고치려면 위하고 분개장에서 프로젝트 칸을 넣으세요."
+                          % (_won(total), (" (금액 모르는 줄 %d)" % unknown) if unknown else ""),
+                "choices": ["그대로 둠", "고칠 것"]})
+    has_cost = set(_prior_code(ln) for ln in costs["lines"] if ln.get("prior") and ln["project"] is None)
+    for k, p in projects.items():
+        if p.get("old") and (p.get("budget") or 0) > 0 and k not in has_cost:
+            items.append({
+                "id": "작년원가0|%s" % k, "kind": PRIOR_FIX_KIND, "date": "", "amount": p["budget"], "vendor": "",
+                "title": "작년 프로젝트 [%s] %s: 장부 원가 0원 (인트라넷 실행가 %s원)" % (k, p["name"], _won(p["budget"])),
+                "detail": "이 번호가 붙은 작년 원가 줄이 장부에 없습니다. 원가가 다른 프로젝트 번호로 들어갔을 수 있으니 "
+                          "지급요청의 거래처·금액으로 위하고 분개장에서 찾아 프로젝트 칸을 [%s]로 고쳐 주세요." % k,
+                "choices": ["위하고에서 고침", "원가 없는 게 맞음", "확인함"]})
+    return items
+
+
 def build_xchk(books, costs, revenue, projects, requests, match, project_rows, meta, cfg, bank, card_vat=None):
     """위하고대조.csv 표. 입력은 바꾸지 않고 파일은 열지 않는다 (bank: {"balances": 줄 또는 None, "transactions": 줄 또는 None})."""
     bank = bank or {}
@@ -478,7 +548,8 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     if history:
         notes.append("기간 밖 이력이 있는 프로젝트 %d건: WEHAGO 원가·매출 누계 판단 불가 (분개장 기간 합계는 따로 한 줄): %s"
                      % (len(history), "; ".join("%s (%s)" % (k, v) for k, v in history.items())))
-    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, notes)
+    return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, notes,
+                 extra={"check_items": prior_fix_items(books, projects, costs, revenue)})
 
 
 # ───────────── load_xchk ─────────────
