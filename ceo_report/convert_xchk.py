@@ -480,7 +480,7 @@ def prior_fix_items(books, projects, costs, revenue):
                 "detail": "%s 전표 %s번 %s번째 줄 · %s [%s] · %s원. %s. 위하고 분개장에서 이 줄의 프로젝트 칸을 고치면 "
                           "프로젝트 이익 비교에 들어갑니다." % (day, ln["no"], ln.get("line"), ln.get("account") or "",
                                                      ln.get("account_code") or "", _won(ln["amount"]), hint),
-                "choices": ["위하고에서 고침", "일부러 둠 (리저브 등)", "확인함"]})
+                "choices": ["위하고에서 고칠 것", "일부러 둠 (리저브 등)", "확인함"]})
         if small:
             total, unknown = _known_sum([ln["amount"] for ln in small])
             items.append({
@@ -488,7 +488,7 @@ def prior_fix_items(books, projects, costs, revenue):
                 "title": "작년 %s 줄 중 프로젝트에 안 이어진 100만 원 미만 %d줄" % (item, len(small)),
                 "detail": "합계 %s원%s. 금액이 작아 묶었습니다. 고치려면 위하고 분개장에서 프로젝트 칸을 넣으세요."
                           % (_won(total), (" (금액 모르는 줄 %d)" % unknown) if unknown else ""),
-                "choices": ["그대로 둠", "고칠 것"]})
+                "choices": ["그대로 둠 (괜찮음)", "고칠 것"]})
     has_cost = set(_prior_code(ln) for ln in costs["lines"] if ln.get("prior") and ln["project"] is None)
     for k, p in projects.items():
         if p.get("old") and (p.get("budget") or 0) > 0 and k not in has_cost:
@@ -497,7 +497,7 @@ def prior_fix_items(books, projects, costs, revenue):
                 "title": "작년 프로젝트 [%s] %s: 장부 원가 0원 (인트라넷 실행가 %s원)" % (k, p["name"], _won(p["budget"])),
                 "detail": "이 번호가 붙은 작년 원가 줄이 장부에 없습니다. 원가가 다른 프로젝트 번호로 들어갔을 수 있으니 "
                           "지급요청의 거래처·금액으로 위하고 분개장에서 찾아 프로젝트 칸을 [%s]로 고쳐 주세요." % k,
-                "choices": ["위하고에서 고침", "원가 없는 게 맞음", "확인함"]})
+                "choices": ["위하고에서 고칠 것", "원가 없는 게 맞음", "확인함"]})
     return items
 
 
