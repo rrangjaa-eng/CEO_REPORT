@@ -3842,8 +3842,9 @@ def _xk_final_table(X, R):
 # ───────────── 프로젝트 이익 차이: 인트라넷 ↔ 장부 (사용자 2026-11-16) ─────────────
 # 원인 이름 · 장부를 다 정리한 뒤에도 남는지 · 할 일. 순서 = 표의 줄 순서.
 PROFIT_CAUSES = (
-    ("prior", "작년 프로젝트 (장부 전표가 옛 번호라 따로 빼 둠)", "고치면 없어짐",
-     "작년 전표는 옛 프로젝트 번호라 이 표에서 연결하지 않고 '참고'로 따로 둠. 손익이 틀린 것이 아니라 연결이 안 된 것"),
+    ("prior", "작년 프로젝트인데 장부에서 옛 번호로 못 찾음", "고치면 없어짐",
+     "작년 전표는 옛 번호([093] 꼴)로 이 표에 이어 견줌. 못 찾은 것은 전표 프로젝트명·적요에 옛 번호가 없거나 다른 번호로 들어간 것 — "
+     "아래 '작년 전표 중 번호로 못 이은 것' 참고"),
     ("before", "행사 전 · 아직 전표 없음", "시간이 지나면 없어짐", "행사가 끝나고 계산서·원가 전표가 들어오면 맞춰짐"),
     ("missing_book", "행사 지났는데 장부에 전표 없음", "고치면 없어짐", "계산서 발행·원가 전표 입력이 빠졌는지 확인"),
     ("intranet_blank", "인트라넷 값이 덜 들어감 (견적·실행가 빈칸이거나 너무 작음)", "고치면 없어짐",
@@ -3884,9 +3885,21 @@ def _profit_rows(X, R):
         if bcost is None and p and p.get("cost_lines") is None and not p.get("cost_note"):
             bcost = 0
         lines = (c.get("wehago_lines") or 0) + (p.get("cost_lines") or 0)
+        linked_prior = False
+        if P.get("state") == PRIOR_STATE:   # 작년 프로젝트: '참고' 줄을 옛 번호로 모은 합을 더함 (사용자 2026-11-16)
+            got = (X.get("prior_link") or {}).get(k) or {}
+            pc, pr = got.get("원가"), got.get("매출")
+            if pc or pr:
+                linked_prior = True
+                if bcost is not None and pc:
+                    bcost = None if pc[0] is None else bcost + pc[0]
+                if brev is not None and pr:
+                    brev = None if pr[0] is None else brev + pr[0]
+                lines += (pc[1] or 0 if pc else 0) + (pr[1] or 0 if pr else 0)
         ev = _event_date(P.get("event_date"))
         r = {"key": k, "name": P.get("name") or p.get("name") or c.get("name") or "", "approval": P.get("approval") or "",
-             "event": ev, "irev": irev, "ib": ib, "brev": brev, "bcost": bcost, "parts": OrderedDict(), "known": True}
+             "event": ev, "irev": irev, "ib": ib, "brev": brev, "bcost": bcost, "parts": OrderedDict(), "known": True,
+             "prior": P.get("state") == PRIOR_STATE, "linked_prior": linked_prior}
         if irev is not None and ib is not None:
             r["iprofit"] = irev - ib
         else:
@@ -3969,6 +3982,21 @@ def _xk_profit_causes(X, R):
         "견준 프로젝트 %d건: 인트라넷 이익 %s, 장부 이익 %s. 대표이사 승인까지 끝난 %d건: 인트라넷 %s, 장부 %s. "
         "한 프로젝트에 원인이 여럿이면 금액을 나눠 각 원인에 넣음(프로젝트 수는 겹침). 원인별 금액을 더하면 합계 차이와 같음."
         % (len(known), won(s_i), won(s_b), len(ceo_rows), won(c_i), won(c_b))))
+    old = [r for r in known if r.get("prior")]
+    if old:
+        lk = [r for r in old if r.get("linked_prior")]
+        left = X.get("prior_left") or {}
+        miss = []
+        for item in ("원가", "매출"):
+            f = left.get(item)
+            if f and f.get("count"):
+                miss.append("%s %d줄 %s%s" % (item, f["count"], won(f["amount"]) if f["amount"] is not None else "금액 모름",
+                                              (" (" + f["note"] + ")") if f.get("note") else ""))
+        out.append("<div class='note'>%s</div>" % esc(
+            "작년(예전 인트라넷) 프로젝트 %d건: 장부의 작년 전표('참고' 줄)를 옛 번호로 이어 견줌 — 이은 것 %d건, 인트라넷 이익 %s, 장부 이익 %s, 차이 %s. "
+            "작년 전표 중 번호로 못 이은 것: %s. (이은 금액은 이 비교에만 쓰고, 다른 보고의 프로젝트 원가·매출은 그대로)"
+            % (len(old), len(lk), won(sum(r["iprofit"] for r in old)), won(sum(r["bprofit"] for r in old)),
+               won(sum(r["diff"] for r in old)), " · ".join(miss) if miss else "없음")))
     skipped = len(rows) - len(known)
     if skipped:
         out.append("<div class='note'>%s</div>" % esc("장부 값을 다 알 수 없거나 인트라넷 이익을 계산할 수 없어 빼고 견준 프로젝트 %d건" % skipped))

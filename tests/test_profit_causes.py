@@ -92,5 +92,53 @@ class TestProfitCauses(unittest.TestCase):
         self.assertLess(src.index("_xk_profit_causes(X, R)"), src.index("_xk_final_table(X, R)"))
 
 
+class TestPriorYearLink(unittest.TestCase):
+    """작년 프로젝트: '참고' 줄을 옛 번호로 모아 이익 비교에 씀 (사용자 2026-11-16)."""
+
+    def ln(self, code, amount, prior=True, slip=None):
+        return {"prior": prior, "project": None, "code": code, "slip_code": slip, "amount": amount}
+
+    def test_prior_lines_are_grouped_by_old_code(self):
+        from ceo_report import convert_xchk
+        projects = {"93": {"name": "가상 93"}, "26001": {"name": "가상 26001"}}
+        costs = {"lines": [self.ln("93", 100), self.ln(None, 7, slip="93"), self.ln("44", 5), self.ln(None, 3),
+                           self.ln("26001", 999, prior=False)]}
+        revenue = {"lines": [self.ln("93", 300)]}
+        rows = convert_xchk._prior_link_rows(projects, costs, revenue)
+        got = dict(((r["구분"], r["대상"], r["항목"]), (r["금액"], r["건수"])) for r in rows)
+        self.assertEqual(got[("지난해이음", "93", "원가")], ("107", "2"))
+        self.assertEqual(got[("지난해이음", "93", "매출")], ("300", "1"))
+        self.assertEqual(got[("지난해못이음", "합계", "원가")], ("8", "2"))   # 목록에 없는 44 + 번호 없음
+        self.assertNotIn(("지난해이음", "26001", "원가"), got)
+
+    def test_linked_prior_project_is_compared_normally(self):
+        X = {"projects": [xp("93", 0, 7_000_000, lines=0)], "revenue": [xr("93", 0, 0)],
+             "prior_link": {"93": {"원가": (7_500_000, 12), "매출": (10_000_000, 1)}}}
+        R = {"asof": ASOF, "s3": {"projects": [P("93", 10_000_000, event="2025-05-01", state="완료(예전 인트라넷)")]}}
+        r = dict((x["key"], x) for x in render._profit_rows(X, R))["93"]
+        self.assertTrue(r["linked_prior"])
+        self.assertEqual((r["brev"], r["bcost"], r["diff"]), (10_000_000, 7_500_000, -500_000))
+        self.assertEqual(dict(r["parts"]), {"cost_more": -500_000})
+
+    def test_prior_project_without_lines_stays_prior(self):
+        X = {"projects": [xp("94", 0, 7_000_000, lines=0)], "revenue": [xr("94", 0, 0)], "prior_link": {},
+             "prior_left": {"원가": {"amount": 8, "count": 2, "note": ""}}}
+        R = {"asof": ASOF, "s3": {"projects": [P("94", 10_000_000, event="2025-05-01", state="완료(예전 인트라넷)")]}}
+        r = dict((x["key"], x) for x in render._profit_rows(X, R))["94"]
+        self.assertEqual(list(r["parts"]), ["prior"])
+        text = re.sub(r"<[^>]+>", " ", render._xk_profit_causes(X, R))
+        self.assertIn("작년 전표 중 번호로 못 이은 것: 원가 2줄 8", text)
+    def test_rows_are_read_back_by_the_loader(self):
+        from ceo_report import convert_xchk
+        projects = {"93": {"name": "가상 93"}}
+        rows = convert_xchk._prior_link_rows(projects, {"lines": [self.ln("93", 100), self.ln(None, 3)]}, {"lines": []})
+        for r in rows:
+            r["_line"] = 1
+        X = convert_xchk._load_rows([convert_xchk._parse(dict(r)) for r in rows])
+        self.assertEqual(X["prior_link"]["93"]["원가"], (100, 1))
+        self.assertEqual(X["prior_left"]["원가"]["count"], 1)
+        self.assertEqual(X["prior_left"]["매출"]["count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
