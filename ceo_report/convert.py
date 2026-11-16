@@ -1362,6 +1362,7 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
             listings = tidy + overlap + dups + ht["notes"] + checks
             summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
             items = (review_checks.duplicate_items(books.journal) + ht["items"]
+                     + [i for t in tables if t.written for i in (t.extra or {}).get("check_items", [])]
                      + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]
                                                      + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]
                                                      + ([snapshot.SKIP_NOTE % snapshot.skipped_projects(snap)]
