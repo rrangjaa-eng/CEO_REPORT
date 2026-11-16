@@ -358,8 +358,10 @@ def check_items(out_dir):
     out = []
     for k, it in items.items():
         out.append({"id": k, "kind": "보고 할 일", "date": d.isoformat(), "amount": None, "vendor": "",
-                    "title": "보고 할 일 (%s · %s): %s" % (TOPIC_NAME.get(it.get("topic"), ""), it.get("owner", ""), it.get("text", "")),
-                    "detail": "%s%s" % (it.get("fact", ""), (" · %d번째 보고에 걸림" % it["n"]) if it.get("n", 1) > 1 else ""),
+                    # 편의성 17 (2026-11-16): 제목마다 '보고 할 일 (자금 · 경영관리):' 를 되풀이하지 않는다 — 주제·맡은 곳은 설명 앞에
+                    "title": it.get("text", ""),
+                    "detail": " · ".join(x for x in (TOPIC_NAME.get(it.get("topic"), ""), it.get("owner", ""), it.get("fact", ""),
+                                                      ("%d번째 보고에 걸림" % it["n"]) if it.get("n", 1) > 1 else "") if x),
                     "choices": ["처리함", "진행 중 — 확인 필요", "안 해도 됨 (이유를 메모에)"]})
     return out
 

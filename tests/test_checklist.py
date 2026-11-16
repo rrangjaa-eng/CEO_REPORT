@@ -223,8 +223,11 @@ class TestEachRow(unittest.TestCase):
     def test_report_args_for_merge(self):
         from ceo_report import app
         p = app.Paths("/tmp/x") if hasattr(app, "Paths") else None
-        _, argv = app.task_argv("주간", p, "2026-11-05", group="거래처별", only="가나,다라")
+        # 편의성 9 (2026-11-16): '고른 곳만 합침'일 때만 고른 거래처를 넘긴다. '모두 합침'(거래처별)은 고른 목록을 쓰지 않는다.
+        _, argv = app.task_argv("주간", p, "2026-11-05", group="고른곳만", only="가나,다라")
         self.assertIn("--합칠거래처", argv)
+        _, argv = app.task_argv("주간", p, "2026-11-05", group="거래처별", only="가나,다라")
+        self.assertNotIn("--합칠거래처", argv)
         _, argv = app.task_argv("주간", p, "2026-11-05", group="건별", only="가나")
         self.assertNotIn("--합칠거래처", argv)
 

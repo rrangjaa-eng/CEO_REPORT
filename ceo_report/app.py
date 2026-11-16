@@ -81,6 +81,7 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
     if task == "변환":
         return "변환", day + ["--입력", paths.input, "--수집폴더", paths.collect]
     if task in ("주간", "월간"):
+        group, only = merge_args(group, only) if group else (group, only)
         return "보고서", ([task] + day + (["--가용일", pick] if pick else [])
                         + (["--출금일", payday] if payday and task == "주간" else [])
                         + (["--출금목록", group] if group and task == "주간" else [])
@@ -576,20 +577,38 @@ def self_check(log_path, base=None):
 MERGE_FILE = "출금목록_합칠거래처.txt"   # 창의 '합칠 거래처' 칸 값 (다음에 열 때 그대로, 사용자 2026-11-05)
 
 
+MERGE_MODES = ("건별", "거래처별", "고른곳만")   # 건마다 한 줄 / 모두 합침 / 고른 곳만 합침 (편의성 9, 2026-11-16)
+
+
+def merge_args(group, only):
+    """창의 출금 목록 설정 -> 보고서에 넘길 (--출금목록, --합칠거래처).
+    예전엔 '거래처별'에 고른 곳이 0곳이면 '모두 합침'으로 읽어, 합칠 거래처 창에서 '모두 해제 → 확인'하면 전부 합쳐졌다.
+    이제 '고른 곳만 합침'에 0곳이면 합치지 않는다 (건별), '모두 합침'은 고른 목록을 쓰지 않는다."""
+    only = (only or "").strip()
+    if group == "거래처별":
+        return "거래처별", ""
+    if group == "고른곳만" and only:
+        return "거래처별", only
+    return "건별", ""
+
+
 def load_merge(paths):
     try:
         with _open_text(os.path.join(paths.input, MERGE_FILE)) as f:
             lines = f.read().splitlines()
     except (OSError, UnicodeDecodeError):
         return "건별", ""
-    group = lines[0].strip() if lines and lines[0].strip() in ("건별", "거래처별") else "건별"
-    return group, (lines[1].strip() if len(lines) > 1 else "")
+    group = lines[0].strip() if lines and lines[0].strip() in MERGE_MODES else "건별"
+    only = lines[1].strip() if len(lines) > 1 else ""
+    if group == "거래처별" and only and (len(lines) < 3 or lines[2].strip() != "v2"):
+        group = "고른곳만"   # 예전 판이 저장한 파일: 거래처별 + 고른 곳 = 그 곳만 합침 (뜻을 그대로)
+    return group, only
 
 
 def save_merge(paths, group, only):
     try:
         with open(os.path.join(paths.input, MERGE_FILE), "w", encoding="utf-8") as f:
-            f.write("%s\n%s\n" % (group, only))
+            f.write("%s\n%s\nv2\n" % (group, only))
     except OSError:
         pass
 

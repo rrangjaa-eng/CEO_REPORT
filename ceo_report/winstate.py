@@ -245,15 +245,28 @@ def _broken_newest(paths, name):
     return False
 
 
-def freshness(paths, asof):
-    """[{name, when, text, level, note}] — 창 오른쪽 '자료가 얼마나 최신인가' 표."""
+def freshness(paths, asof, gate=None):
+    """[{name, when, text, level, note}] — 창 오른쪽 '자료가 얼마나 최신인가' 표.
+    gate (편의성 2, 2026-11-16): gate.status_dir 결과를 주면 분개장·자금계획서 줄에 장부 자료일을 같이 보이고, 대표 보고를 막는
+    자료는 빨강 — 받은 시각만 보면 분개장이 '오늘'로 초록이어도 장부 자료일은 오래됐을 수 있고, 자금계획서 '없음'은 회색이었다."""
     out = []
+    probs = (gate or {}).get("problems") or []
     for n, w, note in sources(paths):
         row = {"name": n, "when": w, "text": when_text(w, asof), "level": level(w, asof), "note": note}
         if w is not None and _broken_newest(paths, n):
             row["text"] += " · 파일 깨짐(읽지 못함)"
             row["level"] = "r"
             row["note"] = "가장 최근 파일을 읽지 못합니다 — 다시 받으세요"
+        if gate is not None and n in ("분개장", "자금계획서"):
+            d = gate.get("book_date" if n == "분개장" else "plan_date")
+            if d is not None:
+                row["text"] += " · 자료일 %d/%d" % (d.month, d.day)
+            word = "분개장" if n == "분개장" else "자금계획"
+            if any(word in p for p in probs):
+                row["level"] = "r"
+                row["note"] = "이 자료 때문에 대표 보고가 막힙니다"
+                if "막힘" not in row["text"]:
+                    row["text"] += " · 보고 막힘"
         out.append(row)
     return out
 
@@ -324,6 +337,170 @@ def latest_reports(output_dir):
     # 경영관리용은 HTML 을 먼저: 브라우저에서 영역별로 나눠 보고 골라 인쇄 (사용자 2026-11-11). 전체 PDF 는 같은 폴더에 그대로
     return {"대표": best("대표보고"), "경영관리": best("경영관리보고", (".html", ".pdf")), "at": at, "kind": kind,
             "name": os.path.basename(base)}
+
+
+# ───────────── 대표 보고를 만들 수 있는가 · 보낼 파일 (편의성 1·2·6·7, 2026-11-16) ─────────────
+def _next_step(problem):
+    """막는 까닭 -> 다음에 할 일 한마디."""
+    p = str(problem or "")
+    if "다른 회사" in p:
+        return "위하고에서 이 회사 SmartA 화면을 앞에 띄우고 다시 받기"
+    if "세금예상" in p or "자료 변환을 다시" in p:
+        return "자료 변환 다시"
+    if "자금계획" in p or "분개장" in p:
+        return "위하고 화면에서 크롬 확장 '모두 받기' 뒤 자료 변환"
+    return "'까닭 보기'의 안내대로"
+
+
+def gate_line(G):
+    """주간 보고 단추 위 한 줄 -> (글, 만들 수 있는가 · 아직 모르면 None). 판단은 보고와 같은 gate.problems."""
+    from . import gate
+    if G is None:
+        return "대표 보고: 확인 중…", None
+    probs = G.get("problems") or []
+    if probs:
+        more = " 외 %d가지" % (len(probs) - 1) if len(probs) > 1 else ""
+        return "대표 보고: 막힘 — %s%s → %s" % (gate.short(probs[0]), more, _next_step(probs[0])), False
+    days = [("분개장", G.get("book_date")), ("자금계획서", G.get("plan_date"))]
+    used = " · ".join("%s %d/%d" % (n, d.month, d.day) for n, d in days if d is not None)
+    return "대표 보고: 만들 수 있음" + (" (%s)" % used if used else ""), True
+
+
+def reports_for(output_dir, asof):
+    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순).
+    state: '만듦' · '막힘'(자료 확인에서 막혀 만들지 않음) · 'PDF 못 만듦'(HTML 만 새로 생김) · '없음'.
+    막힌 보고는 예전 PDF 를 넣지 않고 '만들지 않음' 안내를 가리킨다 (path)."""
+    from . import gate, pdfname
+    day = asof.isoformat()
+    out = []
+
+    def one(label, base, want_pdf=True):
+        page = base + ".html"
+        row = {"label": label, "state": "없음", "at": None, "path": None, "why": ""}
+        made = _mtime(page)
+        if made is None:
+            return row
+        why = gate.stop_reasons(page)
+        if why:
+            return dict(row, state="막힘", at=made, path=page, why=gate.short(why[0]))
+        if not want_pdf:
+            return dict(row, state="만듦", at=made, path=page)
+        pdf = pdfname.newest(base)
+        pdf = _edited_or(pdf, base, ".pdf") if pdf else None
+        pdf_at = _mtime(pdf) if pdf else None
+        if pdf_at is None or pdf_at < made - dt.timedelta(seconds=5):   # PDF 는 HTML 바로 뒤에 만든다 — 더 오래됐으면 이번엔 못 만든 것
+            return dict(row, state="PDF 못 만듦", at=made, path=page, why="HTML을 열고 인쇄 → PDF로 저장")
+        return dict(row, state="만듦", at=pdf_at, path=pdf)
+
+    out.append(one("주간 대표", os.path.join(output_dir, "%s_주간_대표보고" % day)))
+    out.append(one("월간 대표", os.path.join(output_dir, "%s_월간_대표보고" % day)))
+    folder = os.path.join(output_dir, "팀장용")
+    pages = sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day)))
+    team = {"label": "팀장용 (월간)", "state": "없음", "at": None, "path": None, "why": ""}
+    if pages:
+        ones = [one("", p[:-5]) for p in pages]
+        at = max(r["at"] for r in ones if r["at"] is not None)
+        if any(r["state"] == "막힘" for r in ones):
+            team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
+        elif all(r["state"] == "만듦" for r in ones):
+            team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
+        else:
+            team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+    out.append(team)
+    out.append(one("주간 경영관리", os.path.join(output_dir, "%s_주간_경영관리보고" % day), want_pdf=False))
+    out.append(one("월간 경영관리", os.path.join(output_dir, "%s_월간_경영관리보고" % day), want_pdf=False))
+    return out
+
+
+def report_line(row):
+    """보낼 파일 목록 한 줄: '주간 대표 — 만듦 11/16 09:12' · '월간 대표 — 막힘 (자금계획서 없음)' · '팀장용 (월간) — 없음'."""
+    at = row.get("at")
+    when = " %d/%d %s" % (at.month, at.day, at.strftime("%H:%M")) if at else ""
+    why = " (%s)" % row["why"] if row.get("why") else ""
+    return "%s — %s%s%s" % (row["label"], row["state"], when if row["state"] != "없음" else "", why)
+
+
+def report_chip(S, rows, G):
+    """3단계 칩 -> (글, 종류 'ok'·'now'·'wait'·'bad').
+    '완료'는 이번 기준일의 대표 PDF 가 마지막 변환 뒤에 실제로 생겼을 때만. 막혔으면 빨강 '보고 만들지 않음 — 까닭'.
+    예전엔 보고 파일 시각만 봐서, 막혀 '만들지 않음' 안내만 쓴 주에도 초록 '완료'였다 (편의성 1)."""
+    from . import gate
+    if S.get("now") != 3:
+        return "변환 뒤", "wait"
+    conv = S.get("convert")
+    ceo = [r for r in rows or [] if r["label"] in ("주간 대표", "월간 대표") and r.get("at") is not None
+           and (conv is None or r["at"] >= conv)]
+    blocked = [r for r in ceo if r["state"] == "막힘"]
+    if blocked:
+        return "보고 만들지 않음 — %s" % (blocked[0]["why"] or "자료 확인에서 막힘"), "bad"
+    done = [r for r in ceo if r["state"] == "만듦"]
+    if done:
+        at = max(r["at"] for r in done)
+        return "완료 %d/%d %s" % (at.month, at.day, at.strftime("%H:%M")), "ok"
+    if G and G.get("problems"):
+        return "막힘 — %s" % gate.short(G["problems"][0]), "bad"
+    return "지금 할 차례", "now"
+
+
+def open_label(path):
+    """대표용 열기 단추 글: 막힌 보고('만들지 않음' 안내)면 '까닭 보기'."""
+    return "까닭 보기" if path and _is_stop_page(path) else "대표용 열기"
+
+
+def primary_action(S, G):
+    """지금 할 한 동작만 파랑 (편의성 6) -> 'collect'(인트라넷 자료 가져오기) · 'convert'(자료 변환) · 'report'(주간 보고) · None.
+    대표 보고가 막히면 보고 단추도 파랗게 두지 않는다 (할 일은 위하고에서 자료 받기)."""
+    now = (S or {}).get("now")
+    if now == 1:
+        return "collect"
+    if now == 2:
+        return "convert"
+    if now == 3 and not (G and G.get("problems")):
+        return "report"
+    return None
+
+
+# ───────────── 출금일 표시 · 기준일 따라가기 (운영-03 · 편의성 3·4) ─────────────
+def pay_line(asof, payday_text):
+    """주간 보고 단추 옆 한 줄: 실제로 쓰일 출금일과 이체 기간. 기준일이 틀리면 ''."""
+    if asof is None:
+        return ""
+    pay = parse_day(payday_text) or next_friday(asof)
+    if pay <= asof:
+        return ""
+    a, b = transfer_range(pay, asof)
+    return "출금 %d/%d(%s) · 이체 %d/%d~%d/%d" % (pay.month, pay.day, WEEKDAYS[pay.weekday()], a.month, a.day, b.month, b.day)
+
+
+def today_pay_asof(today, asof_text, payday_text):
+    """금요일에 창을 켜면 기본 출금일이 다음 주 금요일이다 (결정 카드 ②: 기본은 그대로). 오늘 출금분을 만들 때 누르는
+    '오늘 출금용' 단추가 넣을 기준일(어제) -> 날짜, 단추를 보일 때가 아니면 None (금요일 · 기준일=오늘 · 출금일 빈칸일 때만)."""
+    if today.weekday() != 4 or (payday_text or "").strip() or parse_day(asof_text) != today:
+        return None
+    return today - dt.timedelta(days=1)
+
+
+def roll_asof(asof_text, was_today, today):
+    """창을 켜 둔 채 날이 바뀌었을 때 (편의성 4): 손대지 않은 기준일(= 창이 알던 오늘)만 새 오늘로 -> (기준일 글, 알림 한 줄 또는 '')."""
+    if today != was_today and parse_day(asof_text) == was_today:
+        return today.isoformat(), "날짜가 바뀌어 기준일을 오늘(%s)로 바꿨습니다" % today.isoformat()
+    return asof_text, ""
+
+
+def asof_note(asof_text, today):
+    d = parse_day(asof_text)
+    return "오늘과 다름" if d is not None and d != today else ""
+
+
+# ───────────── 진행 글 (편의성 8) ─────────────
+_IMPORTANT = ("[확인]", "[주의]", "없음", "못 ", "못함", "못했", "실패", "오류", "빠짐", "빠졌", "막힘", "막혀", "만들지 않",
+              "확인 필요", "불일치", "──")
+
+
+def important(line):
+    """작업이 내는 글 중 접어 두지 않고 늘 보일 줄인가 (경고·못 한 일·구분 줄). 파일마다 'n줄 만듦'·경로는 접어 둔다."""
+    t = str(line or "")
+    return any(w in t for w in _IMPORTANT)
 
 
 OTHER_WEHAGO = "위하고 결산·인사·카드 등 자료"
@@ -434,18 +611,73 @@ def evidence_choices(output_dir, kind, asof=None):
     return os.path.basename(found[-1]), [(n, t) for n, t, _ in idx]
 
 
+# ───────────── 이체 파일 결과 (편의성 11, 2026-11-16) ─────────────
+def transfer_summary(result):
+    """이체 파일을 만든 결과를 이체 칸에 남길 한 줄로 -> (글, 빨강인가).
+    중복 의심(전에 만든 파일에 같은 계좌·금액)이 있으면 빨강 + 그 예금주. 막혔거나 기록을 못 남겨 만들지 않았으면 그 까닭."""
+    result = result or {}
+    s = result.get("summary")
+    if not s:
+        if result.get("log_failed"):
+            return "만들지 않음 — 이체기록.csv 를 닫고 다시 만드세요", True
+        if result.get("blocked"):
+            return "만들지 않음 — %s" % str(result["blocked"][0])[:60], True
+        return "만들지 않음 — 넣을 지급 0건 (진행 상황 참고)", True
+    parts = ["넣음 %d건 %s원" % (s["n"], "{:,}".format(s["total"]))]
+    if s.get("blocked"):
+        parts.append("못 넣음 %d건 (%s)" % (len(s["blocked"]), ", ".join(str(b[0] or "-") for b in s["blocked"][:3])
+                                         + (" 외" if len(s["blocked"]) > 3 else "")))
+    rep = s.get("repeats") or []
+    if rep:
+        parts.append("중복 의심 %d건 — %s: 전에 만든 파일에 같은 계좌·금액, 두 번 보내지 않게 확인"
+                     % (len(rep), ", ".join("%s %s원" % (h, "{:,}".format(a)) for h, a, _, _ in rep[:3]) + (" 외" if len(rep) > 3 else "")))
+    return " · ".join(parts), bool(rep)
+
+
 # ───────────── 종료 코드를 말로 ─────────────
 def blocked_reports(files):
     """만든 파일 중 자료 확인(게이트)에 막혀 '만들지 않음' 안내만 쓴 대표·팀장 보고 HTML (gate.stop_page)."""
     return [f for f in files or [] if f.lower().endswith(".html") and _is_stop_page(f)]
 
 
-def outcome(task, rc, files):
+def pdf_states(files, kinds=("주간", "월간")):
+    """만든 파일 목록 -> {'주간': 'PDF 만듦'|'PDF 못 만듦'|'막힘 (까닭)', '월간': …} — 대표 보고 기준."""
+    from . import gate
+    out = {}
+    for k in kinds:
+        mine = [f for f in files or [] if ("_%s_대표보고" % k) in os.path.basename(f)]
+        stop = [f for f in mine if f.lower().endswith(".html") and _is_stop_page(f)]
+        if stop:
+            why = gate.stop_reasons(stop[0])
+            out[k] = "막힘 (%s)" % gate.short(why[0]) if why else "막힘"
+        elif any(f.lower().endswith(".pdf") for f in mine):
+            out[k] = "PDF 만듦"
+        else:
+            out[k] = "PDF 못 만듦"
+    return out
+
+
+def failed_kinds(files, kinds=("주간", "월간")):
+    """PDF 를 못 만든 보고 종류 (막힌 것은 뺀다 — 다시 눌러도 자료를 받기 전엔 같다)."""
+    return [k for k, v in pdf_states(files, kinds).items() if v == "PDF 못 만듦"]
+
+
+def outcome(task, rc, files, locked=False):
     """-> (완료인가, 한 줄). 2차 C11·C12·P5-23, 1차 E10 (2026-11-15): 종료 코드가 0이어도 대표 보고가 자료 확인에서 막혔거나
     PDF가 하나도 없으면 'PDF를 열었습니다'·'자동 완료, 다시 만들었습니다' 대신 그 사실을 말한다."""
-    ok, line = rc_message(task, rc)
+    ok, line = rc_message(task, rc, locked)
     if rc != 0 or task not in ("주간", "월간", "연간", "예산", "자동"):
         return ok, line
+    if task == "자동":   # 편의성 29: 주간·월간을 따로 — 하나만 못 만들어도 '다시 만들었습니다'로 뭉치지 않는다
+        st = pdf_states(files)
+        line = "자동 반영 끝 — " + " · ".join("%s %s" % (k, v) for k, v in st.items())
+        bad = failed_kinds(files)
+        stopped = [k for k, v in st.items() if v.startswith("막힘")]
+        if bad:
+            line += " → %s 보고를 다시 누르세요" % "·".join(bad)
+        elif stopped:
+            line += " → 맨 위 '대표 보고' 안내의 자료를 받은 뒤 다시"
+        return not (bad or stopped), line
     stops = blocked_reports(files)
     pdfs = [f for f in files or [] if f.lower().endswith(".pdf")
             and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
@@ -457,15 +689,22 @@ def outcome(task, rc, files):
     return ok, line
 
 
-def rc_message(task, rc):
-    """-> (완료인가, 한 줄). 진행 글 맨 위에 크게 보인다."""
+def rc_message(task, rc, locked=False):
+    """-> (완료인가, 한 줄). 진행 글 맨 위에 크게 보인다.
+    편의성 8 (2026-11-16): 원인별로 다음 행동을 말한다 — 인트라넷 연결 실패(5)가 '오류가 있습니다 (코드 5)'였고,
+    자료 변환이 도는 중이라 못 한 것(locked)에 '출력 PDF가 열려 있으면 닫으세요'가 나왔다."""
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
                "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다",
                "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
                "자동": "새 자료로 지금 현황·주간·월간 보고를 다시 만들었습니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
-    if rc == 2:
+    if locked:
+        return False, ("%s 못 함. 자료 변환이 아직 끝나지 않았습니다 — 변환이 끝난 뒤 다시 누르세요 "
+                       "(변환이 중간에 끊긴 것이면 '자료 변환'을 다시 하거나 15분 뒤 저절로 풀립니다)" % task)
+    if rc == 5:
+        why = "인트라넷에 연결하지 못했습니다. 인터넷(사내망) 연결을 확인한 뒤 다시 누르세요"
+    elif rc == 2:
         why = "날짜나 입력 파일에 문제가 있습니다. 아래 글의 안내대로 고친 뒤 다시 누르세요"
     elif rc == 3 and task in ("인트라넷", "승인검토"):
         why = "인트라넷 로그인에 실패했거나 인트라넷 화면이 바뀌었습니다. ID·비밀번호를 확인하세요"

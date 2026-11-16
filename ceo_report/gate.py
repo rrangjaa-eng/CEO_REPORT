@@ -239,17 +239,48 @@ def stop_page(title, probs):
             % (html.escape(title), BANNER_CSS, html.escape(title), "".join("<li>%s</li>" % html.escape(p) for p in probs)))
 
 
-def check_dir(input_dir, asof):
-    """연간·예산처럼 주간 계산을 따로 하지 않는 보고용: 입력 폴더로 자금계획서·분개장 확인만 한다 -> 막는 까닭 목록.
-    (2026-11-14 코덱스 검토: 연간·예산 대표용은 이 확인 없이 만들어졌음)"""
-    if _test_off():
+def short(problem):
+    """막는 까닭의 짧은 이름 (창의 칩·한 줄 안내용): '자금계획서 없음 (수집…' -> '자금계획서 없음'."""
+    t = str(problem or "")
+    for cut in (" (", " — ", " - "):
+        if cut in t:
+            t = t.split(cut)[0]
+    return t.strip()[:40]
+
+
+def stop_reasons(page_path):
+    """'만들지 않음' 안내 화면에 적힌 까닭 목록 (없거나 안내 화면이 아니면 [])."""
+    import re
+    try:
+        with open(page_path, encoding="utf-8") as f:
+            text = f.read(20000)
+    except (OSError, UnicodeDecodeError):
         return []
+    if "— 만들지 않음</title>" not in text:
+        return []
+    return [html.unescape(x) for x in re.findall(r"<li>(.*?)</li>", text, re.S)]
+
+
+def status_dir(input_dir, asof):
+    """창이 '대표 보고를 만들 수 있는가'를 누르기 전에 보이려고 (편의성 1·2, 2026-11-16): 보고와 같은 판단(problems)과
+    장부·자금계획서 자료일. -> {'problems': [까닭], 'book_date': 날짜 또는 None, 'plan_date': 날짜 또는 None}.
+    막는 조건은 여기서 정하지 않는다 — problems() 그대로다."""
     from .calc import compute
     from .data import load
     from . import insights
     try:
         R = compute(load(input_dir), "weekly", asof)
     except Exception as e:   # 계산이 안 되면 대표 보고도 만들지 않는다
-        return ["자료를 읽지 못함 (%s)" % type(e).__name__]
+        return {"problems": [] if _test_off() else ["자료를 읽지 못함 (%s)" % type(e).__name__], "book_date": None, "plan_date": None}
     R["auto_facts"] = insights.read_facts(input_dir)
-    return problems(R)
+    fp = R.get("fundplan") if isinstance(R.get("fundplan"), dict) else None
+    return {"problems": problems(R), "book_date": book_date(R),
+            "plan_date": fp.get("stamp") if fp and fp.get("used") else None}
+
+
+def check_dir(input_dir, asof):
+    """연간·예산처럼 주간 계산을 따로 하지 않는 보고용: 입력 폴더로 자금계획서·분개장 확인만 한다 -> 막는 까닭 목록.
+    (2026-11-14 코덱스 검토: 연간·예산 대표용은 이 확인 없이 만들어졌음)"""
+    if _test_off():
+        return []
+    return status_dir(input_dir, asof)["problems"]
