@@ -163,3 +163,12 @@ class FullReview1117(unittest.TestCase):
         self.assertIn("근거 조문", h)
         self.assertIn("조특법 10조", h)
         self.assertIn("보여 주기만", h)
+
+
+class ResearchDeclined1117(unittest.TestCase):
+    def test_company_decided_not_to_claim(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 연구공제="안 받음"))
+        r = row(T, "연구·인력개발비")
+        self.assertEqual(r[1], "해당 없음")
+        self.assertIn("회사가 공제를 받지 않기로", r[3])
+        self.assertEqual(row(tb.check(folder({}), 2026, dict(YES, 연구전담="예")), "연구·인력개발비")[1], "확인 필요")

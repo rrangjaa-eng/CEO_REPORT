@@ -323,7 +323,11 @@ def check(input_dir, year, answers, holders=(), assets=None):
                          "세무사에게 %d년 신고서의 감면·공제 내역 확인" % (year - 1)))
     # 5) 연구·인력개발비 세액공제 (조특법 10조)
     eq, rd = assets if assets else (None, None)
-    if a.get("연구전담") == "예":
+    if a.get("연구전담") == "예" and a.get("연구공제") == "안 받음":   # 사용자 2026-11-17: 대표만 소속, 나중 문제 소지로 2025·2026 안 받음
+        rows.append(("연구·인력개발비 세액공제", "해당 없음", None,
+                     "연구전담부서는 있지만 회사가 공제를 받지 않기로 함 (설정 '연구공제: 안 받음' — 부서에 대표만 소속, 나중 문제 소지)",
+                     "직원 연구원이 생기면 다시 검토"))
+    elif a.get("연구전담") == "예":
         rd_filed = filed is not None and not ((filed.get("공제감면세액") or 0) - (filed.get("특별감면") or 0) - (filed.get("고용공제") or 0))
         rows.append(("연구·인력개발비 세액공제", "확인 필요", int(rd * 0.25) if rd else None,
                      "연구소·전담부서 있음(설정 답). 중소기업은 연구개발비(연구 전담 직원 인건비 등)의 25%%, 최저한세에 안 걸려 바로 세금이 줄어듦%s%s" % (
