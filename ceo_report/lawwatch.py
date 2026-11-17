@@ -98,10 +98,31 @@ def numbers(text):
 
 
 # ───────────── 받기 ─────────────
+# 2026-11-17: 브라우저와 같은 머리글로 묻는다 (기본 'Python-urllib' 은 사이트가 막는 일이 있음)
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+           "Accept": "application/json, text/plain, */*", "Referer": "https://www.law.go.kr/"}
+
+
 def _get(url, opener=None, timeout=20):
-    opener = opener or urllib.request.urlopen
-    with opener(url, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    """JSON 응답 -> dict. 사이트가 JSON 대신 안내 화면(HTML)을 주면 그 글 앞부분을 넣어 오류로 알린다 (2026-11-17)."""
+    if opener is None:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+    else:
+        with opener(url, timeout=timeout) as r:
+            raw = r.read()
+    text = raw.decode("utf-8", "replace").lstrip("\ufeff").strip()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))[:150]
+        raise ValueError("JSON이 아닌 응답: %s" % plain)
+    # 2026-11-17 PC 확인: Referer 가 없으면 HTTP 200 에 {"result": "사용자 정보 검증에 실패하였습니다.", "msg": …} 를 준다.
+    # 예전엔 이걸 '법령 이름으로 찾지 못함'으로 넘겨 원인이 안 보였음 → 실패로 알린다
+    if isinstance(data, dict) and isinstance(data.get("result"), str) and "실패" in data["result"]:
+        raise ValueError("법령 사이트가 거절: %s %s" % (data["result"], data.get("msg") or ""))
+    return data
 
 
 def _walk(o):
