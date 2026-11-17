@@ -122,7 +122,8 @@ def credits(input_dir, year, base, corp, extra=None):
         items.append(dict(e, used=u, carry=int(e["amount"]) - u))
         nong_base += u if e.get("nong") else 0
     final = tax_left
-    nong = int(nong_base * NONG_RATE) // 10 * 10   # 10원 미만 버림 (작년 68,534 → 68,530 납부)
+    from . import taxlaw   # 11/17: 세법 기준표(농어촌특별세법 5조로 맞춰 본 값), 확인 안 됐으면 기본 20%
+    nong = int(nong_base * taxlaw.checked(input_dir, year, "농특세율", NONG_RATE)[0]) // 10 * 10   # 10원 미만 버림 (작년 68,534 → 68,530 납부)
     carries = []
     if avail - used > 0:
         carries.append({"from": Y - 1, "what": "통합고용 등 (작년에 넘어온 몫)", "amount": avail - used, "until": Y - 1 + CARRY_YEARS})

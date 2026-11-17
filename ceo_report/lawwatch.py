@@ -52,7 +52,13 @@ WATCH = [
     ((), "조세특례제한법", 30, 4),
     ((), "조세특례제한법", 104, 8),
     ((), "법인세법", 57, 0),
-    ((), "법인세법", 58, 0),   # 행정규칙(고시): 이름이 해마다 바뀌어 '최저임금'으로 찾아 가장 최근 것
+    ((), "법인세법", 58, 0),
+    # 11/17 사용자 '더 가져올 법령?': 법인세 계산에 쓰는 나머지 조문 (농특세·지방세율은 값도 맞춰 봄)
+    (("농특세율",), "농어촌특별세법", 5, 0),
+    ((), "농어촌특별세법", 4, 0),          # 비과세 (중소기업 특별세액감면·창업감면 등)
+    (("지방소득세율",), "지방세법", 103, 20),
+    ((), "조세특례제한법", 144, 0),        # 못 쓴 세액공제 10년 이월
+    ((), "법인세법", 34, 0),               # 대손충당금 (결산 때 장부에 넣어야 비용)   # 행정규칙(고시): 이름이 해마다 바뀌어 '최저임금'으로 찾아 가장 최근 것
 ]
 ADMRUL = {"최저임금 고시": "최저임금"}   # 법령이 아니라 고시(행정규칙)로 찾는 것
 
@@ -98,6 +104,10 @@ def _small(t):
 
 def numbers(text):
     """조문 글 → {'원': [금액...], '비율': [비율...]}."""
+    # 11/17: 표(상자 글자) 안의 '× 1,700   │ │만원'처럼 줄이 나뉜 금액도 읽게 상자 글자·빈칸을 먼저 걷어 냄
+    text = re.sub(r"[│┌┐└┘├┤┬┴┼─]+", " ", text or "")
+    text = re.sub(r"(\d)\s+(?=[조억만천백원,\d])", r"\1", text)
+    text = re.sub(r"([조억만천백])\s+(?=[원\d])", r"\1", text)
     amounts = [kor_amount(m) for m in re.findall(r"[\d,]*(?:\d+[조억만천백]|[조억만천백]\d)[\d조억만천백,]*원", text)]
     amounts += [int(m.replace(",", "")) for m in re.findall(r"(\d{1,3}(?:,\d{3})+)원", text)]
     ratios = []
@@ -219,7 +229,18 @@ def find_law(oc, name, opener=None, ref=None):
 def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
     if kind == "admrul":
         q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "ID": mst})
-        return _texts(_get(BASE + "lawService.do?" + q, opener))
+        data = _get(BASE + "lawService.do?" + q, opener)
+        text = _texts(data)
+        if not text:   # 11/17: 최저임금 고시처럼 본문이 첨부 파일(PDF)에만 있는 고시는 이름·첨부 이름으로 받음 (실패로 세지 않음)
+            names = []
+            for d in _walk(data):
+                if d.get("행정규칙명"):
+                    names.append(str(d["행정규칙명"]))
+                if d.get("첨부파일명"):
+                    names += [str(x) for x in _flat(d["첨부파일명"])]
+            if names:
+                text = "(본문은 첨부 파일에만 있음) " + " · ".join(dict.fromkeys(names))
+        return text
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "MST": mst, "JO": _jo(n, sub)})
     return _texts(_get(BASE + "lawService.do?" + q, opener))
 
@@ -294,7 +315,8 @@ def check(input_dir, year, today=None, opener=None):
             ("지금 값이 조문에 있음" if keys else "감면·공제 검토용 (조문·법 기한만 봄)")
         got[tag] = {"hash": h, "text": text[:4000], "시행일자": info["시행일자"], "공포일자": info["공포일자"],
                     "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
-                    "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("flag")),
+                    # 11/17: 예전엔 한 번 켜지면 계속 켜져 있었음 → 지금 값이 조문에 안 보이거나 개정된 적이 있을 때만
+                    "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("changed")),
                     # 2026-11-17: '값이 조문에 안 보임'(표기 차이·부칙에 있는 값)과 실제 개정을 나눔. 확인한 값은 개정됐을 때만 다시 확인
                     "changed": today.isoformat() if state == "개정됨" else (old or {}).get("changed", ""),
                     "miss": miss}

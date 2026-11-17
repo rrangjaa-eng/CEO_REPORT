@@ -171,3 +171,29 @@ class PcFindings1117(unittest.TestCase):
                 return False
         got = lawwatch.find_admrul("x", "최저임금", opener=lambda url, timeout=None: R(json.dumps(body).encode("utf-8")), ref="20261117")
         self.assertEqual(got["mst"], "3")
+
+
+class SecondPcRun1117(unittest.TestCase):
+    """11/17 두 번째 PC 받기: 31개 중 30개, 최저임금 고시는 본문이 PDF 첨부에만 있어 '비어 있음', 29조의8 표의 '× 400만원'이 줄 나눔으로 안 읽힘."""
+
+    def test_box_split_amount(self):
+        from ceo_report import lawwatch
+        got = lawwatch.numbers("증가 인원 수 × 1,700   │ │만원(수도권 밖 2,000만원) · 상한액 : 6,590천원")["원"]
+        for v in (17_000_000, 20_000_000, 6_590_000):
+            self.assertIn(v, got)
+
+    def test_notice_with_pdf_only_body_is_not_empty(self):
+        import io
+        from ceo_report import lawwatch
+
+        class R(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        body = {"AdmRulService": {"행정규칙기본정보": {"행정규칙명": "2026년 적용 최저임금 고시"}, "조문내용": "",
+                                  "첨부파일": {"첨부파일명": ["2026년 적용 최저임금 고시(가짜).pdf"]}}}
+        t = lawwatch.fetch_article("x", "1", 0, 0, opener=lambda url, timeout=None: R(json.dumps(body).encode("utf-8")), kind="admrul")
+        self.assertIn("첨부 파일", t)
+        self.assertIn("2026년 적용 최저임금 고시", t)
