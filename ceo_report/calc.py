@@ -435,6 +435,10 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         if P["remain"] is not None and P["remain"] > 0:
             P["remain_cash"] = int(round(P["remain"] * (1 + BUDGET_VAT)))
             P["remain_due"] = budget_due(_event_date(P.get("event_date")), asof)
+            # M2 (가정 규칙 11/15, 결정 카드 11/17 '할 일 띄우고 예상엔 남김'): 처음 예상 지급일(행사일 다음 달 말 금요일)을 남기고,
+            # 지났으면 '다시 확인' 할 일. 예상 지급에는 그대로 둔다
+            P["remain_first_due"] = budget_due(_event_date(P.get("event_date")), dt.date(1900, 1, 1))   # 기준일로 옮기기 전 날
+            P["remain_overdue"] = P["remain_first_due"] is not None and P["remain_first_due"] <= asof
     remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None and not is_closed(P)]
     by_team = OrderedDict()
     for P in sorted(plist, key=lambda P: P["team"]):
@@ -1378,6 +1382,16 @@ def risks(R):
             "대출 %s 만기 %s (%s) — 매년 연장 예정이라 원금 %s원을 갚을 돈으로 잡지 않음." % (L["vendor"], d2s(L["due"]), left, won(L["balance"])),
             "은행·보증기관에 연장되는지 확인하세요. 연장되면 입력 폴더 대출만기.csv 에 새 만기일과 근거(메모)를 넣고, "
             "안 되면 원금 상환 일정을 자금계획서에 넣으세요.")
+    late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
+    if late:   # M2 (결정 카드 2026-11-17): 행사 끝나고 처음 예상 지급일이 지난 남은 예산 — 할 일만, 예상 지급엔 그대로
+        late.sort(key=lambda P: -P["remain_cash"])
+        add("중간", "자금",
+            "행사 끝나고 처음 예상 지급일이 지났는데 남은 예산이 아직 예상 지급으로 남은 프로젝트 %d개 %s원 (부가세 포함): %s."
+            % (len(late), won(sum(P["remain_cash"] for P in late)),
+               ", ".join("[%s] %s %s원 (처음 예상 %s)" % (P["id"], P["name"], won(P["remain_cash"]), d2s(P["remain_first_due"]))
+                         for P in late[:5]) + (" 외 %d개" % (len(late) - 5) if len(late) > 5 else "")),
+            "팀장에게 더 나갈 돈이 있는지 다시 확인하세요. 없으면 인트라넷에서 종결(대표 승인)하면 예상 지급에서 빠집니다. "
+            "확인 전까지는 '프로젝트 지급 예상'에 그대로 둡니다.")
     if s2["out_missing"]:
         add("높음", "자료", "지급 자료를 읽지 못해 지급예정이 빠졌으므로 기간별 계산 잔액과 최저 잔액을 계산하지 않음: %s."
             % ", ".join(s2["out_missing"]),

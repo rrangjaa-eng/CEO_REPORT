@@ -181,3 +181,42 @@ def tearDownModule():  # noqa: F811
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRemainOverdueTodo(unittest.TestCase):
+    """M2 (가정 규칙 11/15, 결정 카드 2026-11-17 '할 일 띄우고 예상엔 남김')."""
+    @classmethod
+    def setUpClass(cls):
+        refresh()
+
+    def test_overdue_remaining_budget_gets_recheck_todo_but_stays_in_events(self):
+        R = compute(load(SAMPLE), "weekly", ASOF)
+        late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
+        todo = [r for r in R["risks"] if "처음 예상 지급일이 지났는데 남은 예산" in r["fact"]]
+        ev = budget_events(R)
+        if late:
+            self.assertEqual(len(todo), 1)
+            for P in late:
+                self.assertIn(P["id"], ev)   # 예상 지급엔 그대로
+                self.assertLessEqual(P["remain_first_due"], ASOF)
+        else:
+            self.assertEqual(todo, [])
+        # 처음 예상일이 기준일 뒤인 프로젝트는 할 일에 없다
+        for P in R["s3"]["projects"]:
+            if P.get("remain_first_due") and P["remain_first_due"] > ASOF:
+                self.assertFalse(P["remain_overdue"])
+
+    def test_after_first_due_the_todo_appears(self):
+        late_asof = dt.date(2026, 12, 28)   # 샘플 11월 행사 → 처음 예상 12/25 지남
+        R = compute(load(SAMPLE), "weekly", late_asof)
+        todo = [r for r in R["risks"] if "처음 예상 지급일이 지났는데 남은 예산" in r["fact"]]
+        late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
+        self.assertTrue(late)
+        self.assertEqual(len(todo), 1)
+        ev = budget_events(R)
+        for P in late:
+            self.assertIn("[%s]" % P["id"], todo[0]["fact"])
+            self.assertIn(P["id"], ev)   # 예상 지급엔 그대로
+
+    def test_first_due_is_unshifted(self):
+        self.assertEqual(budget_due(dt.date(2026, 9, 18), dt.date(1900, 1, 1)), dt.date(2026, 10, 30))
