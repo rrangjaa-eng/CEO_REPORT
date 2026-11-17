@@ -394,6 +394,7 @@ def apply_monthly(A, M, pack):
     if E.get("prepaid") is not None:
         A["prepaid"] = E["prepaid"]
     A["pay_corp_day"], A["pay_local_day"] = E["due"], E["local_due"]
+    A["local_paid"] = E.get("local_paid") or 0   # 원천징수된 지방소득세 — 4/30 납부액에서 뺌 (월간·자금 일정과 같게)
     A["tax_same"], A["tax_base"], A["tax_adj"], A["tax_credit"] = True, Yp["pre"] + adj, adj, bool(C)
     Yp["net"] = Yp["pre"] - A["tax"]
 
@@ -940,7 +941,9 @@ def render(A, mode):
     h.append("<div class='four c3'>")
     h.append(_card("법인세 납부 (%s)" % "%d/%d" % (A["pay_corp_day"].month, A["pay_corp_day"].day), W(max(A["corp"] - A["prepaid"], 0)),
                    "법인세 %s − 중간예납 등 %s%s" % (W(A["corp"]), W(A["prepaid"]), "" if A["tax_fixed"] else (" · 1~%d월 이익 기준 예상" % cut if mid else " · 예상"))))
-    h.append(_card("지방소득세 납부 (%s)" % "%d/%d" % (A["pay_local_day"].month, A["pay_local_day"].day), W(A["local"]), "법인세 산출세액 × 10%"))
+    lp = A.get("local_paid") or 0
+    h.append(_card("지방소득세 납부 (%s)" % "%d/%d" % (A["pay_local_day"].month, A["pay_local_day"].day), W(max(A["local"] - lp, 0)),
+                   "법인세 산출세액 × 10%%%s" % ((" − 원천징수된 지방소득세 %s" % W(lp)) if lp else "")))
     dep_next = Yp["dep"] if A["closed"] else A["dep_est"]
     h.append(_card("%d년 감가상각비 예상" % (year + 1), W(dep_next), "%d년 %s 금액 · 월간 보고가 미리 비용으로 뺌" % (year, "확정" if A["closed"] else "예상")))
     h.append("</div>")
@@ -1145,7 +1148,7 @@ def _detail(A):
                                    ["법인세 등 %s" % ("확정 (결산 전표)" if A["tax_fixed"] else ("예상 (월간 보고와 같은 계산, 10장)" if A.get("tax_same") else "예상 (세무조정 없음)")), W(A["tax"])],
                                    ["법인세 (지방소득세 뺀 것)", W(A["corp"])], ["− 중간예납 등 선납세금", W(A["prepaid"])],
                                    ["= %s 납부" % A["pay_corp_day"].isoformat(), W(max(A["corp"] - A["prepaid"], 0))],
-                                   ["지방소득세 (%s 납부)" % A["pay_local_day"].isoformat(), W(A["local"])]], "pt pl"))
+                                   ["지방소득세 (%s 납부%s)" % (A["pay_local_day"].isoformat(), " · 원천징수된 지방소득세 %s 뺌" % W(A.get("local_paid") or 0) if A.get("local_paid") else ""), W(max(A["local"] - (A.get("local_paid") or 0), 0))]], "pt pl"))
     NX = A["next"] or []
     if NX:
         d.append("<div class='evh'>근거 6-2 · %d년 행사 프로젝트 %d건</div>" % (year + 1, len(NX)))
