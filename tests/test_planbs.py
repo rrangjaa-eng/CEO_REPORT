@@ -58,6 +58,22 @@ def make_input():
     return d
 
 
+def set_all(bk, style, value):
+    sh = bk.sheets[0]
+    for (r, c), (v, f, s) in list(sh.cells.items()):
+        if s == style:
+            sh.cells[(r, c)] = (value, None, s)
+    bk._memo = {}
+
+
+def put(bk, label, col, value):
+    sh = bk.sheets[0]
+    row = [r for (r, c), (v, f, s) in sh.cells.items() if c == 2 and str(v).startswith(label)][0]
+    v, f, s = sh.cells[(row, col)]
+    sh.cells[(row, col)] = (value, None, s)
+    bk._memo = {}
+
+
 class TestPlanBS(unittest.TestCase):
     def setUp(self):
         self.d = make_input()
@@ -73,11 +89,7 @@ class TestPlanBS(unittest.TestCase):
         self.assertEqual(C["X0"], 12_000_000)     # 2025 이자 2백만 + 지원금 1천만
         P = C["P"]
         self.assertEqual((P["rev"], P["cogs"], P["sga"], P["nin"], P["nout"]), (400_000_000, 250_000_000, 80_000_000, 6_000_000, 3_000_000))
-        # 세금 줄어드는 비율: 프로그램 법인세 계산과 같게
-        base = P["pre"]
-        t = planbs.tax_total(base, 2026, self.d) - planbs.tax_total(base - 6_000_000, 2026, self.d)
-        self.assertEqual(C["T1"], t)
-        self.assertAlmostEqual(C["rate1"], 0.11, places=3)   # 과세표준 2억 이하: 10% + 지방 1%
+        self.assertEqual(C["tax_in"]["brackets"][0], (200_000_000, 0.10))   # 2026년 세율 (corptax 와 같음)
         self.assertAlmostEqual(C["rate0"], 0.099, places=3)  # 2025년: 9% + 0.9%
 
     def test_overstated_items(self):
@@ -93,23 +105,35 @@ class TestPlanBS(unittest.TestCase):
         cells = self.C["_cells"]
         for a in cells["check"]:
             self.assertEqual(bk.value(a), 0)
+        tc, te = (bk.value(a) for a in cells["tax"])
+        self.assertEqual(tc, self.C["tax_all"])   # 기본값이면 프로그램 법인세 예상과 같음
+        self.assertEqual(tc, planbs.tax_total(73_000_000, 2026, self.d))
+        self.assertEqual(te, planbs.tax_total(67_000_000, 2026, self.d))
         cn, en = (bk.value(a) for a in cells["net"])
         ce, ee = (bk.value(a) for a in cells["equity"])
-        g1 = self.C["X1"] - round(self.C["X1"] * round(self.C["rate1"], 4))
         g0 = self.C["X0"] - round(self.C["X0"] * round(self.C["rate0"], 4))
-        self.assertEqual(cn - en, g1)
-        self.assertEqual(ce - ee, g1 + g0)
-        # 회사 전체 자본 = 장부 자산 − 부채 − 올해 법인세 예상
+        self.assertEqual(cn - en, 6_000_000 - (tc - te))
+        self.assertEqual(ce - ee, 6_000_000 - (tc - te) + g0)
         L = K.load(self.d)
-        B = K.balance_sheet(L, "2026-10")
-        self.assertEqual(ce, B["equity"] - self.C["tax_all"])
-        # 노란 칸 '뺄까요'를 모두 '아니오'로 → 차이 0
-        sh = bk.sheets[0]
-        for (r, c), (v, f, s) in list(sh.cells.items()):
-            if v == "예" and s == "inc":
-                sh.cells[(r, c)] = ("아니오", None, s)
-        bk._memo = {}
+        self.assertEqual(ce, K.balance_sheet(L, "2026-10")["equity"] - tc)   # 결산 비용 0 → 장부 자본 − 세금
+        # '뺄까요'를 모두 '아니오'로 → 차이 0
+        set_all(bk, "inc", "아니오")
         self.assertEqual(bk.value(cells["equity"][0]), bk.value(cells["equity"][1]))
+        for a in cells["check"]:
+            self.assertEqual(bk.value(a), 0)
+
+    def test_rate_and_bonus_inputs(self):
+        bk = planbs.build(self.C)
+        cells = self.C["_cells"]
+        cn0 = bk.value(cells["net"][0])
+        put(bk, "법인세율 1구간", 4, 0.2)
+        tc = bk.value(cells["tax"][0])
+        self.assertEqual(tc, int(73_000_000 * 0.2) + int(int(73_000_000 * 0.2) * 0.1))
+        put(bk, "연말 직원 상여금", 3, 10_000_000)
+        tc2, te2 = (bk.value(a) for a in cells["tax"])
+        self.assertEqual(tc2, int(63_000_000 * 0.2) + int(int(63_000_000 * 0.2) * 0.1))
+        self.assertEqual(bk.value(cells["net"][0]), 73_000_000 - 10_000_000 - tc2)
+        self.assertLess(bk.value(cells["net"][0]), cn0)
         for a in cells["check"]:
             self.assertEqual(bk.value(a), 0)
 
@@ -182,10 +206,8 @@ class TestClosingCosts(unittest.TestCase):
     def test_costs(self):
         got = dict((c["key"], (c["amount"], c["in_base"])) for c in self.C["costs"])
         self.assertEqual(got, {"dep": (10_000_000, True), "bad": (4_000_000, False), "card": (1_000_000, False),
-                               "ins": (2_750_000, False), "ret": (10_000_000, False)})
-        base = 60_000_000
-        cut = 6_000_000 + 17_750_000
-        self.assertEqual(self.C["T1"], planbs.tax_total(base, 2026, self.d) - planbs.tax_total(base - cut, 2026, self.d))
+                               "ins": (2_750_000, False), "ret": (10_000_000, False), "bonus": (0, False)})
+        self.assertEqual(self.C["tax_in"]["base_c"], 60_000_000 - 17_750_000)   # 감가상각은 법인세 예상에 이미 빠짐
 
     def test_sheet_balances(self):
         bk = planbs.build(self.C)
@@ -193,14 +215,11 @@ class TestClosingCosts(unittest.TestCase):
         self.assertEqual(bk.value(cells["K"]), 27_750_000)
         for a in cells["check"]:
             self.assertEqual(bk.value(a), 0)
+        tc, te = (bk.value(a) for a in cells["tax"])
+        self.assertEqual(tc, planbs.tax_total(60_000_000 - 17_750_000, 2026, self.d))
         cn, en = (bk.value(a) for a in cells["net"])
-        t1 = round((6_000_000 + 17_750_000) * round(self.C["rate1"], 4))
-        self.assertEqual(cn - en, 6_000_000 + 27_750_000 - t1)
-        sh = bk.sheets[0]
-        for (r, c), (v, f, s) in list(sh.cells.items()):
-            if v == "예" and s == "inc":
-                sh.cells[(r, c)] = ("아니오", None, s)
-        bk._memo = {}
+        self.assertEqual(cn - en, 6_000_000 - (tc - te))   # 결산 비용은 양쪽 모두 → 차이는 영업외수익과 세금뿐
+        set_all(bk, "inc", "아니오")
         self.assertEqual(bk.value(cells["net"][0]), bk.value(cells["net"][1]))
         self.assertEqual(bk.value(cells["equity"][0]), bk.value(cells["equity"][1]))
         for a in cells["check"]:
