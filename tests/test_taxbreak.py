@@ -172,3 +172,13 @@ class ResearchDeclined1117(unittest.TestCase):
         self.assertEqual(r[1], "해당 없음")
         self.assertIn("회사가 공제를 받지 않기로", r[3])
         self.assertEqual(row(tb.check(folder({}), 2026, dict(YES, 연구전담="예")), "연구·인력개발비")[1], "확인 필요")
+
+
+class EasyWords1117(unittest.TestCase):
+    def test_every_candidate_has_plain_explanation(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 벤처="예"))
+        for r in T["rows"]:
+            self.assertIsNotNone(tb.easy(r[0], 2026), r[0])
+        h = tb.render(T, lambda x: x)
+        self.assertIn("받는 조건:", h)
+        self.assertIn("직원 수가 늘면", h)
