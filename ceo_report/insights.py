@@ -828,9 +828,15 @@ def compute(R, facts=None, invoices=None, prev_events=None):
         "missing": missing_entries(R, facts),
         "issue": issue_deadline(R),
         "track": forecast_track(R.get("auto_records"), R.get("_txns"), R, R.get("auto_profits")),
+        "more": _more(R),   # 16~23 (2026-11-17 제안 M3·A1~A8) — 경영관리에만
         "has_facts": bool(facts),
         "has_prev": prev_events is not None,
     }
+
+
+def _more(R):
+    from . import insights_more
+    return insights_more.compute(R)
 
 
 # ───────────── 지난 일정 기록 (1 바뀐 이유) ─────────────

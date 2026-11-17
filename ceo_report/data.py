@@ -364,7 +364,9 @@ def load(folder):
                               # 법인세 줄만 (2026-11-04): 과세표준·산출세액·기납부(중간예납 등 선납세금)
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
-                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None})
+                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None,
+                              # A4 (2026-11-17): 분납할 몫 (회사 선택, 법인세 줄만). 금액 칸은 전체, 자금 일정만 둘로 나눈다
+                              "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None})
 
     # 장부 채무 (변환.py 장부채무.csv, 2026-11-04 점검 A1·A2): 없으면 None
     from .debts import load as load_debts

@@ -411,6 +411,50 @@ def rest_rows(by_month, ym, dep, base, nat, corp, year, input_dir, prepaid=0, lo
     return out or None
 
 
+# ───────────── 분납 (A4, 2026-11-17 사용자 '추가 기능은 전부') ─────────────
+INST_MIN, INST_HALF = 10_000_000, 20_000_000   # 법인세법 64조②·시행령 101조②: 1천만 넘으면 분납, 2천만 이하면 1천만 넘는 몫, 넘으면 절반까지
+INST_MONTHS = 2                                 # 중소기업은 납부기한 지난 날부터 2개월 (일반 1개월)
+
+
+def installable(total):
+    """낼 법인세 total 중 분납할 수 있는 가장 큰 금액 (없으면 0)."""
+    if total is None or total <= INST_MIN:
+        return 0
+    return total - INST_MIN if total <= INST_HALF else total // 2
+
+
+def inst_due(due):
+    """분납 기한: 납부기한 + 2개월 (주말이면 다음 평일)."""
+    import datetime as dt
+    from .tax import _workday
+    y, m = due.year, due.month + INST_MONTHS
+    y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+    last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)).day
+    return _workday(dt.date(y, m, min(due.day if due.day < 28 else last, last)))
+
+
+def installment(rows, on):
+    """회사가 분납을 골랐으면(on) 같은 날 낼 법인세 줄(본 줄 + 남은 달 예상 줄)을 합쳐 분납할 몫을 본 줄 '분납' 칸에 적는다.
+    금액 칸은 그대로(전체 세금) — 자금 일정(tax.merge)만 본 줄을 두 번(기한·2달 뒤)으로 나눈다. 지방소득세·중간예납은 나누지 않음."""
+    for r in rows:
+        r.setdefault("분납", "")
+    if not on:
+        return rows
+    by_due = {}
+    for r in rows:
+        if r.get("세목") == "법인세" and r.get("납부예정일") and str(r.get("납부예정일"))[5:7] in ("03", "04") and r.get("금액") not in ("", None):
+            by_due.setdefault(r["납부예정일"], []).append(r)
+    for due, rs in by_due.items():
+        total = sum(int(r["금액"]) for r in rs)
+        s = installable(total)
+        main = next((r for r in rs if "(1월~" in str(r.get("대상기간")) or "(신고서)" in str(r.get("대상기간"))), rs[0])
+        if s:
+            main["분납"] = str(s)
+            main["근거"] = (main.get("근거") or "") + " · 분납함(회사 선택): %s원은 %s에 (법인세법 64조, 중소기업 2개월)" % (
+                "{:,}".format(s), inst_due(__import__("datetime").date.fromisoformat(due)).isoformat())
+    return rows
+
+
 # ───────────── 작년분 법인세·지방소득세, 8/31 중간예납 (2026-11-14 F5) ─────────────
 INTERIM_MIN = 500_000   # 중소기업은 중간예납세액이 50만 원 미만이면 내지 않는다 (법인세법 63조)
 

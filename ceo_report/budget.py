@@ -669,10 +669,16 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     prepaid = corp_rows[0].get("prepaid") if corp_rows else None
     calc_tax = lc
     if lc is not None:
-        add_tax(3, "3/31", "법인세 (%d년분)" % base, max(lc - (prepaid or 0), 0),
-                "%d년 연말 예상 세전 이익 기준 산출세액 %s%s" % (base, format(lc, ","),
-                                                   " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)"),
+        corp_pay = max(lc - (prepaid or 0), 0)
+        from . import choices, corptax as _ct   # A4 (2026-11-17): 회사가 분납을 골랐으면 3/31 과 5/31 로 나눔
+        inst = _ct.installable(corp_pay) if input_dir and choices.installment(input_dir) else 0
+        add_tax(3, "3/31", "법인세 (%d년분)" % base, corp_pay - inst,
+                "%d년 연말 예상 세전 이익 기준 산출세액 %s%s%s" % (base, format(lc, ","),
+                                                     " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)",
+                                                     " − 분납 %s (5/31)" % format(inst, ",") if inst else ""),
                 "예산 계산 (예상)")
+        if inst:
+            add_tax(5, "5/31", "법인세 분납분 (%d년분)" % base, inst, "분납함(회사 선택): 법인세법 64조 중소기업 2개월", "예산 계산 (예상)")
         add_tax(4, "4/30", "지방소득세 (%d년분)" % base, int(lc * LOCAL), "법인세 산출세액 × 10%", "예산 계산 (예상)")
     sga_vat_q = _r4(VAT * sum(x["budget"] for x in SGA if x["basis"] != "인원") / 4.0)
     for q in range(3):

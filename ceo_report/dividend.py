@@ -803,6 +803,8 @@ def advise(R, S, D, input_dir=None):
                 c = cut if t["kind"] == "법인세" and not done else 0
                 if c:
                     v = max(v - c, 0)
+                if t.get("inst") and t.get("inst_date") and t["inst_date"] > pay_day:   # A4: 분납 몫은 2달 뒤라 이 기간엔 안 나감
+                    v = max(v - t["inst"], 0)
                 big.append(("%s (%s)%s" % (t["kind"], due.isoformat(), " — 감면·공제 %s원 뺌" % W(c) if c else ""), v))
         extend = use.get("대출연장") != "아니오"
         for ln in ((R.get("debts") or {}).get("loans") or []):

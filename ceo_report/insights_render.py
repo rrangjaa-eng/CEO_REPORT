@@ -416,4 +416,7 @@ def mgmt_section(I, R):
                  "출금 + 는 더 나감. 대출·예금처럼 일정에 없던 돈도 실제에 들어감. 영업이익 '지금 장부'는 늦게 들어온 전표에 따라 바뀜.</p>"
                  % (K["last_txn"].isoformat() if K.get("last_txn") else "-"))
     sub(15, "지난 예상 대비 실제 오차 (보고 기록 ↔ 나중 장부)", body)
+    if I.get("more") is not None:   # 16~23 (2026-11-17 제안 M3·A1~A8)
+        from . import insights_more
+        insights_more.render(I["more"], R, sub)
     return "".join(h)

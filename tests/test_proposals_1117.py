@@ -80,3 +80,86 @@ class TestE2YearendLaw(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             taxlaw.confirm(d, 2026, {"인적공제": "2000000"}, source="시험", who="시험")
             self.assertEqual(payroll.ye_values(d, 2026)[0]["인적공제"], 2_000_000)
+
+
+class TestA4Installment(unittest.TestCase):
+    """A4: 법인세 분납 (법인세법 64조 — 1천만 초과, 2천만 이하면 1천만 넘는 몫, 넘으면 절반, 중소기업 2개월)."""
+    def test_installable_amounts(self):
+        from ceo_report.corptax import installable, inst_due
+        self.assertEqual([installable(v) for v in (9_000_000, 10_000_000, 15_000_000, 20_000_000, 30_000_001)],
+                         [0, 0, 5_000_000, 10_000_000, 15_000_000])
+        self.assertEqual(inst_due(D(2027, 3, 31)), D(2027, 5, 31))
+
+    def test_rows_get_installment_only_when_chosen(self):
+        from ceo_report import corptax
+        from ceo_report.tax import _row
+        rows = [_row("법인세", "2026년 (1월~10월 장부 기준)", D(2027, 3, 31), 18_000_000, "예상", "b"),
+                _row("법인세", "2026년 11~12월 남은 기간 예상", D(2027, 3, 31), 7_000_000, "예상", "r"),
+                _row("법인지방소득세", "2026년 (1월~10월 장부 기준)", D(2027, 4, 30), 2_000_000, "예상", "l")]
+        self.assertEqual([r["분납"] for r in corptax.installment([dict(r) for r in rows], False)], ["", "", ""])
+        got = corptax.installment(rows, True)
+        self.assertEqual([r["분납"] for r in got], ["12500000", "", ""])   # 합계 2,500만 → 절반을 본 줄에
+
+    def test_merge_splits_schedule_but_keeps_row_amount(self):
+        from ceo_report import tax
+        t = {"kind": "법인세", "period": "2026년 (1월~10월 장부 기준)", "due": D(2027, 3, 31), "amount": 25_000_000, "state": "예상",
+             "basis": "", "codes": (), "book": None, "inst": 12_500_000}
+        ev, info = tax.merge([], [t], asof=D(2026, 11, 17))
+        self.assertEqual(sorted((e["date"], e["amount"]) for e in ev), [(D(2027, 3, 31), 12_500_000), (D(2027, 5, 31), 12_500_000)])
+        self.assertEqual(info[0]["amount"], 25_000_000)
+
+    def test_choices_file(self):
+        import tempfile
+        from ceo_report import choices
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(choices.installment(d))
+            choices.save(d, {"법인세분납": "예", "예금금리": "3.2"})
+            self.assertTrue(choices.installment(d))
+            self.assertAlmostEqual(choices.rate(d), 0.032)
+            with self.assertRaises(ValueError):
+                choices.save(d, {"법인세분납": "몰라"})
+
+
+def _R(asof, months, projects=(), invoices=(), targets=None, acct=None):
+    """insights_more 용 작은 R: months = {ym: (매출, 원가, 판관비)}."""
+    bm = [(ym, [{"unit": "회사", "target": "회사 전체", "cur": {"revenue": r, "direct": c, "common": g}}]) for ym, (r, c, g) in sorted(months.items())]
+    return {"asof": asof, "s4": {"sources": {"WEHAGO": {"by_month": bm}}}, "s3": {"projects": list(projects)}, "_invoices": list(invoices),
+            "targets": targets or {}, "acct_year": acct or {}, "s2": {}, "tax": []}
+
+
+class TestNewAnalyses(unittest.TestCase):
+    """M3·A1·A2·A3·A8: 경영관리 자동 분석 16~23 (합성 자료)."""
+    def test_collect_days_counts_unpaid_as_late_and_flags(self):
+        from ceo_report import insights_more as M
+        inv = [{"kind": "발행", "date": D(2026, 6, 1), "supply": 1, "paid_date": D(2026, 6, 1) + dt.timedelta(days=d)} for d in (50, 70, 80, 90)]
+        inv += [{"kind": "발행", "date": D(2026, 6, 1), "supply": 1, "paid_date": None}] * 2
+        R = _R(D(2026, 10, 31), {}, invoices=inv)
+        c = M.collect_days(R)
+        self.assertEqual((c["n"], c["open"], c["median"], c["off"]), (6, 2, 80, True))
+        M.add_risks(R)
+        self.assertTrue(any("60일" in r["fact"] for r in R["risks"]))
+
+    def test_breakeven_and_need(self):
+        from ceo_report import insights_more as M
+        months = {"2026-%02d" % m: (100_000_000, 70_000_000, 20_000_000) for m in range(1, 11)}
+        b = M.breakeven(_R(D(2026, 10, 31), months, targets={"1팀": {"revenue": 1_200_000_000}}))
+        self.assertEqual((b["fixed"], round(b["rate"], 2), b["be"], b["left"], b["need"]), (20_000_000, 0.3, 66_666_667, 2, 100_000_000))
+
+    def test_pipeline_and_clients(self):
+        from ceo_report import insights_more as M
+        P = [{"id": "1", "name": "가", "client": "고객갑", "event_date": "2026-11-20", "closed": False, "profit_basis": 100, "profit_now": 30},
+             {"id": "2", "name": "나", "client": "고객을", "event_date": "2026-11-05", "closed": False, "profit_basis": 200, "profit_now": 20}]
+        inv = [{"kind": "발행", "project": "1", "client": "갑(주)", "client_code": "77", "date": D(2026, 11, 1)}]
+        R = _R(D(2026, 10, 31), {"2026-10": (0, 0, 10)}, projects=P, invoices=inv)
+        p = M.pipeline(R)
+        self.assertEqual((p["rows"][0]["ym"], p["rows"][0]["gp"], p["rows"][0]["cover"]), ("2026-11", 50, 5.0))
+        cl = M.clients(R)
+        self.assertEqual([x["label"] for x in cl["rows"]], ["고객을 (코드 없음)", "갑(주) [77]"])
+        self.assertEqual((round(cl["rows"][0]["rate"], 2), cl["rows"][0]["low"]), (0.1, False))   # 평균 16.7% − 10%p 보다 높음
+
+    def test_cost_spike(self):
+        from ceo_report import insights_more as M
+        acc = {"code": "81300", "name": "접대비", "months": [1_000_000] * 9 + [6_000_000, None, None]}
+        A = {"state": "ok", "year": "2026", "groups": [{"name": "판매비와관리비", "accounts": [acc]}]}
+        sp = M.cost_spikes(_R(D(2026, 10, 31), {}, acct=A))
+        self.assertEqual((sp[0]["name"], sp[0]["up"]), ("접대비", 5_000_000))

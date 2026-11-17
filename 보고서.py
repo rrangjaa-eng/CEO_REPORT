@@ -564,6 +564,14 @@ def main(argv=None):
     R["auto_records"] = insights.load_records(a.출력)
     R["auto_profits"] = insights.load_profit_forecasts(a.출력)
     R["_txns"] = data.txns   # 예측 입금 vs 실제 입금
+    # 2026-11-17 제안 A4·A5·A7·M3·A8: 자금 선택(분납·예금 금리), 퇴직금 합계, 입금 60일 다시 재기·비용 급증 할 일 (경영관리에만)
+    from ceo_report import choices, insights_more, payroll as _pay
+    R["fund_choices"] = choices.read(a.입력)
+    try:
+        R["severance"] = _pay.severance(a.입력, asof)
+    except Exception:
+        R["severance"] = None
+    insights_more.add_risks(R)
     from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
     R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)

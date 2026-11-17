@@ -17,7 +17,8 @@ import datetime as dt
 import re
 
 COLUMNS = ["세목", "대상기간", "납부예정일", "금액", "상태", "근거", "과세표준", "산출세액", "기납부", "대손충당금", "세무조정",
-           "거래처코드", "장부기준일"]
+           "거래처코드", "장부기준일", "분납"]
+# 분납 (A4, 2026-11-17): 법인세 줄만 — 회사가 '분납함'을 고르면 납부기한 2달 뒤로 미룰 금액 (corptax.installment). 금액 칸은 그대로 전체.
 # 과세표준~세무조정 다섯 칸은 법인세 줄만 (2026-11-04, 대손충당금 11-12, 세무조정 11-14).
 # 거래처코드 (2026-11-14 사용자 "이름으로 맞추지 말고 코드로"): 이 줄을 계산한 장부 줄의 거래처코드(앞 0 뗌, 여럿이면 띄어 씀).
 #   보고서는 자금계획서·자금일정 줄과 이 코드가 같아야 같은 지급으로 본다 (코드가 없는 옛 줄만 이름·금액으로, '이름으로 맞춤' 표시).
@@ -1079,7 +1080,7 @@ def fixed_costs(journal, asof, skip_codes=(), months_ahead=AHEAD_MONTHS):
 def _row(kind, period, due, amount, state, basis, codes=()):
     return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
             "상태": state, "근거": basis, "과세표준": "", "산출세액": "", "기납부": "", "대손충당금": "", "세무조정": "",
-            "거래처코드": " ".join(codes or ()), "장부기준일": ""}
+            "거래처코드": " ".join(codes or ()), "장부기준일": "", "분납": ""}
 
 
 # ───────────── 보고서 쪽: 자금 일정에 넣기 ─────────────
@@ -1228,5 +1229,17 @@ def merge(events, taxes, asof=None, cash_date=None):
                 ev["orig_date"] = t["due"]
                 ev["basis"] = (ev["basis"] + ", " if ev["basis"] else "") + why
                 row["moved"] = why
+            inst = t.get("inst") or 0
+            if inst and t["amount"] and 0 < inst < t["amount"] and t["kind"] == "법인세":
+                # A4 (2026-11-17): 회사가 분납을 골랐으면 기한에 나머지, 2달 뒤에 분납 몫 (금액 칸·표는 전체 세금 그대로)
+                from .corptax import inst_due
+                later = dict(ev, amount=inst, date=inst_due(t["due"]), cat="%s 분납분 (장부 계산)" % t["kind"],
+                             desc="%s %s 분납분" % (t["kind"], t["period"]), basis="분납함(회사 선택): 법인세법 64조 중소기업 2개월")
+                later.pop("gap", None)
+                later.pop("orig_date", None)
+                ev["amount"] = t["amount"] - inst
+                ev["basis"] = (ev["basis"] + ", " if ev["basis"] else "") + "분납 %s원은 %s에" % ("{:,}".format(inst), later["date"].isoformat())
+                row["inst_date"] = later["date"]
+                out.append(later)
             out.append(ev)
     return out, info

@@ -188,6 +188,42 @@ def _tenure(out, n, s, e, ym, year, total, week, slips):
                 out.append((n, "입사 달 일할", "warn", "%s 입사인데 그 달 급여가 다음 달과 같음 — 일할 계산 확인" % join.isoformat()))
 
 
+def severance(input_dir, asof):
+    """A7 (2026-11-17 사용자 '추가 기능은 전부'): 회사가 줄 퇴직금 합계 어림 -> dict 또는 None (급여 명세가 없으면).
+    사람마다 급여 점검과 같은 계산(최근 3달 평균 × 근속 연수, 1년 넘고 주 15시간 이상)을 더하고, 앞으로 12달 안에 1년이 되는 사람을 달로 보인다.
+    퇴사한 사람·임원은 뺀다(임원 퇴직금은 정관 규정에 따름). 실제 퇴직금(평균임금·퇴직연금 적립)과 다를 수 있는 어림."""
+    emps, slips, _ = load(input_dir)
+    months = sorted(m for (m, _n) in slips if m <= asof.strftime("%Y-%m"))
+    if not months:
+        return None
+    ym = months[-1]
+    end = dt.date(int(ym[:4]), int(ym[5:]), 28)
+    people, soon, skipped = [], [], []
+    for n in sorted(set(x for (m, x) in slips if m == ym)):
+        e = emps.get(n, {})
+        if (e.get("임원") or "").strip() in ("예", "Y", "y", "1", "임원"):
+            skipped.append(n)
+            continue
+        left = _d(e.get("퇴사일"))
+        if left and left <= asof:
+            continue
+        join = _d(e.get("입사일"))
+        if not join or (_n(e.get("주소정근로시간")) or 40) < 15:
+            if not join:
+                skipped.append(n)
+            continue
+        yrs = (end - join).days / 365.0
+        avg3 = _avg3(slips, n, ym)
+        if yrs >= 1:
+            people.append((n, round(yrs, 1), int(avg3 * yrs)))
+        else:
+            one = join.replace(year=join.year + 1) if not (join.month == 2 and join.day == 29) else dt.date(join.year + 1, 3, 1)
+            if one <= asof + dt.timedelta(days=366):
+                soon.append((n, one, int(avg3)))
+    return {"ym": ym, "total": sum(a for _, _, a in people), "people": people, "soon": sorted(soon, key=lambda x: x[1]),
+            "skipped": skipped}
+
+
 def _next(ym):
     y, m = int(ym[:4]), int(ym[5:]) + 1
     return "%04d-%02d" % (y + (m > 12), 1 if m > 12 else m)
