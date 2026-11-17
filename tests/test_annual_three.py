@@ -182,7 +182,10 @@ class TestTeam(Base):
     def test_blocked_writes_stop_page(self):
         """자금계획서·분개장이 막히면 팀장용 연간도 만들지 않고 안내만 (대표용과 같게)."""
         out2 = os.path.join(self.tmp, "출력2")   # 샘플에는 자금계획서가 없다 → 확인을 켜면 막힌다
-        보고서.main(["연간", "--연도", "2026", "--기준일", ASOF.isoformat(), "--입력", self.inp, "--출력", out2, "--pdf", "안함"])
+        from unittest import mock
+        with mock.patch.dict(os.environ):
+            os.environ.pop("CEO_REPORT_TEST_GATE_OFF", None)   # 다른 시험이 꺼 두었어도 여기서는 확인을 켠다
+            보고서.main(["연간", "--연도", "2026", "--기준일", ASOF.isoformat(), "--입력", self.inp, "--출력", out2, "--pdf", "안함"])
         self.assertIn("만들지 않았습니다", open(os.path.join(out2, "2026_연간_대표보고.html"), encoding="utf-8").read())
         folder = os.path.join(out2, "팀장용")
         names = os.listdir(folder)
