@@ -1283,6 +1283,12 @@ def _regular_table(R):
     if gaps:
         h.append("<div class='note mgx'>%s</div>" % esc("장부 계산이 일정보다 커서 차액을 더함: " + " · ".join(
             "%s %s 일정 %s → 장부 계산 %s" % (t["kind"], t["period"], won(t["matched"]["amount"]), won(t["amount"])) for t in gaps)))
+    from .tax import WH_GAP_MARK   # 사용자 결정 2026-11-17: 원천세 장부 잔액과 예상의 차이를 경영관리에 한 줄 (금액은 안 바꿈)
+    for t in R.get("tax") or []:
+        text = str(t.get("basis") or "")
+        if t.get("kind") == "원천세" and WH_GAP_MARK in text:
+            h.append("<div class='note mgx'>%s</div>" % esc("원천세: " + text.split(WH_GAP_MARK, 1)[1].split(" · ")[0]))
+            break
     return "".join(h)
 
 

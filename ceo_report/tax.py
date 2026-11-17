@@ -178,6 +178,10 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
     return _stamp(rows, journal)
 
 
+WH_GAP_MARK = "[장부 잔액 차이] "   # 원천세 줄 근거 속 표시: 경영관리 세금 표 아래에 한 줄로 보인다
+WH_GAP_MIN = 10000
+
+
 def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청", "시청", "군청"), mode="자동", screen=None):
     """원천세(소득세·지방소득세) 납부 예상 -> 행 목록. mode: 자동 | 반기 | 매월.
     screen: 위하고 화면(근로 원천징수부+사업·기타소득)의 달별 합 {(연, 월): 원}. 급여 전표 전 달은 이 값이 있으면 쓰고,
@@ -222,6 +226,7 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
     def side(ln):   # 국세(세무서)·지방세(구청·시청·군청)는 따로 낸다
         return "세무서" if "세무서" in _sq(ln.get("vendor")) else "지자체"
     rows = []
+    booked = 0   # 아직 안 낸 기간에 장부로 뗀 금액 (화면 값·추정은 뺌) — 장부 잔액과 견준다
     for label, start, end, due in periods:
         if not _recent(due, asof):
             continue
@@ -239,6 +244,7 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
         vals = [ln.get("credit") for ln in lines if ln.get("credit") is not None or ln.get("debit") is None]
         unknown = sum(1 for v in vals if v is None)
         got = sum(v for v in vals if v is not None)
+        booked = None if (unknown or booked is None) else booked + got
         basis = "예수금 중 %s 거래처 대변 합계, %s납부" % ("·".join(vendors[:2]), "반기" if mode == "반기" else "매월 ")
         basis += part
         # 기간 안에서 아직 급여 전표가 없는 달 (마지막으로 뗀 달 뒤): 최근 달 금액으로 채운다 (일부 낸 기간은 지난 기간이라 없음)
@@ -259,6 +265,18 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
         elif last < end:
             basis += ", %s까지 쌓인 금액" % last.isoformat()
         rows.append(_row("원천세", label, due, None if unknown else got, "예상", basis, vcodes))
+    # 장부 예수금 잔액이 '아직 안 낸 기간에 뗀 금액'과 다르면 첫 줄 근거에 적는다 (사용자 결정 2026-11-17 '한 줄 보이기':
+    # 실제 자료에서 잔액이 77만 많음 = 앞 기간부터 남은 잔액. 더 낼 돈인지는 장부만으로 모르므로 금액은 바꾸지 않는다)
+    from .wehago import journal_from_start
+    if rows and booked is not None and journal_from_start(journal) and \
+            not any(ln.get("debit") is None and ln.get("credit") is None for ln in mine):
+        balance = sum((ln.get("credit") or 0) - (ln.get("debit") or 0) for ln in mine if ln["date"] <= asof)
+        gap = balance - booked
+        if abs(gap) >= WH_GAP_MIN:
+            rows[0]["근거"] += " · %s장부 예수금 잔액 %s원이 아직 안 낸 기간에 뗀 금액 %s원보다 %s원 %s — %s" % (
+                WH_GAP_MARK, "{:,}".format(balance), "{:,}".format(booked), "{:,}".format(abs(gap)),
+                "많음" if gap > 0 else "적음",
+                "앞 기간부터 남은 잔액 (더 낼 돈인지 세무사 확인)" if gap > 0 else "앞 기간분을 더 냈거나 전표가 빠짐 (확인 필요)")
     return _stamp(rows, journal)
 
 

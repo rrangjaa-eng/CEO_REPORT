@@ -194,5 +194,35 @@ class ProjectSgaCostTest(unittest.TestCase):
         self.assertEqual(out["lines"], [])
 
 
+class WithholdingBalanceGapTest(unittest.TestCase):
+    """8번: 원천세 장부 예수금 잔액이 아직 안 낸 기간에 뗀 금액과 다르면 근거에 적는다 (금액은 안 바꿈)."""
+
+    def journal(self, old_left):
+        def ln(day, debit, credit, memo=""):
+            return {"date": day, "no": "1", "account_code": "25400", "account": "예수금", "debit": debit, "credit": credit,
+                    "vendor": "가상세무서", "vendor_code": "00133", "memo": memo}
+        j = [{"date": dt.date(2025, 1, 2), "no": "1", "account_code": "33100", "account": "자본금", "debit": None,
+              "credit": 20000000, "vendor": "", "vendor_code": "", "memo": "설립"},
+             ln(dt.date(2025, 1, 31), None, 0)]
+        for m in range(1, 7):
+            j.append(ln(dt.date(2026, m, 25), None, 100000))
+        j.append(ln(dt.date(2026, 7, 10), 600000 - old_left, None))   # 상반기분 납부 (old_left 만큼 덜 냄)
+        for m in range(7, 11):
+            j.append(ln(dt.date(2026, m, 25), None, 100000))
+        return j
+
+    def test_gap_is_noted_on_the_first_row_only(self):
+        tax = mod("tax")
+        rows = tax.withholding(self.journal(70000), dt.date(2026, 11, 17), mode="반기")
+        self.assertIn(tax.WH_GAP_MARK + "장부 예수금 잔액 470,000원이 아직 안 낸 기간에 뗀 금액 400,000원보다 70,000원 많음", rows[0]["근거"])
+        self.assertFalse(any(tax.WH_GAP_MARK in r["근거"] for r in rows[1:]))
+
+    def test_no_gap_no_note(self):
+        tax = mod("tax")
+        rows = tax.withholding(self.journal(0), dt.date(2026, 11, 17), mode="반기")
+        self.assertTrue(rows)
+        self.assertFalse(any(tax.WH_GAP_MARK in r["근거"] for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
