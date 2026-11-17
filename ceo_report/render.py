@@ -781,6 +781,9 @@ def _left_out_lines(R):
             top = D["unscheduled"][0]
             out.append("장부에 있는 미지급금 중 지급일이 일정에 없는 것 %s (%d곳 · 가장 큰 곳 %s %s · 장부 %s 기준)" % (
                 won(D["unscheduled_total"]), len(D["unscheduled"]), top["vendor"], won(top["left"]), D["date"] or "-"))
+            if D.get("stale_total"):   # 사용자 결정 2026-11-17: 오래 그대로인 잔액은 따로 보인다
+                out.append("이 중 6달 넘게 그대로인 잔액 %s (%d곳) — 실제로 줄 돈인지, 장부 정리가 빠진 것인지 확인 필요"
+                           % (won(D["stale_total"]), D["stale_n"]))
         if D.get("over"):
             top = D["over"][0]
             out.append("미지급금 지급 예정이 장부 잔액보다 큰 거래처 %s (%d곳 · 가장 큰 곳 %s 예정 %s · 장부 %s) — 이중 계상이거나 장부에 아직 없는 빚" % (
@@ -926,6 +929,17 @@ def _avail_table(R, mode="mgmt"):
         h.append(_mg(mode, "<div class='wsub'>장부 미지급금 중 지급일이 일정에 없는 것 (장부 %s 기준 · %d곳 · %s)</div>"
                      "<table class='pt xr'><thead><tr><th>거래처</th><th>장부 미지급금</th><th>일정에 있는 지급</th><th>일정에 없는 금액</th></tr></thead>"
                      "<tbody>%s</tbody></table>" % (esc(D["date"] or "-"), len(D["unscheduled"]), esc(won(D["unscheduled_total"])), rows)))
+        old = [r for r in D["unscheduled"] if r.get("stale")]
+        if old:   # 사용자 결정 2026-11-17: 6달 넘게 그대로인 잔액은 따로 (지금 줄 돈으로 단정하지 않는다)
+            rows = "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+                esc("%s [%s]" % (r["vendor"], r["vcode"]) if r.get("vcode") else r["vendor"]), esc(won(r["left"])),
+                esc(won(r["stale"]))) for r in old)
+            h.append(_mg(mode, "<div class='wsub'>위 표 가운데 6달 넘게 그대로인 잔액 — 확인 필요 (%d곳 · %s)</div>"
+                         "<table class='pt xr'><thead><tr><th>거래처</th><th>일정에 없는 금액</th><th>6달 넘게 그대로인 금액</th></tr></thead>"
+                         "<tbody>%s</tbody></table>"
+                         "<div class='note'>6달 동안 한 번도 이 금액 아래로 내려가지 않은 잔액입니다. 실제로 줄 돈이면 지급일을 일정에 넣고, "
+                         "이미 준 돈이면 장부에 지급 전표가 빠졌는지 확인하세요.</div>"
+                         % (len(old), esc(won(D["stale_total"])), rows)))
     h.append("</div>")
     return "".join(h)
 
@@ -1210,6 +1224,10 @@ def regular_kind(e, tax_of=None):
     else:
         k = (e.get("cat") or "").replace(" (장부 계산)", "")
     text = "%s %s %s" % (k, e.get("cat") or "", e.get("desc") or "")
+    # 법인지방소득세는 이름에 '소득세'·'지방소득'이 들어 있어 원천세로 묶였다 (1차 점검 자금-15·E3, 사용자 결정 2026-11-17
+    # '고치기': 월간 대표 보고 원천세 칸에 1,617,187원이 섞임). 세목이 법인세·법인지방소득세면 낱말을 보기 전에 가른다
+    if k in ("법인세", "법인지방소득세") or "법인지방소득세" in text:
+        return "기타 세금"
     for kind, words in REGULAR_KINDS:
         if k == kind or any(w in text for w in words):
             return kind
@@ -1265,6 +1283,12 @@ def _regular_table(R):
     if gaps:
         h.append("<div class='note mgx'>%s</div>" % esc("장부 계산이 일정보다 커서 차액을 더함: " + " · ".join(
             "%s %s 일정 %s → 장부 계산 %s" % (t["kind"], t["period"], won(t["matched"]["amount"]), won(t["amount"])) for t in gaps)))
+    from .tax import WH_GAP_MARK   # 사용자 결정 2026-11-17: 원천세 장부 잔액과 예상의 차이를 경영관리에 한 줄 (금액은 안 바꿈)
+    for t in R.get("tax") or []:
+        text = str(t.get("basis") or "")
+        if t.get("kind") == "원천세" and WH_GAP_MARK in text:
+            h.append("<div class='note mgx'>%s</div>" % esc("원천세: " + text.split(WH_GAP_MARK, 1)[1].split(" · ")[0]))
+            break
     return "".join(h)
 
 
@@ -1728,7 +1752,8 @@ def _nonop_rows(N, before, after):
     rows = [("+ 영업외 수익%s" % who(1), N["in"], "mut"), ("− 영업외 비용%s" % who(2), N["out"], "mut")]
     if N.get("dep") is not None:   # 감가상각비 예상: 연말에 한 번에 들어가므로 작년 금액으로 먼저 뺀다 (사용자 2026-11-04)
         rows.append(("− 감가상각비 (예상%s)" % N.get("dep_note", ""), N["dep"], "mut"))
-    # 대손충당금 예상은 세전 이익에서 빼지 않는다 (규칙 계산-08, 사용자 결정 d 2026-11-15): 법인세 예상 줄에 '쌓으면 세금 −X'로만
+    if N.get("bad"):   # 대손충당금 예상 (사용자 2026-11-17: 세무사 답과 상관없이 계산한 금액을 먼저 뺀다, 규칙 계산-08)
+        rows.append(("− 대손충당금 (예상%s)" % N.get("bad_note", ""), N["bad"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
     if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
         rows.append(("− 법인세·지방소득세 (지금까지 이익 기준 예상)", N["tax"], "mut"))
@@ -1849,7 +1874,7 @@ def _corp_row_mid(R, ym, kind="법인세"):
 def _corp_est(R, Y, ym):
     """법인세 예상 한 계산 (2026-11-14 P3·K1): 자금 일정의 법인세 줄과 같은 과세표준(감가상각·대손·세무조정 반영).
     그 줄이 이 보고 기간과 다르거나 없으면 이 표의 세전 이익으로 (세무조정 미반영). -> dict 또는 None (세전 이익 모름)."""
-    from .corptax import LOCAL_RATE, national
+    from .corptax import LOCAL_RATE, national, BAD_DEBT_HINT_RE
     from .tax import _workday
     import re
     row, upto = _corp_row_mid(R, ym)
@@ -1859,9 +1884,9 @@ def _corp_est(R, Y, ym):
         base = Y["nonop"]["pretax"] + (int(m.group(1).replace(",", "")) if m else 0)
     else:
         base = row["base"] if row and row.get("base") is not None else Y["nonop"]["pretax"]
-        old = re.search(r"− 대손충당금 예상 ([\d,]+)", (row or {}).get("basis") or "") if row and row.get("base") is not None else None
-        if old:   # 11/15 전 변환 파일: 과세표준에서 뺀 대손충당금을 되돌린다 (계산-08, 다시 변환하면 이 줄은 필요 없음)
-            base += int(old.group(1).replace(",", ""))
+        hint = re.search(BAD_DEBT_HINT_RE, (row or {}).get("basis") or "") if row and row.get("base") is not None else None
+        if hint:   # 11/15~11/17 변환 파일: 과세표준에 대손충당금이 안 빠져 있음 → 여기서 뺀다 (다시 변환하면 이 줄은 필요 없음)
+            base -= int(hint.group(1).replace(",", ""))
     nat, corp, C = national(base, ym[:4], R.get("taxret_dir"))
     if corp is None:
         return None
@@ -1888,31 +1913,21 @@ def _tax_into(R, Y, ym):
 
 
 def _bad_into(R, T, ym):
-    """대손충당금 예상 (사용자 2026-11-12) → 세전 이익에서 빼지 않고 '쌓으면 세금 −X'만 남긴다 (규칙 계산-08, 결정 d 2026-11-15:
-    세무사 답 전에는 장부에 넣은 비용만 뺌). 변환이 세금예상.csv 법인세 줄 근거에 적은 금액. -> N['bad_hint'] = (금액, 줄어드는 세금 또는 None)."""
+    """대손충당금 예상 (사용자 2026-11-12, 2026-11-17: 세무사 답과 상관없이 먼저 뺀다 — 규칙 계산-08): 누적 결산 줄에 넣고 세전 이익에서 뺀다.
+    변환이 세금예상.csv 법인세 줄 근거에 적은 금액 ('− 대손충당금 예상 X', 11/15~11/17 파일은 '대손충당금 예상 X원은 … 빼지 않음')."""
     import re
     from .corptax import BAD_DEBT_HINT_RE
     row = _corp_row_mid(R, ym)[0]
     basis = (row or {}).get("basis") or ""   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
-    m = re.search(BAD_DEBT_HINT_RE, basis)
-    if m:
-        amount, saving = int(m.group(1).replace(",", "")), None if m.group(2) == "모름" else int(m.group(2).replace(",", ""))
-    else:
-        old = re.search(r"− 대손충당금 예상 ([\d,]+)", basis)   # 11/15 전 변환 파일 (과세표준에서 뺐던 글)
-        amount, saving = (int(old.group(1).replace(",", "")) if old else None), None
-    if amount and T["nonop"].get("pretax") is not None:
-        T["nonop"]["bad_hint"] = (amount, saving)
-
-
-def _bad_hint_text(R, N, E, ym):
-    """'대손충당금 예상 A원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −S원)' 또는 ''."""
-    from .corptax import bad_debt_hint, bad_debt_saving
-    if not N.get("bad_hint"):
-        return ""
-    amount, saving = N["bad_hint"]
-    if saving is None and E is not None:
-        saving = bad_debt_saving(E["base"], amount, ym[:4], R.get("taxret_dir"))
-    return bad_debt_hint(amount, saving)
+    m = re.search(r"− 대손충당금 예상 ([\d,]+)", basis) or re.search(BAD_DEBT_HINT_RE, basis)
+    amount = int(m.group(1).replace(",", "")) if m else None
+    if not amount or T["nonop"].get("pretax") is None:
+        return
+    N = T["nonop"]
+    N["bad"] = amount
+    N["pretax"] -= amount
+    note = basis.split("대손충당금 = ")[-1].split(" · ")[0] if "대손충당금 = " in basis else ""
+    N["bad_note"] = ", " + note if note else ""
 
 
 def _dep_into(R, T, ytd):
@@ -1953,9 +1968,8 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
          "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
          % (W(N["pretax"]), W(base), W(nat), W(prepaid, "미확인"), W(pay), W(local), W(total))]
     d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ⑨에 연간 금액 입력)"
-    hint = _bad_hint_text(R, N, E, ym)
-    if hint:   # 계산-08: 빼지 않고 따로 (결정 d)
-        d_txt += " · " + hint
+    if N.get("bad"):   # 계산-08 (사용자 2026-11-17): 대손충당금 예상도 뺌
+        d_txt += ", 대손충당금 예상 뺀 값"
     d_txt += (" + 세무조정 예상 (자금 일정과 같은 계산)" if base != N["pretax"] else " (자금 일정과 같은 계산)") if E["same"] \
         else " · 세무조정 미반영 (자금 일정의 법인세 줄이 이 기간 것이 아님 — 자료 변환 필요)"
     if E.get("upto"):   # 월 중간: 세전 이익은 오늘까지, 세무조정·대손은 지난달까지 (자금 일정 금액과는 조금 다를 수 있음)
@@ -1985,9 +1999,7 @@ def _corptax_line(R, Y, ym):
         nat = "%s %s (기납부 미확인, %s)" % (lab, won(E["nat"]), d2s(E["due"]))
     else:
         nat = "%s %s − 중간예납 등 기납부 %s = %s (%s)" % (lab, won(E["nat"]), won(E["prepaid"]), won(E["pay"]), d2s(E["due"]))
-    hint = _bad_hint_text(R, Y["nonop"], E, ym)   # 계산-08 (결정 d): 대손충당금은 빼지 않고 '쌓으면 세금 −X'만 (두 판 같게)
-    return "<div class='note'>%s</div>" % esc(head + nat + " · 지방소득세 %s (%s)" % (won(E["local"]), d2s(E["local_due"]))
-                                              + (" · " + hint if hint else ""))
+    return "<div class='note'>%s</div>" % esc(head + nat + " · 지방소득세 %s (%s)" % (won(E["local"]), d2s(E["local_due"])))
 
 
 def _person_table(R, src, dept, ym, basis):
@@ -2120,6 +2132,8 @@ def _ytd_strip(Y, ym):
     parts = ["영업외 손익 %s%s" % ("+" if nn >= 0 else "", won(nn))]
     if N.get("dep") is not None:
         parts.append("감가상각비 −%s" % won(N["dep"]))
+    if N.get("bad"):
+        parts.append("대손충당금 −%s" % won(N["bad"]))
     cards = [("%s 매출" % per, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))),
              ("%s 영업이익" % per, W(c["net"], "확인 필요"), "영업이익률 %s" % esc(pct(c["net"], c["revenue"]))),
              ("%s 세전 이익" % per, W(N["pretax"], "확인 필요"), esc(" · ".join(parts)))]

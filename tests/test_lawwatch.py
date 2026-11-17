@@ -78,3 +78,73 @@ class Check(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRefusedAnswer1117(unittest.TestCase):
+    """2026-11-17 PC 확인: Referer 없이 부르면 200 + '사용자 정보 검증에 실패' JSON. 실패로 알리고, 머리글엔 Referer 를 넣는다."""
+
+    def test_refused_json_is_an_error(self):
+        import io
+        from ceo_report import lawwatch
+
+        class R(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        body = '{ "result" : "사용자 정보 검증에 실패하였습니다.", "msg" : "IP주소 및 도메인주소를 등록해 주세요." }'.encode("utf-8")
+        with self.assertRaises(ValueError) as c:
+            lawwatch._get("https://x", opener=lambda url, timeout=None: R(body))
+        self.assertIn("사용자 정보 검증에 실패", str(c.exception))
+
+    def test_referer_header(self):
+        from ceo_report import lawwatch
+        self.assertEqual(lawwatch.HEADERS["Referer"], "https://www.law.go.kr/")
+
+
+class PcFindings1117(unittest.TestCase):
+    """2026-11-17 새 exe로 PC에서 받아 본 결과: 17개 중 14개 받음, 3개 TypeError, 확인한 값 5개가 '값 안 보임'으로 막힘."""
+
+    def test_nested_list_text(self):
+        from ceo_report import lawwatch
+        o = {"목": [{"목내용": [["가. 중소기업의 경우", "│ 증가 인원 수 × 400만원 │"]]}]}
+        self.assertIn("400만원", lawwatch._texts(o))
+        self.assertIn(4_000_000, lawwatch.numbers(lawwatch._texts(o))["원"])
+
+    def test_cheon_baek_amount(self):
+        from ceo_report import lawwatch
+        self.assertEqual(lawwatch.kor_amount("1천5백만원"), 15_000_000)
+        self.assertEqual(lawwatch.kor_amount("39억8천만원"), 3_980_000_000)
+
+    def test_confirmed_value_stays_usable_when_only_not_seen(self):
+        import json, os, tempfile
+        from ceo_report import lawwatch, taxlaw
+        d = tempfile.mkdtemp()
+        taxlaw.confirm(d, 2026, {"국민연금요율": "9.5%"}, "세무사", today=dt.date(2026, 11, 13))
+        S = {"oc": "x", "last": "", "items": {"국민연금법 88조": {"hash": "h", "text": "1천분의 65", "시행일자": "20261020", "공포일자": "",
+             "keys": ["국민연금요율"], "seen": "2026-11-17", "flag": True, "changed": "", "miss": ["국민연금 요율"]}}}
+        with open(os.path.join(d, lawwatch.FILE), "w", encoding="utf-8") as f:
+            json.dump(S, f, ensure_ascii=False)
+        self.assertTrue(taxlaw.value(d, 2026, "국민연금요율", today=dt.date(2026, 11, 17))[1])   # 부칙에 있는 단계 인상값 → 그대로 씀
+        S["items"]["국민연금법 88조"]["changed"] = "2026-11-17"
+        with open(os.path.join(d, lawwatch.FILE), "w", encoding="utf-8") as f:
+            json.dump(S, f, ensure_ascii=False)
+        self.assertFalse(taxlaw.value(d, 2026, "국민연금요율", today=dt.date(2026, 11, 17))[1])  # 확인 뒤 실제 개정 → 다시 확인
+
+    def test_min_wage_notice_pick(self):
+        from ceo_report import lawwatch
+        body = {"AdmRulSearch": {"admrul": [
+            {"행정규칙명": "통계작성의 변경승인(협의) 고시(최저임금적용효과에관한실태조사)", "행정규칙일련번호": "1", "시행일자": "20261115"},
+            {"행정규칙명": "2027년 적용 최저임금안 고시", "행정규칙일련번호": "2", "시행일자": "20260805"},
+            {"행정규칙명": "2026년 적용 최저임금 고시", "행정규칙일련번호": "3", "시행일자": "20260101"}]}}
+        import io
+
+        class R(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        got = lawwatch.find_admrul("x", "최저임금", opener=lambda url, timeout=None: R(json.dumps(body).encode("utf-8")), ref="20261117")
+        self.assertEqual(got["mst"], "3")

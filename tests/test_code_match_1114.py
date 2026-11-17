@@ -128,6 +128,73 @@ class TestReplacedCard(unittest.TestCase):
         self.assertFalse(any("롯데_7344" in r["근거"] for r in rows), [r["근거"] for r in rows])
 
 
+class TestPrepaidCardKeepsItsOwnMoney(unittest.TestCase):
+    """2026-11-17 사용자 "카드대금이 안 맞는데, 선결제도 반영했어?": 한도 증액 카드(롯데_1842)에 미리 낸 돈(사용 전표 전)이
+    다른 롯데 카드(7972)의 결제를 지워 주간 보고에서 롯데 11/16 결제가 빠졌다. 결제는 카드 번호마다 그 카드 사용에서만 지운다."""
+
+    def test_prepaid_limit_card_does_not_wipe_other_card_bill(self):
+        K = 10000
+        bank = lambda d, no, amt, v: [ln(d, no, "26200", debit=amt, vendor=v), ln(d, no, "10300", credit=amt)]
+        j = [ln(D(2026, 10, 10), "u1", "26200", credit=1057 * K, vendor="롯데_7972"),
+             *bank(D(2026, 10, 29), "p1", 626 * K, "롯데_7972"),                       # 7972 선결제
+             *bank(D(2026, 10, 23), "p2", 4400 * K, "롯데_1842"),                      # 1842 대관료 선결제 (사용 전표는 아직 일부만)
+             ln(D(2026, 10, 27), "u2", "26200", credit=3300 * K, vendor="롯데_1842")]
+        rows = tax.cards(j, D(2026, 11, 13), {"롯데": (14, 1)})
+        got = [(r["납부예정일"], r["금액"], r["상태"]) for r in rows]
+        self.assertEqual(got, [("2026-11-16", str(431 * K), "확정(전표)")])
+
+    def test_prepaid_money_still_clears_the_same_card_later_use(self):
+        K = 10000
+        j = [ln(D(2026, 10, 23), "p", "26200", debit=4400 * K, vendor="롯데_1842"), ln(D(2026, 10, 23), "p", "10300", credit=4400 * K),
+             ln(D(2026, 10, 27), "u", "26200", credit=3300 * K, vendor="롯데_1842"),
+             ln(D(2026, 11, 3), "u2", "26200", credit=1100 * K, vendor="롯데_1842")]
+        self.assertEqual(tax.cards(j, D(2026, 11, 13), {"롯데": (14, 1)}), [])
+
+
+class TestCardStaleLeftover(unittest.TestCase):
+    """결정 카드 2026-11-17 '출금에서 빼고 확인할 것으로': 지난 결제분까지 장부 사용·결제가 딱 안 맞고 남은 끝전은 출금에 넣지 않는다."""
+    K = 10000
+
+    def bank(self, d, no, amt, v):
+        return [ln(d, no, "26200", debit=amt, vendor=v), ln(d, no, "10300", credit=amt)]
+
+    def test_old_unpaid_leftover_is_not_a_payment(self):
+        K = self.K
+        j = [ln(D(2026, 8, 10), "u8", "26200", credit=500 * K, vendor="신한_1278"),
+             *self.bank(D(2026, 9, 15), "p8", 300 * K, "신한_1278"),        # 8월분을 덜 냄 → 200만 끝전
+             ln(D(2026, 9, 10), "u9", "26200", credit=400 * K, vendor="신한_1278"),
+             *self.bank(D(2026, 10, 15), "p9", 400 * K, "신한_1278"),
+             ln(D(2026, 10, 10), "u10", "26200", credit=60 * K, vendor="신한_1278")]
+        stale = []
+        rows = tax.cards(j, D(2026, 11, 17), {"신한": (15, 1)}, stale=stale)
+        self.assertEqual([(r["납부예정일"], r["금액"]) for r in rows if r["상태"] == "확정(전표)"], [("2026-11-16", str(60 * K))])
+        self.assertEqual([(c, a) for c, a, _ in stale], [("신한_1278", 200 * K)])
+        note = tax.card_stale_note(stale)
+        self.assertTrue(note.startswith(tax.CARD_STALE_MARK))
+        self.assertIn("신한_1278 +2,000,000원(덜 낸 것으로 보임)", note)
+
+    def test_old_overpaid_leftover_does_not_shrink_this_bill(self):
+        """실제 신한_5860: 예전부터 더 낸 것으로 남은 −142만이 10월분 결제를 줄였음."""
+        K = self.K
+        j = [ln(D(2026, 8, 10), "u8", "26200", credit=500 * K, vendor="신한_5860"),
+             *self.bank(D(2026, 9, 15), "p8", 650 * K, "신한_5860"),        # 예전에 더 냄 → −150만 끝전
+             ln(D(2026, 9, 10), "u9", "26200", credit=700 * K, vendor="신한_5860"),
+             *self.bank(D(2026, 10, 2), "pp", 300 * K, "신한_5860"),        # 9월분 선결제
+             *self.bank(D(2026, 10, 6), "p9", 400 * K, "신한_5860"),
+             ln(D(2026, 10, 10), "u10", "26200", credit=690 * K, vendor="신한_5860"),
+             *self.bank(D(2026, 11, 10), "pq", 300 * K, "신한_5860")]       # 10월분 선결제
+        stale = []
+        rows = tax.cards(j, D(2026, 11, 17), {"신한": (15, 1)}, stale=stale)
+        self.assertEqual([(r["납부예정일"], r["금액"]) for r in rows if r["상태"] == "확정(전표)"], [("2026-11-16", str(390 * K))])
+        self.assertEqual([(c, a) for c, a, _ in stale], [("신한_5860", -150 * K)])
+
+    def test_stale_note_goes_to_checklist(self):
+        from ceo_report import checklist
+        items = checklist.convert_items([], [], [tax.card_stale_note([("신한_1278", 2003864, D(2026, 11, 16))])])
+        self.assertEqual(len(items), 1)
+        self.assertIn("끝전", items[0]["title"])
+
+
 class TestScheduleCode(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
