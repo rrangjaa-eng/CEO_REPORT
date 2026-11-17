@@ -148,6 +148,10 @@ def convert_items(tables, cross, notes):
             out.append({"id": "카드|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
                         "title": "카드 전표를 아직 넣지 않은 달이 있음 (빠진 카드는 최근 3달 평균으로 예상)",
                         "detail": n.replace("[확인] ", ""), "choices": ["명세서 오면 확정 금액 넣음", "확인함"]})
+        if n.startswith("[확인] 카드 장부 끝전"):   # 결정 카드 2026-11-17
+            out.append({"id": "카드끝전|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
+                        "title": "카드별로 장부에 오래 남은 끝전이 있음 (출금에는 안 넣음)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
         if n.startswith("[확인] 원천세 장부·위하고") or n.startswith("[확인] 4대보험 직원분 장부·위하고"):   # 제안 3 (2026-11-14)
             out.append({"id": "원천대조|%s" % _h(n), "kind": "세금 대조", "date": "", "amount": None, "vendor": "",
                         "title": "장부 %s가 위하고 화면과 다름" % ("원천세" if "원천세" in n[:12] else "4대보험 직원분"),
@@ -169,7 +173,7 @@ def convert_items(tables, cross, notes):
 
 
 _HANDLED = ("[확인] 카드 전표 입력 전", "[확인] 원천세 장부·위하고", "[확인] 4대보험 직원분 장부·위하고", "[확인] 지급요청 짝짓기",
-            "[확인] 통장 줄만 있는 전표")
+            "[확인] 통장 줄만 있는 전표", "[확인] 카드 장부 끝전")
 
 
 def save_convert_items(input_dir, items, now=None, trace=None):

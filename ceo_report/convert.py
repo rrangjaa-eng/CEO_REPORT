@@ -1007,11 +1007,12 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     scr_notes, scr = screen_tax.compare(books.journal, wehago_raw.files(wehago_dir), asof, cfg["withholding_codes"],
                                         cfg["withholding_vendors"], cfg["insurance_vendors"]) if wehago_dir else ([], {})
     card_real, card_upto = screen_tax.card_usage(wehago_dir) if wehago_dir else ({}, None)
+    card_stale = []
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
         tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
-        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto) + tax.deposits(books.journal, asof)
+        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto, stale=card_stale) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
     manual = corptax.read(input_dir) if input_dir else {}
     ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
@@ -1030,6 +1031,8 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
         notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
                      % ", ".join(r["대상기간"].replace(" (전표 입력 전 추정)", "") for r in thin))
+    if card_stale:   # 결정 카드 2026-11-17: 지난 결제분에 남은 카드 끝전은 출금에서 빼고 확인할 것으로
+        notes.append(tax.card_stale_note(card_stale))
     notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
     return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
