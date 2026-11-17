@@ -87,6 +87,7 @@ class Y1UnclosedLastYear(unittest.TestCase):
         self.assertEqual((y25["상태"], y25["당기순이익"]), ("예상", 100))
         self.assertEqual(y26["전기이월"], 100)
         self.assertEqual(y26["미처분"], 150)
+        self.assertEqual(y26.get("전기이월상태"), "예상")   # 앞 해가 예상이면 이월도 '확정'이라 하지 않음
 
 
 if __name__ == "__main__":

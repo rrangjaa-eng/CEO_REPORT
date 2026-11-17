@@ -174,6 +174,9 @@ def statements(years, first_year, est):
         else:
             open_, open_known = (carry if carry_known else None), carry_known
             st["why"]["전기이월"] = "%d년 계산서의 차기이월" % (y - 1) if carry_known else "앞 해 금액 모름"
+            if carry_known and out and out[-1]["상태"] == "예상":   # Y1: 앞 해가 결산 전 예상이면 이월도 예상
+                st["전기이월상태"] = "예상"
+                st["why"]["전기이월"] += " (%d년 결산 전 예상)" % (y - 1)
         if v.get("결산있음"):
             ni, ni_state = v["결산이익"], "확정"
             st["why"]["당기순이익"] = "%d년 12월 결산 전표에서 미처분이익잉여금으로 옮긴 금액" % y
@@ -235,7 +238,8 @@ def build_table(books, cfg, asof, wehago_dir=None, input_dir=None):
             if k in EXTRA and k not in st:
                 continue
             v = st.get(k)
-            state = "모름" if v is None else (st["상태"] if k in ("당기순이익", "미처분", "차기이월") else "확정")
+            state = "모름" if v is None else (st["상태"] if k in ("당기순이익", "미처분", "차기이월")
+                                              else st.get("전기이월상태", "확정") if k == "전기이월" else "확정")
             why = ("%d년 말 잔액 (분개장 누계)" % st["year"]) if k in ("자본금", "이익준비금잔액") else \
                 ("%d년 분개장 차변 합 (법인세 공제 후보 판단용)" % st["year"]) if k in ("장비구입", "연구개발비") else st["why"].get(k) or (st["why"]["처분"] if k in ("이익준비금", "배당금", "임의적립금", "이입액", "처분액") else "")
             rows.append(dict(zip(KEYS, [str(st["year"]), k, "" if v is None else str(int(v)), state, why])))
