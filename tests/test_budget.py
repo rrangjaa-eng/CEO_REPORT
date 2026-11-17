@@ -124,7 +124,7 @@ class Compute(Base):
         lc = corp_tax(B["L"]["pre"], 2026)
         self.assertIn(("3/31", lc - 4_000_000), names)
         self.assertIn(("4/30", int(lc * 0.1)), names)
-        self.assertIn(("8/31", budget._r4(lc / 2.0)), names)    # 중간예납 = 산출세액 ÷ 2
+        self.assertIn(("8/31", budget._r4(int(lc * 6 / 12))), names)    # 중간예납 = 감면 뒤 법인세 × 6/12 (감면 없는 예시 자료라 산출세액과 같음, N2 11/17 밤)
 
     def test_render_both(self):
         B = self.B()

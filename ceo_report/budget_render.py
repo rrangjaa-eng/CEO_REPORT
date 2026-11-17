@@ -209,7 +209,7 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
           ("감가상각비", "dep", "ind", "%d년 예상 (%s)" % (base, B["dep_src"] or "모름")), ("그 밖의 판관비", "sga", "ind", "계정별 %d년 실적 × 인원·물가" % base),
           ("영업이익", "op", "tot", ""), ("영업외 수익", "nin", "ind", "이자수익만 (지원금 등은 확정 전이라 뺌)"),
           ("영업외 비용", "nout", "ind", "%d년 실적을 1년으로 늘림" % base), ("세전 이익", "pre", "tot", ""),
-          ("법인세 (지방세 포함, 예상)", "tax", "ind", "세전 이익 기준 세율표, 세무조정 없음")]
+          ("법인세 (지방세 포함, 예상)", "tax", "ind", "월간 법인세 예상과 같은 계산 (세무조정·대손충당금·감면·최저한세), 내년은 대손충당금 안 뺌")]
     for nm, k, cls, how in PL:
         a, b = L[k], Y[k]
         h.append("<tr class='%s'><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>%s</tr>"

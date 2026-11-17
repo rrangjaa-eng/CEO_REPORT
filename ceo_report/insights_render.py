@@ -4,6 +4,7 @@
 팀장 보고: 그 팀 것만 — 8 이익 흐름 · 4 예산 80%·100%·적자 · 7 계산서 짝 · 6 미수금 나이 · 11 목표 달성률.
 경영관리 보고: 13가지 모두.
 """
+import datetime as dt
 import html
 
 from . import insights
@@ -122,9 +123,20 @@ def ceo_issue(D, top=3, compact=False):
         return ("<div class='ins-line'>%s: 잔액·지급 자료가 없어 발행이 늦을 때 자금이 모자라는지 판단 못 함 "
                 "<b class='ins-neg'>(확인 필요)</b>.</div>" % what)
     if not D["short"]:
-        return ("<div class='ins-line'>%s: 예상 입금·지급까지 넣은 지금 일정으로는 %s(%s)까지 잔액이 늘 남겨 둘 돈 아래로 "
-                "내려가지 않습니다 (자금만 본 것 · 세금계산서 발행 기한은 따로 · 작성일 뒤 %d일 입금 기준).</div>"
+        line = ("%s: 예상 입금·지급까지 넣은 지금 일정으로는 %s(%s)까지 잔액이 늘 남겨 둘 돈 아래로 "
+                "내려가지 않습니다 (자금만 본 것 · 세금계산서 발행 기한은 따로 · 작성일 뒤 %d일 입금 기준)."
                 % (what, D["horizon"].strftime("%Y-%m-%d"), "자금계획서 끝" if D.get("horizon_plan") else "일정 끝", D["days"]))
+        fs = D.get("firm_short")
+        if fs:   # N3 (2026-11-17 밤): 예상 입금이 안 들어오면(확정된 돈과 급여·세금 예상만) 모자라는 날 — 1장 '최저 계산 잔액'과 같은 기준
+            fday, fgap, fwday, fwgap = fs
+            dl = fday - dt.timedelta(days=D["days"])
+            pay = D.get("pay_if_today")
+            late = pay is not None and dl < pay - dt.timedelta(days=D["days"])
+            line += (" <b class='ins-neg'>다만 예상 입금이 늦으면</b>(확정된 돈과 급여·세금 같은 정기 지출만 보면) %s에 %s원 모자랍니다%s — %s"
+                     % (_md(fday), W(fgap), "" if fwday == fday else " (가장 모자란 날 %s %s원)" % (_md(fwday), W(fwgap)),
+                        ("이 계산서는 %s까지 발행했어야 그 전에 들어옵니다 · 오늘 발행해도 %s 입금." % (_md(dl), _md(pay))) if late
+                        else "이 계산서를 %s까지 발행해야 그 전에 들어옵니다." % _md(dl)))
+        return "<div class='ins-line'>%s</div>" % line
     day, gap, wday, wgap = D["short"]
     head = ("예상 입금·지급까지 넣으면 <b>%s</b>에 잔액이 늘 남겨 둘 돈보다 %s원 모자랍니다%s. 작성일 뒤 %d일 입금이라 "
             % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))

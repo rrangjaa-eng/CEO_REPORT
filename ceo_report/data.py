@@ -365,6 +365,9 @@ def load(folder):
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
                               "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None,
+                              # N2 (2026-11-17 밤): 예산 법인세도 월간과 같은 과세표준으로 — 대손충당금·세무조정 칸도 읽는다
+                              "bad_debt": num(r.get("대손충당금"), iss, r, "대손충당금") if (r.get("대손충당금") or "").strip() else None,
+                              "adj": num(r.get("세무조정"), iss, r, "세무조정") if (r.get("세무조정") or "").strip() else None,
                               # A4 (2026-11-17): 분납할 몫 (회사 선택, 법인세 줄만). 금액 칸은 전체, 자금 일정만 둘로 나눈다
                               "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None})
 

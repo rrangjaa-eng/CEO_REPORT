@@ -24,6 +24,7 @@ from collections import OrderedDict
 
 from .calc import year_revenue_left
 from .corptax import corp_tax, depreciation
+from . import corptax as _corptax
 from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 VALUES_FILE = "예산값.csv"
@@ -380,6 +381,35 @@ def _loan_plan(input_dir, debts, asof, until):
     return pays, notes
 
 
+def _tax_book(taxrows, base):
+    """N2 (2026-11-17 밤): 세금예상.csv 의 올해 법인세 본 줄('YYYY년 (1월~M월 장부 기준)')에서 월간 법인세 예상과 같은 재료를 꺼낸다.
+    -> {'m': 장부 달 수, 'adj': 세무조정, 'bad_debt': 대손충당금, 'prepaid': 선납 법인세, 'local_prepaid': 원천징수된 지방소득세} 또는 None."""
+    head = "%d년 (1월~" % base
+    main = next((t for t in taxrows if t.get("kind") == "법인세" and str(t.get("period") or "").startswith(head)), None)
+    if not main:
+        return None
+    m = re.search(r"\(1월~(\d+)월", str(main.get("period") or ""))
+    local = next((t for t in taxrows if t.get("kind") == "법인지방소득세" and str(t.get("period") or "").startswith(head)), None)
+    local_prepaid = 0
+    if main.get("calc") is not None and local and local.get("amount") is not None:
+        local_prepaid = max(int(main["calc"] * LOCAL) - local["amount"], 0)
+    return {"m": int(m.group(1)) if m else 12, "adj": main.get("adj") or 0, "bad_debt": main.get("bad_debt") or 0,
+            "prepaid": main.get("prepaid"), "local_prepaid": local_prepaid}
+
+
+def _tax_calc(pre, year, input_dir, adj=0, bad_debt=0):
+    """세전 이익 -> 월간 법인세 예상과 같은 계산 (corptax.national: 작년 신고서 감면·'받음' 공제·최저한세·농특세).
+    과세표준 = 세전 이익 − 대손충당금 예상 + 세무조정. -> dict 또는 None.
+    total = 낼 법인세(감면 뒤 + 농특세) + 지방소득세(산출세액 × 10%%), final = 감면 뒤 법인세(농특세 전, 중간예납 기준)."""
+    if pre is None:
+        return None
+    tb = max(int(pre) - int(bad_debt or 0) + int(adj or 0), 0)
+    nat, corp, C = _corptax.national(tb, str(year), input_dir)
+    local = int(corp * LOCAL)
+    return {"base": tb, "corp": corp, "nat": nat, "final": C["final"] if C else corp, "local": local, "total": nat + local,
+            "credits": bool(C), "adj": int(adj or 0), "bad_debt": int(bad_debt or 0)}
+
+
 def compute(d, values, year, asof, settings=None, input_dir=None):
     """-> 예산 dict B. values = read_values(). year = 예산 연도(정수).
     input_dir 가 있으면 급여·인원은 위하고 급여 화면·사원등록 기준 (_wehago_pay), 없으면 장부 부서비용."""
@@ -609,16 +639,19 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
          "nin": sum(nin_m), "nout": sum(nout_m)}
     Y["op"] = None if not known else Y["gp"] - Y["sal"] - Y["dep"] - Y["sga"]
     Y["pre"] = None if Y["op"] is None else Y["op"] + Y["nin"] - Y["nout"]
-    ct = corp_tax(Y["pre"], year)
-    Y["tax"] = None if ct is None else ct + int(ct * LOCAL)
+    # N2 (2026-11-17 밤): 예산 법인세도 월간·연간·배당·기획본부와 같은 계산 (예전: 세전 이익에 세율표만 — 세무조정·감면·최저한세 없음)
+    TB = _tax_book(getattr(d, "tax", None) or [], base)
+    adj_y = 0 if not TB else int(round(TB["adj"] * 12.0 / max(TB["m"], 1)))   # 세무조정(승용차 한도 초과 등)은 달마다 쌓여 1년으로 늘림
+    YT = _tax_calc(Y["pre"], year, input_dir, adj_y, 0)   # 내년 대손충당금은 모름 → 빼지 않음 (세금이 적게 보이지 않게)
+    Y["tax"] = None if YT is None else YT["total"]
     # 올해 (실적 + 예상)
     base_dep = D["annual"]
     L = {"rev": base_rev, "gp": base_gp, "cogs": base_rev - base_gp, "sal": sal_base, "dep": base_dep, "sga": sga_base,
          "nin": nin_base_y, "nout": nout_base_y}
     L["op"] = None if None in (sal_base, base_dep) else L["gp"] - L["sal"] - L["dep"] - L["sga"]
     L["pre"] = None if L["op"] is None else L["op"] + L["nin"] - L["nout"]
-    lc = corp_tax(L["pre"], base)
-    L["tax"] = None if lc is None else lc + int(lc * LOCAL)
+    LT = _tax_calc(L["pre"], base, input_dir, adj_y, TB["bad_debt"] if TB else 0)
+    L["tax"] = None if LT is None else LT["total"]
 
     # ───── 자금 ─────
     bals = [b for b in getattr(d, "balances", []) if b.get("balance") is not None and b.get("date")]
@@ -666,28 +699,37 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     # 연말 예상 이익, 지급 일정은 세금예상.csv 의 지금까지 이익이라 같은 예산 안에서 1,001만 달랐음). 기납부(중간예납)는
     # 세금예상.csv 의 값이 있으면 뺀다. 결산·세무조정 뒤 바뀔 수 있으므로 '예상'으로 적는다.
     corp_rows = [t for t in taxrows if t["kind"] == "법인세" and t.get("due") and t["due"].year == year]
-    prepaid = corp_rows[0].get("prepaid") if corp_rows else None
-    calc_tax = lc
-    if lc is not None:
-        corp_pay = max(lc - (prepaid or 0), 0)
+    prepaid = TB["prepaid"] if TB and TB["prepaid"] is not None else (corp_rows[0].get("prepaid") if corp_rows else None)
+    if LT is not None:
+        corp_pay = max(LT["nat"] - (prepaid or 0), 0)
         from . import choices, corptax as _ct   # A4 (2026-11-17): 회사가 분납을 골랐으면 3/31 과 5/31 로 나눔
         inst = _ct.installable(corp_pay) if input_dir and choices.installment(input_dir) else 0
         add_tax(3, "3/31", "법인세 (%d년분)" % base, corp_pay - inst,
-                "%d년 연말 예상 세전 이익 기준 산출세액 %s%s%s" % (base, format(lc, ","),
+                "%d년 연말 예상 과세표준 %s → 낼 법인세 %s%s%s%s" % (base, format(LT["base"], ","), format(LT["nat"], ","),
+                                                     " (감면·공제 뒤, 월간과 같은 계산)" if LT["credits"] else " (월간과 같은 계산)",
                                                      " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)",
                                                      " − 분납 %s (5/31)" % format(inst, ",") if inst else ""),
                 "예산 계산 (예상)")
         if inst:
             add_tax(5, "5/31", "법인세 분납분 (%d년분)" % base, inst, "분납함(회사 선택): 법인세법 64조 중소기업 2개월", "예산 계산 (예상)")
-        add_tax(4, "4/30", "지방소득세 (%d년분)" % base, int(lc * LOCAL), "법인세 산출세액 × 10%", "예산 계산 (예상)")
+        lp = TB["local_prepaid"] if TB else 0
+        add_tax(4, "4/30", "지방소득세 (%d년분)" % base, max(LT["local"] - lp, 0),
+                "법인세 산출세액 %s × 10%%%s" % (format(LT["corp"], ","), " − 원천징수된 지방소득세 %s" % format(lp, ",") if lp else ""),
+                "예산 계산 (예상)")
     sga_vat_q = _r4(VAT * sum(x["budget"] for x in SGA if x["basis"] != "인원") / 4.0)
     for q in range(3):
         s_ = slice(q * 3, q * 3 + 3)
         amt = max(_r4(VAT * sum(gp[s_]) - sga_vat_q), 0)
         add_tax(q * 3 + 4, "%d/25" % (q * 3 + 4), "부가세 (%d년 %d~%d월)" % (year, q * 3 + 1, q * 3 + 3), amt,
                 "(매출 − 매입) 예산 × 10% − 판관비 매입세액", "예산 계산")
-    if calc_tax:
-        add_tax(8, "8/31", "법인세 중간예납 (%d년분)" % year, _r4(calc_tax / 2.0), "%d년 산출세액 ÷ 2" % base, "예산 계산")
+    # 중간예납 = (작년 감면 뒤 법인세 − 원천징수 등) × 6/12, 50만 원 미만이면 안 냄 (법인세법 63조·63조의2, 월간 일정과 같은 계산 corptax.carry_rows)
+    if LT is not None:
+        w = 0   # 올해 이자 원천징수 법인세는 예산에서 따로 모름 → 빼지 않음 (중간예납이 조금 크게 잡힘 — 돈이 적게 보이는 쪽)
+        mid_amt = int(max(LT["final"] - w, 0) * 6 / 12)
+        if mid_amt >= _corptax.INTERIM_MIN:
+            add_tax(8, "8/31", "법인세 중간예납 (%d년분)" % year, _r4(mid_amt),
+                    "(%d년 감면 뒤 법인세 %s%s) × 6/12 (50만 원 미만이면 안 냄)" % (base, format(LT["final"], ","),
+                                                                    " − 원천징수 등 %s" % format(w, ",") if w else " · 이자 원천징수분은 안 뺌"), "예산 계산")
     FIX.sort(key=lambda f: (f["month"], int(f["day"].split("/")[1])))
     min_cash = None
     try:
