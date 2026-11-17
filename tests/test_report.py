@@ -47,6 +47,9 @@ def numbers_of(html):
     html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
     html = re.sub(r"<table class='sign'>.*?</table>", "", html, flags=re.S)   # 결재란은 대표용 주간에만
     html = re.sub(r"<div class='mgonly'>.*?<!-- /mgonly -->", "", html, flags=re.S)   # 근거 묶음은 경영관리용에만 (2026-11-03)
+    # 그림의 자리·크기(좌표)는 보고 숫자가 아니다 — 그림 속 글자(막대 금액 등)만 견준다
+    # (2026-11-17 보는 사람 기준 양식: 대표용 그림 높이가 경영관리용과 달라짐)
+    html = re.sub(r"<(svg|line|rect|path|polyline|circle|text)\b[^>]*>", r"<\1>", html)
     return re.findall(r"−?\d[\d,.]*", html)
 
 

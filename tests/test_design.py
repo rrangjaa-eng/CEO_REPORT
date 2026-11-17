@@ -528,7 +528,8 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
                 self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertEqual(html.count("break-inside:auto"), 2)
+                # 2026-11-17 보는 사람 기준 양식: 대표용은 ② 자금(표 · 그림 사이)도 주간·월간 모두 나뉠 수 있다 → 한 번 더
+                self.assertEqual(html.count("break-inside:auto"), 3)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 
