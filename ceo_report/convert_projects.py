@@ -430,6 +430,9 @@ def _row_order(g):
     return (g["day"] or dt.date.max, (0, int(no), "") if no.isdigit() else (1, 0, no), _first_line(g)["vendor"])
 
 
+PREPAID_PREFIX = "131"   # 선급금 계정 (실제 장부: 13100 선급금 · 13101 선급금_기타소득 · 13102 선급금_계약금)
+
+
 def _wehago_rows(books, costs, cfg):
     """원가 묶음마다 줄 하나. 돌려주는 값: (정렬된 묶음 목록, 대조 목록, 알림 목록)."""
     keys = linking.line_keys(books.journal)
@@ -460,6 +463,13 @@ def _wehago_rows(books, costs, cfg):
             g["state"], g["paid_day"], g["firm"] = "지급완료", g["day"], True
             continue
         if not pay_idx:
+            # 미리 준 돈(선급금)에서 원가로 옮긴 전표: 돈은 선급금을 줄 때 이미 나갔다 (사용자 결정 2026-11-17 '고치기' —
+            # 실제 자료: 기타소득 상금·강연료 등 약 5,000만이 '아직 안 줌'으로 보였는데 장부 미지급 잔액은 0원)
+            if any(_squash(books.journal[i].get("account_code")).startswith(PREPAID_PREFIX)
+                   and (books.journal[i].get("credit") or 0) > 0 for i in idxs):
+                g["state"], g["paid_day"], g["firm"] = "지급완료", g["day"], True
+                g["basis"] = base + " · 미리 준 돈(선급금)에서 옮김"
+                continue
             g["state"] = "요청미지급"
             g["basis"] = base + " · 지급 여부 확인 불가 (현금·미지급 대변 없음)"
             continue
