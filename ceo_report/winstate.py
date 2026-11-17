@@ -731,6 +731,8 @@ def auto_line(state, failed="", running=False):
         return "자동 반영: 실패 — %s" % failed, "bad", True
     st = state or {"state": "none", "text": "새 자료 없음"}
     kind = {"none": "idle", "collecting": "wait", "wait": "wait", "ready": "now"}.get(st.get("state"), "idle")
+    if st.get("fail"):   # '위하고에서 받기'가 못 받음 (2026-11-17)
+        kind = "bad"
     return "자동 반영: %s" % st.get("text", ""), kind, False
 
 

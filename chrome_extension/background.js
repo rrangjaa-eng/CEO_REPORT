@@ -125,6 +125,16 @@ async function saveJournal(msg) {
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg) return;
+  if (msg.type === "programTrigger") {   // 프로그램이 연 받기 주소가 화면에 열림 (탭 알림을 놓친 때)
+    const tab = sender.tab;
+    if (tab && isTrigger(tab.url) && msg.fresh) startFromProgram(tab.id);
+    else if (tab && !handledTabs.has(tab.id)) {
+      const why = "받기 주소가 새 탭이 아닌 곳에서 열려 받지 않음 — 대표보고 프로그램의 '위하고에서 받기'를 다시 누르세요";
+      setStatus({error: why, badge: "!"});
+      writeMark("끝", 1, why);
+    }
+    return;
+  }
   if (msg.type === "captured") {
     if (!(pending && sender.tab && pending.tabId === sender.tab.id)) return;   // 사용자가 화면에서 직접 [조회]한 것은 저장하지 않음
     saveJournal(msg).then((r) => {
@@ -353,8 +363,9 @@ async function collectPlan(months) {
 // 대표보고 프로그램은 '받는 중'인 동안 자동 반영을 미루고, '끝' 뒤에 시작한다 (반쪽 자료로 보고가 먼저 나오지 않게).
 // 표시는 자료가 아니다 (받은 내용 없음). 폴더 허용을 기다리는 중이면 '끝'만 다른 파일과 함께 나중에 쓴다. 표시를 못 써도 받기는 그대로.
 const MARK = "받기상태.txt";
-async function writeMark(state, fail = 0) {
-  const text = JSON.stringify({"상태": state, "때": new Date().toISOString(), "못받음": fail});
+async function writeMark(state, fail = 0, why = "") {
+  // why: 못 받은 까닭 (exe '위하고에서 받기' 단추 옆에 보임, 2026-11-17)
+  const text = JSON.stringify({"상태": state, "때": new Date().toISOString(), "못받음": fail, "오류": String(why || "").slice(0, 300)});
   try {
     const r = await writeToFolder(MARK, text);
     if (r === "ok") return;
@@ -370,17 +381,17 @@ async function writeMark(state, fail = 0) {
   } catch (e) { /* 표시는 도움말일 뿐 */ }
 }
 
-async function collectAll(months) {
+async function collectAll(months, marks = true) {   // marks=false: 부르는 쪽이 받기 표시를 쓴다 (프로그램 단추)
   // 2차 P1-5 (2026-11-15): 오류 표시는 받기를 시작할 때 비우고, 끝나면 단계 중 하나라도 실패했으면 다시 적는다
   // (예전엔 뒤 단계 저장 성공이 앞 단계 실패를 지워, 팝업을 다시 열면 실패가 안 보였음)
   await setStatus({error: ""});
-  await writeMark("받는 중");
+  if (marks) await writeMark("받는 중");
   const out = {};
   for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
-  await writeMark("끝", errs.length);
+  if (marks) await writeMark("끝", errs.length, errs.join(" / "));
   if (errs.length) await setStatus({error: errs.join(" / "), badge: "!"});
   return errs.length ? {error: errs.join(" / "), parts: out} : {parts: out};
 }
@@ -473,7 +484,7 @@ const RECON_SCREENS = [
   // 자동으로 받지 않는다 (읽기 전용, 2026-11-15 실제 화면)
   {prefix: "대조", mod: "account", code: "SAFM0108", name: "차입금스케줄", onOpen: true},    // 이자율·상환 시작일 (열면 바로 옴)
   {prefix: "대조", mod: "account", code: "SABM0109", name: "거래처별초기이월"},             // 올해 첫날로 넘어온 계정 잔액 (작년 말 장부와 맞춤)
-  {prefix: "대조", mod: "account", code: "SAAC0110", name: "자료수집현황", onOpen: true, match: "/collectingdata/"},   // 은행·카드·홈택스 자료가 언제까지 들어왔나
+  // 자료수집현황(SAAC0110)은 뺌 (사용자 2026-11-17: 실제 PC에서 매번 '응답이 오지 않음' → "빼")
   {prefix: "대조", mod: "account", code: "SAVF0119", name: "부가세예정고지"},               // 세무서가 고지한 부가세 (없으면 빈 목록)
   {prefix: "대조", mod: "humanresource", code: "SWTA0101", name: "원천세신고", tab: "신고리스트", close: true},   // 저장된 원천징수이행상황신고서 목록 (반기·매월, 소득세)
 ];
@@ -566,5 +577,66 @@ async function collectBooks() {
   if (fails.length) r.error = fails.join(" / ");
   return r;
 }
+
+// 대표보고 프로그램 '위하고에서 받기' 단추 (사용자 2026-11-17 결정 카드 A): 프로그램이 크롬으로 아래 주소를 열면
+// 그 탭을 바로 닫고 '모두 받기' + '결산·인사급여·연말정산 모두 받기(자동)'를 시작한다. 받기는 사용자가 프로그램 단추를 눌렀을 때만 (단추 위치만 팝업 → 프로그램).
+// 이미 있던 탭이 이 주소로 바뀐 것은 무시한다(새로 연 탭만). 위하고에서는 지금처럼 읽기만 한다.
+// 11/17 PC 고침: 크롬은 명령줄로 연 탭에도 '연 탭'(openerTabId)을 붙일 수 있어 그 조건은 뺐다.
+const TRIGGER = "https://smarta.wehago.com/ceo-report-collect";
+const TRIGGER_FRESH_MS = 15000;
+const startedAt = Date.now();
+const freshTabs = new Map();   // 방금 바깥(프로그램)에서 연 탭 id → 연 시각
+let triggerBusy = false;
+const isTrigger = (url) => String(url || "").startsWith(TRIGGER);
+
+const handledTabs = new Set();   // 같은 탭이 '생김'·'주소 바뀜' 두 번 알려도 한 번만
+async function startFromProgram(tabId) {
+  if (handledTabs.has(tabId)) return;
+  handledTabs.add(tabId);
+  freshTabs.delete(tabId);
+  const busy = triggerBusy || pending || planRun || closingRun || booksRun;   // 이미 받는 중이면 두 번째 누름은 탭만 닫음
+  if (!busy) triggerBusy = true;
+  try { await chrome.tabs.remove(tabId); } catch (e) { /* 이미 닫힘 */ }
+  if (busy) return;
+  try {
+    let src = null, why = "";
+    try { src = await findSmartaTab(); } catch (e) { why = String(e.message || e); }
+    if (!src) {
+      why = why || "위하고 회계(SmartA) 화면이 열려 있지 않음 — 위하고에 로그인해 회사 [회계]를 연 뒤 대표보고에서 다시 누르세요";
+      await setStatus({error: why, badge: "!"});
+      await writeMark("끝", 1, why);
+      if (!why.includes("여러 회사")) { try { await chrome.tabs.create({url: "https://www.wehago.com/", active: true}); } catch (e) { /* 무시 */ } }
+      return;
+    }
+    // 사용자 2026-11-17: 프로그램 단추 한 번에 '모두 받기'와 '결산·인사급여·연말정산 모두 받기(자동)'를 차례로.
+    // 받기 표시는 둘 다 끝난 뒤에 '끝' (중간에 자동 반영이 먼저 돌지 않게). 화면에 직접 열어 [조회]하는 낱개 단추 셋은 여기 넣지 않는다.
+    const {planMonths = 3} = await chrome.storage.local.get("planMonths");
+    await writeMark("받는 중");
+    let all, books;
+    try { all = await collectAll(planMonths, false); } catch (e) { all = {error: String(e.message || e)}; }
+    try { books = await collectBooks(); } catch (e) { books = {error: String(e.message || e)}; }
+    const errs = [all && all.error, books && books.error && `결산·인사급여: ${books.error}`].filter(Boolean);
+    await writeMark("끝", errs.length, errs.join(" / "));
+    if (errs.length) await setStatus({error: errs.join(" / "), badge: "!"});
+  } finally {
+    triggerBusy = false;
+  }
+}
+
+function fromProgram(tab) {
+  if (!tab) return false;
+  const t = freshTabs.get(tab.id);
+  // 크롬이 꺼져 있다가 프로그램이 켠 때는 탭 생김 알림을 놓칠 수 있어, 확장이 막 깨어난 뒤 잠깐은 그것도 받는다
+  return (t !== undefined && Date.now() - t < TRIGGER_FRESH_MS) || Date.now() - startedAt < TRIGGER_FRESH_MS;
+}
+
+chrome.tabs.onCreated.addListener((tab) => {
+  freshTabs.set(tab.id, Date.now());
+  for (const [id, t] of freshTabs) if (Date.now() - t > TRIGGER_FRESH_MS) freshTabs.delete(id);
+  if (isTrigger(tab.pendingUrl || tab.url) && fromProgram(tab)) startFromProgram(tab.id);
+});
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.url && isTrigger(change.url) && fromProgram(tab)) startFromProgram(tabId);
+});
 
 chrome.runtime.onInstalled.addListener(() => { chrome.alarms && chrome.alarms.clearAll(); });

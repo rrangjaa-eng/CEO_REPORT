@@ -441,8 +441,44 @@ def collect_mark(paths, dirs=None):
                 fail = int(d.get("못받음") or 0)
             except (TypeError, ValueError):
                 fail = 0
-            best = {"state": state, "at": at, "fail": fail}
+            best = {"state": state, "at": at, "fail": fail, "error": str(d.get("오류") or "").strip()}
     return best
+
+
+WEHAGO_TRIGGER = "https://smarta.wehago.com/ceo-report-collect"   # 확장 0.9.7 이 이 주소가 열리면 탭을 닫고 '모두 받기' (background.js TRIGGER)
+
+
+def find_chrome(env=None, exists=os.path.exists, which=shutil.which):
+    """크롬 경로 또는 None. 위하고 확장은 크롬에만 깔려 있어 엣지는 찾지 않는다."""
+    env = os.environ if env is None else env
+    cands = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
+    for base in (env.get("LOCALAPPDATA"), env.get("ProgramFiles"), env.get("ProgramFiles(x86)"), env.get("ProgramW6432")):
+        if base:
+            cands.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
+    for p in cands:
+        if exists(p):
+            return p
+    for name in ("chrome", "google-chrome"):
+        p = which(name)
+        if p:
+            return p
+    return None
+
+
+def start_wehago_collect(chrome=None, popen=None):
+    """'위하고에서 받기' 단추 (사용자 2026-11-17 결정 카드 A): 크롬에 표시 주소를 열어 확장이 '모두 받기'를 하게 한다.
+    프로그램은 위하고에 직접 접속하지 않는다. 받은 파일·받기상태.txt 는 지금처럼 자동 반영이 읽는다. -> (성공 여부, 글)."""
+    import subprocess
+    chrome = chrome or find_chrome()
+    if not chrome:
+        return False, "크롬을 찾지 못함 — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요"
+    try:
+        (popen or subprocess.Popen)([chrome, WEHAGO_TRIGGER])
+    except OSError as e:
+        return False, "크롬을 열지 못함 (%s) — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요" % (e.strerror or type(e).__name__)
+    return True, ("크롬에 받기 요청을 보냄 — 분개장·대조·자금계획에 이어 결산·인사급여·연말정산까지 받으며 위하고 화면이 앞에 떴다 닫힙니다(3~5분, 그동안 다른 탭으로 옮기지 마세요). 다 받으면 자동 반영이 이어갑니다. "
+                  "위하고에 로그인돼 있지 않으면 크롬에 위하고가 열립니다: 로그인해 회사 [회계]를 연 뒤 다시 누르세요")
 
 
 def auto_state(paths, now=None, dirs=None):
@@ -472,6 +508,10 @@ def auto_state(paths, now=None, dirs=None):
         return {"state": "collecting", "sig": None,
                 "text": "위하고 확장이 받는 중 (%s 시작) — 다 받으면 반영" % mark["at"].strftime("%H:%M")}
     if not new:
+        # 2026-11-17: '위하고에서 받기'로 시작했는데 못 받았으면 그 까닭을 보인다 (20분까지)
+        if mark and mark["state"] == "끝" and mark.get("error") and 0 <= (now - mark["at"]).total_seconds() < MARK_FRESH_SEC:
+            return {"state": "none", "sig": None, "fail": True, "text": "새 자료 없음 · 위하고 받기 못 함 (%s) — %s"
+                    % (mark["at"].strftime("%H:%M"), mark["error"])}
         return {"state": "none", "sig": None, "text": "새 자료 없음"}
     latest = [w for w in new.values()] + [w for _, w in pend]
     other = winstate.other_wehago_time(paths)

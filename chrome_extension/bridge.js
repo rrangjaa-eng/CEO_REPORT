@@ -329,3 +329,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     reply({ok: true, v: BRIDGE_VERSION});
   }
 });
+
+// 대표보고 프로그램 '위하고에서 받기' (2026-11-17 고침): 탭 생김 알림을 놓쳐(크롬이 막 켜짐·서비스 워커 잠듦) 404 쪽이 그대로 남던 문제 →
+// 그 쪽이 열리면 이 스크립트가 배경에 알린다. 새 탭에서 처음 연 쪽(앞 쪽 없음·어디서 왔는지 없음)일 때만.
+if (location.pathname.replace(/\/+$/, "") === "/ceo-report-collect") {
+  chrome.runtime.sendMessage({type: "programTrigger", fresh: history.length <= 1 && !document.referrer});
+}
