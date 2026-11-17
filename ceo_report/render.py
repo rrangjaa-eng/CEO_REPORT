@@ -2041,6 +2041,13 @@ def _corp_row_mid(R, ym, kind="법인세"):
     return _corp_row(R, "%d-%02d" % (y, m - 1), kind), "%d월" % (m - 1)
 
 
+def _corp_rest(R, ym):
+    """E1: 자금 일정의 그해 '남은 달 예상' 법인세·지방소득세 줄 (corptax.rest_rows). 없으면 빈 목록."""
+    from .tax import REST_MARK
+    return [t for t in (R.get("tax") or []) if t.get("kind") in ("법인세", "법인지방소득세") and t.get("amount")
+            and str(t.get("period") or "").startswith("%s년 " % ym[:4]) and str(t.get("period") or "").endswith(REST_MARK)]
+
+
 def _corp_est(R, Y, ym):
     """법인세 예상 한 계산 (2026-11-14 P3·K1): 자금 일정의 법인세 줄과 같은 과세표준(감가상각·대손·세무조정 반영).
     그 줄이 이 보고 기간과 다르거나 없으면 이 표의 세전 이익으로 (세무조정 미반영). -> dict 또는 None (세전 이익 모름)."""
@@ -2174,6 +2181,11 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
     h.append("<div class='note'>%s</div>" % esc(
         "과세표준 = %s · 세율 %s, 지방세 10%%%s · 기납부 = 장부 선납세금 · %s · %s"
         % (d_txt, rate, (" (%s − 원천징수된 지방소득세 %s)" % (won(local), won(E["local_paid"]))) if E["local_paid"] else "", "산출세액 %s에서 작년 신고서의 감면·넘어온 공제를 빼고 최저한세까지 (아래 표)" % won(corp) if C else "공제 미반영", pay_txt)))
+    rest = _corp_rest(R, ym)
+    if rest:   # E1 (결정 카드 2026-11-17): 남은 달 이익으로 더 낼 세금은 자금 일정에 따로 한 줄 — 이 표(지금까지 이익 기준)와 나눠 보임
+        h.append("<div class='note'>%s</div>" % esc(
+            "남은 달 이익 예상으로 자금 일정에 따로 더 넣은 세금: " + " · ".join(
+                "%s %s (%s)" % (t["kind"], won(t["amount"]), d2s(t["due"])) for t in rest) + " — " + str(rest[0].get("basis") or "")))
     # 세무조정 예상은 분기 보고 부록 C-1 로 옮김 (사용자 2026-11-12: 결산·세무·신용평가는 분기·반기·연간 보고로)
     if R.get("taxret_dir"):   # 실제 법인세 신고서 (사용자 2026-11-13, 경영관리에만). 보고서.py 가 파일 있을 때만 폴더를 넣음
         from . import taxreturn

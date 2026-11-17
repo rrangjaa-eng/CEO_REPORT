@@ -34,9 +34,29 @@ class TestVat(unittest.TestCase):
         # 3분기분은 미지급으로만 잡혀 있고 11/2까지의 장부에 통장 납부가 없음 → 납부일이 지나도 지우지 않는다 (F3, 2026-11-14)
         self.assertEqual([(r["대상기간"], r["납부예정일"], r["금액"], r["상태"]) for r in rows],
                          [("2026년 3분기 (7~9월)", "2026-10-26", "70", "확정(전표)"),
-                          ("2026년 4분기 (10~12월)", "2027-01-25", "360", "예상")])
+                          ("2026년 4분기 (10~12월)", "2027-01-25", "360", "예상"),
+                          # E1 (결정 카드 2026-11-17): 남은 기간(11/3~12/31, 59일) × 최근 끝난 3달(8·9·10월 순부가세 450 ÷ 92일)
+                          ("2026년 4분기 (10~12월) 남은 기간 예상", "2027-01-25", "289", "예상")])
         self.assertIn("2026-11-02까지", rows[1]["근거"])
+        self.assertIn("남은 59일", rows[2]["근거"])
         self.assertEqual(rows[0]["장부기준일"], "2026-11-02")
+
+    def test_rest_of_quarter_not_added_when_average_is_refund(self):
+        # E1: 최근 3달 평균이 환급(0 이하)이면 남은 기간 줄을 넣지 않는다 (지급을 줄이지 않음)
+        J = [ln(D(2026, 10, 10), "3", "13500", debit=500), ln(D(2026, 10, 20), "4", "25500", credit=100)]
+        rows = tax.vat(J, D(2026, 11, 3))
+        self.assertFalse([r for r in rows if r["대상기간"].endswith(tax.REST_MARK)])
+
+    def test_rest_row_dropped_when_plan_has_the_tax(self):
+        # E1: 자금계획서에 그 분기 부가세가 있으면 그 금액을 쓰고 남은 기간 예상은 일정에 넣지 않는다
+        taxes = [{"kind": "부가세", "period": "2026년 4분기 (10~12월)", "due": D(2027, 1, 25), "amount": 360, "state": "예상", "basis": "", "codes": ["9"]},
+                 {"kind": "부가세", "period": "2026년 4분기 (10~12월)" + tax.REST_MARK, "due": D(2027, 1, 25), "amount": 289, "state": "예상", "basis": "", "codes": ["9"]}]
+        plan = [{"date": D(2027, 1, 25), "io": "out", "amount": 900, "firm": True, "cat": "부가세", "desc": "세무서", "basis": "", "vendor_code": "9"}]
+        out, info = tax.merge(plan, taxes)
+        self.assertEqual(len(out), 1)
+        self.assertTrue(info[1]["matched"].get("rest_in_plan"))
+        out2, _ = tax.merge([], taxes)
+        self.assertEqual(sorted(e["amount"] for e in out2), [289, 360])
 
     def test_estimate_before_payment_equals_payment_slip(self):
         before = tax.vat([x for x in self.journal() if x["date"] <= D(2026, 9, 30)], D(2026, 10, 3))
@@ -423,3 +443,23 @@ class TestCardMatchNeedsSameCompany(unittest.TestCase):
         events, info = tax.merge(sched, t)
         self.assertEqual(len(events), 1)
         self.assertIsNotNone(info[1]["matched"])
+
+
+class TestCorpRest(unittest.TestCase):
+    """E1 (결정 카드 2026-11-17): 올해 남은 달 이익으로 더 낼 법인세·지방소득세 줄."""
+    def test_rest_rows_from_recent_three_months(self):
+        from ceo_report import corptax
+        by = {"2026-08": 30_000_000, "2026-09": 30_000_000, "2026-10": 30_000_000}
+        dep = {"annual": 12_000_000}
+        nat, corp, _ = corptax.national(300_000_000, "2026")
+        rows = corptax.rest_rows(by, "2026-10", dep, 300_000_000, nat, corp, "2026", None)
+        # 남은 2달 이익 = 3천만 × 2 − 감가상각 1,200만 × 2/12 = 5,800만 → 과세표준 3.58억, 20% 구간 → 법인세 +1,160만
+        self.assertEqual([(r["세목"], r["대상기간"], r["금액"]) for r in rows],
+                         [("법인세", "2026년 11~12월 남은 기간 예상", "11600000"), ("법인지방소득세", "2026년 11~12월 남은 기간 예상", "1160000")])
+        self.assertEqual(rows[0]["과세표준"], "")   # 본 줄(과세표준 있는 줄)과 섞이지 않는다
+
+    def test_no_rest_rows_for_loss_or_december(self):
+        from ceo_report import corptax
+        nat, corp, _ = corptax.national(100_000_000, "2026")
+        self.assertIsNone(corptax.rest_rows({"2026-10": -5_000_000}, "2026-10", {"annual": 0}, 100_000_000, nat, corp, "2026", None))
+        self.assertIsNone(corptax.rest_rows({"2026-12": 5_000_000}, "2026-12", {"annual": 0}, 100_000_000, nat, corp, "2026", None))

@@ -218,7 +218,8 @@ def taxes_set_aside(R):
     · later: 다음 달 말일 뒤에 낼 세금 계산값 (이미 쌓인 부가세·원천세·법인세)
     after = 마지막 기간 여유 자금(확정분) − must − later."""
     rows = [t for t in R.get("tax") or [] if t.get("kind") in TAX_KINDS and t.get("due") and t["due"] > R["asof"]
-            and t.get("amount") is not None]
+            and t.get("amount") is not None
+            and not (isinstance(t.get("matched"), dict) and t["matched"].get("rest_in_plan"))]   # E1: 일정에 그 세금이 있으면 남은 기간 줄은 빼고
     total = sum(t["amount"] for t in rows)
     last = _last(R)
     end = last["end"] if last else R["asof"]

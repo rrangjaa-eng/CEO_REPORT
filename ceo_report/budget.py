@@ -656,7 +656,10 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     # 올해 4분기 부가세·법인세·지방세: 세금예상.csv (있으면)
     base_vat = [t for t in taxrows if t["kind"] == "부가세" and t.get("due") and t["due"].year == year and t["due"].month == 1]
     if base_vat:
-        add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, base_vat[0]["amount"], "세금예상 (%s)" % base_vat[0].get("basis", ""), "분개장")
+        # E1 (2026-11-17): 진행 중 분기면 '남은 기간 예상' 줄도 함께 (쌓인 금액 + 남은 기간). 금액 모르는 줄이 있으면 모름
+        amts = [t["amount"] for t in base_vat]
+        add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, None if any(a is None for a in amts) else sum(amts),
+                "세금예상 (%s)" % " + ".join(str(t.get("basis", "")) for t in base_vat), "분개장")
     else:
         add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, _r4(VAT * sum(base_gp_m[9:12])), "올해 10~12월 매출총이익 × 10% (예상)", "올해 예상")
     # 올해분 법인세·지방세: 손익표와 같은 '올해 연말 예상 세전 이익' 하나로 계산 (2026-11-14 오후 점검 G3: 예전엔 손익표는

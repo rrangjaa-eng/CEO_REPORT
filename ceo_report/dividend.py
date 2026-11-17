@@ -796,6 +796,8 @@ def advise(R, S, D, input_dir=None):
                 v = t["amount"]
                 # 지방소득세는 감면이 없다(산출세액 × 10%). 법인세 예상이 이미 '감면·공제 뒤'면 또 빼지 않는다 (코덱스 검토 2026-11-14)
                 done = "감면·공제 뒤" in (t.get("basis") or t.get("note") or "")
+                from .tax import REST_MARK   # E1: 남은 달 예상 줄은 감면 뒤 금액의 차이라 감면을 또 빼지 않는다
+                done = done or str(t.get("period") or "").endswith(REST_MARK)
                 c = cut if t["kind"] == "법인세" and not done else 0
                 if c:
                     v = max(v - c, 0)
