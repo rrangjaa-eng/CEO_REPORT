@@ -375,7 +375,7 @@ class Window(object):
         self._btn(r, "위하고에서 받기", self.wehago_collect)
         self._btn(r, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
         self._btn(r, "예전 파일 정리", self.archive)
-        self._hint(s1, "위하고에서 받기 = 크롬 위하고 확장의 '모두 받기'(크롬에 위하고 회계 화면이 열려 있어야 함). "
+        self._hint(s1, "위하고에서 받기 = 크롬 위하고 확장의 '모두 받기' + '결산·인사급여·연말정산 모두 받기'(크롬에 위하고 회계 화면이 열려 있어야 함). "
                        "받은 파일은 수집\\위하고 에. 예전 파일 정리 = 쓰지 않는 파일을 지난자료로 옮김")
 
         # 2 변환하고 확인 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력)

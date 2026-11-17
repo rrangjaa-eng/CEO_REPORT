@@ -19,11 +19,17 @@ const ctx = {chrome, console, setTimeout, clearTimeout, URL, TextEncoder, crypto
   importScripts() {}, writeToFolder: async (name, text) => { if (name === "받기상태.txt") log.marks.push(JSON.parse(text)); return "ok"; }};
 vm.createContext(ctx);
 vm.runInContext(src, ctx);
-vm.runInContext("collectAll = async (m) => { __hit(m); return {parts: {}}; }", Object.assign(ctx, {__hit: (m) => { log.collectAll++; log.months = m; }}));
+vm.runInContext("collectAll = async (m, marks) => { __hit(m, marks); return {parts: {}}; }; collectBooks = async () => { __books(); return {done: 1, error: __booksErr || undefined}; }",
+  Object.assign(ctx, {__hit: (m, marks) => { log.collectAll++; log.months = m; log.allMarks = marks; }, __books: () => { log.order = (log.order || "") + (log.collectAll ? "AB" : "B"); log.books = (log.books || 0) + 1; },
+                      __booksErr: scenario === "bookserr" ? "2026 사업소득조회: 응답이 오지 않음" : ""}));
 const T = "https://smarta.wehago.com/ceo-report-collect";
 const fire = (name, ...a) => ev[name].listeners.forEach((f) => f(...a));
 (async () => {
-  if (scenario === "opener") fire("onCreated", {id: 5, openerTabId: 3, pendingUrl: T});
+  if (scenario === "content" || scenario === "content_opener" || scenario === "content_old") {   // 탭 알림 없이 쪽의 스크립트만 알림
+    vm.runInContext("const __n = Date.now; Date.now = () => __n() + 60000", ctx);
+    const tab = {id: 9, url: T}; if (scenario === "content_opener") tab.openerTabId = 2;
+    fire("onMessage", {type: "programTrigger", fresh: scenario !== "content_old"}, {tab}, () => {});
+  } else if (scenario === "opener") fire("onCreated", {id: 5, openerTabId: 3, pendingUrl: T});
   else if (scenario === "existing") {   // 확장이 깨어난 지 한참 뒤, 예전부터 있던 탭이 그 주소로 바뀜
     vm.runInContext("Date.now = () => startedAt + 60000", ctx);
     fire("onUpdated", 8, {url: T}, {id: 8, url: T});
