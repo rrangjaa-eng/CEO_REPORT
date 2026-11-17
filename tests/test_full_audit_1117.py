@@ -113,3 +113,13 @@ class RemainingFixes(unittest.TestCase):
         for y in (2028, 2029, 2030):
             self.assertIn(y, tax.HOLIDAY_YEARS)
         self.assertIn(dt.date(2028, 10, 5), tax.KR_HOLIDAYS)   # 추석·개천절 겹침 대체공휴일
+
+
+class MergeFixes(unittest.TestCase):
+    def test_next_tax_sums_same_day_lines(self):
+        from ceo_report import render
+        asof = dt.date(2026, 11, 17)
+        ev = [{"io": "out", "date": dt.date(2027, 1, 25), "amount": 100, "firm": False, "cat": "세금", "desc": "부가세", "kind": "부가세"},
+              {"io": "out", "date": dt.date(2027, 1, 25), "amount": 40, "firm": False, "cat": "세금", "desc": "부가세 남은 기간 예상", "kind": "부가세"}]
+        h = render._regular_table({"asof": asof, "events": ev, "tax": []})
+        self.assertIn("<td>140 (예상)</td>", h.replace(",", ""))

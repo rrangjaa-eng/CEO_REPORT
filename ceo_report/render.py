@@ -1433,8 +1433,13 @@ def _regular_table(R):
                     r["unk"][i] += 1
                 else:
                     r["q"][i] += e["amount"]
+                # 같은 날 나가는 줄은 합친다 (E1 '남은 기간 예상' 줄이 본 줄과 같은 날이면 다음 출금액이 분기 칸보다 작게 보였음)
                 if r["next"] is None or e["date"] < r["next"]["date"]:
-                    r["next"] = e
+                    r["next"] = {"date": e["date"], "amount": e["amount"], "firm": bool(e.get("firm"))}
+                elif e["date"] == r["next"]["date"]:
+                    n = r["next"]
+                    n["amount"] = None if n["amount"] is None or e["amount"] is None else n["amount"] + e["amount"]
+                    n["firm"] = n["firm"] and bool(e.get("firm"))
     head = "".join("<th>%s</th>" % ("%d년 %d분기%s" % (y, q, " (남은 기간)" if i == 0 else "")) for i, (y, q, _, _) in enumerate(qs))
     h = ["<table class='pt xr taxq'><thead><tr><th>항목</th><th>다음 출금일</th><th>다음 출금액</th>%s</tr></thead><tbody>" % head]
     for k, r in rows.items():
