@@ -966,7 +966,15 @@ def build_bank(books, cfg):
         k = (ln["date"], ln.get("no"))
         slips[k][0] |= bool(ln["debit"])
         slips[k][1] |= bool(ln["credit"])
-    acct = lambda ln: (ln.get("vendor") or "").strip() or "보통예금 (거래처 없음)"
+    # 통장은 거래처코드로 묶는다 (사용자 결정 2026-11-17 '고치기', 2026-11-14 '낱말 대신 거래처코드'): 같은 코드의 이름이
+    # 중간에 바뀌어도 한 통장으로 보고, 가장 최근 전표의 이름으로 부른다. 코드가 없는 줄만 이름으로 묶는다
+    latest = {}
+    for ln in lines:   # 날짜순
+        vc = wehago.norm_code(ln.get("vendor_code"))
+        if vc and (ln.get("vendor") or "").strip():
+            latest[vc] = (ln.get("vendor") or "").strip()
+    acct = lambda ln: (latest.get(wehago.norm_code(ln.get("vendor_code"))) or (ln.get("vendor") or "").strip()
+                       or "보통예금 (거래처 없음)")
     others = collections.defaultdict(list)   # 전표별 보통예금 아닌 줄 (상대 거래처)
     for o in books.journal:
         if o.get("date") is not None and wehago._squash(o.get("account_code")) not in cash:

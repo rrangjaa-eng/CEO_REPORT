@@ -224,5 +224,20 @@ class WithholdingBalanceGapTest(unittest.TestCase):
         self.assertFalse(any(tax.WH_GAP_MARK in r["근거"] for r in rows))
 
 
+class GroupByVendorCodeTest(unittest.TestCase):
+    """9번: 카드는 거래처코드로 묶는다 — 같은 코드의 이름이 바뀐 줄도 같은 카드."""
+
+    def test_renamed_card_vendor_stays_in_the_card(self):
+        tax = mod("tax")
+
+        def use(day, amount, vendor, vcode="00137"):
+            return {"date": day, "no": "9", "account_code": "26200", "account": "미지급비용", "debit": None, "credit": amount,
+                    "vendor": vendor, "vendor_code": vcode, "memo": ""}
+        journal = [use(dt.date(2026, 10, 5), 300000, "법인카드 1111"),      # 예전 이름 (카드사_끝번호 꼴이 아님)
+                   use(dt.date(2026, 10, 20), 200000, "신한_1111")]
+        rows = tax.cards(journal, dt.date(2026, 11, 3), {})
+        self.assertEqual([int(r["금액"]) for r in rows], [500000])   # 예전엔 이름이 카드 꼴인 20만만 잡힘
+
+
 if __name__ == "__main__":
     unittest.main()

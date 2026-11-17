@@ -632,12 +632,20 @@ def cards(journal, asof, card_days, accrued_codes=("26200",), actual=None, actua
     bank_slips = {(ln["date"], ln.get("no")) for ln in journal
                   if ln["date"] is not None and _sq(ln.get("account_code")).startswith(BANK_PREFIX)}
     use, pay, use_card, pay_card = {}, {}, {}, {}
+    # 카드는 거래처코드로 묶는다 (사용자 결정 2026-11-17 '고치기'): 같은 코드의 카드 거래처 이름이 중간에 바뀌어도 한 카드로 보고
+    # 가장 최근 전표의 카드 이름('카드사_끝번호')으로 부른다. 코드가 없는 줄만 이름으로 묶는다
+    card_of = {}
+    for ln in sorted((x for x in journal if x["date"] is not None and _sq(x["account_code"]) in accrued_codes),
+                     key=lambda x: x["date"]):
+        name = str(ln.get("vendor") or "").strip()
+        if _code(ln.get("vendor_code")) and CARD_PREFIX.match(name):
+            card_of[_code(ln.get("vendor_code"))] = name
     co_lines = {}   # 카드사 -> 그 카드사 미지급비용 줄 (거래처코드로 자금계획서 카드 줄과 맞춘다)
     use_lines = {}  # 카드(거래처) -> 줄 (위하고 카드 사용 화면과 거래처코드로 맞춘다)
     for ln in journal:
         if ln["date"] is None or _sq(ln["account_code"]) not in accrued_codes:
             continue
-        vendor = str(ln.get("vendor") or "").strip()
+        vendor = card_of.get(_code(ln.get("vendor_code"))) or str(ln.get("vendor") or "").strip()
         m = CARD_PREFIX.match(vendor)
         if not m:
             continue
