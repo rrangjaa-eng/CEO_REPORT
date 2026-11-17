@@ -82,8 +82,7 @@ class TestPlanBS(unittest.TestCase):
 
     def test_overstated_items(self):
         names = [x[0] for x in self.C["over"]]
-        self.assertIn("경영관리 부서 비용 (급여 빼고)", names)
-        self.assertEqual(dict((x[0], x[1]) for x in self.C["over"])["경영관리 부서 비용 (급여 빼고)"], 3_000_000)   # 12월·급여 빠짐
+        self.assertFalse(any("경영관리" in n or "플랜트" in n for n in names))   # 회사 기본 비용 (사용자 2026-11-17)
         self.assertTrue(any("감가상각" in n for n in names))
         self.assertTrue(any("이자비용" in n for n in names))
         self.assertTrue(any("법인세 예상" in n for n in names))

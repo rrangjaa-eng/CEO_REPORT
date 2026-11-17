@@ -17,7 +17,7 @@
   그 해 실제 부담률(총부담세액 ÷ 산출세액)로, 없으면 장부 세전 이익으로 같은 계산.
 - 기획본부 기준: 이익잉여금(지난해까지) −(X0 − 세금0), 올해 이익 −X1, 올해 법인세 예상 −세금1. 자산 쪽은 영업외수익으로 들어온 돈
   −(X1 + X0 − 세금0), 부채 쪽은 올해 법인세 예상 −세금1. 그래서 자산 = 부채 + 자본이 그대로 맞는다.
-- 비용이 크게 잡혔을 수 있는 항목: 장부(계정잔액·부서비용)와 법인세 예상(세무조정)에서 실제 금액이 있는 것만. 급여 금액은 넣지 않는다 (팀장용과 같은 규칙).
+- 비용이 크게 잡혔을 수 있는 항목 (경영관리·플랜트8 비용은 회사 기본 비용이라 넣지 않음, 사용자 2026-11-17): 장부(계정잔액)와 법인세 예상(세무조정)에서 실제 금액이 있는 것만. 급여 금액은 넣지 않는다 (팀장용과 같은 규칙).
 """
 import collections
 import csv
@@ -198,28 +198,12 @@ def compute(input_dir, asof):
             "over": over, "first_year": min(int(m[:4]) for m, *_ in L["rows"]) if L["rows"] else Y}
 
 
-DEPT_FILE = "부서비용.csv"
 
 
 def overstated(input_dir, L, kinds, names, ytd, Y, M, adj, T_all, nin_rows):
     """기획본부가 알기 어려운데 비용이 크게 잡혔을 수 있는 항목 (실제 금액이 있는 것만). -> [(이름, 금액, 어디에 들었나, 설명)]"""
     out = []
-    # 부서 비용 (급여 금액은 넣지 않음)
-    dept = collections.defaultdict(int)
-    for r in _rows(os.path.join(input_dir, DEPT_FILE)):
-        ym = (r.get("연월") or "").strip()
-        if ym[:4] == str(Y) and ym <= "%04d-%02d" % (Y, M):
-            dept[(r.get("부서") or "").strip()] += _int(r.get("판관비")) or 0
-    for word, label, why in (
-            ("경영관리", "경영관리 부서 비용 (급여 빼고)",
-             "회사 전체를 위해 쓰는 돈(사무실·세무·보험·대표 관련 비용 등)입니다. 기획본부가 쓰지 않았고 내역도 보기 어렵지만 회사 전체 비용이라 판관비에 들어 있습니다. "
-             "급여는 사람별 금액이 드러날 수 있어 넣지 않았습니다."),
-            ("플랜트", "플랜트8 부서 비용 (급여 빼고)",
-             "다른 사업(플랜트8)에서 쓴 돈입니다. 회사 전체 비용이라 판관비에 들어 있어 기획본부 이익이 그만큼 작아 보입니다. 급여는 넣지 않았습니다.")):
-        v = sum(a for d, a in dept.items() if word in d)
-        if v:
-            out.append((label, v, "판관비", why))
-
+    # 경영관리·플랜트8 비용은 회사 기본 비용이라 넣지 않는다 (사용자 2026-11-17)
     def acct(pred):
         return sum(v for c, v in ytd.items() if pred(c, names.get(c, "")))
     v = acct(lambda c, n: kinds.get(c) in ("cogs", "sga") and "상각비" in n and "대손" not in n)
@@ -382,7 +366,7 @@ def build(C, sources=""):
     sh.set(rv, Ee, f="%s-%s" % (xlsxw.addr(rv, Cc), xlsxw.addr(rv, Dd)), s="num")
     cg, _ = pl("매출원가", P["cogs"], note=_mark(over_where["원가"]))
     sh.set(cg, Ee, f="%s-%s" % (xlsxw.addr(cg, Cc), xlsxw.addr(cg, Dd)), s="num")
-    sg, _ = pl("판매비와관리비 (급여·경영관리·플랜트8 비용 포함)", P["sga"], note=_mark(over_where["판관비"]))
+    sg, _ = pl("판매비와관리비", P["sga"], note=_mark(over_where["판관비"]))
     sh.set(sg, Ee, f="%s-%s" % (xlsxw.addr(sg, Cc), xlsxw.addr(sg, Dd)), s="num")
     op, _ = pl("영업이익", f="%s-%s-%s" % (xlsxw.addr(rv, Cc), xlsxw.addr(cg, Cc), xlsxw.addr(sg, Cc)), bold=True,
                note="매출 − 매출원가 − 판관비. 영업외수익을 빼도 영업이익은 그대로입니다.")
