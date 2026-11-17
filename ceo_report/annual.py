@@ -264,7 +264,8 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     # 결산 끝 = 감가상각비가 들어왔고, 결산 법인세도 들어왔거나 감가상각비가 올해 예상만큼 다 들어옴 (2026-11-14 코덱스 검토: 1원만 있어도 끝으로 봤음)
     A["closed"] = Yp["dep"] > 0 and (bool(ann_y.get("법인세등")) or not dep_est or Yp["dep"] >= dep_est)
     if not A["closed"] and dep_est:
-        pend = max(dep_est - Yp["dep"], 0)   # 일부만 들어왔으면 나머지만 예상으로
+        # 결정 M5 (2026-11-15, 계산-14): 연중이면 한 해 예상 × 지난 달 수 ÷ 12 (월간과 같게 — 예전엔 한 해 금액을 다 뺐다)
+        pend = max(dep_est * cut // 12 - Yp["dep"], 0)   # 일부만 들어왔으면 나머지만 예상으로
         Yp["dep_pending"] = pend
         Yp["pre"] -= pend   # 결산 전: 월간과 같게 감가상각비 예상을 먼저 비용으로
     pre_est = Yp["pre"] + (Yp["dep"] - (dep_est or 0) if A["closed"] else 0)
@@ -293,8 +294,8 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
         # 연중 보고: 작년도 같은 기간으로 맞춘다. 월간·올해와 같이 작년 연간 감가상각비를 먼저 비용으로 빼고
         # (작년 결산 감가상각비는 12월에 들어가 같은 기간엔 0원), 법인세는 그 기간 세전 이익 × 세율
         lfull = A["Lfull"]["dep"] if A["Lfull"] else 0
-        if lfull and lfull > Lp["dep"]:
-            Lp["dep_pending"] = lfull - Lp["dep"]
+        if lfull and lfull * cut // 12 > Lp["dep"]:
+            Lp["dep_pending"] = lfull * cut // 12 - Lp["dep"]   # 작년도 같은 달 수만큼 (결정 M5)
             Lp["pre"] -= Lp["dep_pending"]
         lc = corp_tax(Lp["pre"], LY)
         Lp["tax"] = lc + lc // 10
@@ -361,6 +362,51 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["proj"] = _projects(pl, projs, Y, LY, goals, cut)
     A["next"] = _next_projects(input_dir, year, D, asof)
     return A
+
+
+def apply_monthly(A, M, pack):
+    """월간 보고와 같은 계산으로 맞춘다 (사용자 2026-11-17: 연간 보고에 넣어야 할 항목 전부, 법인세는 월간과 같은 계산).
+    M = 끝난 달 말일 기준 월간 계산(R), pack = render.annual_pack(M). 결산 법인세가 장부에 들어왔으면(tax_fixed) 그대로 둔다.
+    감가상각비 예상(달 수만큼)·대손충당금 예상을 세전 이익에서 빼고, 법인세는 자금 일정과 같은 과세표준(세무조정 예상)·작년 신고서 감면·기납부."""
+    A["M"], A["pack"] = M, pack
+    Yp = A.get("Y")
+    md = (M or {}).get("dep") or {}
+    if A.get("dep_est") is None and md.get("annual"):   # 6장 '내년 감가상각비 예상'도 월간이 쓴 연간 금액으로
+        A["dep_est"], A["dep_src"] = md["annual"], md.get("source") or "월간 보고"
+    if not pack or Yp is None or A.get("tax_fixed") or not A.get("cut"):
+        return
+    if pack["ym"] != "%d-%02d" % (A["year"], A["cut"]) or pack.get("E") is None:
+        return
+    from .corptax import LOCAL_RATE, national
+    N, E = pack["N"], pack["E"]
+    booked = Yp["pre"] + (Yp.get("dep_pending") or 0)   # 예상을 빼기 전 장부 세전 이익
+    dep = N.get("dep") if N.get("dep") is not None else (Yp.get("dep_pending") or 0)
+    bad = N.get("bad") or 0
+    Yp["dep_pending"], Yp["bad_pending"] = dep or None, bad or None
+    Yp["dep_note"], Yp["bad_note"] = (N.get("dep_note") or "").lstrip(", "), (N.get("bad_note") or "").lstrip(", ")
+    Yp["pre"] = booked - dep - bad
+    adj = E["base"] - N["pretax"]   # 세무조정 예상 (자금 일정의 법인세 줄과 같은 값)
+    nat, corp, C = national(Yp["pre"] + adj, str(A["year"]), M.get("taxret_dir"))
+    if corp is None:
+        return
+    A["corp"], A["local"] = nat, int(corp * LOCAL_RATE)
+    A["tax"] = A["tax_est"] = A["corp"] + A["local"]
+    if E.get("prepaid") is not None:
+        A["prepaid"] = E["prepaid"]
+    A["pay_corp_day"], A["pay_local_day"] = E["due"], E["local_due"]
+    A["local_paid"] = E.get("local_paid") or 0   # 원천징수된 지방소득세 — 4/30 납부액에서 뺌 (월간·자금 일정과 같게)
+    A["tax_same"], A["tax_base"], A["tax_adj"], A["tax_credit"] = True, Yp["pre"] + adj, adj, bool(C)
+    Yp["net"] = Yp["pre"] - A["tax"]
+
+
+def team_extra(A, team):
+    """연간 팀장 보고에 붙일 것 (teamreport.render_annual): 작년 같은 기간 매출, 내년 받은 일·목표, 기간."""
+    T = next((t for t in A.get("teams") or [] if t["name"] == team), None)
+    cut = A.get("cut", 12)
+    return {"year": A["year"], "cut": cut, "mid": bool(A.get("mid")), "asof": A.get("asof") or dt.date(A["year"], 12, 31),
+            "end": _month_end(A["year"], cut) if cut else dt.date(A["year"], 1, 1),
+            "lrev": T["lrev"] if T else None, "goal_next": (A.get("goals_next") or {}).get(team),
+            "next": [p for p in (A.get("next") or []) if p["team"] == team]}
 
 
 def blank_cash(A):
@@ -694,8 +740,14 @@ def render(A, mode):
     Yp, Lp = A["Y"], A["L"]
     who = "보고" if mode == "ceo" else "경영관리 보고"
     h = ["<!doctype html><html lang='ko'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-         "<title>%s %d년 연간 %s</title><style>%s%s</style></head><body><div class='wrap mon'>"
-         % (esc(st.get("회사명", "")), year, who, RD.CSS + RD.FS_CSS + RD.DOC_CSS + RD.DOC2_CSS + RD.DOC3_CSS + RD.AIR_CSS + RD.TYPE_CSS, EXTRA_CSS)]
+         "<title>%s %d년 연간 %s</title><style>%s%s%s</style></head><body%s><div class='wrap mon'>"
+         % (esc(st.get("회사명", "")), year, who, RD.CSS + RD.FS_CSS + RD.DOC_CSS + RD.DOC2_CSS + RD.DOC3_CSS + RD.AIR_CSS + RD.TYPE_CSS, EXTRA_CSS,
+            # 대표용만 보는 사람 기준 양식 + 쪽 아래 글 (주간·월간 대표용과 같게, 사용자 2026-11-17)
+            (RD._reader_css({"asof": A.get("asof") or dt.date(year, 12, 31)}, "%d년 연간 보고" % year)
+             # 연간 '돈 받는 속도' 줄은 마지막 칸이 합계가 아니라 거래처 이름이라 짙은 칸으로 두지 않는다
+             + ".rd .flow>div:last-child{background:#F4F5F7!important}.rd .flow>div:last-child .lab{color:#3A4452!important}"
+               ".rd .flow>div:last-child .big{color:#17202B!important}") if mode == "ceo" else "",
+            " class='rd'" if mode == "ceo" else "")]
     h.append("<div class='doc-h'><h1><span class='co'>%s</span>%d년 연간 %s%s</h1>" % (
         esc(st.get("회사명", "")), year, who, "" if mode == "ceo" else " <span class='badge m'>경영관리용</span>"))
     cut, mid = A.get("cut", 12), A.get("mid")
@@ -713,6 +765,9 @@ def render(A, mode):
     if len(Yp["months"]) < cut:
         meta.append("%d년 손익 %d개월치 (%d월까지)" % (year, len(Yp["months"]), Yp["months"][-1]))
     meta.append("작년 = %d년%s" % (year - 1, (" 1~%d월" % cut if mid else "") + (" (%d개월)" % len(Lp["months"]) if Lp and len(Lp["months"]) < cut else "") if Lp else " 자료 없음"))
+    if A.get("M"):   # 사용한 자료와 날짜 (사용자 2026-11-12·14: 숫자를 보일 때 무슨 자료·언제 것인지)
+        from . import gate
+        meta.append(gate.sources_line(A["M"]))
     h.append("<div class='meta dsrc'>%s</div></div>" % esc(" · ".join(meta)))
     sum_i = len(h)
     h.append("<div class='page fs mon'>")
@@ -740,6 +795,8 @@ def render(A, mode):
             ("+ 영업외 수익", "nin", ""), ("− 영업외 비용", "nout", "")]
     if Yp.get("dep_pending") or (Lp and Lp.get("dep_pending")):
         rows.append(("− 감가상각비 예상 (결산 전)", "dep_pending", ""))
+    if Yp.get("bad_pending"):   # 계산-08 (사용자 2026-11-17): 대손충당금 예상도 먼저 뺌 (월간과 같게)
+        rows.append(("− 대손충당금 예상 (결산 전)", "bad_pending", ""))
     rows += [("세전 이익", "pre", "tot"), ("− 법인세 등 (지방소득세 포함)", "tax", ""), ("당기순이익", "net", "tot")]
     Yp["tax"] = A["tax"]
     t = ["<div class='card'><table class='pt pl'><thead><tr><th>구분</th><th>%d년%s</th><th>매출 대비</th>%s</tr></thead><tbody>"
@@ -756,17 +813,29 @@ def render(A, mode):
         if A["dep_est"]:
             fix.append("· 감가상각비 확정 <b>%s</b> — 연중 예상 %s(%s)보다 %s" % (W(Yp["dep"]), W(A["dep_est"]), A["dep_src"], sgn(Yp["dep"] - A["dep_est"])))
     else:
-        fix.append("· %s 감가상각비는 한 해 예상 %s(%s)를 먼저 뺐습니다 (월간 보고와 같은 방식)" % (
-            "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(A["dep_est"]), A["dep_src"]) if A["dep_est"]
-                   else "· 12월 결산 전표가 아직 없고 감가상각비 예상도 없습니다")
+        if Yp.get("dep_note"):   # 월간과 같은 계산 (apply_monthly)
+            fix.append("· %s 감가상각비 예상 %s를 먼저 뺐습니다 (%s · 월간 보고와 같은 계산)" % (
+                "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(Yp.get("dep_pending") or 0), esc(Yp["dep_note"])))
+        else:
+            fix.append("· %s 감가상각비는 한 해 예상 %s(%s)%s를 먼저 뺐습니다 (월간 보고와 같은 방식)" % (
+                "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(A["dep_est"]), A["dep_src"],
+                " 중 지난 달 수만큼(%d/12) %s" % (cut, W(Yp.get("dep_pending") or 0)) if mid else "") if A["dep_est"]
+                       else "· 12월 결산 전표가 아직 없고 감가상각비 예상도 없습니다")
+        if Yp.get("bad_pending"):
+            fix.append("· 대손충당금 예상 %s도 먼저 뺐습니다%s" % (W(Yp["bad_pending"]), " (%s)" % esc(Yp["bad_note"]) if Yp.get("bad_note") else ""))
         if mid and Lp and Lp.get("dep_pending"):
             fix.append("· 작년 1~%d월도 같은 방식으로 작년 감가상각비 %s를 먼저 뺐습니다 (작년 결산 감가상각비는 12월에 들어가 같은 기간엔 0원)"
                        % (cut, W(Lp["dep_pending"])))
     if A["tax_fixed"]:
         fix.append("· 법인세 등 확정 <b>%s</b> — 결산 전 예상 %s보다 %s" % (W(A["tax"]), W(A["tax_est"]), sgn(A["tax"] - A["tax_est"])))
     else:
-        fix.append("· 법인세 등은 결산 전 예상 (%s세전 이익 × 세율, 세무조정 없음%s)" % (
-            "1~%d월 " % cut if mid else "", " — 한 해 이익이 정해지면 바뀜" if mid else ""))
+        if A.get("tax_same"):
+            fix.append("· 법인세 등은 결산 전 예상 — 월간 보고와 같은 계산 (%s과세표준 %s%s%s)%s" % (
+                "1~%d월 " % cut if mid else "", W(A["tax_base"]), " = 세전 이익 + 세무조정 예상 %s" % sgn(A["tax_adj"]) if A["tax_adj"] else "",
+                " · 작년 신고서의 감면·넘어온 공제 반영" if A.get("tax_credit") else "", " — 한 해 이익이 정해지면 바뀜" if mid else ""))
+        else:
+            fix.append("· 법인세 등은 결산 전 예상 (%s세전 이익 × 세율, 세무조정 없음%s)" % (
+                "1~%d월 " % cut if mid else "", " — 한 해 이익이 정해지면 바뀜" if mid else ""))
     t.append("<div class='wsub'>결산 확정치와 연중 예상 차이</div><div class='fix'>%s</div></div></div>" % "<br>".join(fix))
     h.append("".join(t))
 
@@ -872,7 +941,9 @@ def render(A, mode):
     h.append("<div class='four c3'>")
     h.append(_card("법인세 납부 (%s)" % "%d/%d" % (A["pay_corp_day"].month, A["pay_corp_day"].day), W(max(A["corp"] - A["prepaid"], 0)),
                    "법인세 %s − 중간예납 등 %s%s" % (W(A["corp"]), W(A["prepaid"]), "" if A["tax_fixed"] else (" · 1~%d월 이익 기준 예상" % cut if mid else " · 예상"))))
-    h.append(_card("지방소득세 납부 (%s)" % "%d/%d" % (A["pay_local_day"].month, A["pay_local_day"].day), W(A["local"]), "법인세 산출세액 × 10%"))
+    lp = A.get("local_paid") or 0
+    h.append(_card("지방소득세 납부 (%s)" % "%d/%d" % (A["pay_local_day"].month, A["pay_local_day"].day), W(max(A["local"] - lp, 0)),
+                   "법인세 산출세액 × 10%%%s" % ((" − 원천징수된 지방소득세 %s" % W(lp)) if lp else "")))
     dep_next = Yp["dep"] if A["closed"] else A["dep_est"]
     h.append(_card("%d년 감가상각비 예상" % (year + 1), W(dep_next), "%d년 %s 금액 · 월간 보고가 미리 비용으로 뺌" % (year, "확정" if A["closed"] else "예상")))
     h.append("</div>")
@@ -906,6 +977,9 @@ def render(A, mode):
     if not A["goals_next"]:
         h.append("<div class='note'>%d년 팀 목표는 대표보고 창 '가끔 넣는 값'의 팀 목표에 넣습니다.</div>" % (year + 1))
     h.append("</div></div>")
+    # ── 5쪽: 기업신용평가 미리보기 (사용자 2026-11-17: 연간 보고에 있어야 함). 대표용은 등급·점수·지표 값만, 전체는 경영관리 9장
+    from . import credit
+    h.append("<div class='sec pgb'>" + _q("7. 기업신용평가 미리보기", "근거 9") + credit.render_brief(A.get("credit")) + "</div>")
     if mode == "ceo":
         h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.<span class='doc-end'>끝.</span></div></div></div></body></html>")
     else:
@@ -990,7 +1064,7 @@ def _detail(A):
     d.append("<div class='evh'>근거 1-2 · 결산 확정치와 연중 예상</div>")
     d.append(_tab(["항목", "연중 예상", "결산", "차이", "예상 근거"], [
         ["감가상각비", W(A["dep_est"]), W(Yp["dep"]) if A["closed"] else "결산 전", sgn(Yp["dep"] - A["dep_est"]) if A["closed"] and A["dep_est"] else "—", esc(A["dep_src"] or "")],
-        ["법인세 등", W(A["tax_est"]), W(A["tax"]) if A["tax_fixed"] else "결산 전", sgn(A["tax"] - A["tax_est"]) if A["tax_fixed"] else "—", "세전 이익 × 세율, 세무조정 없음"]], "pt evt"))
+        ["법인세 등", W(A["tax_est"]), W(A["tax"]) if A["tax_fixed"] else "결산 전", sgn(A["tax"] - A["tax_est"]) if A["tax_fixed"] else "—", "월간 보고와 같은 계산 (10장)" if A.get("tax_same") else "세전 이익 × 세율, 세무조정 없음"]], "pt evt"))
     cut("d1", "1. " + names[0])
     d.append("<h2 id='d2'>2. 분기별 실적</h2><div class='evh'>근거 2-1 · 분기 합계%s</div>" % ("와 작년 같은 분기" if Lp else ""))
     qr = []
@@ -1070,10 +1144,11 @@ def _detail(A):
                       ["판관비 합계", W(ta), pct(ta, Yp["rev"])] + ([W(tb), pct(tb, Lp["rev"]), sgn(ta - tb), chg(ta, tb)] if Lp else [])))
     cut("d5", "5. " + names[4])
     d.append("<h2 id='d6'>6. %d년 준비 근거</h2><div class='evh'>근거 6-1 · 법인세 계산</div>" % (year + 1))
-    d.append(_tab(["단계", "금액"], [["세전 이익", W(Yp["pre"])], ["법인세 등 %s" % ("확정 (결산 전표)" if A["tax_fixed"] else "예상 (세무조정 없음)"), W(A["tax"])],
+    d.append(_tab(["단계", "금액"], [["세전 이익", W(Yp["pre"])], ] + ([["과세표준 (세전 이익%s)" % (" + 세무조정 예상 %s" % sgn(A["tax_adj"]) if A["tax_adj"] else ""), W(A["tax_base"])]] if A.get("tax_same") else []) + [
+                                   ["법인세 등 %s" % ("확정 (결산 전표)" if A["tax_fixed"] else ("예상 (월간 보고와 같은 계산, 10장)" if A.get("tax_same") else "예상 (세무조정 없음)")), W(A["tax"])],
                                    ["법인세 (지방소득세 뺀 것)", W(A["corp"])], ["− 중간예납 등 선납세금", W(A["prepaid"])],
                                    ["= %s 납부" % A["pay_corp_day"].isoformat(), W(max(A["corp"] - A["prepaid"], 0))],
-                                   ["지방소득세 (%s 납부)" % A["pay_local_day"].isoformat(), W(A["local"])]], "pt pl"))
+                                   ["지방소득세 (%s 납부%s)" % (A["pay_local_day"].isoformat(), " · 원천징수된 지방소득세 %s 뺌" % W(A.get("local_paid") or 0) if A.get("local_paid") else ""), W(max(A["local"] - (A.get("local_paid") or 0), 0))]], "pt pl"))
     NX = A["next"] or []
     if NX:
         d.append("<div class='evh'>근거 6-2 · %d년 행사 프로젝트 %d건</div>" % (year + 1, len(NX)))
@@ -1081,6 +1156,12 @@ def _detail(A):
                       [[esc(p["team"]), esc("%s %s" % (p["id"], p["name"])), p["day"].isoformat(), W(p["est"]), W(p["budget"]), W(p["paid"]),
                         W((p["budget"] or 0) - p["paid"])] for p in NX], "pt evt"))
         d.append("<div class='note'>추정 예산 = 사전견적 × (1 − 그 팀 목표 수익률)</div>")
+    loans = ((A.get("credit") or {}).get("E") or {}).get("loans")
+    if loans:   # 대출 만기 (사용자 2026-11-14: 기술보증기금 대출은 매년 연장 예정 → 원금 상환으로 잡지 않고 표시)
+        d.append("<div class='evh'>근거 6-3 · 대출 잔액과 만기</div>")
+        d.append(_tab(["대출", "잔액", "만기", "상태"], [[esc(v), W(bal), m_.isoformat() if m_ else "모름", esc(st_)]
+                                                  for v, bal, m_, k_, cur_, st_ in loans], "pt evt"))
+        d.append("<div class='note'>만기는 장부 적요·창에 넣은 날짜 기준. 매년 연장하는 대출은 원금 상환으로 잡지 않습니다 (연장이 안 되면 만기에 원금 상환).</div>")
     cut("d6", "6. " + names[5])
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12: 연간 누적으로도). 경영관리용에만
     d.append("<h2 id='d7'>7. 현금흐름표</h2>" + ("<div class='note'>최신 자금계획서·분개장이 없어 현금흐름표 숫자를 비웠습니다.</div>"
@@ -1092,4 +1173,34 @@ def _detail(A):
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 연간 경영관리 보고에 늘
     d.append("<h2 id='d9'>9. 기업신용평가 미리보기</h2>" + credit.render(A.get("credit")))
     cut("d9", "9. 기업신용평가 미리보기")
+    # 10~14 (사용자 2026-11-17 '연간 보고에 넣어야 할 항목 전부'): 월간 경영관리의 분기·반기 절과 같은 계산·같은 표
+    M, pack = A.get("M"), A.get("pack")
+    none = "<div class='note'>월간 보고 계산 자료가 없어 만들지 못했습니다 (자료 변환 뒤 다시 만들면 생김).</div>"
+    d.append("<h2 id='d10'>10. 법인세 예상 · 세무조정 예상</h2>")
+    if A["tax_fixed"]:
+        d.append("<div class='note'>결산 법인세가 장부에 들어와 6장의 확정 금액을 씁니다. 아래는 결산 전 계산(참고)입니다.</div>")
+    d.append((pack or {}).get("tax_table") or none)
+    if M and M.get("taxadj"):
+        from . import taxadj
+        d.append("<div class='evh'>세무조정 예상</div>" + taxadj.render(M["taxadj"], esc))
+    elif M:
+        d.append("<div class='note'>세무조정 예상 자료 없음 (자료 변환을 하면 세무조정.csv 가 생김)</div>")
+    cut("d10", "10. 법인세·세무조정", "결산·세무")
+    from . import taxbreak
+    tb = ((M or {}).get("re") or {}).get("tb")
+    d.append("<h2 id='d11'>11. 법인세 감면·공제 전체 검토</h2>" + (taxbreak.render(tb, esc) if tb else none))
+    cut("d11", "11. 감면·공제 검토", "결산·세무")
+    d.append("<h2 id='d12'>12. 신고 일정 · 신고 도우미</h2>")
+    if M and (M.get("filing") or M.get("filing_help")):
+        from . import filing
+        d.append("<h3>신고 일정 (장부 기준)</h3>" + filing.render(M.get("filing"), esc) + (M.get("filing_help") or ""))
+    else:
+        d.append("<div class='note'>신고 일정 자료 없음</div>")
+    cut("d12", "12. 신고 일정·도우미", "결산·세무")
+    d.append("<h2 id='d13'>13. 급여 점검 · 연말정산 예상</h2>"
+             + ((M or {}).get("payroll") or "<div class='note'>위하고 인사·급여 자료가 없어 만들지 않음</div>"))
+    cut("d13", "13. 급여 점검·연말정산", "결산·세무")
+    d.append("<h2 id='d14'>14. 예산 대비</h2>"
+             + ((pack or {}).get("budget") or "<div class='note'>확정한 %d년 예산이 없어 만들지 않음 (창 ‘내년 예산’에서 ‘예산 확정’을 누르면 생김)</div>" % year))
+    cut("d14", "14. 예산 대비", "결산·세무")
     return out

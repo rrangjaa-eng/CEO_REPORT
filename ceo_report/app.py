@@ -441,8 +441,44 @@ def collect_mark(paths, dirs=None):
                 fail = int(d.get("못받음") or 0)
             except (TypeError, ValueError):
                 fail = 0
-            best = {"state": state, "at": at, "fail": fail}
+            best = {"state": state, "at": at, "fail": fail, "error": str(d.get("오류") or "").strip()}
     return best
+
+
+WEHAGO_TRIGGER = "https://smarta.wehago.com/ceo-report-collect"   # 확장 0.9.7 이 이 주소가 열리면 탭을 닫고 '모두 받기' (background.js TRIGGER)
+
+
+def find_chrome(env=None, exists=os.path.exists, which=shutil.which):
+    """크롬 경로 또는 None. 위하고 확장은 크롬에만 깔려 있어 엣지는 찾지 않는다."""
+    env = os.environ if env is None else env
+    cands = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
+    for base in (env.get("LOCALAPPDATA"), env.get("ProgramFiles"), env.get("ProgramFiles(x86)"), env.get("ProgramW6432")):
+        if base:
+            cands.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
+    for p in cands:
+        if exists(p):
+            return p
+    for name in ("chrome", "google-chrome"):
+        p = which(name)
+        if p:
+            return p
+    return None
+
+
+def start_wehago_collect(chrome=None, popen=None):
+    """'위하고에서 받기' 단추 (사용자 2026-11-17 결정 카드 A): 크롬에 표시 주소를 열어 확장이 '모두 받기'를 하게 한다.
+    프로그램은 위하고에 직접 접속하지 않는다. 받은 파일·받기상태.txt 는 지금처럼 자동 반영이 읽는다. -> (성공 여부, 글)."""
+    import subprocess
+    chrome = chrome or find_chrome()
+    if not chrome:
+        return False, "크롬을 찾지 못함 — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요"
+    try:
+        (popen or subprocess.Popen)([chrome, WEHAGO_TRIGGER])
+    except OSError as e:
+        return False, "크롬을 열지 못함 (%s) — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요" % (e.strerror or type(e).__name__)
+    return True, ("크롬에 받기 요청을 보냄 — 분개장·대조·자금계획에 이어 결산·인사급여·연말정산까지 받으며 위하고 화면이 앞에 떴다 닫힙니다(3~5분, 그동안 다른 탭으로 옮기지 마세요). 다 받으면 자동 반영이 이어갑니다. "
+                  "위하고에 로그인돼 있지 않으면 크롬에 위하고가 열립니다: 로그인해 회사 [회계]를 연 뒤 다시 누르세요")
 
 
 def auto_state(paths, now=None, dirs=None):
@@ -472,6 +508,10 @@ def auto_state(paths, now=None, dirs=None):
         return {"state": "collecting", "sig": None,
                 "text": "위하고 확장이 받는 중 (%s 시작) — 다 받으면 반영" % mark["at"].strftime("%H:%M")}
     if not new:
+        # 2026-11-17: '위하고에서 받기'로 시작했는데 못 받았으면 그 까닭을 보인다 (20분까지)
+        if mark and mark["state"] == "끝" and mark.get("error") and 0 <= (now - mark["at"]).total_seconds() < MARK_FRESH_SEC:
+            return {"state": "none", "sig": None, "fail": True, "text": "새 자료 없음 · 위하고 받기 못 함 (%s) — %s"
+                    % (mark["at"].strftime("%H:%M"), mark["error"])}
         return {"state": "none", "sig": None, "text": "새 자료 없음"}
     latest = [w for w in new.values()] + [w for _, w in pend]
     other = winstate.other_wehago_time(paths)
@@ -904,9 +944,10 @@ def question_text(input_dir):
         CL = dividend.checklist(input_dir)
     except Exception:
         return ""
-    miss = [k for k, q, v, need, u in CL if need and u is None]
-    done = sum(1 for k, q, v, need, u in CL if v and k != "주주")
-    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당·감면 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
+    tax = set(k for k, g in dividend.GROUP_OF.items() if g == dividend.TAX_GROUP)   # 감면·공제는 창 '법인세 감면·공제'에서 (2026-11-17)
+    miss = [k for k, q, v, need, u in CL if need and u is None and k not in tax]
+    done = sum(1 for k, q, v, need, u in CL if v and k != "주주" and k not in tax)
+    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
 
 
 def holder_settings(input_dir):
@@ -917,10 +958,38 @@ def holder_settings(input_dir):
         return {}
 
 
-def save_holder_settings(input_dir, values):
-    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12)."""
+def save_holder_settings(input_dir, values, group=None, exclude=None):
+    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12). group/exclude = 그 창이 맡은 묶음만 막음."""
     from . import dividend
-    return dividend.save_settings(input_dir, values, strict=True)
+    return dividend.save_settings(input_dir, values, strict=True, group=group, exclude=exclude)
+
+
+def taxbreak_text(input_dir):
+    """창 '법인세 감면·공제' 상태 (사용자 2026-11-17: 공제·감면 '받음' 체크를 목록에 따로) -> 여러 줄 글."""
+    from . import dividend, taxbreak
+    try:
+        a = dividend.read_settings(input_dir)
+        rows = taxbreak.pick_states(a)
+        miss = dividend.missing_required(a, group=dividend.TAX_GROUP)
+    except Exception:
+        return ""
+    on = [n for n, ok, _ in rows if ok]
+    off = [n for n, ok, _ in rows if not ok]
+    out = ["법인세 예상에 넣는 것 %d개: %s" % (len(on), " · ".join(on) if on else "없음"),
+           "안 넣는 것 %d개: %s" % (len(off), " · ".join(off) if off else "없음")]
+    if miss:
+        out.append("★ 꼭 넣을 값 %d개 비어 있음 — 감면 후보를 판단하지 못합니다" % len(miss))
+    return "\n".join(out)
+
+
+def taxbreak_count(input_dir):
+    """목록 옆 짧은 글: '넣는 것 n개'."""
+    from . import dividend, taxbreak
+    try:
+        rows = taxbreak.pick_states(dividend.read_settings(input_dir))
+    except Exception:
+        return ""
+    return "넣는 것 %d개" % sum(1 for _, ok, _ in rows if ok)
 
 
 def holder_text(input_dir):

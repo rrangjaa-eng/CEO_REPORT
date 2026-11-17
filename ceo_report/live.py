@@ -51,6 +51,19 @@ def is_failed_page(path):
             return FAIL_MARK in f.read(2000)
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def page_asof(path):
+    """만든 화면의 기준일 (머리 '지금 현황 · YYYY-MM-DD 기준') -> 'YYYY-MM-DD' 또는 None. 편의성 36."""
+    import re
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r"지금 현황 · (\d{4}-\d{2}-\d{2}) 기준", f.read(20000))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return m.group(1) if m else None
+
+
 KEEP = 30
 REFRESH_SEC = 60
 TAX_DAYS = 120   # 이 날수 안에 낼 세금·카드·4대보험·급여만 보인다

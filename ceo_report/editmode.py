@@ -20,15 +20,20 @@ START, END = "<!--수정모드-시작-->", "<!--수정모드-끝-->"
 
 _BAR = START + """<div id="edit-bar" contenteditable="false" style="position:sticky;top:0;z-index:9999;display:flex;gap:10px;
 align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#fff;font:14px 'Malgun Gothic',sans-serif">
-<b>수정 모드</b><span style="opacity:.85">글자·숫자를 눌러 바로 고치세요. 원래 보고서는 그대로 남습니다.</span>
+<b>수정 모드</b><span style="opacity:.85">글자·숫자를 눌러 바로 고치세요. 원래 보고서는 그대로 남습니다. 고친 숫자의 합계·비율·근거자료는 다시 계산되지 않습니다.</span>
 <span style="flex:1"></span><span id="edit-msg" style="opacity:.95"></span>
 <button id="edit-save" style="font:bold 14px 'Malgun Gothic',sans-serif;padding:6px 14px;border:0;border-radius:4px;background:#fff;color:#1f4e8c;cursor:pointer">저장하고 PDF 만들기</button>
 <button id="edit-close" style="font:14px 'Malgun Gothic',sans-serif;padding:6px 12px;border:1px solid #fff;border-radius:4px;background:transparent;color:#fff;cursor:pointer">끝내기</button>
 </div>
-<style>@media print{#edit-bar{display:none!important}}[contenteditable=true]:focus{outline:2px dashed #1f4e8c55}</style>
+<div id="edit-stale" contenteditable="false" style="display:none;position:sticky;top:48px;z-index:9998;padding:10px 16px;background:#fde2e2;color:#7f1d1d;font:14px 'Malgun Gothic',sans-serif">
+<b>원본 보고가 다시 만들어졌습니다.</b> 이 화면의 숫자는 예전 것이라 저장하지 않습니다. 아래 고친 곳을 복사해 두고, 이 창을 닫은 뒤 수정 모드를 다시 열어 옮기세요.
+<button id="edit-copy" style="margin-left:8px;font:13px 'Malgun Gothic',sans-serif">고친 곳 복사</button>
+<pre id="edit-list" style="white-space:pre-wrap;margin:6px 0 0;font:13px 'Malgun Gothic',sans-serif"></pre></div>
+<style>@media print{#edit-bar,#edit-stale{display:none!important}}[contenteditable=true]:focus{outline:2px dashed #1f4e8c55}</style>
 <script>
 (function(){
-  var KEY=%(key)s, dirty=false;
+  var KEY=%(key)s, dirty=false, stale=false;
+  var first=document.body.innerText.split('\n');
   document.body.setAttribute('contenteditable','true');
   document.body.setAttribute('spellcheck','false');
   document.body.addEventListener('input',function(){dirty=true;msg('고친 내용이 아직 저장되지 않았습니다');});
@@ -44,11 +49,30 @@ align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#ff
     x.onload=function(){var r={}; try{r=JSON.parse(x.responseText);}catch(e){} done(x.status,r);};
     x.onerror=function(){done(0,{});}; x.send(body);
   }
+  // 편의성 48 (2026-11-17): 원본이 바뀌면 저장할 때가 아니라 바로 알리고, 고친 곳 목록을 보여 새 보고로 옮기기 쉽게
+  function edited(){
+    var seen={}; first.forEach(function(t){seen[t]=1;});
+    return document.body.innerText.split('\n').filter(function(t){t=t.trim(); return t && !seen[t] && t.indexOf('수정 모드')<0;}).slice(0,40);
+  }
+  function showStale(){
+    stale=true; var box=document.getElementById('edit-stale'); box.style.display='block';
+    var l=edited(); document.getElementById('edit-list').textContent=l.length?l.join('\n'):'(아직 고친 곳 없음)';
+    document.getElementById('edit-save').disabled=true;
+  }
+  document.getElementById('edit-copy').onclick=function(){
+    var t=document.getElementById('edit-list').textContent;
+    if(navigator.clipboard) navigator.clipboard.writeText(t); msg('고친 곳을 복사했습니다');
+  };
+  setInterval(function(){ if(stale) return;
+    var x=new XMLHttpRequest(); x.open('GET','/state?k='+KEY);
+    x.onload=function(){try{if(JSON.parse(x.responseText).stale) showStale();}catch(e){}}; x.send();
+  },10000);
   document.getElementById('edit-save').onclick=function(){
     msg('저장하고 PDF를 만드는 중…'); this.disabled=true; var btn=this;
     post('/save',clean(),function(st,r){btn.disabled=false;
       if(st===200&&r.ok){dirty=false; msg('저장함: '+r.pdf+' (PDF가 열립니다)');}
-      else msg('저장하지 못함: '+(r.msg||'프로그램 창이 닫혔는지 확인하세요'));});
+      else if(r.html){dirty=false; msg(r.msg);}
+      else {if(r.stale) showStale(); msg('저장하지 못함: '+(r.msg||'프로그램 창이 닫혔는지 확인하세요'));}});
   };
   document.getElementById('edit-close').onclick=function(){
     if(dirty&&!confirm('저장하지 않은 내용이 있습니다. 그래도 끝낼까요?'))return;
@@ -195,6 +219,11 @@ class Session(object):
                 return u.path, secrets.compare_digest(q.get("k", ""), sess.key)
 
             def do_GET(self):
+                if urlparse(self.path).path == "/state":   # 편의성 48: 원본이 바뀌었는지 화면이 묻는다
+                    path, ok = self._key_ok()
+                    if not ok:
+                        return self._send(403, "{}")
+                    return self._send(200, json.dumps({"stale": sess.stale()}))
                 if urlparse(self.path).path != "/" + sess.key:
                     return self._send(404, "{}")
                 with open(sess.src, encoding="utf-8") as f:
@@ -214,13 +243,18 @@ class Session(object):
                     threading.Thread(target=sess.stop, daemon=True).start()
                     return None
                 ok, text, pdf = sess.save(body)
-                self._send(200 if ok else 500, json.dumps({"ok": ok, "msg": text, "pdf": os.path.basename(pdf or "")},
+                self._send(200 if ok else 500, json.dumps({"ok": ok, "msg": text, "pdf": os.path.basename(pdf or ""),
+                                                           "html": text.startswith("HTML 저장됨"), "stale": sess.stale()},
                                                           ensure_ascii=False))
                 return None
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return self.url
+
+    def stale(self):
+        """수정 모드를 연 뒤 원본 보고가 다시 만들어졌는가."""
+        return _sig(self.orig) != self.orig_sig
 
     def save(self, page):
         page = strip(page)
@@ -247,9 +281,9 @@ class Session(object):
                 err = self.make_pdf(self.dst, pdf)
             except Exception as e:
                 err = "%s: %s" % (type(e).__name__, e)
-        if err:
+        if err:   # 편의성 32: HTML 은 저장됐고 PDF 만 못 만든 것을 '저장하지 못함'과 구분
             self.on_saved(None, "%s 저장함, PDF는 못 만듦: %s" % (os.path.basename(self.dst), err))
-            return False, err, None
+            return False, "HTML 저장됨 / PDF 못 만듦: %s" % err, None
         self.on_saved(pdf, "저장함: %s" % os.path.basename(pdf))
         return True, "저장함", pdf
 

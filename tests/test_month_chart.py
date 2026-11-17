@@ -80,7 +80,8 @@ class TestMonthChart(unittest.TestCase):
             rd.render(RM, "ceo")
             RM["_issue_compact"] = True
             rd.render(RM, "ceo")
-        self.assertEqual(seen, [250, 120])
+        # 2026-11-17 보는 사람 기준 양식: 대표 월간 2쪽에 ③④⑤가 들어가게 보통 높이는 150 (경영관리용은 250 그대로), 쪽 맞춤 줄임은 120
+        self.assertEqual(seen, [150, 120])
 
 
 class TestBuildEvidence(unittest.TestCase):

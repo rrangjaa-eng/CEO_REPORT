@@ -347,6 +347,15 @@ QUESTIONS = [
     ("감면업종", "법인세 감면", "세무사가 우리 업종이 창업 감면 업종이라고 확인했나요?", "choice", ("예", "아니오", "모름"), None, True),
     ("작년감면", "법인세 감면", "2025년 법인세 신고 때 받은 감면·공제는?", "choice", ("창업감면", "고용공제", "둘 다", "없음", "모름"), None, True),
     ("연구전담", "법인세 감면", "기업부설연구소나 연구개발 전담부서를 인정받았나요?", "choice", ("예", "아니오"), None, True),
+    ("연구공제", "법인세 감면", "  있으면 연구전담부서 인건비 공제를 받나요? (회사 결정)", "choice", ("모름", "받음", "안 받음"), "모름", False),   # 사용자 2026-11-17: 대표만 소속, 2025·2026 안 받음
+    # 감면·공제 후보를 법인세 계산에 넣을지 (사용자 2026-11-17: 후보를 세금 계산에 넣고, 최저한세로 못 쓴 공제는 이월)
+    ("반영기본", "법인세 감면", "감면·공제 후보를 법인세 계산에 넣는 기본 규칙", "choice", ("모두 안 받음", "계산된 것만", "모두 받음"), "모두 안 받음", False),   # 사용자 11/17: 경영관리가 확인·체크한 것만
+    ("반영_특별감면", "법인세 감면", "  작년 신고서의 중소기업 특별세액감면(같은 비율)을 올해 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
+    ("반영_이월공제", "법인세 감면", "  작년에서 넘어온 세액공제(이월분)를 올해 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
+    ("반영_고용", "법인세 감면", "  올해 새로 생긴 통합고용 세액공제를 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
+    ("반영_교육훈련", "법인세 감면", "  교육훈련비(인력개발비) 세액공제를 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
+    ("반영_투자", "법인세 감면", "  통합투자 세액공제를 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
+    ("반영_연구", "법인세 감면", "  연구·인력개발비 세액공제를 계산에 넣나요?", "choice", ("기본", "받음", "안 받음"), "기본", False),
     ("승용차기록", "법인세 감면", "회사 차량이 승용차라면 운행기록부를 쓰나요?", "choice", ("모름", "씀", "안 씀", "승용차 없음"), "모름", False),
     ("벤처", "법인세 감면", "벤처기업·이노비즈 인증이 있나요?", "choice", ("예", "아니오", "모름"), "모름", False),
     ("법인세감면", "법인세 감면", "세무사가 알려준 올해 감면·공제 예상액 (원, 있으면 프로그램 계산 대신 씀)", "amount", (), None, False),
@@ -354,6 +363,7 @@ QUESTIONS = [
 # 답에 따라 꼭 넣어야 하는 칸: (키, 그 값일 때) -> 함께 넣을 키
 NEEDS_IF = {("큰지출", "있음"): ("큰지출금액", "큰지출시기"), ("퇴직금계획", "있음"): ("퇴직금유보",)}
 LABEL = dict((k, q) for k, _, q, _, _, _, _ in QUESTIONS)
+GROUP_OF = dict((k, g) for k, g, _, _, _, _, _ in QUESTIONS)
 
 
 def read_settings(input_dir):
@@ -368,17 +378,27 @@ def read_settings(input_dir):
     return out
 
 
-def missing_required(st):
-    """꼭 넣을 값 중 빈 것 -> [질문]. 답에 따라 함께 넣어야 하는 칸(큰 지출 금액·시기 등)도 본다."""
-    out = [q.strip() for k, _, q, _, _, dflt, need in QUESTIONS if need and not st.get(k) and not dflt]
+TAX_GROUP = "법인세 감면"   # 사용자 2026-11-17: 감면·공제 고르기는 '배당 판단 질문' 창에서 빼 목록에 따로 둔다
+
+
+def _in_group(k, group=None, exclude=None):
+    g = GROUP_OF.get(k)
+    return (group is None or g == group) and (exclude is None or g != exclude)
+
+
+def missing_required(st, group=None, exclude=None):
+    """꼭 넣을 값 중 빈 것 -> [질문]. 답에 따라 함께 넣어야 하는 칸(큰 지출 금액·시기 등)도 본다.
+    group/exclude: 그 묶음만(또는 그 묶음 빼고) 본다 — 창마다 자기 칸만 막는다."""
+    out = [q.strip() for k, _, q, _, _, dflt, need in QUESTIONS if need and not st.get(k) and not dflt and _in_group(k, group, exclude)]
     for (k, v), more in NEEDS_IF.items():
-        if st.get(k) == v:
+        if st.get(k) == v and _in_group(k, group, exclude):
             out += ["%s → %s" % (LABEL[k].strip(), LABEL[m].strip().replace("있으면 ", "")) for m in more if not st.get(m)]
     return out
 
 
-def save_settings(input_dir, values, strict=False):
-    """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict."""
+def save_settings(input_dir, values, strict=False, group=None, exclude=None):
+    """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict.
+    group/exclude 는 strict 로 볼 묶음 (감면·공제 창은 그 묶음만, 배당 질문 창은 그 묶음 빼고)."""
     from .util import guard_save
     guard_save(os.path.join(input_dir, SET_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_settings(input_dir)
@@ -402,7 +422,7 @@ def save_settings(input_dir, values, strict=False):
             raise ValueError("%s: 날짜 형식 YYYY-MM-DD" % LABEL[k].strip())
         cur[k] = v
     if strict:
-        miss = missing_required(cur)
+        miss = missing_required(cur, group, exclude)
         if miss:
             raise ValueError("꼭 넣을 값 %d개가 비어 있어 저장하지 않았습니다: %s" % (len(miss), " / ".join(miss)))
     if cur.get("큰지출") == "있음" and not cur.get("큰지출금액"):

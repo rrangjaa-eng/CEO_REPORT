@@ -234,7 +234,7 @@ class TestCalc15AcceptedRequests(unittest.TestCase):
         self.assertEqual([(x["근거"], money(x)) for x in a.execs.rows], [(x["근거"], money(x)) for x in b.execs.rows])
 
 
-# ───────────── 계산-08 (결정 d): 법인세 예상은 장부에 넣은 비용만 뺌, 대손충당금은 '쌓으면 세금 −X'만 ─────────────
+# ───────────── 계산-08 (사용자 2026-11-17, 11/15 결정 d를 바꿈): 대손충당금 예상은 세무사 답과 상관없이 과세표준에서 먼저 뺌 ─────────────
 class TestCalc08BadDebt(unittest.TestCase):
     def journal(self):
         from test_dept import line
@@ -242,25 +242,21 @@ class TestCalc08BadDebt(unittest.TestCase):
                 line(D(2026, 3, 5), "10800", "외상매출금", 330_000_000),
                 line(D(2026, 3, 5), "61000", "외주비(도)", 100_000_000)]
 
-    def test_calc08_bad_debt_is_not_taken_off_the_tax_base(self):
+    def test_calc08_bad_debt_is_taken_off_the_tax_base(self):
         rows, _ = corptax.from_journal(self.journal(), dict(convert.DEFAULT_CONFIG), D(2026, 11, 4), {})
         ct = rows[0]
-        # 300 − 100 = 200 (백만): 대손충당금 예상 3.3백만(외상매출금 330 × 1%)을 빼지 않는다 (예전 196.7)
-        self.assertEqual(ct["과세표준"], "200000000")
+        # 300 − 100 − 대손충당금 예상 3.3 (외상매출금 330 × 1%) = 196.7 (백만)
+        self.assertEqual(ct["과세표준"], "196700000")
         self.assertEqual(ct["대손충당금"], "3300000")
-        self.assertIn("대손충당금 예상 3,300,000원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −", ct["근거"])
-        m = re.search(corptax.BAD_DEBT_HINT_RE, ct["근거"])
-        saving = int(m.group(2).replace(",", ""))
-        nat, corp, _ = corptax.national(200_000_000, "2026")
-        nat2, corp2, _ = corptax.national(200_000_000 - 3_300_000, "2026")
-        self.assertEqual(saving, nat + int(corp * corptax.LOCAL_RATE) - nat2 - int(corp2 * corptax.LOCAL_RATE))
-        self.assertGreater(saving, 0)
+        self.assertIn("− 대손충당금 예상 3,300,000 = 과세표준 196,700,000", ct["근거"])
+        self.assertNotIn("빼지 않음", ct["근거"])
 
-    def test_calc08_no_hint_when_nothing_to_set_aside(self):
+    def test_calc08_zero_when_nothing_to_set_aside(self):
         from test_dept import line
         rows, _ = corptax.from_journal([line(D(2026, 3, 5), "41200", "용역매출", credit=300_000_000)],
                                        dict(convert.DEFAULT_CONFIG), D(2026, 11, 4), {})
-        self.assertNotIn("세무사 확인 전이라 빼지 않음", rows[0]["근거"])
+        self.assertEqual(rows[0]["과세표준"], "300000000")
+        self.assertNotIn("빼지 않음", rows[0]["근거"])
 
 
 class TestReportChartBasis(unittest.TestCase):
@@ -3083,7 +3079,7 @@ flush(false).then((r) => console.log(JSON.stringify({r, left: store.pendingSaves
 
     def test_manifest_version(self):
         with open(os.path.join(ROOT, "chrome_extension", "manifest.json"), encoding="utf-8") as f:
-            self.assertIn('"version": "0.9.6"', f.read())
+            self.assertIn('"version": "0.9.11"', f.read())
 
 
 # ───────────── 1차 E11: 지금 현황을 새로 못 만들면 예전 화면이 최신처럼 열리지 않음 ─────────────
@@ -3141,6 +3137,7 @@ class TestLiveFailureNotStale(unittest.TestCase):
             paths = type("P", (), {"input": inp, "output": out})()
             say = staticmethod(lambda s: None)
             asof = type("V", (), {"get": staticmethod(lambda: "")})()
+            asof_date = staticmethod(lambda: None)   # 편의성 36(11/17): 기준일 다르면 다시 만듦
         with mock.patch.object(winstate, "convert_time", return_value=dt.datetime.now()), \
                 mock.patch.object(app, "build_live", side_effect=lambda *a, **k: built.append(1)), \
                 mock.patch.object(gui, "open_path", side_effect=opened.append):

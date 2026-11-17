@@ -177,10 +177,11 @@ def team_section(I, R, team, start_no=7):
     if fl or miss:
         body = ""
         if fl:
-            rows = "".join("<tr><td class='l'>%s</td><td class='c'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
-                           % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"]))
+            rows = "".join("<tr><td class='l'><b>%s</b></td><td class='l'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n %s'><b>%s</b></td></tr>"
+                           % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
+                              "hl neg" if f["diff"] < 0 else "up", T(f["diff"]))
                            for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
-            body = ("<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
+            body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
                     "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         if miss:
             body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
@@ -189,8 +190,11 @@ def team_section(I, R, team, start_no=7):
     # 4 경보 (그 팀 프로젝트)
     al = [(lv, t) for lv, t in I["alerts"] if any(t.startswith(n) for n in names)]
     if al:
-        sec("주의할 프로젝트", "<table class='g'><tbody>%s</tbody></table>" % "".join(
-            "<tr><td class='c'>%s</td><td class='l'>%s</td></tr>" % (esc(lv), esc(t)) for lv, t in al))
+        def _al(lv, t):   # 등급 딱지 + 프로젝트 이름(굵게) + 내용
+            nm = max((n for n in names if t.startswith(n)), key=len)
+            return ("<div class='al%s'><span class='lv'>%s</span><div><b>%s</b><br>%s</div></div>"
+                    % (" hi" if lv == "높음" else "", esc(lv), esc(nm), esc(t[len(nm):].strip())))
+        sec("주의할 프로젝트", "".join(_al(lv, t) for lv, t in al))
         no += 1
     # 7 계산서 짝
     pr = [(n, t) for n, t in I["pairs"] if n in names]

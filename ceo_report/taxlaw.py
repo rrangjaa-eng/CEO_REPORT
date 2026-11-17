@@ -36,6 +36,9 @@ ITEMS = [
     ("고용공제_지방", "통합고용 공제 1명당 (중소기업·수도권 밖·청년 외)", "원", "감면 후보"),
     ("고용공제_수도권청년", "통합고용 공제 1명당 (중소기업·수도권·청년 등)", "원", "감면 후보"),
     ("고용공제_지방청년", "통합고용 공제 1명당 (중소기업·수도권 밖·청년 등)", "원", "감면 후보"),
+    # 11/17 사용자: 법인세 계산에 쓰는 법정 비율은 모두 최신 법령과 맞춰 봄
+    ("농특세율", "농어촌특별세율 (세액공제로 줄인 세금 대비)", "비율", "법인세 예상"),
+    ("지방소득세율", "법인지방소득세율 (과세표준 2억 이하)", "비율", "지방소득세 예상 (법인세 산출세액 × 10%와 같음)"),
     ("금융소득기준", "금융소득 종합과세 기준 (1인 연)", "원", "배당 권장액"),
     ("배당원천세율", "배당 원천징수 소득세율 (지방세 별도)", "비율", "배당 권장액"),
     ("건강보험료율", "건강보험료율 (전체, 근로자는 절반)", "비율", "배당 권장액·급여 점검"),
@@ -58,6 +61,7 @@ for _k in ("월소정시간",):
     UNIT[_k] = "시간"
 
 SRC = "공개 세법 자료 (2026-11-12 확인)"
+LAW_HIRE = "조특법 29조의8 (2025-12-23 개정) 중소기업 직전 해 대비 1명당 — 법령 조문 확인 2026-11-17"
 # {연도: {키: (값, 상태, 근거, 시행일 또는 None)}}
 DEFAULTS = {
     2025: {
@@ -97,11 +101,14 @@ DEFAULTS = {
         "국민연금요율": (0.095, "자료확인", "2025 연금개혁, 2026년부터 해마다 0.5%p 인상", None),
         "국민연금상한": (6_370_000, "자료확인", "2025-07 ~ 2026-06 기준소득월액 상한 (7월마다 바뀜)", dt.date(2026, 7, 1)),
         "장기요양비율": (0.1314, "자료확인", SRC, None),
-        # 2026 개편: 근속 1·2·3년차별로 금액이 다르고 인원 감소 추징 삭제. 연차별 금액은 자료가 엇갈려 미확인 (2026-11-12)
-        "고용공제_수도권": (None, "미확인", "조특법 29조의8 개정 (시행 2026-07-01): 1·2·3년차 금액 다름 — 세무사 확인", dt.date(2026, 7, 1)),
-        "고용공제_지방": (None, "미확인", "조특법 29조의8 개정 (시행 2026-07-01): 1·2·3년차 금액 다름 — 세무사 확인", dt.date(2026, 7, 1)),
-        "고용공제_수도권청년": (None, "미확인", "조특법 29조의8 개정 (시행 2026-07-01): 1·2·3년차 금액 다름 — 세무사 확인", dt.date(2026, 7, 1)),
-        "고용공제_지방청년": (None, "미확인", "조특법 29조의8 개정 (시행 2026-07-01): 1·2·3년차 금액 다름 — 세무사 확인", dt.date(2026, 7, 1)),
+        # 2026 개편 (조특법 29조의8, 2025-12-23 개정): 직전·전전·전전전 해 대비 증가 인원마다 금액이 다름. 여기 값은 직전 해 대비(1년차),
+        # 나머지는 taxbreak.TIERS_2026. 2026-11-17 법령 조문으로 확인 (사용자 카드: 공개 자료 금액으로 계산)
+        "고용공제_수도권": (4_000_000, "자료확인", LAW_HIRE, None),
+        "고용공제_지방": (7_000_000, "자료확인", LAW_HIRE, None),
+        "고용공제_수도권청년": (7_000_000, "자료확인", LAW_HIRE, None),
+        "고용공제_지방청년": (10_000_000, "자료확인", LAW_HIRE, None),
+        "농특세율": (0.20, "자료확인", "농어촌특별세법 5조 ①1호 (감면세액의 100분의 20)", None),
+        "지방소득세율": (0.01, "자료확인", "지방세법 103조의20 (개정 2025-12-31, 2억 이하 1천분의 10)", None),
     },
 }
 LATEST = max(DEFAULTS)
@@ -206,8 +213,9 @@ def value(input_dir, year, key, today=None):
         day = _day(mine[1])
         if eff and day and day < eff <= (today or dt.date.today()):
             return mine[0], False, "%s 확인 뒤 %s 시행 개정이 있어 다시 확인 필요" % (mine[1], eff.isoformat())
-        if fl and day and _day(fl[2]) and day < _day(fl[2]):
-            return mine[0], False, "%s 확인 뒤 %s 조문이 바뀜 (%s 받음) — 다시 확인 필요" % (mine[1], fl[0], fl[2])
+        changed = _day(fl[3]) if fl and len(fl) > 3 else (_day(fl[2]) if fl else None)   # 예전 파일(3칸)은 받은 날로
+        if changed and day and day < changed:
+            return mine[0], False, "%s 확인 뒤 %s 조문이 바뀜 (%s 받음) — 다시 확인 필요" % (mine[1], fl[0], fl[3] if len(fl) > 3 else fl[2])
         return mine[0], True, "확인함 %s%s" % (mine[1], " · " + mine[2] if mine[2] else "")
     if fl:
         return v, False, "법령 조문 확인 필요: %s (시행 %s, %s 받음)" % (fl[0], fl[1] or "?", fl[2])
@@ -237,7 +245,12 @@ def status(input_dir, year, today=None):
         rows.append((k, name, v, ok, why, (year, k) in mine and ok and mine[(year, k)][0] == v))
         if not ok:
             todo.append(k)
-    return {"year": year, "rows": rows, "todo": todo, "confirmed": all(r[5] for r in rows), "known": year <= LATEST}
+    try:   # 최신 법령 확인 상태 (사용자 2026-11-17)
+        from . import lawwatch
+        ls = lawwatch.state(input_dir, today)
+    except Exception:
+        ls = None
+    return {"year": year, "rows": rows, "todo": todo, "confirmed": all(r[5] for r in rows), "known": year <= LATEST, "law_state": ls}
 
 
 def show(key, v):
@@ -310,6 +323,9 @@ def render(T, esc):
     if not T:
         return ""
     h = ["<div class='q'>%d년 적용한 세법 기준</div>" % T["year"]]
+    ls = T.get("law_state")
+    if ls:
+        h.append("<div class='%s'>%s</div>" % ("note" if ls.get("ok") else "warn", esc(ls["msg"])))
     b = banner(T)
     if b:
         h.append("<div class='warn'>%s</div>" % esc(b))
@@ -317,6 +333,6 @@ def render(T, esc):
         "<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td></tr>"
         % (esc(n), esc(show(k, v)), "<span class='tag'>확인함</span>" if mine else ("<span class='tag e'>자료확인</span>" if ok else "<b style='color:#c62828'>미확인</b>"),
            esc(why)) for k, n, v, ok, why, mine in T["rows"]))
-    h.append("<div class='note'>프로그램은 인터넷에서 세법 개정을 스스로 읽지 않습니다. 해마다 1월에 기본값을 갱신하고, "
-             "세무사 확인 값은 창에서 넣습니다. '미확인' 값을 쓰는 계산은 '확인 필요'로만 보여 주고 합계에 넣지 않습니다.</div>")
+    h.append("<div class='note'>보고를 만들 때 7일 안에 받은 적이 없으면 국가법령정보에서 조문을 먼저 받아 개정 여부를 봅니다 (창 '개정 확인 받기'로도 받음). "
+             "확인한 값은 창에서 넣습니다. '미확인' 값을 쓰는 계산은 '확인 필요'로만 보여 주고 합계에 넣지 않습니다.</div>")
     return "".join(h)
