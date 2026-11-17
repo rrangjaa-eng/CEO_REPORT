@@ -232,15 +232,27 @@ def _next_report(R):
     return dt.date(y, m, 1) - dt.timedelta(days=1)
 
 
+# 예산 초과 할 일은 '확인할 것'·할 일 표에 넣지 않는다 (사용자 2026-11-17: 확인할 것에서 예산초과 빼기).
+# 경영관리의 예산 초과 줄·위험 분석 표·프로젝트별 예산 표·경보 목록에는 그대로 남는다 (경영관리는 전부 남김).
+_BUDGET_OVER = re.compile(r"등록 지출\(장부 전 지급요청 포함\) .*원이 예산 .*원의 [\d.]+%|추정 예산 .*원을 넘음")
+
+
+def is_budget_over(*texts):
+    """위험 분석의 예산 초과(calc.risks)·자동 분석 경보의 예산 초과(insights.alerts) 글이면 True."""
+    return any(_BUDGET_OVER.search(t or "") for t in texts)
+
+
 def todo_items(R, I, L):
     """할 일 전부: 위험 분석의 해결방안(높음 먼저) + 위험 분석에 없는 자동 분석 경보 '높음' + '자료 없음' 주제의 채울 일."""
     items = []
     for r in R.get("risks") or []:
+        if is_budget_over(r.get("fact")):
+            continue
         items.append({"id": todo_id(r["area"], r["fact"], r["action"]), "topic": RISK_TOPIC.get(r["area"], "data"),
                       "level": r["level"], "text": r["action"], "fact": r["fact"], "owner": _owner(R, r["fact"])})
     facts = " ".join(r["fact"] for r in R.get("risks") or [])
     for lv, t in (I or {}).get("alerts") or []:
-        if lv != "높음":
+        if lv != "높음" or is_budget_over(t):
             continue
         m = re.match(r"\[([^\]]+)\]", t)
         if m and m.group(1) in facts:
@@ -281,7 +293,7 @@ def todo_status(R, items):
     blind = R.get("_gate_hidden") is not None   # 자료가 막혀 자금 숫자를 비움 → 자금 할 일은 이번에 판단하지 못함 (P4-12)
     done = []
     for k, p in prev.items():
-        if k not in now:
+        if k not in now and not is_budget_over(p.get("fact"), p.get("text")):   # 예전 기록의 예산 초과는 '처리'로 보이지 않게
             d = dec.get(k) or {}
             if blind and p.get("topic") == "cash":
                 done.append({"id": k, "topic": "cash", "text": p.get("text", ""), "owner": p.get("owner", ""),
@@ -357,6 +369,8 @@ def check_items(out_dir):
             items.setdefault(k, it)
     out = []
     for k, it in items.items():
+        if is_budget_over(it.get("fact"), it.get("text")):   # 예전 기록에 남은 예산 초과 할 일도 빼기 (2026-11-17)
+            continue
         out.append({"id": k, "kind": "보고 할 일", "date": d.isoformat(), "amount": None, "vendor": "",
                     # 편의성 17 (2026-11-16): 제목마다 '보고 할 일 (자금 · 경영관리):' 를 되풀이하지 않는다 — 주제·맡은 곳은 설명 앞에
                     "title": it.get("text", ""),
