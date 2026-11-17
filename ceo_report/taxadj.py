@@ -3,7 +3,8 @@
 장부 이익과 세법 이익의 차이 중 장부로 셀 수 있는 것만 어림한다 (1월~보고 달 누적, 한도는 달 수만큼 나눠 비교):
   · 접대비(기업업무추진비) 한도 초과 → 비용 인정 안 함 (+)
   · 벌금·과태료·가산세·과징금·범칙금 (적요로 찾음) → 비용 인정 안 함 (+)
-  · 업무용 승용차 비용: 운행기록부 없으면 1대 연 1,500만 원 넘는 몫 (+, 사용자 2026-11-17: 1대·기록부 없음으로 보고 넣음)
+  · 업무용 승용차 비용: 운행기록부 없으면 감가상각비까지 넣은 관련비용이 1대 연 1,500만 원 넘는 몫 (+, 사용자 2026-11-17: 1대·기록부 없음으로 보고 넣음)
+    이때 감가상각비 한도(연 800만)는 감가상각비 × 업무사용비율로 비교 (시행령 50조의2 ⑦⑩)
   · 업무용 승용차 감가상각비: 작년 신고서의 승용차 상각비로 올해 1년 치 한도(연 800만) 조정 (±)
   · 대표·임직원 가지급금 인정이자 → 수익으로 더함 (+)
   · 기부금 → 한도 계산은 세무사 (확인 필요)
@@ -86,6 +87,8 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
                           why + " — 운행기록부 없음·승용차 1대로 보고 넣음 (기록부를 쓰거나 차가 여러 대면 창에서 고치면 줄어듦)"))
     # 업무용 승용차 감가상각비 한도 (사용자 2026-11-13: 작년 상세 신고서의 업무용승용차 관련비용 명세서)
     car_dep = _car_dep(input_dir, year, law("승용차상각한도"), wehago_dir, months)
+    if car_dep and lim_car and rec not in ("씀", "승용차 없음"):
+        car_dep = _no_log(items, car_dep, car, lim_car, law("승용차상각한도"), input_dir, year, wehago_dir, months)
     if car_dep:
         items.append(car_dep)
     # 가지급금 인정이자
@@ -159,6 +162,41 @@ def _car_dep(input_dir, year, lim_info, wehago_dir=None, months=12):
         adj = int(round(full * months / 12.0))
         why += " · 1~%d월 몫 %s원 = 1년 치 %s원 × %d/12 (감가상각비 예상과 같은 기준)" % (months, "{:,}".format(adj), "{:,}".format(full), months)
     return ("업무용 승용차 감가상각비 한도", adj, bool(ok), why)
+
+
+def _no_log(items, car_dep, car, lim_car, lim_info, input_dir, year, wehago_dir, months):
+    """운행기록부 없음 (사용자 2026-11-17 카드)일 때 법인세법 시행령 50조의2를 그대로 따른다 (11/17 최종 점검에서 고침):
+    ② 관련비용 = 감가상각비 + 유류비·보험료·수선비 등 → 감가상각비도 넣어 1,500만 원(달 수만큼)과 비교
+    ⑦ 넘으면 업무사용비율 = 1,500만 ÷ 관련비용, 넘는 몫은 비용 인정 안 함
+    ⑩ 감가상각비 한도 초과 = 감가상각비 × 업무사용비율 − 800만 (달 수만큼).
+    올해 1년 치 감가상각비를 대장에서 모르면 예전 계산 그대로 둔다."""
+    from .corptax import DEP_MODE
+    annual = _ledger_car(input_dir, year, wehago_dir)
+    lim8 = lim_info[0]
+    if not annual or not lim8 or DEP_MODE != "prorate":
+        return car_dep
+    dep = int(round(annual * min(months, 12) / 12.0))
+    total = int(car or 0) + dep
+    cap = int(lim_car * months / 12.0)
+    cap8 = int(lim8 * months / 12.0)
+    ratio = 1.0 if total <= cap else cap / float(total)
+    private = max(total - cap, 0)
+    over = max(int(round(dep * ratio)) - cap8, 0)
+    for i, it in enumerate(items):
+        if it[0] == "업무용 승용차 비용":
+            items[i] = ("업무용 승용차 비용", private, private > 0 and it[2] is not None,
+                        "1~%d월 승용차 관련비용 %s원 (차량 비용 %s + 감가상각비 %s) vs 운행기록부 없을 때 한도 %s원 (연 %s, %d달 몫) → 넘는 %s원은 비용 인정 안 됨 "
+                        "(업무사용비율 %.1f%%, 법인세법 시행령 50조의2 ②⑦) — 운행기록부 없음·승용차 1대로 보고 넣음 (기록부를 쓰면 창에서 고치면 줄어듦)"
+                        % (months, "{:,}".format(total), "{:,}".format(int(car or 0)), "{:,}".format(dep), "{:,}".format(cap),
+                           "{:,}".format(int(lim_car)), months, "{:,}".format(private), ratio * 100))
+            if private > 0:
+                items[i] = (items[i][0], items[i][1], True, items[i][3])
+    name, _, ok, why = car_dep
+    why = why.split(" → 한도")[0] if " → 한도" in why else why
+    why += (" → 1~%d월 감가상각비 %s원 × 업무사용비율 %.1f%% = %s원 중 한도 %s원(연 %s, %d달 몫) 넘는 %s원을 과세표준에 더함 (시행령 50조의2 ⑩)"
+            % (months, "{:,}".format(dep), ratio * 100, "{:,}".format(int(round(dep * ratio))), "{:,}".format(cap8),
+               "{:,}".format(int(lim8)), months, "{:,}".format(over)))
+    return (name, over, ok, why)
 
 
 def _ledger_car(input_dir, year, wehago_dir=None):

@@ -290,7 +290,7 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     from .convert import closing_pl_line
     closing = cfg.get("closing_sorts", ())
     prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
-    pretax, unknown, prepaid, dep_lines = 0, 0, 0, []
+    pretax, unknown, prepaid, local_prepaid, dep_lines = 0, 0, 0, 0, []
     for ln in journal:
         ln = closing_pl_line(ln, closing)   # 결산 전표: 원가·손익 대체는 빼고 감가상각비 차변만 (변환과 같게)
         if ln is None or ln["date"] is None:
@@ -302,7 +302,11 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
         if lym[:4] != year or lym > ym:
             continue
         if code in prepaid_codes:
-            prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+            # 11/17 최종 점검: 원천징수된 지방소득세(거래처·적요에 '지방')는 법인세가 아니라 지방소득세에서 뺀다
+            if "지방" in _squash(ln.get("vendor")) + _squash(ln.get("memo")):
+                local_prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+            else:
+                prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
             continue
         kind = _classify(ln, cfg)
         if code in nin:
@@ -326,7 +330,8 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     # 감가상각비처럼 과세표준에서 먼저 뺀다 (받을 돈 × 한도율 − 쌓인 충당금)
     base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
     nat, corp, C = national(base, year, input_dir)
-    local = int(corp * LOCAL_RATE)
+    local_tax = int(corp * LOCAL_RATE)
+    local = max(local_tax - local_prepaid, 0)
     pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
@@ -349,7 +354,7 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
                  과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"])),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
-                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
+                      "법인세 산출세액 %s × 10%%%s" % ("{:,}".format(corp), (" = %s − 원천징수된 지방소득세 %s" % ("{:,}".format(local_tax), "{:,}".format(local_prepaid))) if local_prepaid else "")), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
     return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))
 

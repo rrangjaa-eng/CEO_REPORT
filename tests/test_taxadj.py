@@ -40,6 +40,21 @@ class Adjust(unittest.TestCase):
         A = taxadj.adjust(J, {}, "2026-12", tempfile.mkdtemp(), revenue=0, answers={"승용차기록": "씀"})
         self.assertEqual(A["total"], 0)
 
+    def test_no_log_counts_depreciation_1117(self):
+        # 11/17 최종 점검: 기록부 없음이면 감가상각비도 관련비용 (시행령 50조의2 ②⑦⑩). 가짜 숫자, 1~10월
+        items = [("업무용 승용차 비용", 0, False, "")]
+        old = taxadj._ledger_car
+        taxadj._ledger_car = lambda *a, **k: 24_000_000          # 1년 치 상각 → 10달 2,000만
+        try:
+            dep = taxadj._no_log(items, ("업무용 승용차 감가상각비 한도", 999, True, "작년 → 한도 x"), 5_000_000,
+                                 15_000_000, (8_000_000, True, ""), None, 2026, None, 10)
+        finally:
+            taxadj._ledger_car = old
+        # 관련비용 2,500만 vs 한도 1,250만 → 넘는 1,250만, 비율 50% → 상각 2,000만 × 50% = 1,000만 − 666만 = 333만
+        self.assertEqual((items[0][1], items[0][2]), (12_500_000, True))
+        self.assertEqual((dep[1], dep[2]), (3_333_334, True))
+        self.assertIn("업무사용비율 50.0%", dep[3])
+
     def test_bad_debt(self):
         J = [L(dt.date(2025, 3, 1), "외상매출금", "10800", debit=300_000_000),
              L(dt.date(2026, 3, 1), "외상매출금", "10800", debit=200_000_000),
