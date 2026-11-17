@@ -35,7 +35,8 @@ AUTO_CHECK_MS = 30000   # 새 자료 확인 간격 (창이 켜져 있을 때만)
 AUTO_WAIT_MS = 10000    # 받는 중·기다리는 중엔 더 자주 본다 (편의성 27)
 RECOUNT_MS = 800        # 기준일을 고친 뒤 이만큼 조용하면 다시 셈 (편의성 5)
 FOCUS_SEC = 20          # 창으로 돌아올 때 다시 세는 최소 간격
-RARE = ("주주", "배당 판단 질문", "법인세 감면·공제", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기")   # 사용자 2026-11-17: 감면·공제를 따로   # 운영-05: 1년에 몇 번 쓰는 것
+RARE = ("주주", "배당 판단 질문", "법인세 감면·공제", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기",
+        "이렇게 하면?", "자금 선택")   # 2026-11-17 제안 A6(가정 계산, 저장 안 함)·A4/A5(법인세 분납·예금 금리)   # 사용자 2026-11-17: 감면·공제를 따로   # 운영-05: 1년에 몇 번 쓰는 것
 
 # 색 (목업과 같게)
 C = {"bg": "#f5f3ef", "card": "#ffffff", "line": "#e2ded6", "text": "#141b26", "sub": "#5b6475",
@@ -1072,11 +1073,107 @@ class Window(object):
         r = self._row(p, (6, 0))
         self._btn(r, "대출 만기 넣기·고치기", self.open_maturity)
 
+        # '이렇게 하면?' 가정 계산 (2026-11-17 제안 A6): 저장하지 않고 여유 자금이 어떻게 바뀌는지만 본다
+        p = panel("이렇게 하면?")
+        from .insights_more import WHATIF_KINDS
+        self.wi_kind, self.wi_amt, self.wi_day = tk.StringVar(value=WHATIF_KINDS[0]), tk.StringVar(), tk.StringVar()
+        r = self._row(p, (0, 0))
+        ttk.Label(r, text="종류").pack(side="left")
+        ttk.Combobox(r, textvariable=self.wi_kind, values=WHATIF_KINDS, width=12, state="readonly").pack(side="left", padx=(3, 8))
+        ttk.Label(r, text="금액(늦춤은 일 수)").pack(side="left")
+        e_w = ttk.Entry(r, textvariable=self.wi_amt, width=12)
+        e_w.pack(side="left", padx=(3, 8))
+        self._amount(e_w, self.wi_amt)
+        ttk.Label(r, text="날짜(부터)").pack(side="left")
+        e_wd = ttk.Entry(r, textvariable=self.wi_day, width=11)
+        e_wd.pack(side="left", padx=(3, 1))
+        ttk.Button(r, text="▾", width=2, style="Tiny.TButton", command=lambda: self.calendar(self.wi_day, e_wd)).pack(side="left", padx=(0, 8))
+        r = self._row(p, (6, 0))
+        self._btn(r, "계산해 보기 (저장 안 함)", self.whatif_run)
+        self._enter((e_w, e_wd), self.whatif_run)
+        self.wi_out = tk.StringVar(value="")
+        self._hint(p, "", self.wi_out, wrap=560)
+        self._hint(p, "채용 1명(매달 지출)·큰 지출·큰 입금·입금이 늦어지는 경우를 넣으면 기간마다 여유 자금이 어떻게 바뀌는지 봅니다. "
+                      "보고서 숫자와 파일은 바뀌지 않습니다", wrap=560)
+
+        # 자금 선택 (2026-11-17 제안 A4·A5): 법인세 분납·예금 금리 — 입력\자금선택.csv
+        p = panel("자금 선택")
+        self.fc_inst, self.fc_rate = tk.BooleanVar(value=False), tk.StringVar()
+        r = self._row(p, (0, 0))
+        ttk.Checkbutton(r, text="법인세 나눠 내기 (분납, 1천만 원 넘을 때)", variable=self.fc_inst).pack(side="left", padx=(0, 10))
+        ttk.Label(r, text="예금 금리(연 %)").pack(side="left")
+        e_fr = ttk.Entry(r, textvariable=self.fc_rate, width=6)
+        e_fr.pack(side="left", padx=(3, 8))
+        self._btn(r, "저장", self.save_choices)
+        self._enter((e_fr,), self.save_choices)
+        self.fc_now = tk.StringVar(value="")
+        self._hint(p, "", self.fc_now, wrap=560)
+        self._hint(p, "분납을 고르면 다음 자료 변환(보고 만들기)부터 3월 말 법인세 중 법이 허용하는 만큼이 2달 뒤로 나뉘어 자금 일정에 들어갑니다. "
+                      "금리는 경영관리 '당분간 안 쓸 돈' 이자 어림에만 씁니다", wrap=560)
+        self.fill_choices()
+
         for name in RARE:
             self.rare_panels[name].grid(row=0, column=0, sticky="nsew")
         self.refresh_rare()
         self.fill_budget()
         self.fill_dep()
+
+    def fill_choices(self):
+        from . import choices
+        try:
+            c = choices.read(self.paths.input)
+        except Exception:
+            c = {}
+        self.fc_inst.set(c.get("법인세분납") == "예")
+        self.fc_rate.set(c.get("예금금리", ""))
+        self.fc_now.set("저장된 값: 법인세 분납 %s · 예금 금리 %s" % ("함" if c.get("법인세분납") == "예" else "안 함",
+                                                         (c["예금금리"] + "%") if c.get("예금금리") else "없음"))
+
+    def save_choices(self):
+        from . import choices
+        try:
+            choices.save(self.paths.input, {"법인세분납": "예" if self.fc_inst.get() else "아니오", "예금금리": self.fc_rate.get().strip()})
+        except (ValueError, OSError) as e:
+            self.fc_now.set("저장하지 못함: %s" % e)
+            return
+        self.fill_choices()
+        self.refresh_rare()
+
+    def whatif_run(self):
+        """A6: 지금 자료로 보고와 같은 계산을 한 뒤 가정 하나만 더해 본다 (몇 초, 저장 안 함)."""
+        from .insights_more import whatif
+        try:
+            amt = int(float(self.wi_amt.get().replace(",", "").strip() or 0))
+        except ValueError:
+            self.wi_out.set("금액은 숫자로 넣어 주세요")
+            return
+        t = self.wi_day.get().strip()
+        try:
+            day = dt.date.fromisoformat(t) if t else None
+        except ValueError:
+            self.wi_out.set("날짜는 YYYY-MM-DD 로 넣어 주세요")
+            return
+        kind, asof = self.wi_kind.get(), self.today
+        self.wi_out.set("계산 중…")
+
+        def work():
+            try:
+                from .calc import compute
+                from .data import load
+                R = compute(load(self.paths.input), "weekly", asof)
+                res = whatif(R, kind, amt, day)
+            except Exception as e:
+                res = "계산하지 못함 (%s)" % type(e).__name__
+            self.q.put(("call", lambda: self.wi_out.set(self.whatif_text(res))))
+        threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def whatif_text(res):
+        if isinstance(res, str):
+            return res
+        w = lambda v: "모름" if v is None else "{:,}".format(v)
+        return "\n".join("%s 여유 자금(확정분) %s → %s원 (%s) · 예상 포함 %s → %s원" % (
+            lab, w(a), w(b), "{:+,}".format(b - a) if a is not None and b is not None else "-", w(c), w(d)) for lab, a, b, c, d in res)
 
     def lock_rare_size(self):
         """고른 카드를 바꿔도 창 크기가 변하지 않게: 가장 큰 카드 크기로 자리를 잡아 두고 고른 것만 보인다 (운영-05)."""
@@ -1106,6 +1203,10 @@ class Window(object):
                 return "%s년" % self.b_year.get().strip() if hasattr(self, "b_year") else ""
             if name == "대출 만기":
                 return "%d건" % len(occasional.maturity_rows(inp))
+            if name == "자금 선택":
+                from . import choices
+                c = choices.read(inp)
+                return "분납 %s · 금리 %s" % ("함" if c.get("법인세분납") == "예" else "안 함", (c.get("예금금리") + "%") if c.get("예금금리") else "없음")
         except Exception:
             return ""
         return ""
