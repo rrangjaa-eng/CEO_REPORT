@@ -92,3 +92,24 @@ class Y1UnclosedLastYear(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RemainingFixes(unittest.TestCase):
+    def test_vendor_alias_match(self):
+        from ceo_report import wehago
+        known = {"한진기획", "레지스토", "에이치에스지알(HSGR)", "브라더코(BROTHERCO)", "메이"}
+        idx = {}
+        for k in known:
+            for a in wehago._vendor_aliases(k):
+                idx.setdefault(a, set()).add(k)
+        self.assertEqual(wehago._resolve_vendor("한진기획(메이)", known, idx), "한진기획")   # 괄호 앞 이름 먼저
+        self.assertEqual(wehago._resolve_vendor("레지스토_김정운", known, idx), "레지스토")
+        self.assertEqual(wehago._resolve_vendor("HSGR(언니네와인샵)", known, idx), "에이치에스지알(HSGR)")
+        self.assertEqual(wehago._resolve_vendor("브라더코", known, idx), "브라더코(BROTHERCO)")
+        self.assertEqual(wehago._resolve_vendor("디자이너_최은지", known, idx), "디자이너_최은지")   # 못 찾으면 그대로
+
+    def test_holidays_through_2030(self):
+        from ceo_report import tax
+        for y in (2028, 2029, 2030):
+            self.assertIn(y, tax.HOLIDAY_YEARS)
+        self.assertIn(dt.date(2028, 10, 5), tax.KR_HOLIDAYS)   # 추석·개천절 겹침 대체공휴일

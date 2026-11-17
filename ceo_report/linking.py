@@ -18,7 +18,7 @@ from .approval import _expected_date, _masked, _status, norm_project, parse_regi
 from .screen_values import PROJECT_STAGE_ALL_DONE, PROJECT_STAGE_DONE
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
-from .wehago import norm_code, norm_vendor
+from .wehago import norm_code, norm_vendor, rq_vendor
 
 LINK_FILE = "프로젝트연결.csv"
 LINK_COLUMNS = ["전표일자", "전표번호", "줄", "프로젝트번호"]
@@ -469,7 +469,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
     eligible = {}
     if projects:
         for rq in requests:
-            vn = norm_vendor(rq["vendor"])
+            vn = rq_vendor(rq)
             if rq["amount"] is not None and rq["registered"] is not None and rq["code"] in projects and vn:
                 eligible.setdefault(vn, []).append(rq)
     cand = {}

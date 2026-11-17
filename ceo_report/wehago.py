@@ -1271,6 +1271,58 @@ def _summary(requests, rows):
     return out
 
 
+def _vendor_aliases(key, request_side=False):
+    """거래처 이름의 다른 이름들 (11/17 전수 점검: 인트라넷 요청 거래처가 '한진기획 주식회사 (메이)'·'레지스토_김정운'처럼
+    담당자·별칭이 붙어 장부 이름과 달라 313건 6.2억이 '거래처 후보 0건'이었음). 괄호 앞·괄호 안, 요청 쪽은 '_'·'/' 앞부분도."""
+    out = {key}
+    base = re.sub(r"\([^)]*\)", "", key)
+    out.add(base)
+    out.update(x for x in re.findall(r"\(([^)]*)\)", key))
+    if request_side:
+        out.add(re.split(r"[_/]", base)[0])
+    return set(x for x in out if len(x) >= 2)
+
+
+def _resolve_vendor(key, known, alias_index):
+    """요청 거래처 → 장부 거래처 이름. 정확히 같으면 그대로, 아니면 다른 이름으로 딱 한 곳만 맞을 때만 (애매하면 그대로 둠)."""
+    if key in known:
+        return key
+    base = re.sub(r"\([^)]*\)", "", key)
+    inner = set(re.findall(r"\(([^)]*)\)", key))
+    for group in (_vendor_aliases(key, True) - inner, inner):   # 괄호 앞 이름 먼저, 안 맞을 때만 괄호 안 이름
+        hits = set()
+        for a in group:
+            hits |= alias_index.get(a, set())
+        if hits:
+            return next(iter(hits)) if len(hits) == 1 else key
+    return key
+
+
+def _alias_index(books):
+    known = set(r["vendor_norm"] for src in (books.journal, books.ledger, books.einvoice) for r in src)
+    idx = {}
+    for k in known:
+        if k:
+            for a in _vendor_aliases(k):
+                idx.setdefault(a, set()).add(k)
+    return known, idx
+
+
+def resolve_request_vendors(books, requests):
+    """요청마다 장부 거래처 이름(vendor_key)을 붙인다 — 대조·연결·짝짓기가 모두 같은 이름을 쓰게. 원래 vendor 글자는 그대로."""
+    if getattr(books, "state", "ok") != "ok":
+        return requests
+    known, idx = _alias_index(books)
+    for rq in requests:
+        rq["vendor_key"] = _resolve_vendor(norm_vendor(rq.get("vendor")), known, idx)
+    return requests
+
+
+def rq_vendor(rq):
+    """요청의 거래처 비교 이름: 장부 이름으로 맞춘 것(vendor_key)이 있으면 그것."""
+    return rq.get("vendor_key") or norm_vendor(rq.get("vendor"))
+
+
 def match_requests(books, requests):
     """요청마다 WEHAGO 기준 상태 하나를 붙인다. 애매하면 '연결 불가'로 두어 일정에 남긴다 (W-6~W-8).
 
@@ -1288,11 +1340,11 @@ def match_requests(books, requests):
             rows[rq["번호"]] = _row(rq, "판단 불가", text)
         return {"rows": rows, "summary": _summary(requests, rows)}
 
-    known = set(r["vendor_norm"] for src in (books.journal, books.ledger, books.einvoice) for r in src)
+    known, alias_index = _alias_index(books)
     settled = paid_invoices(books)  # 이미 지급된 계산서는 어떤 요청의 근거도 아니다 (CR-01, D-30b)
     pending, pay_users, inv_users, lone_users = {}, {}, {}, {}
     for rq in requests:  # 1회전: 요청마다 후보를 모은다
-        no, key = rq["번호"], norm_vendor(rq["vendor"])
+        no, key = rq["번호"], _resolve_vendor(rq_vendor(rq), known, alias_index)
         if rq["amount"] is None:
             rows[no] = _row(rq, "연결 불가", "연결 불가 (금액 미확인)")
             continue
@@ -1395,7 +1447,7 @@ def vendor_payables(books, requests, match, settled=()):
         paid = match["rows"].get(rq["번호"], {}).get("status") == "이미 지급"
         if rq["status"] not in ("pending", "approved") or paid or rq.get("id") in settled:
             continue
-        key = norm_vendor(rq["vendor"])
+        key = rq_vendor(rq)
         intranet_names.setdefault(key, rq["vendor"])
         asked.setdefault(key, []).append(rq["amount"])
     rows = []

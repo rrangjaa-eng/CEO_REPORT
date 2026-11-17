@@ -343,7 +343,7 @@ def _match_plan(req_all, events, F, norm_vendor):
         if rq["status"] == "status_unknown" or rq["amount"] is None:
             continue
         amounts = set(a for a in (rq["amount"], rq["schedule_amount"]) if a is not None)
-        key = norm_vendor(rq["vendor"])
+        key = rq.get("vendor_key") or norm_vendor(rq["vendor"])
         best = None
         for ev in plan:
             if id(ev) in taken or ev["amount"] not in amounts:
@@ -542,6 +542,7 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
         req_all.append(rq)
 
     # WEHAGO 대조 (D-32): 요청마다 상태 하나. '금액 차이'는 계산서 합계로 일정에 넣는다 (D-30a)
+    wehago.resolve_request_vendors(books, req_all)   # 변환과 같은 거래처 이름 맞춤
     match = wehago.match_requests(books, req_all)
     for rq in req_all:
         row = match["rows"][rq["번호"]]

@@ -330,11 +330,15 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["bal0"] = ends.get((year - 1, 12), 0 if first and first.year >= year else None)
     A["bal_end"] = next((v for v in reversed(A["bal_m"]) if v is not None), None)
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12): 1월 1일 잔액은 장부(작년 분개장 있을 때)
-    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"], upto=asof if cut < 12 else None)
+    # 11/17 전수 점검 F8: 연중이면 현금흐름표(장부상 이익에서 시작)와 신용평가도 1절 손익과 같은 '끝난 달 말일'까지.
+    # 예전엔 기준일(11/17)까지라 11월 급여 전 장부 이익 3.08억이 1절 1~10월 손익과 섞여 보였음. 3절 통장 흐름은 기준일까지 그대로
+    p_end = _month_end(year, cut) if cut < 12 else None
+    cf_end_bal = A["bal_m"][cut - 1] if (p_end and A["bal_m"][cut - 1] is not None) else A["bal_end"]
+    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, cf_end_bal, A["bal0"], upto=p_end)
     if A["cfs"]:
         A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 기준
-    A["credit"] = credit.compute(input_dir, asof, annual=True)
+    A["credit"] = credit.compute(input_dir, p_end or asof, annual=True)
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
     # 사용자 2026-11-17: 배당 한도·권장은 올해 이익(기준일까지 예상)과 작년에서 넘어온 이익잉여금을 합쳐 봐야 한다 → 연중이어도 올해 것.
     # 1차 C7(기준일 뒤 자료 금지): 올해 당기순이익 예상이 기준일 달보다 뒤 달까지의 장부로 만든 것이면 지난해 결산 것을 쓴다.
