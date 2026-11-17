@@ -483,12 +483,20 @@ class TestBuildExecsBooks(unittest.TestCase):
         self.assertEqual(mod("convert").check_result(chk), "판단 불가")
         self.assertIsNone(t.extra["cost_portions"][cell_rows(t).index(row)])
 
-    def test_a_slip_with_only_a_prepayment_credit_is_unpaid_and_says_it_cannot_tell(self):
+    def test_a_slip_with_only_an_unknown_credit_is_unpaid_and_says_it_cannot_tell(self):
         lines = [_jl(dt.date(2026, 10, 30), 71, "61101", "행사외주비(도)", 500000, None, "가상선급", "[26201] 선급 정산"),
-                 _jl(dt.date(2026, 10, 30), 71, "25900", "선급금", None, 500000, "가상선급", "[26201] 선급 정산")]
+                 _jl(dt.date(2026, 10, 30), 71, "25900", "선수금", None, 500000, "가상선급", "[26201] 선급 정산")]
         row = by_slip(exec_table(exec_inputs(journal_with(lines))), 71)
         self.assertEqual((row[3], row[6], row[7]), ("요청미지급", "", "추정"))
         self.assertTrue(row[8].endswith(" · 지급 여부 확인 불가 (현금·미지급 대변 없음)"), row[8])
+
+    def test_a_cost_moved_from_a_prepayment_is_already_paid(self):
+        """사용자 결정 2026-11-17: 미리 준 돈(선급금 131xx)에서 원가로 옮긴 전표는 '아직 안 줌'이 아니라 지급완료."""
+        lines = [_jl(dt.date(2026, 10, 30), 73, "61101", "행사외주비(도)", 500000, None, "가상선급", "[26201] 선급 정산"),
+                 _jl(dt.date(2026, 10, 30), 73, "13101", "선급금_기타소득", None, 500000, "가상선급", "[26201] 선급 정산")]
+        row = by_slip(exec_table(exec_inputs(journal_with(lines))), 73)
+        self.assertEqual((row[3], row[6], row[7]), ("지급완료", "2026-10-30", "확정"))
+        self.assertTrue(row[8].endswith(" · 미리 준 돈(선급금)에서 옮김"), row[8])
 
     def test_a_slip_credited_to_both_cash_and_payable_is_not_called_paid(self):
         lines = [_jl(dt.date(2026, 10, 30), 72, "61101", "행사외주비(도)", 1000000, None, "가상혼합", "[26201] 일부 현금"),

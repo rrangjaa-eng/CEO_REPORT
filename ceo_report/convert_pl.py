@@ -352,7 +352,10 @@ def build_pl(books, cfg, prev_rows, links=None):
                 unit_checks.extend(_unit_checks(ym, company, "팀별", list(teams.values())))
             keys = _project_order(list(units), links["projects"])
             rows.extend(_project_row(columns, ym, k, units[k], links["projects"], links["snapshot"], final) for k in keys)
-            unit_checks.extend(_unit_checks(ym, company, "프로젝트별", [units[k] for k in keys]))
+            # 프로젝트 줄 직접비에는 프로젝트 번호 달린 판관비도 들어 있다 (사용자 결정 2026-11-17) → 회사 직접비에 그만큼 더해 맞춘다
+            extra = ((links["costs"].get("sga") or {}).get("months") or {}).get(ym, 0)
+            both = dict(company, direct=None if company["direct"] is None else company["direct"] + extra)
+            unit_checks.extend(_unit_checks(ym, both, "프로젝트별", [units[k] for k in keys]))
     labels = _labels(cfg)
     checks = [Check(labels[k], source[k], None if csv_unknown[k] else csv_sum[k]) for k, _, _ in CATEGORIES]
     checks.extend(unit_checks)

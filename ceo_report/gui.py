@@ -372,9 +372,11 @@ class Window(object):
         self._hint(s1, "프로젝트(사전견적)·지급요청을 모든 쪽 읽어 저장합니다 (조회만)")
         self._sep(s1, "위하고 파일 (분개장·자금계획서)")
         r = self._row(s1)
+        self._btn(r, "위하고에서 받기", self.wehago_collect)
         self._btn(r, "수집 폴더 열기", lambda: self.open_dir(self.paths.wehago))
         self._btn(r, "예전 파일 정리", self.archive)
-        self._hint(s1, "위하고에서 받은 파일을 수집\\위하고 에 넣습니다. 예전 파일 정리 = 쓰지 않는 파일을 지난자료로 옮김")
+        self._hint(s1, "위하고에서 받기 = 크롬 위하고 확장의 '모두 받기'(크롬에 위하고 회계 화면이 열려 있어야 함). "
+                       "받은 파일은 수집\\위하고 에. 예전 파일 정리 = 쓰지 않는 파일을 지난자료로 옮김")
 
         # 2 변환하고 확인 (사용자 2026-11-05: 확인이 필요한 것을 따로 화면으로, 건마다 결정 입력)
         s2 = self.s2 = self._step(tab, 1, 2, "변환하고 확인")
@@ -1828,6 +1830,14 @@ class Window(object):
         self.say("──── 수정 모드: %s ────" % os.path.basename(src))
         self.say("브라우저에서 고친 뒤 위쪽 '저장하고 PDF 만들기'를 누르세요 → %s" % os.path.basename(
             os.path.splitext(editmode.edited_path(orig))[0] + ".pdf"))
+
+    def wehago_collect(self):
+        """'위하고에서 받기' (사용자 2026-11-17): 크롬 확장에 '모두 받기'를 시킨다. 진행은 자동 반영 줄에 보인다."""
+        ok, text = app.start_wehago_collect()
+        self.say(text)
+        if not ok:
+            self.status.set(text)
+        self.root.after(3000, self.auto_tick)
 
     def archive(self):
         if self.busy:
