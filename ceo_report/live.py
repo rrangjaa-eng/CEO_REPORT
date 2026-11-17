@@ -256,14 +256,14 @@ def render(R, now_snap, diff, meta, auto_html=""):
         h.append("<table><tr><th>프로젝트</th><th>팀</th><th>행사일</th><th class='n'>계약(매출)</th><th class='n'>쓴 돈</th>"
                  "<th class='n'>예상 총비용</th><th class='n'>예상 이익</th><th class='n'>이익률</th></tr>")
         for p in sorted(projects, key=lambda p: (p.get("event_date") or "9999", p.get("id") or "")):
-            sales, profit = p.get("contract"), p.get("profit_end")
+            sales, profit = p.get("profit_basis", p.get("contract")), p.get("profit_end")   # F2: 계약금액이 비면 사전견적·장부 매출
             rate = "–" if not sales or profit is None else "%.0f%%" % (100.0 * profit / sales)
             h.append("<tr><td>[%s] %s</td><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td>"
                      "<td class='n%s'>%s</td><td class='n'>%s</td></tr>"
                      % (_e(p.get("id")), _e(p.get("name")), _e(p.get("team")), _e(p.get("event_date") or ""), _won(sales),
                         _won(p.get("paid_total")), _won(p.get("expected")), " neg" if (profit or 0) < 0 else "",
                         _won(profit), rate))
-        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 쓴 돈 + 요청·카드 미결제·집행 계획·남은 예산. 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액)</p>")
+        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 쓴 돈 + 요청·카드 미결제·집행 계획·남은 예산. 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액). 계약이 비면 사전견적·장부 매출로 계산</p>")
     else:
         h.append("<p class='muted'>프로젝트 자료가 없습니다 (인트라넷 자료를 가져온 뒤 변환하면 보입니다).</p>")
     h.append("</section>")

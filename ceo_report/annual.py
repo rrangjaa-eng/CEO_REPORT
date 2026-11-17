@@ -23,6 +23,12 @@ CF_ORDER = ("자본금 납입", "영업 입금", "영업 지급", "세금", "투
 
 
 # ───────────── 변환 쪽 ─────────────
+
+def _tpct(r):
+    """목표 수익률 표시 (11/17 전수 점검 F7: 28.5% 가 '28%' 로 반올림되던 것). 정수면 '28%', 아니면 '28.5%'."""
+    v = round(r * 100, 1)
+    return "%d%%" % v if v == int(v) else "%.1f%%" % v
+
 def _sq(text):
     return re.sub(r"\s+", "", text or "")
 
@@ -324,13 +330,25 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["bal0"] = ends.get((year - 1, 12), 0 if first and first.year >= year else None)
     A["bal_end"] = next((v for v in reversed(A["bal_m"]) if v is not None), None)
     from . import cashflow   # 연간 현금흐름표 (사용자 2026-11-12): 1월 1일 잔액은 장부(작년 분개장 있을 때)
-    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, A["bal_end"], A["bal0"], upto=asof if cut < 12 else None)
+    # 11/17 전수 점검 F8: 연중이면 현금흐름표(장부상 이익에서 시작)와 신용평가도 1절 손익과 같은 '끝난 달 말일'까지.
+    # 예전엔 기준일(11/17)까지라 11월 급여 전 장부 이익 3.08억이 1절 1~10월 손익과 섞여 보였음. 3절 통장 흐름은 기준일까지 그대로
+    p_end = _month_end(year, cut) if cut < 12 else None
+    cf_end_bal = A["bal_m"][cut - 1] if (p_end and A["bal_m"][cut - 1] is not None) else A["bal_end"]
+    A["cfs"] = cashflow.annual(cashflow.load(input_dir), year, cf_end_bal, A["bal0"], upto=p_end)
     if A["cfs"]:
         A["cfs"]["collect"] = cashflow.collection(input_dir, dt.date(year, 1, 1), A["cfs"]["p1"])
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 기준
-    A["credit"] = credit.compute(input_dir, asof, annual=True)
+    A["credit"] = credit.compute(input_dir, p_end or asof, annual=True)
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
-    A["re"] = surplus.for_report(input_dir, year - 1 if cut < 12 else year, strict=True)   # 1차 C7: 연중이면 지난해 결산 것
+    # 사용자 2026-11-17: 배당 한도·권장은 올해 이익(기준일까지 예상)과 작년에서 넘어온 이익잉여금을 합쳐 봐야 한다 → 연중이어도 올해 것.
+    # 1차 C7(기준일 뒤 자료 금지): 올해 당기순이익 예상이 기준일 달보다 뒤 달까지의 장부로 만든 것이면 지난해 결산 것을 쓴다.
+    y_re = year
+    if cut < 12:
+        ni = ((surplus.load(input_dir) or {}).get(year) or {}).get("당기순이익")
+        mm = re.search(r"1~(\d+)월", ni[2]) if ni else None
+        if not ni or ni[0] is None or (mm and int(mm.group(1)) > asof.month):
+            y_re = year - 1
+    A["re"] = surplus.for_report(input_dir, y_re, strict=True, asof=asof)
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
@@ -359,6 +377,7 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
                  for r in _read(os.path.join(input_dir, "팀목표.csv")))
     A["goals"], A["goals_next"] = goals, dict((t, v) for (y, t), v in goals.items() if y == NY)
     A["teams"] = _teams(co_rows, dept, Y, LY, goals, cut)
+    A["team_none"] = _team_none(co_rows, Y, LY, cut)
     A["proj"] = _projects(pl, projs, Y, LY, goals, cut)
     A["next"] = _next_projects(input_dir, year, D, asof)
     return A
@@ -453,6 +472,22 @@ def _speed(invoices, projs, year, upto=None):
     late = sorted(((v, sum(d) / float(len(d)), len(d)) for v, d in by.items()), key=lambda x: -x[1])
     return {"n": len(after), "pre": len(rows) - len(after), "avg": sum(x[5] for x in after) / float(len(after)),
             "over60": sorted([x for x in after if x[5] > 60], key=lambda x: -x[5]), "late": late}
+
+
+def _team_none(rows, Y, LY, cut=12):
+    """팀이 없는 장부 줄 (손익.csv '팀 미지정': 부서가 팀이 아닌 매출·원가, 예전 인트라넷 팀 '0' 프로젝트 등).
+    11/17 전수 점검 F6: 팀 표 합계가 회사 합계와 1.8억 어긋나 보이던 것 — 한 줄로 보이고 합계에 넣는다. 없으면 None."""
+    def tot(y):
+        rv = dc = 0
+        for r in rows:
+            if r["단위"] == "팀" and not r["대상"].endswith("팀") and r["연월"][:4] == y and 1 <= int(r["연월"][5:7] or 0) <= cut:
+                rv += _n(r["매출"]) or 0
+                dc += _n(r["직접비"]) or 0
+        return rv, dc
+    (rv, dc), (lrv, ldc) = tot(Y), tot(LY)
+    if not (rv or dc or lrv or ldc):
+        return None
+    return {"name": "팀 미지정", "rev": rv, "gp": rv - dc, "lrev": lrv}
 
 
 def _teams(rows, dept, Y, LY, goals, cut=12):
@@ -906,9 +941,14 @@ def render(A, mode):
         tt.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s / %s</td><td>%s</td></tr>" % (
             esc(T["name"]), W(g[0]), W(T["rev"]),
             ("<span class='tbar'><i style='width:%d%%'></i><s style='left:%d%%'></s></span>%.1f%%" % (min(a, 100), round(100.0 * cut / 12), a)) if a is not None else "목표 없음",
-            W(T["lrev"]), chg(T["rev"], T["lrev"]), W(T["gp"]), pct(T["gp"], T["rev"]), "%d%%" % round(g[1] * 100) if g[1] is not None else "—", chip))
-    trev, tgp = sum(T["rev"] for T in A["teams"]), sum(T["gp"] for T in A["teams"])
-    tl = sum(T["lrev"] or 0 for T in A["teams"]) or None
+            W(T["lrev"]), chg(T["rev"], T["lrev"]), W(T["gp"]), pct(T["gp"], T["rev"]), _tpct(g[1]) if g[1] is not None else "—", chip))
+    TN = A.get("team_none")
+    if TN:   # F6: 팀 없는 장부 줄 (대표 직접 프로젝트 등) — 팀 합계가 회사와 맞게
+        tt.append("<tr><td>%s</td><td></td><td>%s</td><td></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td></td></tr>" % (
+            "팀 미지정<br><small>팀 없는 장부 줄</small>", W(TN["rev"]), W(TN["lrev"]), chg(TN["rev"], TN["lrev"]), W(TN["gp"]), pct(TN["gp"], TN["rev"]) if TN["rev"] else ""))
+    allT = list(A["teams"]) + ([TN] if TN else [])
+    trev, tgp = sum(T["rev"] for T in allT), sum(T["gp"] for T in allT)
+    tl = sum(T["lrev"] or 0 for T in allT) or None
     tt.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td></td></tr></tbody></table>"
               % (W(goal_all or None), W(trev), pct(trev, goal_all) if goal_all else "", W(tl), chg(trev, tl), W(tgp), pct(tgp, trev)))
     lines = []
@@ -971,7 +1011,7 @@ def render(A, mode):
         got = sum(p["est"] or 0 for p in NX if p["team"] == T["name"])
         rows_.append([esc(T["name"]), W(T["rev"]), pct(T["gp"], T["rev"]),
                       W(g[0]) if g and g[0] else "<span class='blank'>입력 전</span>",
-                      "%d%%" % round(g[1] * 100) if g and g[1] is not None else "<span class='blank'>입력 전</span>",
+                      _tpct(g[1]) if g and g[1] is not None else "<span class='blank'>입력 전</span>",
                       W(got) + (" (%s)" % pct(got, g[0]) if g and g[0] else "")])
     h.append(_tab(["팀", "%d년%s 매출" % (year, ym), "%d년%s 수익률" % (year, ym), "%d년 매출 목표" % (year + 1), "%d년 목표 수익률" % (year + 1), "목표 중 이미 받은 일"], rows_, "pt tgy"))
     if not A["goals_next"]:
@@ -1130,7 +1170,7 @@ def _detail(A):
         if under:
             d.append("<div class='wsub'>목표 수익률 미달 프로젝트 %d건</div>" % len(under))
             d.append(_tab(["팀", "프로젝트", "매출", "수익률", "목표"], [[esc(x["team"]), esc("%s %s" % (x["id"], x["name"])), W(x["rev"]),
-                                                                       "<span class='%s'>%.1f%%</span>" % ("up" if x["rate"] < 0 else "", x["rate"] * 100), "%d%%" % round(x["target"] * 100)] for x in under], "pt evt"))
+                                                                       "<span class='%s'>%.1f%%</span>" % ("up" if x["rate"] < 0 else "", x["rate"] * 100), _tpct(x["target"])] for x in under], "pt evt"))
     if Yp["acct"]:
         d.append("<div class='evh'>근거 5-3 · 판관비 항목별%s</div>" % (" (작년 대비)" if Lp else ""))
         keys = list(Yp["acct"]) + [k for k in (Lp["acct"] if Lp else {}) if k not in Yp["acct"]]

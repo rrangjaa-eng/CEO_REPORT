@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "자금계획받은달.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "자금계획받은달.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "근로소득.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -448,7 +448,10 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     if old is not None:
         notes = list(notes) + old.notes
     # 예전 인트라넷 지급요청은 원가 줄 연결에만 (requests 에는 넣지 않음: 요청미지급·요청 누계는 지금 인트라넷만)
-    costs = linking.link_costs(books, requests + linking.old_requests(old, asof, now), projects, overrides, cfg["link_days"],
+    # 11/17 전수 점검: 요청 거래처 이름('한진기획 주식회사 (메이)'·'레지스토_김정운')을 장부 이름에 맞춤 — 연결·대조·짝짓기 모두 같은 이름
+    old_rq = wehago.resolve_request_vendors(books, linking.old_requests(old, asof, now))
+    wehago.resolve_request_vendors(books, requests)
+    costs = linking.link_costs(books, requests + old_rq, projects, overrides, cfg["link_days"],
                                cfg["direct_prefixes"], cfg["direct_mark"], cfg["vat_codes"],
                                cfg["common_prefixes"], cfg["common_mark"])
     revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])
@@ -1042,6 +1045,8 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
     rows += ct_rows
     rows += corptax.carry_rows(books.journal, cfg, asof, manual, input_dir, wehago_dir)   # 작년분 4/30까지·8/31 중간예납 (2026-11-14 F5)
+    from . import choices   # A4 (2026-11-17): 회사가 '법인세 분납'을 고르면 2달 뒤로 나눌 몫을 적는다 (금액 칸은 전체 그대로)
+    rows = corptax.installment(rows, choices.installment(input_dir) if input_dir else False)
     # 결정 g (2026-11-15): 매달 같은 금액으로 통장에서 바로 나가는 지출 (대출 이자·할부·공제부금). 다른 줄이 쓰는 거래처는 빼고 찾는다
     rows += tax.fixed_costs(books.journal, asof, skip_codes=[c for r in rows for c in (r.get("거래처코드") or "").split()])
     rows.sort(key=lambda r: r["납부예정일"] or "9999")

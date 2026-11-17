@@ -47,7 +47,8 @@ def folder():
     save(d, "261113 결산_고정자산관리대장 자동수집.json", "결산원본", "고정자산관리대장", 2026, [{"path": "/smarta/saas0107/allfixlist/", "data": FIX}])
     wh = [{"path": "/smarta/swym0107/emp/", "data": [{"cd_emp": "00002", "nm_krname": "나직원", "num_wife": 1, "num_childs": 2, "num_60over": 0}]},
           {"path": "/smarta/swym0107/emp/income/", "cd_emp": "00001",
-           "data": {"group1": [{"ym_pay": "202601", "am_income1": 300000, "am_inhabit1": 30000}, {"ym_pay": "", "am_income1": 0}]}}]
+           "data": {"group1": [{"ym_pay": "202601", "am_income1": 300000, "am_inhabit1": 30000, "am_paytotal": 4800000},
+                               {"ym_pay": "", "am_income1": 0}]}}]
     save(d, "261113 인사_소득자별근로소득원천징수부 자동수집.json", "인사원본", "소득자별근로소득원천징수부", 2026, wh)
     return d
 
@@ -108,6 +109,11 @@ class Raw(unittest.TestCase):
         self.assertEqual(C[2025]["처분_차기이월"], 100)
         self.assertEqual(C[2025]["자본금"], 10)
         self.assertEqual(C[2025]["차입금"], 50)
+
+    def test_wage_rows_from_withholding_book(self):
+        """사용자 2026-11-17: 배당 표가 대표 근로소득을 못 찾음 → 원천징수부 과세 총급여(am_paytotal)를 근로소득.csv 로."""
+        rows = w.wage_rows(self.F)
+        self.assertEqual(rows, [{"연월": "2026-01", "사원명": "가대표", "과세급여": "4800000", "자료": "위하고 소득자별 근로소득 원천징수부"}])
 
     def test_tables(self):
         T = dict((t.name, t) for t in w.build_tables(folder()))

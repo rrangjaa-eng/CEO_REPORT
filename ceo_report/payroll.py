@@ -19,14 +19,39 @@ YE_FILE = "연말정산.csv"
 YE_COLUMNS = ["귀속연도", "사원명", "총급여", "기본공제인원", "경로우대", "장애인", "부녀자", "한부모", "자녀세액공제인원",
               "출산입양", "특별소득공제", "그밖소득공제", "특별세액공제", "연금계좌세액공제", "월세세액공제", "결정세액"]
 EXTRA = {"경로우대": 1_000_000, "장애인": 2_000_000, "부녀자": 500_000, "한부모": 1_000_000}
-BIRTH_CREDIT = 300_000   # 출산·입양 1명당 (둘째 50만·셋째 70만은 세무사 확인)
+BIRTH_CREDIT = 300_000   # 출산·입양 1명당 기본값 — 실제 계산은 taxlaw '출산공제_첫째' (E2)
 EXTRA_WORDS = ("연장", "야간", "휴일", "상여", "성과", "인센티브", "특근")
 DED = {"국민연금": "국민연금", "건강보험": "건강", "장기요양": "장기요양", "고용보험": "고용", "소득세": "소득세", "지방소득세": "지방"}
-# 연말정산 간이 계산 상수 (2025년 귀속 기준 — 세무사 확인 필요)
+# 연말정산 간이 계산 기본값 (2025·2026 귀속). 실제 계산은 그해 taxlaw 기준표 값을 쓴다 (E2, 2026-11-17 계산-04: 기간 없이 박아 두지 않음)
 PERSONAL = 1_500_000
 CHILD = {1: 250_000, 2: 550_000}
 CHILD_MORE = 400_000
 STANDARD_CREDIT = 130_000
+YE_KEYS = ("인적공제", "자녀공제_1명", "자녀공제_2명", "자녀공제_추가", "출산공제_첫째", "표준세액공제",
+           "종합소득세율", "근로소득공제", "근로세액공제")
+
+
+def ye_values(input_dir, year):
+    """그해 연말정산 기준 -> ({키: 값}, 미확인 키 이름들). 미확인이어도 가장 가까운 앞 해 값으로 어림하되 메모에 '확인 필요'를 남긴다."""
+    from . import taxlaw
+    base = {"인적공제": PERSONAL, "자녀공제_1명": CHILD[1], "자녀공제_2명": CHILD[2], "자녀공제_추가": CHILD_MORE,
+            "출산공제_첫째": BIRTH_CREDIT, "표준세액공제": STANDARD_CREDIT}
+    vals, miss = {}, []
+    for k in YE_KEYS:
+        v, ok, _ = taxlaw.value(input_dir, year, k)
+        if k in base:
+            vals[k] = v if isinstance(v, (int, float)) and v is not None else base[k]
+        if not ok:
+            miss.append(taxlaw.LABEL[k])
+    return vals, miss
+
+
+def child_credit(kids, V):
+    if kids <= 0:
+        return 0
+    if kids == 1:
+        return V["자녀공제_1명"]
+    return V["자녀공제_2명"] + V["자녀공제_추가"] * (kids - 2)
 
 
 def _read(path):
@@ -163,6 +188,42 @@ def _tenure(out, n, s, e, ym, year, total, week, slips):
                 out.append((n, "입사 달 일할", "warn", "%s 입사인데 그 달 급여가 다음 달과 같음 — 일할 계산 확인" % join.isoformat()))
 
 
+def severance(input_dir, asof):
+    """A7 (2026-11-17 사용자 '추가 기능은 전부'): 회사가 줄 퇴직금 합계 어림 -> dict 또는 None (급여 명세가 없으면).
+    사람마다 급여 점검과 같은 계산(최근 3달 평균 × 근속 연수, 1년 넘고 주 15시간 이상)을 더하고, 앞으로 12달 안에 1년이 되는 사람을 달로 보인다.
+    퇴사한 사람·임원은 뺀다(임원 퇴직금은 정관 규정에 따름). 실제 퇴직금(평균임금·퇴직연금 적립)과 다를 수 있는 어림."""
+    emps, slips, _ = load(input_dir)
+    months = sorted(m for (m, _n) in slips if m <= asof.strftime("%Y-%m"))
+    if not months:
+        return None
+    ym = months[-1]
+    end = dt.date(int(ym[:4]), int(ym[5:]), 28)
+    people, soon, skipped = [], [], []
+    for n in sorted(set(x for (m, x) in slips if m == ym)):
+        e = emps.get(n, {})
+        if (e.get("임원") or "").strip() in ("예", "Y", "y", "1", "임원"):
+            skipped.append(n)
+            continue
+        left = _d(e.get("퇴사일"))
+        if left and left <= asof:
+            continue
+        join = _d(e.get("입사일"))
+        if not join or (_n(e.get("주소정근로시간")) or 40) < 15:
+            if not join:
+                skipped.append(n)
+            continue
+        yrs = (end - join).days / 365.0
+        avg3 = _avg3(slips, n, ym)
+        if yrs >= 1:
+            people.append((n, round(yrs, 1), int(avg3 * yrs)))
+        else:
+            one = join.replace(year=join.year + 1) if not (join.month == 2 and join.day == 29) else dt.date(join.year + 1, 3, 1)
+            if one <= asof + dt.timedelta(days=366):
+                soon.append((n, one, int(avg3)))
+    return {"ym": ym, "total": sum(a for _, _, a in people), "people": people, "soon": sorted(soon, key=lambda x: x[1]),
+            "skipped": skipped}
+
+
 def _next(ym):
     y, m = int(ym[:4]), int(ym[5:]) + 1
     return "%04d-%02d" % (y + (m > 12), 1 if m > 12 else m)
@@ -202,6 +263,9 @@ def yearend(input_dir, year, asof, holders=()):
     prev = last_yearend(input_dir, year)
     meal_lim, meal_ok = taxlaw.checked(input_dir, year, "식대비과세", 0)
     meal_lim = meal_lim or 0
+    V, ye_miss = ye_values(input_dir, year)
+    age = taxlaw.value(input_dir, year, "자녀공제_나이")[0]
+    prev_age = taxlaw.value(input_dir, year - 1, "자녀공제_나이")[0]
     rate_ok = all(taxlaw.checked(input_dir, year, k)[1] for k in ("국민연금요율", "건강보험료율", "장기요양비율", "고용보험요율"))
     by = collections.defaultdict(list)
     for (m, n), s in slips.items():
@@ -237,15 +301,20 @@ def yearend(input_dir, year, asof, holders=()):
             extra = sum(P[k] * v for k, v in EXTRA.items())
             other = P["특별소득공제"] + P["그밖소득공제"]
             kids = P["자녀세액공제인원"]
-            credits = P["특별세액공제"] + P["연금계좌세액공제"] + P["월세세액공제"] + P["출산입양"] * BIRTH_CREDIT
-            std = 0 if (P["특별세액공제"] or P["특별소득공제"]) else STANDARD_CREDIT
+            credits = P["특별세액공제"] + P["연금계좌세액공제"] + P["월세세액공제"] + P["출산입양"] * V["출산공제_첫째"]
+            std = 0 if (P["특별세액공제"] or P["특별소득공제"]) else V["표준세액공제"]
             notes.append("%d년 연말정산 공제 그대로 (본인 포함 %d명%s)" % (year - 1, P["기본공제인원"], ", 자녀 %d명" % kids if kids else ""))
+            if kids and age and prev_age and age != prev_age:   # 2026: 아동수당 확대로 8세 자녀는 자녀세액공제에서 빠짐
+                notes.append("자녀세액공제 나이가 바뀜(%s → %s) — 작년 공제 자녀 중 올해 나이가 안 되는 자녀는 빠져 세금이 조금 더 나올 수 있음"
+                             % (prev_age.split(" (")[0], age.split(" (")[0]))
+            if P["출산입양"]:
+                notes.append("출산·입양 공제는 첫째 금액으로 어림 (둘째·셋째는 더 큼)")
         else:
-            deps, extra, other, credits, std = _n(e.get("부양가족수")), 0, 0, 0, STANDARD_CREDIT
+            deps, extra, other, credits, std = _n(e.get("부양가족수")), 0, 0, 0, V["표준세액공제"]
             kids = _n(e.get("자녀수"))
-        base = max(gross - wage_deduction(gross) - PERSONAL * (1 + deps) - extra - pension - health - other, 0)
+        base = max(gross - wage_deduction(gross) - V["인적공제"] * (1 + deps) - extra - pension - health - other, 0)
         calc = basic_tax(base)
-        child = CHILD.get(kids, 0) if kids <= 2 else CHILD[2] + CHILD_MORE * (kids - 2)
+        child = child_credit(kids, V)
         tax = max(calc - wage_credit(calc, gross) - child - credits - std, 0)
         paid = int(sum(_ded(s, "소득세") for s in ss) * scale) if detail and (not totals or has_tax) else None
         if not detail:
@@ -258,6 +327,8 @@ def yearend(input_dir, year, asof, holders=()):
             notes.append("사원 정보·작년 연말정산 없음 — 부양가족 0명으로 봄")
         if join and join.year == year and scale != 1.0:
             notes.append("%d월 입사 — %d달치로 계산" % (join.month, max(span, k)))
+        if ye_miss:
+            notes.append("%d년 연말정산 기준 확인 필요(%s) — 가장 가까운 해 값으로 어림" % (year, " · ".join(ye_miss[:3]) + (" 외" if len(ye_miss) > 3 else "")))
         if not meal_ok:
             notes.append("식대 비과세 한도가 확인되지 않아 식대도 세금 붙는 돈으로 봄")
         if totals and not rate_ok:

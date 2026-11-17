@@ -17,7 +17,7 @@ from .convert import Check, Table, cell_amount
 from .convert_pl import _classify, _net
 from .convert_projects import out_of_period, period_text
 from .util import is_blank, mask_rrn, num, won
-from .wehago import STATUSES, norm_vendor, vendor_payables
+from .wehago import STATUSES, norm_vendor, rq_vendor, vendor_payables
 
 XCHK_FILE = "위하고대조.csv"
 XCHK_COLUMNS = ["구분", "대상", "이름", "항목", "금액", "건수", "비고"]
@@ -209,7 +209,7 @@ def _vendor_rows(books, requests, match):
     rows = []
     for v in vp["rows"]:
         key = norm_vendor(v["vendor"])
-        asked = [r for r in requests if r["status"] in ("pending", "approved") and norm_vendor(r["vendor"]) == key
+        asked = [r for r in requests if r["status"] in ("pending", "approved") and rq_vendor(r) == key
                  and match["rows"].get(r["번호"], {}).get("status") != "이미 지급"]
         rows.append(_row("거래처미지급", "", v["vendor"], "WEHAGO 미지급", v["payable"], None, v["reason"]))
         rows.append(_row("거래처미지급", "", v["vendor"], "인트라넷 요청", None if v["requested_unknown"] else v["requested"],

@@ -17,7 +17,8 @@ import datetime as dt
 import re
 
 COLUMNS = ["세목", "대상기간", "납부예정일", "금액", "상태", "근거", "과세표준", "산출세액", "기납부", "대손충당금", "세무조정",
-           "거래처코드", "장부기준일"]
+           "거래처코드", "장부기준일", "분납"]
+# 분납 (A4, 2026-11-17): 법인세 줄만 — 회사가 '분납함'을 고르면 납부기한 2달 뒤로 미룰 금액 (corptax.installment). 금액 칸은 그대로 전체.
 # 과세표준~세무조정 다섯 칸은 법인세 줄만 (2026-11-04, 대손충당금 11-12, 세무조정 11-14).
 # 거래처코드 (2026-11-14 사용자 "이름으로 맞추지 말고 코드로"): 이 줄을 계산한 장부 줄의 거래처코드(앞 0 뗌, 여럿이면 띄어 씀).
 #   보고서는 자금계획서·자금일정 줄과 이 코드가 같아야 같은 지급으로 본다 (코드가 없는 옛 줄만 이름·금액으로, '이름으로 맞춤' 표시).
@@ -136,6 +137,19 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
     last = max(dated)
     starts = sorted(set(_quarter(ln["date"])[0] for ln in journal
                         if ln["date"] is not None and _sq(ln["account_code"]) in out_codes | in_codes))
+    # E1 (결정 카드 2026-11-17 '더하기(따로 한 줄)'): 진행 중 분기의 남은 기간 부가세 예상 — 최근 끝난 3달의 하루 평균 순부가세
+    month_net = {}
+    for key, lines in slips.items():
+        if key[0] is None or key in payments:
+            continue
+        for x in lines:
+            code = _sq(x["account_code"])
+            if code not in out_codes | in_codes:
+                continue
+            v = _net(x, credit_side=code in out_codes)
+            if v is not None:
+                ym = key[0].strftime("%Y-%m")
+                month_net[ym] = month_net.get(ym, 0) + (v if code in out_codes else -v)
     rows = []
     for start in starts:
         q_start, q_end = _quarter(start)
@@ -175,7 +189,40 @@ def vat(journal, asof, out_codes=("25500",), in_codes=("13500",)):
             basis += ", %s까지 쌓인 금액 (남은 기간분은 더 늘어남)" % last.isoformat()
         rows.append(_row("부가세", period, due, None if unknown else total, "예상",
                          basis + (" · 금액 없는 줄 %d건" % unknown if unknown else ""), codes))
+        if last < q_end:
+            rest = vat_rest(month_net, last, q_end)
+            if rest:
+                rows.append(_row("부가세", period + REST_MARK, due, rest[0], "예상", rest[1], codes))
     return _stamp(rows, journal)
+
+
+REST_MARK = " 남은 기간 예상"   # E1: 진행 중 기간 세금의 남은 몫 줄 (대상기간 끝에 붙음). 일정에 같은 세금 줄이 있으면 넣지 않는다
+
+
+def vat_rest(month_net, last, q_end):
+    """진행 중 분기 남은 기간(last 다음 날 ~ q_end) 부가세 예상 -> (금액, 근거) 또는 None.
+    최근 끝난 3달(last 의 달 앞)의 순부가세(예수금 − 대급금) 합 ÷ 그 날수 × 남은 날수. 평균이 0 이하이면 None (지급을 줄이지 않음)."""
+    first = dt.date(last.year, last.month, 1)
+    if last.day == calendar.monthrange(last.year, last.month)[1]:   # 마지막 전표일이 달 끝이면 그 달도 끝난 달
+        first = last + dt.timedelta(days=1)
+    months, days, total = [], 0, 0
+    for k in range(1, 4):
+        y, m = first.year, first.month - k
+        while m < 1:
+            y, m = y - 1, m + 12
+        ym = "%d-%02d" % (y, m)
+        if ym not in month_net:
+            continue
+        months.append(ym)
+        days += calendar.monthrange(y, m)[1]
+        total += month_net[ym]
+    left = (q_end - last).days
+    if not months or total <= 0 or left <= 0:
+        return None
+    amt = int(round(total / float(days) * left))
+    return amt, ("남은 %d일 (%s~%s) × 하루 평균 %s원 (최근 끝난 %d달 %s 순부가세 %s원 ÷ %d일). 신고 금액이 정해지면 바뀜"
+                 % (left, (last + dt.timedelta(days=1)).isoformat(), q_end.isoformat(), "{:,}".format(int(total / float(days))),
+                    len(months), "·".join(sorted(months)), "{:,}".format(total), days))
 
 
 WH_GAP_MARK = "[장부 잔액 차이] "   # 원천세 줄 근거 속 표시: 경영관리 세금 표 아래에 한 줄로 보인다
@@ -466,7 +513,14 @@ KR_HOLIDAYS = frozenset(dt.date(*d) for d in (
     (2026, 1, 1), (2026, 2, 16), (2026, 2, 17), (2026, 2, 18), (2026, 3, 2), (2026, 5, 5), (2026, 5, 25), (2026, 6, 3),
     (2026, 8, 17), (2026, 9, 24), (2026, 9, 25), (2026, 9, 28), (2026, 10, 5), (2026, 10, 9), (2026, 12, 25),
     (2027, 1, 1), (2027, 2, 8), (2027, 2, 9), (2027, 3, 1), (2027, 5, 5), (2027, 5, 13), (2027, 8, 16),
-    (2027, 9, 14), (2027, 9, 15), (2027, 9, 16), (2027, 10, 4), (2027, 10, 11), (2027, 12, 27)))
+    (2027, 9, 14), (2027, 9, 15), (2027, 9, 16), (2027, 10, 4), (2027, 10, 11), (2027, 12, 27),
+    # 11/17 전수 점검 Y8: 2028~2030 (한국천문연구원 음력 환산 기준 민간 달력과 대조, 월력요항 발표 전 — 선거일은 2028 총선만)
+    (2028, 1, 1), (2028, 1, 26), (2028, 1, 27), (2028, 1, 28), (2028, 3, 1), (2028, 4, 12), (2028, 5, 2), (2028, 5, 5),
+    (2028, 6, 6), (2028, 8, 15), (2028, 10, 2), (2028, 10, 3), (2028, 10, 4), (2028, 10, 5), (2028, 10, 9), (2028, 12, 25),
+    (2029, 1, 1), (2029, 2, 12), (2029, 2, 13), (2029, 2, 14), (2029, 3, 1), (2029, 5, 7), (2029, 5, 21), (2029, 6, 6),
+    (2029, 8, 15), (2029, 9, 21), (2029, 9, 24), (2029, 10, 3), (2029, 10, 9), (2029, 12, 25),
+    (2030, 1, 1), (2030, 2, 4), (2030, 2, 5), (2030, 3, 1), (2030, 5, 6), (2030, 5, 9), (2030, 6, 6), (2030, 8, 15),
+    (2030, 9, 11), (2030, 9, 12), (2030, 9, 13), (2030, 10, 3), (2030, 10, 9), (2030, 12, 25)))
 
 
 HOLIDAY_YEARS = frozenset(d.year for d in KR_HOLIDAYS)
@@ -1033,7 +1087,7 @@ def fixed_costs(journal, asof, skip_codes=(), months_ahead=AHEAD_MONTHS):
 def _row(kind, period, due, amount, state, basis, codes=()):
     return {"세목": kind, "대상기간": period, "납부예정일": due.isoformat() if due else "", "금액": "" if amount is None else str(amount),
             "상태": state, "근거": basis, "과세표준": "", "산출세액": "", "기납부": "", "대손충당금": "", "세무조정": "",
-            "거래처코드": " ".join(codes or ()), "장부기준일": ""}
+            "거래처코드": " ".join(codes or ()), "장부기준일": "", "분납": ""}
 
 
 # ───────────── 보고서 쪽: 자금 일정에 넣기 ─────────────
@@ -1111,8 +1165,11 @@ def merge(events, taxes, asof=None, cash_date=None):
         return i not in taken and ev.get("source") not in NOT_TAX   # 프로젝트 원가·남은 예산 줄은 세금이 아니다
 
     # ⓪ 거래처코드 (여러 줄이면 모두)
+    def rest(t):   # E1: 남은 기간 예상 줄은 일정 줄과 맞추지 않는다 (본 줄이 맞으면 아래에서 뺀다)
+        return str(t.get("period") or "").endswith(REST_MARK)
+
     for n, t in enumerate(taxes):
-        if not codes(t):
+        if not codes(t) or rest(t):
             continue
         hit = [i for i, ev in enumerate(events) if usable(i, ev) and near(ev, t) and _ev_code(ev) in codes(t)]
         if hit:
@@ -1123,7 +1180,7 @@ def merge(events, taxes, asof=None, cash_date=None):
              lambda ev, t: t["amount"] is not None and ev["amount"] == t["amount"])
     for test in tests:
         for n, t in enumerate(taxes):
-            if found[n] is not None:
+            if found[n] is not None or rest(t):
                 continue
             for i, ev in enumerate(events):
                 if usable(i, ev) and near(ev, t) and not conflict(ev, t) and test(ev, t):
@@ -1134,8 +1191,14 @@ def merge(events, taxes, asof=None, cash_date=None):
     # 같은 카드사·같은 결제일의 확정분과 전표 입력 전 추정분은 한 결제다: 하나가 일정(명세서 금액 등)과 맞으면 다른 것도 넣지 않는다
     card_hit = {(str(t.get("period") or "").split("카드")[0].strip(), t["due"]) for t, m in zip(taxes, found)
                 if m is not None and t["kind"] == "카드대금"}
+    planned = {(t["kind"], str(t.get("period") or "")) for t, m in zip(taxes, found) if m is not None}
     info = []
     for t, hits, named in zip(taxes, found, by_name):
+        if rest(t) and (t["kind"], str(t.get("period") or "")[:-len(REST_MARK)]) in planned:
+            # 일정(자금계획서 등)에 이 세금이 이미 있으면 그 금액을 쓰고 남은 기간 예상은 넣지 않는다
+            info.append(dict(t, matched={"rest_in_plan": True, "amount": None}, matched_all=[], diff=None, by_name=False,
+                             moved="일정에 이 세금이 있어 남은 기간 예상은 넣지 않음"))
+            continue
         if hits is None and t["kind"] == "카드대금" and (str(t.get("period") or "").split("카드")[0].strip(), t["due"]) in card_hit:
             info.append(dict(t, matched={"merged_card": True, "amount": None}, matched_all=[], diff=None, by_name=False, moved=""))
             continue
@@ -1173,5 +1236,17 @@ def merge(events, taxes, asof=None, cash_date=None):
                 ev["orig_date"] = t["due"]
                 ev["basis"] = (ev["basis"] + ", " if ev["basis"] else "") + why
                 row["moved"] = why
+            inst = t.get("inst") or 0
+            if inst and t["amount"] and 0 < inst < t["amount"] and t["kind"] == "법인세":
+                # A4 (2026-11-17): 회사가 분납을 골랐으면 기한에 나머지, 2달 뒤에 분납 몫 (금액 칸·표는 전체 세금 그대로)
+                from .corptax import inst_due
+                later = dict(ev, amount=inst, date=inst_due(t["due"]), cat="%s 분납분 (장부 계산)" % t["kind"],
+                             desc="%s %s 분납분" % (t["kind"], t["period"]), basis="분납함(회사 선택): 법인세법 64조 중소기업 2개월")
+                later.pop("gap", None)
+                later.pop("orig_date", None)
+                ev["amount"] = t["amount"] - inst
+                ev["basis"] = (ev["basis"] + ", " if ev["basis"] else "") + "분납 %s원은 %s에" % ("{:,}".format(inst), later["date"].isoformat())
+                row["inst_date"] = later["date"]
+                out.append(later)
             out.append(ev)
     return out, info

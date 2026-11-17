@@ -758,8 +758,8 @@ class TestProfitFlowKind(unittest.TestCase):
         self.assertIn("<th>구분</th>", part)
         self.assertRegex(part, r"끝난 행사</td><td>기획1팀</td><td>끝남</td>")
         self.assertRegex(part, r"진행 행사</td><td>기획2팀</td><td>진행 중</td>")
-        self.assertIn("끝남 = 계약 − (쓴 돈 + 요청 + 계획)", part)
-        self.assertIn("진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산)", part)
+        self.assertIn("끝남 = 매출 기준 − (쓴 돈 + 요청 + 계획)", part)
+        self.assertIn("진행 중 = 매출 기준 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산)", part)
 
     def test_team_note_counts_requests_for_closed(self):
         """끝난 프로젝트도 calc 는 요청·계획까지 뺀다 (calc profit_now) — 팀장 보고 설명도 같게."""
@@ -769,7 +769,7 @@ class TestProfitFlowKind(unittest.TestCase):
             {"name": "[%s] %s" % (p["id"], p["name"]), "team": p["team"], "contract": 100, "quote": 30, "now": 20, "diff": -10,
              "closed": True}])
         html = insights_render.team_section(I, self.R, p["team"])
-        self.assertIn("끝남 = 계약 − (쓴 돈 + 요청 + 계획)", html)
+        self.assertIn("끝남 = 매출 기준 − (쓴 돈 + 요청 + 계획)", html)
         self.assertNotIn("끝남 = 계약 − 쓴 돈,", html)
 
 

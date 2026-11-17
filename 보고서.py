@@ -326,6 +326,8 @@ def _annual_monthly(a, D, year, A):
             _say(law_state["msg"])
         R = compute(D, "monthly", asof)
         R["law_state"] = law_state
+        from ceo_report import insights
+        R["auto_facts"] = insights.read_facts(a.입력)   # 11/17 전수 점검 F3: 연간에 '분개장 날짜 모름' 나오던 것
         from ceo_report import surplus, taxadj, filing, taxreturn, filehelp, payroll
         from ceo_report.util import esc as _esc
         R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
@@ -454,9 +456,41 @@ def _annual(a):
     return 0
 
 
+def _planbs(a):
+    """기획본부용 재무상태표 (사용자 2026-11-17): 회사 전체 장부에서 영업외수익만 뺀 엑셀. 노란 칸을 바꾸면 모두 다시 계산된다.
+    규칙(안전): 분개장·자금계획서가 없거나 7일 넘게 오래되면 만들지 않는다 (대표·팀장 보고와 같은 판단)."""
+    from ceo_report import planbs, gate
+    asof = parse_date(a.기준일) if a.기준일 else dt.date.today()
+    if asof is None:
+        _say("기준일 형식 오류: %s" % a.기준일)
+        return 2
+    if not os.path.isdir(a.입력):
+        _say(_input_help(a.입력))
+        return 2
+    st = gate.status_dir(a.입력, asof) if not gate._test_off() else {"problems": [], "book_date": None, "plan_date": None}
+    if st["problems"]:
+        _say("기획본부 재무상태표를 만들지 않습니다 — " + " / ".join(st["problems"]))
+        return 2
+    C = planbs.compute(a.입력, asof)
+    if C.get("error"):
+        _say(C["error"])
+        return 2
+    src = "사용한 자료: 분개장 %s · 자금계획서 %s" % (st["book_date"].isoformat() if st.get("book_date") else "날짜 모름",
+                                              st["plan_date"].isoformat() if st.get("plan_date") else "미반영")
+    try:
+        path, bk = planbs.write(C, a.출력, src)
+    except OSError as e:
+        _say(_write_help(a.출력, e))
+        return 7
+    _say(planbs.summary(C, bk))
+    _say("만든 파일:")
+    _say("  " + path)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="대표 주간·월간 보고서")
-    ap.add_argument("유형", choices=["주간", "월간", "연간", "weekly", "monthly"])
+    ap.add_argument("유형", choices=["주간", "월간", "연간", "기획본부", "weekly", "monthly"])
     ap.add_argument("--기준일", default=None, help="YYYY-MM-DD (기본: 오늘)")
     ap.add_argument("--시작일", default=None, help="집계 시작일 (기본: 주간=기준일-6일, 월간=그 달 1일)")
     ap.add_argument("--가용일", default=None, help="이 날짜까지의 가용자금 줄을 더함 YYYY-MM-DD (기준일 뒤)")
@@ -471,6 +505,8 @@ def main(argv=None):
     ap.add_argument("--근거", default=None, help="대표가 요청한 근거 번호 (예: 1-1,3-2). 이미 만든 경영관리 보고에서 그 근거만 따로 만듦")
     ap.add_argument("--연도", default=None, help="연간: 보고할 해 (기본: 기준일의 해, 1~3월이면 지난해)")
     a = ap.parse_args(argv)
+    if a.유형 == "기획본부":   # 기획본부용 재무상태표 엑셀 (사용자 2026-11-17)
+        return _planbs(a)
     if a.유형 == "연간":
         if a.근거 is not None:   # 2차 P4-14 (2026-11-15): 예전엔 말없이 연간 보고 전체를 다시 만들었다
             _say("연간 보고는 근거자료만 따로 뽑기를 지원하지 않습니다 — 근거는 연간 경영관리 보고에서 그 번호를 찾아 보세요 "
@@ -562,6 +598,14 @@ def main(argv=None):
     R["auto_records"] = insights.load_records(a.출력)
     R["auto_profits"] = insights.load_profit_forecasts(a.출력)
     R["_txns"] = data.txns   # 예측 입금 vs 실제 입금
+    # 2026-11-17 제안 A4·A5·A7·M3·A8: 자금 선택(분납·예금 금리), 퇴직금 합계, 입금 60일 다시 재기·비용 급증 할 일 (경영관리에만)
+    from ceo_report import choices, insights_more, payroll as _pay
+    R["fund_choices"] = choices.read(a.입력)
+    try:
+        R["severance"] = _pay.severance(a.입력, asof)
+    except Exception:
+        R["severance"] = None
+    insights_more.add_risks(R)
     from ceo_report import digest   # 경영관리 1쪽 요약 '바뀜' 비교용 지난 보고 신호 (사용자 2026-11-12)
     R["lights_prev"] = digest.load_previous(a.출력, kind, asof)
     R["docs_files"] = digest.find_docs(a.출력, asof)   # 자료 안내: 따로 만드는 자료의 마지막 파일 (사용자 2026-11-13)

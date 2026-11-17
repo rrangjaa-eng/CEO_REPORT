@@ -21,7 +21,8 @@ FIN_LIMIT = 20_000_000          # 금융소득 종합과세 기준 (이자+배�
 WITHHOLD = 0.14                 # 배당·이자 원천징수 소득세율 (지방소득세 10% 별도 → 15.4%)
 GROSS_UP = 0.10                 # 배당 가산율 (Gross-up)
 LOCAL = 0.10
-PERSONAL = 1_500_000            # 본인 기본공제
+PERSONAL = 1_500_000            # 본인 기본공제 (기본값 — 계산할 땐 그해 taxlaw '인적공제', _with_law)
+# 종합소득세 기본세율 (2023 귀속부터 같음, taxlaw '종합소득세율'로 해마다 확인 — 바뀌면 여기를 고침)
 RATES = [(14_000_000, 0.06, 0), (50_000_000, 0.15, 1_260_000), (88_000_000, 0.24, 5_760_000),
          (150_000_000, 0.35, 15_440_000), (300_000_000, 0.38, 19_940_000), (500_000_000, 0.40, 25_940_000),
          (1_000_000_000, 0.42, 35_940_000), (None, 0.45, 65_940_000)]
@@ -152,24 +153,85 @@ def text(input_dir):
         ("  (지분율 합 %g%%)" % s if abs(s - 100) > 0.001 else "")
 
 
-def wages(input_dir, name, asof):
-    """사원급여.csv 에서 그 사람의 최근 12달 급여 합 -> (금액, 달 수) 또는 (None, 0)."""
-    path = os.path.join(input_dir, "사원급여.csv")
+def _monthly(input_dir, fname, name, value_of):
+    """csv 에서 그 사람의 {연월: 금액}."""
+    path = os.path.join(input_dir, fname)
+    out = {}
     if not os.path.exists(path):
-        return None, 0
-    lo = (asof.replace(day=1) - dt.timedelta(days=365)).strftime("%Y-%m")
-    hi = asof.strftime("%Y-%m")
-    tot, months = 0, set()
+        return None
     with _open_text(path) as f:
         for r in csv.DictReader(f):
-            if (r.get("사원명") or "").strip() != name or not (lo < (r.get("연월") or "") <= hi):
+            if (r.get("사원명") or "").strip().replace(" ", "") != name.replace(" ", ""):
                 continue
-            try:
-                tot += int(float(r.get("급여") or 0))
-            except ValueError:
-                continue
-            months.add(r["연월"])
-    return (tot, len(months)) if months else (None, 0)
+            ym = (r.get("연월") or "")[:7]
+            v = value_of(r)
+            if len(ym) == 7 and v:
+                out[ym] = out.get(ym, 0) + v
+    return out
+
+
+def _int(t):
+    try:
+        return int(float(str(t or "").replace(",", "")))
+    except ValueError:
+        return 0
+
+
+# 대표 근로소득을 찾는 자료 (받은 자료 먼저 — 사용자 2026-11-17 "대표가 급여를 받는다고 했잖아! 왜 못 찾는데?")
+# 원인: 예전엔 장부 사원급여.csv(올해 장부만)에서만 찾아, 지난해를 보는 연중 연간 보고에서 '못 찾음'이 나왔다.
+WAGE_SOURCES = (
+    ("근로소득.csv", "위하고 원천징수부 과세 급여", lambda r: _int(r.get("과세급여"))),
+    ("급여명세.csv", "위하고 급여 지급합계(비과세 식대 등 포함이라 조금 큼)",
+     lambda r: _int(r.get("금액")) if (r.get("구분") or "").strip() == "지급" and (r.get("항목") or "").strip() == "지급합계" else 0),
+    ("사원급여.csv", "장부 급여 계정", lambda r: _int(r.get("급여"))),
+)
+
+
+def wage_info(input_dir, name, asof):
+    """그 사람의 연 근로소득(과세 총급여) -> {"wage", "months", "src", "span", "looked"}.
+    기준일 달까지 자료가 있는 마지막 달로 끝나는 12달 합(상여가 있는 달도 한 번 들어감). 12달이 안 되면 달 수로 늘린다.
+    모두 없으면 연말정산 총급여(가장 최근 해, 기준일 해 이하)를 쓴다. 찾지 못하면 wage=None, looked=[찾아본 자료]."""
+    hi = asof.strftime("%Y-%m")
+    looked = []
+    for fname, label, fn in WAGE_SOURCES:
+        m = _monthly(input_dir, fname, name, fn)
+        if m is None:
+            looked.append("%s 없음" % fname)
+            continue
+        ms = sorted(k for k in m if k <= hi)
+        if not ms:
+            looked.append("%s에 '%s' 없음" % (fname, name))
+            continue
+        end = ms[-1]
+        y, mo = int(end[:4]), int(end[5:7])
+        start = "%04d-%02d" % ((y - 1, mo + 1) if mo < 12 else (y, 1))
+        use = [k for k in ms if start <= k <= end]
+        tot = sum(m[k] for k in use)
+        n = len(use)
+        return {"wage": int(tot * 12 / n) if n < 12 else tot, "months": n, "sum": tot, "src": label,
+                "span": "%s~%s" % (use[0], use[-1]), "looked": looked}
+    path = os.path.join(input_dir, "연말정산.csv")
+    if os.path.exists(path):
+        best = None
+        with _open_text(path) as f:
+            for r in csv.DictReader(f):
+                if (r.get("사원명") or "").strip().replace(" ", "") == name.replace(" ", "") and _int(r.get("총급여")):
+                    y = _int(r.get("귀속연도"))
+                    if y <= asof.year and (best is None or y > best[0]):
+                        best = (y, _int(r.get("총급여")))
+        if best:
+            return {"wage": best[1], "months": 12, "sum": best[1], "src": "위하고 %d년 연말정산 총급여" % best[0],
+                    "span": "%d년" % best[0], "looked": looked}
+        looked.append("연말정산.csv에 '%s' 없음" % name)
+    else:
+        looked.append("연말정산.csv 없음")
+    return {"wage": None, "months": 0, "sum": 0, "src": "", "span": "", "looked": looked}
+
+
+def wages(input_dir, name, asof):
+    """(예전 이름) -> (연 근로소득, 달 수) 또는 (None, 0)."""
+    w = wage_info(input_dir, name, asof)
+    return (w["wage"], w["months"]) if w["wage"] is not None else (None, 0)
 
 
 def people(input_dir, asof, interim=0):
@@ -178,14 +240,16 @@ def people(input_dir, asof, interim=0):
     for r in read(input_dir):
         name = r["이름"].strip()
         notes = []
-        wage, n = (None, 0)
-        if r.get("회사급여") == "예":
-            wage, n = wages(input_dir, name, asof)
-            if wage is None:
-                notes.append("분개장 급여에서 이름을 못 찾아 근로소득 0으로 봄")
-            elif n < 12:
-                wage = int(wage * 12 / n)
-                notes.append("급여 %d달치를 12달로 늘려 봄" % n)
+        # 회사급여 칸과 상관없이 급여 자료에서 먼저 찾는다 (자료 먼저). 찾으면 직장가입자로 본다.
+        wi = wage_info(input_dir, name, asof)
+        wage = wi["wage"]
+        said = r.get("회사급여") == "예"
+        if wage is not None:
+            notes.append("근로소득: %s %s%s" % (wi["src"], wi["span"],
+                                              " (%d달치를 12달로 늘림)" % wi["months"] if wi["months"] < 12 else " 12달 합"))
+        elif said:
+            notes.append("회사 급여를 받는다고 했지만 급여 자료에서 이름을 못 찾음 (%s) — 근로소득 0으로 계산함. "
+                         "위하고에서 받기로 인사급여·원천징수부를 받거나 주주 이름을 사원 이름과 같게 넣으세요" % ", ".join(wi["looked"]))
         other = int(float(r.get("그밖소득") or 0))
         interest = int(float(r.get("다른금융소득") or 0))
         if not (r.get("그밖소득") or "").strip():
@@ -198,8 +262,8 @@ def people(input_dir, asof, interim=0):
             interest += int(interim * share)
             notes.append("올해 중간배당 %s원을 금융소득에 넣음" % W(int(interim * share)))
         income = (wage or 0) - wage_deduction(wage or 0) + other
-        out.append({"name": name, "share": share, "minor": r.get("미성년자") == "예", "salaried": r.get("회사급여") == "예",
-                    "wage": wage, "interest": interest, "other": other,
+        out.append({"name": name, "share": share, "minor": r.get("미성년자") == "예", "salaried": said or wage is not None,
+                    "wage": wage, "wage_src": wi, "said_salaried": said, "interest": interest, "other": other,
                     "other_base": max(income - PERSONAL * max(n_dep, 1), 0), "notes": notes})
     return out
 
@@ -216,7 +280,8 @@ def taxes_at(P, total):
     return out
 
 
-LAW_KEYS = (("금융소득기준", "FIN_LIMIT"), ("배당원천세율", "WITHHOLD"), ("건강보험료율", "HEALTH_RATE"))
+LAW_KEYS = (("금융소득기준", "FIN_LIMIT"), ("배당원천세율", "WITHHOLD"), ("건강보험료율", "HEALTH_RATE"),
+            ("인적공제", "PERSONAL"))   # E2 (11/17): 기본공제도 그해 기준표 값 (세율·근로소득공제 구간은 기준표에서 '글'로 확인만)
 
 
 def _with_law(fn):
@@ -275,8 +340,101 @@ def W(v):
     return "–" if v is None else "{:,}".format(int(v))
 
 
-def render(D, esc):
-    """처분계산서 장 안의 '배당 권장' 조각."""
+def bracket(base):
+    """과세표준 base 에 다음 1원이 붙을 때 기본세율 (지방소득세 뺀 것)."""
+    base = max(int(base), 0)
+    for top, rate, _ in RATES:
+        if top is None or base < top:
+            return rate
+    return RATES[-1][1]
+
+
+def _pct(x):
+    return ("%.1f" % (x * 100)).rstrip("0").rstrip(".") + "%"
+
+
+def why_html(D, S, esc):
+    """권장 금액을 이렇게 정했다 — 회계를 몰라도 읽히게 단계별로 (사용자 2026-11-17: 배당을 권하는 이유·판단 기준을 쉽게 자세히).
+    경영관리용 보고에만 들어간다 (대표·팀장 보고엔 안내 문구를 넣지 않음)."""
+    if not D or not D.get("people"):
+        return ""
+    P = D["people"]
+    li = []
+    # ① 한도: 작년까지 쌓인 이익 + 올해 이익
+    cur = (S or {}).get("cur") or {}
+    y = (S or {}).get("year")
+    first, opening, ni = (cur.get(k, (None, "", "")) for k in ("미처분", "전기이월", "당기순이익"))
+    if D.get("limit") is not None and first[0] is not None:
+        txt = ("<b>① 회사가 나눠 줄 수 있는 최대 금액(배당 한도)</b> — 배당은 회사가 번 이익 안에서만 할 수 있습니다. "
+               "작년까지 벌어 회사에 남겨 둔 이익 <b>%s원</b> + %s년 이익 <b>%s원</b>%s = <b>%s원</b>(미처분이익잉여금). "
+               % (W(opening[0] or 0), y, W(ni[0]), " (" + esc(ni[2]) + ")" if ni[1] == "예상" and ni[2] else "", W(first[0])))
+        txt += ("배당할 때는 법(상법 458조)에 따라 배당액의 10%%를 '이익준비금'으로 회사 안에 따로 쌓아야 합니다(자본금의 절반이 찰 때까지). "
+                "그 몫을 빼면 실제로 나눠 줄 수 있는 최대는 <b>%s원</b>입니다." % W(D["limit"]))
+        li.append(txt)
+    # ② 15.4% 와 2천만 원
+    li.append("<b>② 배당 세금의 기본 규칙</b> — 주주가 배당을 받으면 회사가 15.4%%(소득세 14%% + 지방소득세 1.4%%)를 떼고 줍니다. "
+              "한 사람이 1년 동안 받은 이자·배당이 합쳐서 <b>%s원 이하</b>면 세금은 이걸로 끝입니다. "
+              "넘으면 넘는 몫은 그 사람의 급여 등 다른 소득과 합쳐서 다시 세금을 계산(금융소득 종합과세)하므로, "
+              "소득이 많은 사람일수록 넘는 몫에 15.4%%보다 높은 세율이 붙습니다." % W(FIN_LIMIT))
+    # ③ 사람마다: 근로소득 → 세율 구간
+    for p in P:
+        if p["minor"]:
+            continue
+        w = p.get("wage")
+        wi = p.get("wage_src") or {}
+        rate = bracket(p["other_base"])
+        if w:
+            src = "%s, %s" % (wi.get("src") or "급여 자료", wi.get("span") or "")
+            t = ("<b>③ %s님(지분 %s)</b> — 근로소득(1년 급여) <b>%s원</b>(%s)에서 근로소득공제 %s원·기본공제를 빼면 세금 매기는 금액이 약 %s원이라 "
+                 "세율 구간이 <b>%s</b>(지방소득세 포함 %s)입니다. "
+                 % (esc(p["name"]), _pct(p["share"]), W(w), esc(src), W(wage_deduction(w)), W(p["other_base"]),
+                    _pct(rate), _pct(rate * (1 + LOCAL))))
+        else:
+            t = ("<b>③ %s님(지분 %s)</b> — 근로소득을 급여 자료에서 찾지 못해 0원으로 계산했습니다(%s). "
+                 % (esc(p["name"]), _pct(p["share"]), esc(", ".join(wi.get("looked") or [])) or "자료 없음"))
+        if rate * (1 + LOCAL) > WITHHOLD * (1 + LOCAL) + 0.0001:
+            t += ("그래서 배당이 1년 %s원을 넘으면 넘는 몫에는 15.4%% 대신 약 %s가 붙어 세금이 늘어납니다." % (W(FIN_LIMIT), _pct(rate * (1 + LOCAL))))
+        else:
+            t += "세율 구간이 낮아 2천만 원을 넘어도 세금이 크게 늘지 않습니다."
+        if p.get("salaried"):
+            t += (" 또 회사에서 급여를 받는 사람(건강보험 직장가입자)은 급여 말고 다른 소득(배당·이자 등)이 1년 %s원을 넘으면 넘는 몫에 "
+                  "건강보험료 %s가 더 붙습니다(장기요양보험료 별도)." % (W(HEALTH_LIMIT), _pct(HEALTH_RATE)))
+        li.append(t)
+    minors = [p for p in P if p["minor"]]
+    if minors:
+        li.append("<b>③ 미성년 자녀(%s)</b> — 자녀는 금융소득이 1년 2천만 원을 넘지 않게 묶었습니다(넘으면 종합과세 신고·건강보험 피부양자 문제)."
+                  % esc(", ".join("%s %s" % (p["name"], _pct(p["share"])) for p in minors)))
+    # ④ 지분율대로 → 누가 먼저 2천만에 닿나
+    best = D.get("best") or 0
+    if best:
+        rows = D.get("best_rows") or []
+        hit = [p for p, (d, _) in zip(P, rows) if p["interest"] + d >= FIN_LIMIT - STEP]
+        who = hit[0] if hit else max(P, key=lambda p: p["share"])
+        li.append("<b>④ 지분율대로 똑같이 나눠야 함</b> — 배당은 지분율대로 나눠야 합니다(다르게 나누면 증여로 볼 수 있음). "
+                  "총액을 늘리면 모두의 몫이 같이 늘어나는데, 지분이 가장 큰 %s님 몫이 먼저 2천만 원에 닿습니다. "
+                  "총 <b>%s원</b>이면 %s 받습니다."
+                  % (esc(who["name"]), W(best), ", ".join("%s님 %s원" % (esc(p["name"]), W(d)) for p, (d, _) in zip(P, rows))))
+        more = [t for t in D.get("table") or [] if t["total"] > best]
+        t0 = next((t for t in D.get("table") or [] if t["best"]), None)
+        txt = ("<b>⑤ 그래서 세금으로 본 권장 금액은 %s원</b> — 이때 주주 세금은 모두 %s원으로 배당의 %s입니다."
+               % (W(best), W(t0["tax"]) if t0 else "–", _pct(t0["rate"]) if t0 else "15.4%"))
+        if more and t0:
+            m = more[-1]
+            extra = (m["tax"] - t0["tax"]) / float(m["total"] - best)
+            txt += (" 총액을 %s원으로 늘리면 세금이 %s원(%s)이 되어, 더 준 %s원에는 %s의 세금·건보료가 붙습니다 — "
+                    "같은 돈을 내년에 나눠 주면 내년 2천만 원 몫으로 다시 15.4%%만 낼 수 있습니다."
+                    % (W(m["total"]), W(m["tax"]), _pct(m["rate"]), W(m["total"] - best), _pct(extra)))
+        li.append(txt)
+    li.append("<b>⑥ 마지막으로 현금</b> — 실제 배당액은 ⑤의 금액, ①의 한도, 그리고 배당 지급일까지 세금·대출·큰 지출을 내고도 통장에 남는 돈 "
+              "중에서 <b>가장 작은 값</b>으로 정합니다(월간 경영관리 보고 '이번 시기 제안'에서 계산). "
+              "주주마다 2천만 원 기준은 해마다 새로 생기고, 배당하지 않은 해의 몫은 다음 해로 넘어가지 않습니다. "
+              "회사에 남겨 두면 지금 낼 세금은 없지만, 나중에 한꺼번에 받으면 2천만 원을 넘어 더 높은 세율이 붙습니다.")
+    return ("<div class='q'>권장 금액은 이렇게 정했습니다</div><div class='say' style='line-height:1.7'>%s</div>"
+            % "<br>".join(li))
+
+
+def render(D, esc, S=None):
+    """처분계산서 장 안의 '배당 권장' 조각. S = 처분계산서 (있으면 한도 설명에 작년 이월·올해 이익을 적음)."""
     if D is None:
         return ("<div class='q'>배당 권장액</div><div class='note'>주주가 입력되지 않음 — 창 '가끔 넣는 값'의 '주주'에 이름·지분율을 넣으면 "
                 "대표 근로소득을 고려한 배당 권장액이 나옵니다.</div>")
@@ -308,6 +466,7 @@ def render(D, esc):
                      % (" class='g'" if t["best"] else "", W(t["total"]), " (권장)" if t["best"] else "", W(t["tax"]), t["rate"] * 100,
                         "".join("<td>%s<span class='ex'>세금 %s</span></td>" % (W(d), W(a)) for d, a in t["rows"])))
         h.append("</table>")
+    h.append(why_html(D, S, esc))
     if abs(D["share_sum"] - 1) > 0.00001:
         h.append("<div class='note'>지분율 합이 %g%% — 100%%가 아니라 나머지 주주 몫은 계산에 없습니다.</div>" % (D["share_sum"] * 100))
     h.append("<div class='warn'>미성년 주주: 받은 배당은 자녀 명의 통장에서 자녀 돈으로 관리해야 합니다(부모가 쓰면 증여 문제). "
@@ -441,13 +600,38 @@ def save_settings(input_dir, values, strict=False, group=None, exclude=None):
     return cur
 
 
+def _filed_breaks(input_dir):
+    """법인세신고.csv(작년 실제 신고서)로 '작년에 받은 감면·공제' 답 -> 문장 또는 None."""
+    try:
+        from . import taxreturn
+        T = taxreturn.load(input_dir)
+    except Exception:
+        return None
+    if not T:
+        return None
+    y = max(k[0] for k in T)
+    d = T.get((y, "확정")) or next(v for k, v in T.items() if k[0] == y)
+    sp, emp, tot = d.get("특별감면") or 0, d.get("고용공제") or 0, d.get("공제감면세액") or 0
+    if not tot and not sp and not emp:
+        return "없음 (%d년 법인세 신고서)" % y
+    parts = (["중소기업 특별세액감면 %s원" % W(sp)] if sp else []) + (["통합고용 세액공제 %s원" % W(emp)] if emp else [])
+    rest = tot - sp - emp
+    if rest > 0:
+        parts.append("그 밖 %s원" % W(rest))
+    tail = (["창업 감면은 받지 않음"] if rest <= 0 else []) + (["공제 이월 %s원" % W(d["공제이월"])] if d.get("공제이월") else [])
+    return "%d년 법인세 신고서: %s%s" % (y, " · ".join(parts), " (%s)" % ", ".join(tail) if tail else "")
+
+
 def checklist(input_dir):
     """-> [(키, 질문, 넣은 값 또는 None, 꼭 필요, 쓰는 값)] (+ 주주 줄). 쓰는 값 = 넣은 값 또는 기본값."""
     st = read_settings(input_dir) if input_dir else {}
     out = []
     cond = set(m for (k, v), more in NEEDS_IF.items() if st.get(k) == v for m in more)
+    filed = _filed_breaks(input_dir) if input_dir else None
     for k, _, q, _, _, dflt, need in QUESTIONS:
         v = st.get(k)
+        if k == "작년감면" and filed and v in (None, "모름"):
+            v = filed   # 11/17 규칙: 받은 자료(작년 법인세 신고서)에 답이 있으면 그 값으로 (묻지 않음)
         out.append((k, q.strip(), v, need or k in cond, v or dflt))
     rows = read(input_dir) if input_dir else []
     tot = sum(float(r.get("지분율") or 0) for r in rows)
@@ -614,9 +798,13 @@ def advise(R, S, D, input_dir=None):
                 v = t["amount"]
                 # 지방소득세는 감면이 없다(산출세액 × 10%). 법인세 예상이 이미 '감면·공제 뒤'면 또 빼지 않는다 (코덱스 검토 2026-11-14)
                 done = "감면·공제 뒤" in (t.get("basis") or t.get("note") or "")
+                from .tax import REST_MARK   # E1: 남은 달 예상 줄은 감면 뒤 금액의 차이라 감면을 또 빼지 않는다
+                done = done or str(t.get("period") or "").endswith(REST_MARK)
                 c = cut if t["kind"] == "법인세" and not done else 0
                 if c:
                     v = max(v - c, 0)
+                if t.get("inst") and t.get("inst_date") and t["inst_date"] > pay_day:   # A4: 분납 몫은 2달 뒤라 이 기간엔 안 나감
+                    v = max(v - t["inst"], 0)
                 big.append(("%s (%s)%s" % (t["kind"], due.isoformat(), " — 감면·공제 %s원 뺌" % W(c) if c else ""), v))
         extend = use.get("대출연장") != "아니오"
         for ln in ((R.get("debts") or {}).get("loans") or []):
@@ -677,6 +865,9 @@ def advise(R, S, D, input_dir=None):
         verdict = "배당"
         why = "세금이 15.4%로 끝나는 선" if D and amount == best else ("배당에 쓸 수 있는 현금" if cash is not None and amount == cash // 1_000_000 * 1_000_000 else "배당 한도")
         reasons.insert(0, "한도·현금·회사 상태 모두 괜찮습니다. 금액은 %s에 맞췄습니다." % why)
+        # 사용자 2026-11-17: 판단 기준을 쉽게 — 세 숫자 중 가장 작은 값
+        reasons.insert(1, "세 숫자 중 가장 작은 값을 골랐습니다: 법으로 나눠 줄 수 있는 최대(배당 한도) %s원 · 지급일까지 세금 등을 내고 "
+                          "남는 현금 %s원 · 주주 세금이 15.4%%로 끝나는 선 %s원." % (W(limit), W(cash), W(best) if D else "계산 안 함"))
     else:
         verdict = "이월"
         reasons.insert(0, "배당할 수 있는 금액이 100만 원보다 작습니다.")

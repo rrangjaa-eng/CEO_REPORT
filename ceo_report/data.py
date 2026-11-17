@@ -57,6 +57,7 @@ BOOK_NOTE_KEYS = ["알림"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
+INVOICE_OPTIONAL = ["거래처코드"]   # 계산서.csv 선택 칸 (E3, 2026-11-17): 매출 거래처코드 — 입금 습관·고객사별 이익을 코드로 묶음. 옛 파일은 빈칸
 SCHED_OPTIONAL = ["거래처코드"]   # 자금일정.csv 선택 칸 (2026-11-14): 없는 옛 파일도 그대로 읽는다. 새 파일·양식에는 넣는다
 TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
 
@@ -363,7 +364,9 @@ def load(folder):
                               # 법인세 줄만 (2026-11-04): 과세표준·산출세액·기납부(중간예납 등 선납세금)
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
-                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None})
+                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None,
+                              # A4 (2026-11-17): 분납할 몫 (회사 선택, 법인세 줄만). 금액 칸은 전체, 자금 일정만 둘로 나눈다
+                              "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None})
 
     # 장부 채무 (변환.py 장부채무.csv, 2026-11-04 점검 A1·A2): 없으면 None
     from .debts import load as load_debts
@@ -462,6 +465,7 @@ def load(folder):
     d.invoices = []
     for r in raw["계산서.csv"]:
         v = {"project": r.get("프로젝트번호", ""), "client": r.get("거래처", ""),
+             "client_code": (r.get("거래처코드") or "").strip().lstrip("0"),
              "date": date(r.get("발행일"), iss, r, "발행일"), "kind": r.get("구분", "") or "발행",
              "supply": num(r.get("공급가액"), iss, r, "공급가액"), "vat": num(r.get("부가세"), iss, r, "부가세"),
              "due": date(r.get("입금예정일"), iss, r, "입금예정일"), "due_firm": r.get("예정일확정", "") in ("Y", "확정"),

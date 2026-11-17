@@ -76,6 +76,7 @@ def _event_date(text):
 
 BUDGET_VAT = 0.1      # 남은 예산은 공급가 기준이므로 지급(현금)은 부가세 10%를 더한다 (적게 보이지 않게)
 DONE_STATES = ("완료", "완료(예전 인트라넷)")
+OVER_ALERT_PCT = 120   # 사용자 2026-11-17: 예산 대비 실행가 120% 넘는 것만 경영관리에 알림
 CEO_APPROVED = "대표이사"   # 프로젝트.csv 승인단계: 인트라넷에서 대표이사 승인까지 끝남 = 종결 (사용자 2026-11-11)
 
 
@@ -364,6 +365,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         # 예산에서 남은 돈·예산 초과 (1차 점검 E1·B5·B6, 2026-11-15): 장부 전 지급요청까지 넣은 등록 지출로 본다 — 대표 '예산 초과'
         # 줄·프로젝트 칸·위험표가 팀장 경보(T1)와 같은 기준 (예전엔 장부 전 요청을 빼 A사 113% 초과를 놓쳤음)
         P["remain_all"] = None if (b is None or P["committed"] is None) else b - P["committed"]
+        # 사용자 2026-11-17: 인트라넷에서 대표 승인까지 끝난(회색) 프로젝트는 완료 → 남은 예산은 지운다 (0). 예산 초과(음수)는 그대로 보임
+        P["remain_cleared"] = None
+        if P["closed"]:
+            if P["remain"] is not None and P["remain"] > 0:
+                P["remain_cleared"], P["remain"] = P["remain"], 0
+            if P["remain_all"] is not None and P["remain_all"] > 0:
+                P["remain_all"] = 0
         # 종료 시점 예상 원가·이익 = 지금 예상 이익(profit_now)과 같은 식: 진행 중은 추정 예산과 등록 지출 중 큰 쪽, 끝난 것은 등록 지출.
         # 예산이 없으면 등록 지출까지만 (예전엔 장부 전 요청·남은 예산을 안 봐 화면마다 4,000만~4,500만 달랐음)
         if P["committed"] is None:
@@ -372,13 +380,26 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             P["cost_end"] = P["committed"]
         else:
             P["cost_end"] = max(P["committed"], b)
-        P["profit_end"] = None if (P["contract"] is None or P["cost_end"] is None) else P["contract"] - P["cost_end"]
+        # 이익 기준 매출 (11/17 전수 점검 F2): 계약금액(수동 입력)이 먼저, 없으면 받은 자료 — 끝난 행사는 매출 반영 누계(장부),
+        # 진행 중은 사전견적과 이미 잡힌 매출 중 큰 쪽 (추정 예산이 사전견적에서 나오므로 같은 기준). 인트라넷엔 계약금액 칸이 없어
+        # 예전엔 144개가 '못 냄'이었음. 견적금액은 승인 단계 금액이라 전체보다 작은 일이 많아(Games on AWS 2,450만 vs 사전견적 2.6억) 쓰지 않음
+        rec, est = P.get("recognized") or 0, P.get("estimate") or 0
+        if P["contract"]:
+            P["profit_basis"], P["profit_basis_src"] = P["contract"], "계약금액"
+        elif P["closed"] and rec:
+            P["profit_basis"], P["profit_basis_src"] = rec, "매출 반영 누계"
+        elif est or rec:
+            P["profit_basis"], P["profit_basis_src"] = (est, "사전견적") if est >= rec else (rec, "매출 반영 누계")
+        else:
+            P["profit_basis"], P["profit_basis_src"] = None, ""
+        pb = P["profit_basis"]
+        P["profit_end"] = None if (pb is None or P["cost_end"] is None) else pb - P["cost_end"]
         # 지금 예상 이익: 끝난 프로젝트 = 계약 − 등록 지출. 진행 중 = 계약 − 추정 예산과 등록 지출 중 큰 쪽
         # (아직 요청·계획으로 올리지 않은 남은 예산도 나갈 돈으로 본다 — 예전엔 남은 예산만큼 늘 '이익 개선'으로 보였음)
-        if P["contract"] is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
+        if pb is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
             P["profit_now"] = None
         else:
-            P["profit_now"] = P["contract"] - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
+            P["profit_now"] = pb - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
     plist = [P for P in proj.values() if (P.get("state") or "").strip() != OLD_STATE]   # 예전 인트라넷 끝난 행사 (사용자 2026-11-05)
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
@@ -422,6 +443,10 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         if P["remain"] is not None and P["remain"] > 0:
             P["remain_cash"] = int(round(P["remain"] * (1 + BUDGET_VAT)))
             P["remain_due"] = budget_due(_event_date(P.get("event_date")), asof)
+            # M2 (가정 규칙 11/15, 결정 카드 11/17 '할 일 띄우고 예상엔 남김'): 처음 예상 지급일(행사일 다음 달 말 금요일)을 남기고,
+            # 지났으면 '다시 확인' 할 일. 예상 지급에는 그대로 둔다
+            P["remain_first_due"] = budget_due(_event_date(P.get("event_date")), dt.date(1900, 1, 1))   # 기준일로 옮기기 전 날
+            P["remain_overdue"] = P["remain_first_due"] is not None and P["remain_first_due"] <= asof
     remain_unknown = [P for P in plist if P["budget"] is not None and P["remain"] is None and not is_closed(P)]
     by_team = OrderedDict()
     for P in sorted(plist, key=lambda P: P["team"]):
@@ -950,6 +975,8 @@ def account_year(rows, ym, problem=""):
     for r in rows:
         if r["ym"][:4] != year or not r["ym"][5:7].isdigit() or int(r["ym"][5:7]) > upto:
             continue
+        if r["group"] == "영업외수익":   # 비용 표라 수익 줄은 넣지 않음 (F10: 예산의 이자수익용으로 계정별비용.csv 에 들어감)
+            continue
         k = (r["group"] or "구분 없음", r["code"])
         names.setdefault(k, r["name"])
         m = int(r["ym"][5:7]) - 1
@@ -1345,7 +1372,8 @@ def risks(R):
     ar_days = sn["위험_미수경과일"]
     ui_days = sn["위험_미발행경과일"]
     data_days = sn["위험_자료경과일"]
-    over_pct = sn["위험_예산초과율"]
+    # 사용자 2026-11-17: 예산 대비 실행가(등록 지출)가 120%를 넘는 것만 경영관리에 알림 (설정이 더 높으면 설정값)
+    over_pct = max(sn["위험_예산초과율"] or 0, OVER_ALERT_PCT)
     s2 = R["s2"]
     for mode, label in (("firm", "확정·정기 지출"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]
@@ -1363,6 +1391,16 @@ def risks(R):
             "대출 %s 만기 %s (%s) — 매년 연장 예정이라 원금 %s원을 갚을 돈으로 잡지 않음." % (L["vendor"], d2s(L["due"]), left, won(L["balance"])),
             "은행·보증기관에 연장되는지 확인하세요. 연장되면 입력 폴더 대출만기.csv 에 새 만기일과 근거(메모)를 넣고, "
             "안 되면 원금 상환 일정을 자금계획서에 넣으세요.")
+    late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
+    if late:   # M2 (결정 카드 2026-11-17): 행사 끝나고 처음 예상 지급일이 지난 남은 예산 — 할 일만, 예상 지급엔 그대로
+        late.sort(key=lambda P: -P["remain_cash"])
+        add("중간", "자금",
+            "행사 끝나고 처음 예상 지급일이 지났는데 남은 예산이 아직 예상 지급으로 남은 프로젝트 %d개 %s원 (부가세 포함): %s."
+            % (len(late), won(sum(P["remain_cash"] for P in late)),
+               ", ".join("[%s] %s %s원 (처음 예상 %s)" % (P["id"], P["name"], won(P["remain_cash"]), d2s(P["remain_first_due"]))
+                         for P in late[:5]) + (" 외 %d개" % (len(late) - 5) if len(late) > 5 else "")),
+            "팀장에게 더 나갈 돈이 있는지 다시 확인하세요. 없으면 인트라넷에서 종결(대표 승인)하면 예상 지급에서 빠집니다. "
+            "확인 전까지는 '프로젝트 지급 예상'에 그대로 둡니다.")
     if s2["out_missing"]:
         add("높음", "자료", "지급 자료를 읽지 못해 지급예정이 빠졌으므로 기간별 계산 잔액과 최저 잔액을 계산하지 않음: %s."
             % ", ".join(s2["out_missing"]),

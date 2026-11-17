@@ -453,9 +453,13 @@ def render(R, mode):
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")
                 + ("" if mode == "ceo" else _ins(" · 프로그램 판 %s" % esc(_build())))))   # 사용자 2026-11-17: 예전 exe 로 만든 보고인지 알 수 있게
     from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-12: 자금계획서 없이 계산한 보고가 다시 나오면 안 됨)
-    h.append("<div class='meta dsrc'>%s%s</div>" % (esc(
-        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])),
-        _ins("<br>" + esc(gate.sources_line(R)))))
+    # 11/17 전수 점검 F4: 자료기준일.csv 가 비면 '자료 기준일:' 빈 칸만 남던 것 — 그때는 사용한 자료(분개장·자금계획서 날짜)를 보임
+    dsrc_a = ("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])) if R["s7"]["asof"] else ""
+    dsrc_b = gate.sources_line(R)
+    if not dsrc_a:
+        h.append("<div class='meta dsrc'>%s</div>" % esc(dsrc_b))
+    else:
+        h.append("<div class='meta dsrc'>%s%s</div>" % (esc(dsrc_a), _ins("<br>" + esc(dsrc_b))))
     h.append("</div>")
     h.append(_ins(gate.banner(gate.problems(R))))
     lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 두 판 모두 한 줄
@@ -1429,8 +1433,13 @@ def _regular_table(R):
                     r["unk"][i] += 1
                 else:
                     r["q"][i] += e["amount"]
+                # 같은 날 나가는 줄은 합친다 (E1 '남은 기간 예상' 줄이 본 줄과 같은 날이면 다음 출금액이 분기 칸보다 작게 보였음)
                 if r["next"] is None or e["date"] < r["next"]["date"]:
-                    r["next"] = e
+                    r["next"] = {"date": e["date"], "amount": e["amount"], "firm": bool(e.get("firm"))}
+                elif e["date"] == r["next"]["date"]:
+                    n = r["next"]
+                    n["amount"] = None if n["amount"] is None or e["amount"] is None else n["amount"] + e["amount"]
+                    n["firm"] = n["firm"] and bool(e.get("firm"))
     head = "".join("<th>%s</th>" % ("%d년 %d분기%s" % (y, q, " (남은 기간)" if i == 0 else "")) for i, (y, q, _, _) in enumerate(qs))
     h = ["<table class='pt xr taxq'><thead><tr><th>항목</th><th>다음 출금일</th><th>다음 출금액</th>%s</tr></thead><tbody>" % head]
     for k, r in rows.items():
@@ -2037,6 +2046,13 @@ def _corp_row_mid(R, ym, kind="법인세"):
     return _corp_row(R, "%d-%02d" % (y, m - 1), kind), "%d월" % (m - 1)
 
 
+def _corp_rest(R, ym):
+    """E1: 자금 일정의 그해 '남은 달 예상' 법인세·지방소득세 줄 (corptax.rest_rows). 없으면 빈 목록."""
+    from .tax import REST_MARK
+    return [t for t in (R.get("tax") or []) if t.get("kind") in ("법인세", "법인지방소득세") and t.get("amount")
+            and str(t.get("period") or "").startswith("%s년 " % ym[:4]) and str(t.get("period") or "").endswith(REST_MARK)]
+
+
 def _corp_est(R, Y, ym):
     """법인세 예상 한 계산 (2026-11-14 P3·K1): 자금 일정의 법인세 줄과 같은 과세표준(감가상각·대손·세무조정 반영).
     그 줄이 이 보고 기간과 다르거나 없으면 이 표의 세전 이익으로 (세무조정 미반영). -> dict 또는 None (세전 이익 모름)."""
@@ -2170,6 +2186,11 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
     h.append("<div class='note'>%s</div>" % esc(
         "과세표준 = %s · 세율 %s, 지방세 10%%%s · 기납부 = 장부 선납세금 · %s · %s"
         % (d_txt, rate, (" (%s − 원천징수된 지방소득세 %s)" % (won(local), won(E["local_paid"]))) if E["local_paid"] else "", "산출세액 %s에서 작년 신고서의 감면·넘어온 공제를 빼고 최저한세까지 (아래 표)" % won(corp) if C else "공제 미반영", pay_txt)))
+    rest = _corp_rest(R, ym)
+    if rest:   # E1 (결정 카드 2026-11-17): 남은 달 이익으로 더 낼 세금은 자금 일정에 따로 한 줄 — 이 표(지금까지 이익 기준)와 나눠 보임
+        h.append("<div class='note'>%s</div>" % esc(
+            "남은 달 이익 예상으로 자금 일정에 따로 더 넣은 세금: " + " · ".join(
+                "%s %s (%s)" % (t["kind"], won(t["amount"]), d2s(t["due"])) for t in rest) + " — " + str(rest[0].get("basis") or "")))
     # 세무조정 예상은 분기 보고 부록 C-1 로 옮김 (사용자 2026-11-12: 결산·세무·신용평가는 분기·반기·연간 보고로)
     if R.get("taxret_dir"):   # 실제 법인세 신고서 (사용자 2026-11-13, 경영관리에만). 보고서.py 가 파일 있을 때만 폴더를 넣음
         from . import taxreturn
@@ -2512,6 +2533,9 @@ def _team_notes(R, basis, dept, last, ym):
             "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
     elif last and not last["dept_ok"]:
         notes.append("급여·판관비 미확인: 부서비용.csv에 %s 자료가 없음" % _ym_text(ym))
+    if last and last.get("heads_from"):   # 11/17 전수 점검 F1: 달 중간 보고 — 이번 달 급여 전
+        notes.append("%s 급여가 아직 장부에 없어 이번 달 인원은 %s 인원, 급여는 0 (누적 평균 인원은 급여 들어온 달만)"
+                     % (_ym_text(ym), _ym_text(last["heads_from"])))
     for hq, v in (last or {}).get("hq_nonop", []):
         notes.append("%s 영업외 비용(이자 등) %s은 %s 판관비에 넣어 영업이익에서 뺌 (결산 영업외 비용 줄에는 넣지 않음)" % (hq, won(v), hq))
     if last and last["check"]:
@@ -3442,11 +3466,14 @@ def _s4(R):
     h.append("<h3>프로젝트 계약·매출 반영·종료 시점 예상이익 (인트라넷·집행자료 기준)</h3>")
     rows = []
     for P in s4["projects"]:
-        rows.append([esc(P["id"]), esc(P["name"]), W(P["contract"], "계약금액 미등록"), W(P["recognized"]),
+        pb = P.get("profit_basis", P["contract"])   # F2 (11/17 결정): 계약금액이 비면 받은 자료(사전견적·장부 매출)로 이익을 냄
+        cell = W(P["contract"], "계약금액 미등록") if P["contract"] is not None or pb is None else \
+            W(pb) + " <span class='na'>(%s)</span>" % esc(P.get("profit_basis_src") or "")
+        rows.append([esc(P["id"]), esc(P["name"]), cell, W(P["recognized"]),
                      W(P["unrecognized"], "판단 불가"), W(P.get("cost_end", P["expected"]), "판단 불가"),
                      W(P["profit_end"], "판단 불가") + (" <span class='na'>(미확인 원가 %d건)</span>" % P["unknown_cost"]
                                                        if P["unknown_cost"] else ""),
-                     esc(pct(P["profit_end"], P["contract"]))])
+                     esc(pct(P["profit_end"], pb))])
     ce = [P.get("cost_end", P["expected"]) for P in s4["projects"]]
     h.append(table(["번호", "프로젝트", "계약금액", "매출 반영 누계", "계약 중 매출 미반영", "종료 예상 원가", "종료 시점 예상이익",
                     "예상이익률"], rows, num_cols=(2, 3, 4, 5, 6, 7),
@@ -3456,6 +3483,7 @@ def _s4(R):
                           "", ""]))
     h.append("<div class='note'>종료 예상 원가 = 등록 지출(누적 지급 + 요청 미지급 + 장부 전 지급요청 + 카드 미결제 + 미요청 계획)과 "
              "추정 예산 중 큰 쪽 (끝난 프로젝트는 등록 지출, 예산 미지정은 등록 지출까지만). 예상이익 = 계약금액 − 종료 예상 원가 — "
+             "계약금액이 비면 끝난 것은 매출 반영 누계, 진행 중은 사전견적과 매출 반영 누계 중 큰 것을 괄호에 출처와 함께 씀 — "
              "팀장 보고 '지금 예상 이익'과 같은 식. 금액 미확인 원가·요청이 있으면 ‘판단 불가’.</div>")
     return "".join(h)
 
@@ -3994,13 +4022,13 @@ def _xk_final_why(p, b, c, v, d0, used):
         return " · ".join(why)
     if used:
         if used == v:
-            why.append("인트라넷 실행가에 법인카드 사용분 부가세 %s 포함 (%d건 전부) → 그만큼 실행가가 큼" % (won(used), p.get("card_n") or 0))
+            why.append("인트라넷 실행가에 법인카드 사용분 부가세 %s 포함으로 추정 (%d건 전부) → 그만큼 실행가가 큼" % (won(used), p.get("card_n") or 0))
         else:
-            why.append("인트라넷 실행가에 법인카드 사용분 부가세 포함 → %s은 카드 부가세로 설명됨 (카드 부가세 모두 %s 중 일부만 인트라넷에 부가세 포함으로 올라감)"
+            why.append("인트라넷 실행가에 법인카드 사용분 부가세 포함으로 추정 → %s은 카드 부가세 차이로 추정 (카드 부가세 모두 %s 중 일부만 인트라넷에 부가세 포함으로 올라감)"
                        % (won(used), won(v)))
     rest = d0 + used
     if rest == 0:
-        why.append("카드 부가세를 빼면 일치")
+        why.append("카드 부가세를 빼면 일치 (카드 부가세 차이로 추정)")  # 가정 표시 규칙(11/15): 단정 말고 '추정'
     elif rest > 0:
         why.append("장부 원가가 실행가보다 %s 많음 → 실행가에 없는 지출이거나 다른 프로젝트 원가가 이 번호로 들어갔을 수 있음" % won(rest))
     else:
@@ -4045,7 +4073,7 @@ def _xk_final_table(X, R):
         elif d0 == 0:
             verdict = ("ok", "일치")
         elif rest == 0:
-            verdict = ("ok", "카드 부가세로 설명")
+            verdict = ("ok", "카드 부가세 차이로 추정")
         elif rest > 0:
             verdict = ("hi", "장부 원가 많음")
         else:
@@ -4059,7 +4087,7 @@ def _xk_final_table(X, R):
         return "<div class='note'>%s</div>" % esc("팀장 승인 이상 진행된 프로젝트 없음")
     # 사용자 2026-11-12: '차이 설명' 칸이 좁아 읽을 수 없음 → 숫자 줄 밑에 표 너비 전체로 설명 줄을 붙이고, 끝 칸은 짧은 판정만
     head = ["번호", "프로젝트", "승인 단계", "인트라넷 실행가", "장부 원가", "차이 (장부 원가−실행가)",
-            "카드 부가세", "카드 부가세로 설명", "남는 차이", "실행가 대비", "판정"]
+            "카드 부가세", "카드 부가세 차이로 추정", "남는 차이", "실행가 대비", "판정"]
     nums = (3, 4, 5, 6, 7, 8, 9)
     td = lambda i, c: '<td class="n">%s</td>' % c if i in nums else "<td>%s</td>" % c
     body = []
@@ -4069,7 +4097,7 @@ def _xk_final_table(X, R):
             body.append("<tr class='xsub'><td></td><td colspan='%d'>%s</td></tr>" % (len(head) - 1, esc(why)))
     total = ["합계 (두 값을 모두 아는 %d건)" % n_both, "", "", esc(won(s_b)), esc(won(s_c)), esc(won(s_d)), esc(won(s_v)),
              esc(won(s_used)), esc(won(s_rest)), esc("%.1f%%" % (s_c * 100.0 / s_b)) if s_b else "",
-             esc("카드 부가세로 설명되는 프로젝트 %d건" % n_vat) if n_vat else ""]
+             esc("카드 부가세 차이로 추정되는 프로젝트 %d건" % n_vat) if n_vat else ""]
     body.append('<tr class="tot">%s</tr>' % "".join(td(i, c) for i, c in enumerate(total)))
     style = ("<style>#xchk-final tr.xsub td{border-top:0;padding-top:0;color:#444;font-size:.92em;line-height:1.45;white-space:normal}"
              "#xchk-final tr.xmain:not(.xnowhy) td{border-bottom:0}"
@@ -4081,7 +4109,7 @@ def _xk_final_table(X, R):
     return out + "<div class='note'>%s</div>" % esc(
         "대상 = 인트라넷에서 팀장 승인이 끝난 프로젝트부터 대표이사 승인까지 끝난 프로젝트 (%d건). "
         "장부 원가 = 회계자료 기준 (도)원가, 부가세 뺀 금액 (법인카드 결제분도)%s. 인트라넷 실행가는 법인카드 사용분 일부가 부가세 포함으로 올라가 있어, "
-        "실행가가 장부 원가보다 큰 만큼은 그 프로젝트 카드 부가세 범위 안에서 '카드 부가세로 설명'에 넣고 나머지만 '남는 차이'로 둠. "
+        "실행가가 장부 원가보다 큰 만큼은 그 프로젝트 카드 부가세 범위 안에서 '카드 부가세 차이로 추정'에 넣고 나머지만 '남는 차이'로 둠. "
         "차이가 +면 장부 원가가 실행가보다 큼. 장부 원가는 프로젝트 번호가 붙은 전표만 (미연결 원가는 빠짐). 증빙이 늦게 들어오면 바뀜. "
         "판정 밑 줄은 장부에서 알 수 있는 차이 까닭." % (len(rows), (", " + per) if per else ""))
 

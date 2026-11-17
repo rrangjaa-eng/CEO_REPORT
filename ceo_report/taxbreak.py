@@ -193,7 +193,11 @@ def assets_by_year(journal):
             continue
         code, name = str(ln.get("account_code") or ""), str(ln.get("account") or "")
         dr = ln.get("debit") or 0
-        if code[:3] in ("206", "207", "208", "209", "210", "212", "213") or any(w in name for w in ("기계장치", "비품", "공구", "시설장치")):
+        # 11/17 전수 점검 F5: 차량운반구(208, 승용차 볼보 1.24억)와 감가상각누계액(처분 때 차변)이 통합투자 '확인 필요'로 잡히던 것.
+        # 통합투자세액공제 사업용 자산 범위(조특법 24조 위임 시행규칙)에 차량·운반구는 운수업 등만 들어감 → 빼고, 누계액 줄도 뺌
+        if "누계" in name or code[:3] == "208" or "차량" in name:
+            pass
+        elif code[:3] in ("206", "207", "209", "210", "212", "213") or any(w in name for w in ("기계장치", "비품", "공구", "시설장치")):
             out[d.year][0] += dr
         if "연구" in name and "개발" in name:
             out[d.year][1] += dr

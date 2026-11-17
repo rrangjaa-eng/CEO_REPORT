@@ -202,6 +202,11 @@ class T1ProfitFlow(Base):
     def test_over_budget_alert_uses_committed(self):
         R = self.R()
         al = [t for lv, t in insights.alerts(R) if t.startswith("[P26201]")]
+        # 사용자 2026-11-17: 120% 넘는 것만 알림 — 예시 A사(약 113%)는 알리지 않고, 예산을 줄여 120%를 넘기면 등록 지출 기준으로 알림
+        self.assertFalse(any("추정 예산" in t and "넘음" in t for t in al), al)
+        p = [x for x in R["s3"]["projects"] if x["id"] == "P26201"][0]
+        p["budget"] = int(p["committed"] / 1.3)
+        al = [t for lv, t in insights.alerts(R) if t.startswith("[P26201]")]
         self.assertTrue(any("추정 예산" in t and "넘음" in t for t in al), al)
 
     def test_in_progress_never_shows_improvement(self):
