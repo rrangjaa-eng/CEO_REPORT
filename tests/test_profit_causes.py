@@ -190,6 +190,13 @@ class TestPriorFixItems(unittest.TestCase):
                          projects={"129": {"name": "x", "old": True, "budget": 1}})
         self.assertEqual(got, [])
 
+    def test_old_project_with_linked_this_year_cost_is_not_zero(self):
+        """예전 인트라넷 2026년 1~3월 행사(5자리 번호)는 올해 장부에 이어진 원가가 있으면 '원가 0원'이 아니다 (2026-11-17)."""
+        linked = dict(self.ln("26037", 9_000_000, day="2026-03-20", prior=False), project="26037")
+        got = self.items([linked], projects={"26037": {"name": "한컴", "old": True, "budget": 112_000_000},
+                                             "26099": {"name": "원가 없음", "old": True, "budget": 1_000_000}})
+        self.assertEqual([i["id"] for i in got if i["id"].startswith("작년원가0|")], ["작년원가0|26099"])
+
     def test_items_reach_checklist_order(self):
         from ceo_report import checklist
         self.assertIn("전표 프로젝트 번호", checklist.ORDER)

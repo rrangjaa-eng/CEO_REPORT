@@ -215,6 +215,30 @@ class TestTodoCarry(unittest.TestCase):
         checklist.save_decision(inp, items[0]["id"], "처리함", "메모")
         self.assertEqual(checklist.read_decisions(inp)[items[0]["id"]]["결정"], "처리함")
 
+    def test_budget_over_not_in_todos_or_check_screen(self):
+        """사용자 2026-11-17: 확인할 것에서 예산초과 빼기. 경영관리 위험 분석 표에는 남는다."""
+        R = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
+        over = [r for r in R["risks"] if mgmt_topics.is_budget_over(r["fact"])]
+        self.assertTrue(over, "샘플에 예산 초과 위험이 있어야 시험이 뜻이 있음")
+        page = render(R, "mgmt")
+        self.assertFalse(any(mgmt_topics.is_budget_over(it["fact"], it["text"]) for it in R["_topics"]["todos"]))
+        self.assertIn(over[0]["fact"].split(":")[0], page)   # 경영관리에는 그대로
+        out = os.path.join(self.out, "출력")
+        path = mgmt_topics.write_record(out, R)
+        with open(path, encoding="utf-8") as f:
+            rec = json.load(f)
+        # 예전 판이 남긴 기록의 예산 초과 할 일도 확인할 것 화면에 안 나오고, 다음 보고에서 '처리'로도 안 보인다
+        rec["items"]["할일|프로젝트|옛예산"] = {"n": 2, "first": "2026-10-01", "topic": "proj", "owner": "기획1팀",
+                                           "text": "남은 지급요청·집행계획 중 줄일 수 있는 항목 확인",
+                                           "fact": "26245 A: 등록 지출(장부 전 지급요청 포함) 9,518,819원이 예산 6,022,800원의 158.0%."}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rec, f, ensure_ascii=False)
+        self.assertNotIn("할일|프로젝트|옛예산", [it["id"] for it in mgmt_topics.check_items(out)])
+        R2 = compute(load(SAMPLE), "monthly", dt.date(2026, 11, 30))
+        R2["todo_prev"] = mgmt_topics.load_previous(out, "monthly", R2["asof"])
+        render(R2, "mgmt")
+        self.assertNotIn("할일|프로젝트|옛예산", [d["id"] for d in R2["_topics"].get("done") or []])
+
     def test_ceo_card_delta(self):
         c = {"label": "이번 주 여유 자금", "value": 100, "good_up": True}
         self.assertIn("tq-cd v-up", mgmt_topics._delta(c, {"ceo": {"이번 주 여유 자금": 50}}))
