@@ -367,7 +367,7 @@ def gate_line(G):
 
 
 def reports_for(output_dir, asof):
-    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순).
+    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순, 연간 보고를 만든 적이 있으면 연간 대표·연간 경영관리도).
     state: '만듦' · '막힘'(자료 확인에서 막혀 만들지 않음) · 'PDF 못 만듦'(HTML 만 새로 생김) · '없음'.
     막힌 보고는 예전 PDF 를 넣지 않고 '만들지 않음' 안내를 가리킨다 (path)."""
     from . import gate, pdfname
@@ -409,6 +409,13 @@ def reports_for(output_dir, asof):
     out.append(team)
     out.append(one("주간 경영관리", os.path.join(output_dir, "%s_주간_경영관리보고" % day), want_pdf=False))
     out.append(one("월간 경영관리", os.path.join(output_dir, "%s_월간_경영관리보고" % day), want_pdf=False))
+    # 연간 보고도 대표용·경영관리용 두 가지 (사용자 2026-11-17 "연간보고는 왜 경영관리용과 대표용이 없어": 만들고 있었지만 이 목록에 안 보였다).
+    # 만든 해가 있을 때만, 가장 최근 해 것
+    years = sorted(set(os.path.basename(f)[:4] for f in glob.glob(os.path.join(output_dir, "[0-9][0-9][0-9][0-9]_연간_*보고.html"))))
+    if years:
+        y = years[-1]
+        out.append(one("%s년 연간 대표" % y, os.path.join(output_dir, "%s_연간_대표보고" % y)))
+        out.append(one("%s년 연간 경영관리" % y, os.path.join(output_dir, "%s_연간_경영관리보고" % y), want_pdf=False))
     return out
 
 

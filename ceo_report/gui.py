@@ -682,7 +682,7 @@ class Window(object):
         s4 = self.s4 = self._step(tab, 3, 4, STEPS[3])
         c = self._box(s4, "보낼 파일", "이번 기준일")
         r = self._row(c, (0, 0))
-        self.send_list = tk.Listbox(r, height=6, font=self.fonts["small"], activestyle="none", exportselection=False,
+        self.send_list = tk.Listbox(r, height=7, font=self.fonts["small"], activestyle="none", exportselection=False,
                                     highlightthickness=1, highlightbackground=C["line"], relief="flat", background="#faf9f6",
                                     selectbackground="#dbe4ff", selectforeground=C["text"])
         self.send_list.pack(side="left", fill="x", expand=True)
