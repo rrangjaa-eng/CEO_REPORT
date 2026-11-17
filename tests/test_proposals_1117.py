@@ -163,3 +163,46 @@ class TestNewAnalyses(unittest.TestCase):
         A = {"state": "ok", "year": "2026", "groups": [{"name": "판매비와관리비", "accounts": [acc]}]}
         sp = M.cost_spikes(_R(D(2026, 10, 31), {}, acct=A))
         self.assertEqual((sp[0]["name"], sp[0]["up"]), ("접대비", 5_000_000))
+
+
+class TestM4Guides(unittest.TestCase):
+    """M4 (규칙 11/13): 오차범위·전표 입력 안내를 프로그램이 경영관리 '요청 자료 전부'에 만든다."""
+    def test_tables_and_live_measure(self):
+        from ceo_report import guides
+        K = {"weeks": [{"part": False, "in": {"all": 100, "actual": 130}, "out": {"all": 50, "actual": 40}}],
+             "profit": [{"forecast": 10, "actual": 25}]}
+        h = guides.trust_html({"track": K})
+        self.assertIn("id='trust'", h)
+        self.assertIn("그 뒤 4주 입·출금 2번", h)
+        self.assertIn("1번: 가운데 15원", h)
+        self.assertIn("카드사_끝4자리", guides.entry_html())
+
+    def test_docs_section_links(self):
+        from ceo_report import digest
+        R = {"kind": "monthly", "asof": D(2026, 10, 31), "risks": []}
+        try:
+            h = digest.docs_section(R, {}, [])
+        except Exception:
+            self.skipTest("요청 자료 표는 전체 보고 계산이 있어야 만들어짐 (아래 보고서.py 시험이 확인)")
+        self.assertIn("href='#trust'", h)
+
+
+class TestMonthlyMgmtHasNewParts(unittest.TestCase):
+    """보고서.py 월간: 경영관리에 자동 분석 16~23·오차범위·전표 안내가 있고 대표 보고에는 없다 (11/17 규칙)."""
+    def test_cli(self):
+        import shutil
+        import subprocess
+        import tempfile
+        root = os.path.dirname(HERE)
+        with tempfile.TemporaryDirectory() as t:
+            inp, out = os.path.join(t, "입력"), os.path.join(t, "출력")
+            shutil.copytree(os.path.join(root, "입력양식", "샘플"), inp)
+            subprocess.run([sys.executable, os.path.join(root, "보고서.py"), "월간", "--기준일", "2026-10-31", "--입력", inp, "--출력", out,
+                            "--pdf", "안함"], capture_output=True, text=True, cwd=root)
+            mg = open(os.path.join(out, "2026-10-31_월간_경영관리보고.html"), encoding="utf-8").read()
+            for k in ("id='trust'", "id='entry'", "입금 걸린 날", "손익분기 매출", "고객사별 이익", "법인세 나눠 내면", "당분간 안 쓸 돈",
+                      "퇴직금 합계", "비용 급증"):
+                self.assertIn(k, mg)
+            ceo = open(os.path.join(out, "2026-10-31_월간_대표보고.html"), encoding="utf-8").read()
+            for k in ("손익분기", "고객사별 이익", "당분간 안 쓸 돈", "id='trust'"):
+                self.assertNotIn(k, ceo)

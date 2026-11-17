@@ -693,11 +693,24 @@ def docs_section(R, I, L):
         esc("월간 보고 때 함께"), [], "팀마다 이번 달 매출·이익·진행 프로젝트 예산을 보여 주는 팀장 전달용 문서입니다 (급여 금액 없음).")
     add("세법 기준 확인 (해마다)", esc("창 ‘세법 기준 확인’"), esc("1·7월 자동 확인"), [],
         "세율·공제 금액이 바뀌었는지 법령 조문을 받아 확인하고, 확인 안 된 값은 계산에서 ‘확인 필요’로 둡니다.")
+    # M4 (2026-11-17): 문서로만 있던 두 자료를 프로그램이 만든다 (규칙 11/13)
+    add("보고 숫자를 얼마나 믿나 (오차범위)", "<a class='go' href='#trust'>아래 표</a>", yes, [],
+        "항목마다 보통·크게 틀리는 정도와 믿을 정도, 줄이는 법입니다. 지난 예상과 실제의 차이(자동 분석 15)로 매번 다시 잽니다.")
+    add("분개장 전표 입력 안내", "<a class='go' href='#entry'>아래 표</a>", yes, [],
+        "프로그램이 장부를 바르게 읽도록 전표를 넣는 모양입니다. 안 지키면 보고서에서 생기는 일을 함께 적었습니다.")
     return ("<style>%s</style><div class='dg1'><h2 id='docs'>자료 안내 · 요청하신 자료 전부</h2>%s"
             "<div class='tw'><table class='pt evt dgx nofold'><thead><tr><th>자료</th><th>어디서 보나</th><th>이번 보고</th><th>쉬운 설명</th><th>제안</th></tr></thead>"
             "<tbody>%s</tbody></table></div>"
-            "<div class='note'>새 자료를 만들 때마다 이 표에 한 줄씩 더하고, 그 장 맨 위에 ‘쉬운 설명 · 제안’ 상자를 붙입니다 (사용자 2026-11-13).</div></div>"
-            % (CSS, guide_box("docs", R, I, L), "".join(rows)))
+            "<div class='note'>새 자료를 만들 때마다 이 표에 한 줄씩 더하고, 그 장 맨 위에 ‘쉬운 설명 · 제안’ 상자를 붙입니다 (사용자 2026-11-13).</div>%s</div>"
+            % (CSS, guide_box("docs", R, I, L), "".join(rows), _guides(I)))
+
+
+def _guides(I):
+    from . import guides   # M4 (2026-11-17)
+    try:
+        return guides.trust_html(I) + guides.entry_html()
+    except Exception as e:   # 안내 표 때문에 보고서를 못 만들면 안 된다
+        return "<div class='note'>오차범위·전표 안내 표를 만들지 못함 (%s)</div>" % esc(type(e).__name__)
 
 
 # ─────────── 연간 경영관리 보고에도 같은 상자 (사용자 2026-11-13) ───────────
