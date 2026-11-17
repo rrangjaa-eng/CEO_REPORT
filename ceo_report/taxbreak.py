@@ -11,6 +11,7 @@ AI 없이 규칙으로만 본다:
 import collections
 import csv
 import os
+import re
 
 from .surplus import FOUNDED
 from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
@@ -75,22 +76,49 @@ def young_or_old(birth, year):
     return 15 <= age <= 34 or age >= 60
 
 
+def pay_months(input_dir):
+    """달마다 급여 받은 사람 -> ({연월: {이름}}, {연도: 자료 이름}).
+    장부 사원급여.csv 를 먼저 쓰고, 거기 없는 해는 위하고 급여 화면(급여명세.csv '지급합계')으로 채운다
+    (2026-11-17: 사원급여.csv 는 올해 장부만이라 작년 인원을 몰라 고용 공제를 못 셈 → 위하고 2025 급여 화면이 있음)."""
+    per, src = collections.defaultdict(set), {}
+    for r in _read_csv(os.path.join(input_dir, "사원급여.csv")):
+        ym, name = (r.get("연월") or "").strip(), (r.get("사원명") or "").strip()
+        if len(ym) >= 7 and name:
+            per[ym[:7]].add(name)
+            src[int(ym[:4])] = "장부 사원급여"
+    have = set(src)
+    for r in _read_csv(os.path.join(input_dir, "급여명세.csv")):
+        ym, name = (r.get("연월") or "").strip(), (r.get("사원명") or "").strip()
+        if len(ym) >= 7 and name and (r.get("구분") or "").strip() == "지급" and ym[:4].isdigit() and int(ym[:4]) not in have:
+            per[ym[:7]].add(name)
+            src[int(ym[:4])] = "위하고 급여 화면"
+    return per, src
+
+
+def pay_amounts(input_dir):
+    """위하고 급여 화면(급여명세.csv) -> {(연월, 이름): 지급합계}. 1인당 임금 비교용."""
+    out = {}
+    for r in _read_csv(os.path.join(input_dir, "급여명세.csv")):
+        if (r.get("구분") or "").strip() == "지급" and (r.get("항목") or "").strip() == "지급합계":
+            try:
+                out[((r.get("연월") or "").strip()[:7], (r.get("사원명") or "").strip())] = float(r.get("금액") or 0)
+            except ValueError:
+                pass
+    return out
+
+
 def headcount(input_dir, exclude=(), young=False):
-    """사원급여.csv -> {연도: (월평균 인원, 들어온 달 수)}. 주주(대표·가족)·임원(사원.csv)은 상시근로자가 아니라 뺀다.
+    """사원급여.csv(없는 해는 위하고 급여명세.csv) -> {연도: (월평균 인원, 급여 나간 달 수)}. 주주(대표·가족)·임원(사원.csv)은
+    상시근로자가 아니라 뺀다. 대표만 급여를 받은 달도 0명인 달로 평균에 넣는다 (법: 매월 말 인원 합 ÷ 과세연도 달 수).
     young=True 면 사원.csv 생년월일로 청년·60세 이상만 센다 (생년월일 모르는 사원은 안 셈)."""
     officers, birth = _staff_info(input_dir)
     ex = set(n.strip() for n in exclude if n) | officers
-    per = collections.defaultdict(set)
-    for r in _read_csv(os.path.join(input_dir, "사원급여.csv")):
-        ym, name = (r.get("연월") or "").strip(), (r.get("사원명") or "").strip()
-        if len(ym) >= 7 and name and name not in ex:
-            per[ym[:7]]   # 급여가 나간 달은 청년이 없어도 0명으로 평균에 넣는다 (코덱스 검토 2026-11-14: 빼면 평균이 부풀려짐)
-            if young and not (name in birth and young_or_old(birth[name], int(ym[:4]))):
-                continue
-            per[ym[:7]].add(name)
+    per, _ = pay_months(input_dir)
     years = collections.defaultdict(list)
     for ym, names in per.items():
-        years[int(ym[:4])].append(len(names))
+        y = int(ym[:4])
+        n = [x for x in names if x not in ex and (not young or (x in birth and young_or_old(birth[x], y)))]
+        years[y].append(len(n))
     return dict((y, (sum(v) / float(len(v)), len(v))) for y, v in years.items())
 
 
@@ -296,10 +324,12 @@ def check(input_dir, year, answers, holders=(), assets=None):
     # 5) 연구·인력개발비 세액공제 (조특법 10조)
     eq, rd = assets if assets else (None, None)
     if a.get("연구전담") == "예":
+        rd_filed = filed is not None and not ((filed.get("공제감면세액") or 0) - (filed.get("특별감면") or 0) - (filed.get("고용공제") or 0))
         rows.append(("연구·인력개발비 세액공제", "확인 필요", int(rd * 0.25) if rd else None,
-                     "연구소·전담부서 있음. 중소기업은 연구개발비(연구원 인건비 등)의 25%%%s" % (
-                         " — 장부 연구개발비 %s원" % W(rd) if rd else " — 장부에 연구개발비 계정이 없어 금액 못 셈"),
-                     "연구원 인건비를 연구개발비로 나눠 적는지 세무사 확인"))
+                     "연구소·전담부서 있음(설정 답). 중소기업은 연구개발비(연구 전담 직원 인건비 등)의 25%%, 최저한세에 안 걸려 바로 세금이 줄어듦%s%s" % (
+                         " — 장부 연구개발비 %s원" % W(rd) if rd else " — 장부에 연구개발비 계정이 없어 금액 못 셈 (연구 전담 직원 급여를 따로 나눈 계정 없음)",
+                         " · %d년 신고서의 공제·감면은 특별감면+고용 공제뿐이라 연구개발 공제는 받지 않았음" % (year - 1) if rd_filed else ""),
+                     "세무사에게 연구 전담 직원 인건비 공제(%d년분은 경정청구) 검토 요청" % (year - 1)))
     else:
         rows.append(("연구·인력개발비 세액공제", "나중", None, "연구소·전담부서가 있어야 함 (중소기업은 연구개발비의 25%)",
                      "새 서비스 개발 인력이 있으면 전담부서 인정 검토"))
@@ -313,10 +343,23 @@ def check(input_dir, year, answers, holders=(), assets=None):
         rows.append(("통합투자세액공제", "나중", None, "장부에 장비 산 내역 없음 — 사업용 장비를 사면 중소기업 기본 10%",
                      "큰 장비를 살 계획이 있으면 산 해에 공제"))
     # 7) 근로소득증대세액공제 (조특법 29조의4) — 직전 3년 평균임금이 있어야 함
-    rows.append(("근로소득을 늘린 기업 세액공제", "나중", None,
-                 "직전 3년 평균임금 증가율이 필요해 %d년 이후 가능" % (FOUNDED + 3), ""))
+    # 29조의4: ①·⑤(평균임금 증가)는 직전 3년 평균임금 증가율을 계산할 수 있어야 함 — 창업으로 못 하면 적용 안 함 (시행령 26조의4 ⑫).
+    # 2025년 창업이면 2029년부터 계산되는데 법 기한은 2028년 → ③ 정규직 전환분만 남음 (2026-11-17 조문 확인)
+    rows.append(("근로소득을 늘린 기업 세액공제", "해당 없음" if FOUNDED + 4 > 2028 else "나중", None,
+                 "평균임금 증가분 공제는 직전 3년 평균임금 증가율이 있어야 하는데 %d년 창업이라 %d년부터 계산됨 (법 기한 2028년, 시행령 26조의4 ⑫). "
+                 "남는 길: 계약직·단시간 직원을 정규직으로 바꾸면 그 사람 임금 증가분의 20%% (직원 수가 줄지 않을 때)" % (FOUNDED, FOUNDED + 4),
+                 "계약직을 정규직으로 바꿀 때 세무사에게 알림"))
     if a.get("벤처") == "예":
         rows.append(("벤처기업 관련 감면", "확인 필요", None, "벤처 확인을 받았으면 창업 감면 기간·감면율이 달라질 수 있음", "세무사 확인"))
+    rows += review_more(input_dir, year, a, filed, holders)
+    # 근거 조문 칸 + 받은 조문의 법 기한이 지났으면 '해당 없음' (사용자 2026-11-17)
+    items, out = _law_items(input_dir), []
+    for r in rows:
+        cell, end, _ = law_cell(r[0], items, year)
+        if end and end < year and r[1] != "해당 없음":
+            r = (r[0], "해당 없음", None, "법 기한(%d년)이 지남 · " % end + r[3], "")
+        out.append(tuple(r[:5]) + (cell,))
+    rows = out
     total = sum(r[2] for r in rows if r[1] == "해당" and r[2])
     note = ""
     if base is not None and tax is not None and total:
@@ -327,8 +370,172 @@ def check(input_dir, year, answers, holders=(), assets=None):
             note = "최저한세(과세표준의 7%% = %s원) 때문에 줄일 수 있는 세금은 %s원까지" % (W(floor), W(cap))
             total = cap
         total = min(total, tax)
-    return {"year": year, "rows": rows, "total": total, "local": int(total * LOCAL_RATE), "base": base, "tax": tax,
+    carry = (filed or {}).get("공제이월") or 0
+    mt_note = ("%d년 신고 때 최저한세 때문에 못 쓴 공제 %s원이 넘어와 있음 → '최저한세 적용' 공제는 새로 생겨도 올해 세금이 바로 줄지 않고 "
+               "다음 해로 넘어갈 가능성이 큼. 바로 줄어드는 것은 '최저한세 안 걸림'(중소기업 연구·인력개발비)뿐" % (year - 1, W(carry))) if carry else ""
+    return {"year": year, "rows": rows, "total": total, "mt_note": mt_note, "local": int(total * LOCAL_RATE), "base": base, "tax": tax,
             "period": period, "note": note}
+
+
+# ───────────── 감면·공제 전체 검토 (사용자 2026-11-17: 법인세 감면·공제를 모두 최신 법령 기준으로 찾아 적용할 게 있는지 검토) ─────────────
+# 세금 계산에는 넣지 않고 보여 주기만 (11/17 카드 ③). 조문은 '개정 확인 받기'(lawwatch)가 받아 두고, 받은 글에서 법 기한을 다시 읽는다.
+# 후보 이름 -> (법령, 조, 의, 최저한세 적용 여부, 받은 글이 없을 때 쓰는 법 기한(해) 또는 None)
+# 최저한세: 조특법 132조 ①3·4호 (2026-11-17 조문 확인). 중소기업 연구·인력개발비 공제(10조)만 최저한세 밖.
+LAWS = {
+    "창업중소기업 세액감면": ("조세특례제한법", 6, 0, True, None),
+    "중소기업 특별세액감면": ("조세특례제한법", 7, 0, True, None),
+    "통합고용세액공제": ("조세특례제한법", 29, 8, True, None),
+    "연구·인력개발비 세액공제": ("조세특례제한법", 10, 0, False, 2029),
+    "인력개발비(교육훈련비) 세액공제": ("조세특례제한법", 10, 0, False, 2029),
+    "통합투자세액공제": ("조세특례제한법", 24, 0, True, None),
+    "근로소득을 늘린 기업 세액공제": ("조세특례제한법", 29, 4, True, 2028),
+    "상생결제 지급금액 세액공제": ("조세특례제한법", 7, 4, True, 2028),
+    "상생협력 출연금 세액공제": ("조세특례제한법", 8, 3, True, 2028),
+    "성과공유 중소기업 경영성과급 세액공제": ("조세특례제한법", 19, 0, True, 2027),
+    "영상콘텐츠 제작비용 세액공제": ("조세특례제한법", 25, 6, True, 2028),
+    "고용을 늘린 기업 세액공제(옛)": ("조세특례제한법", 29, 7, True, 2024),
+    "중소기업 사회보험료 세액공제": ("조세특례제한법", 30, 4, True, 2024),
+    "고용유지중소기업 세액공제": ("조세특례제한법", 30, 3, True, 2026),
+    "전자신고 세액공제": ("조세특례제한법", 104, 8, True, None),
+    "외국납부세액공제": ("법인세법", 57, 0, False, None),
+    "재해손실세액공제": ("법인세법", 58, 0, False, None),
+}
+_END_RE = re.compile(r"(20\d\d)년 12월 31일(?:이 속하는 과세연도)?까지")
+
+
+def law_tag(name, n, sub):
+    return "%s %d조%s" % (name, n, "의%d" % sub if sub else "")
+
+
+def _law_items(input_dir):
+    try:
+        from . import lawwatch
+        return lawwatch.load(input_dir).get("items", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def law_cell(name, items, year):
+    """후보 -> (조문 칸 글, 법 기한 해 또는 None, 받은 조문 있음). 받은 조문 글에서 'YYYY년 12월 31일(이 속하는 과세연도)까지'를 읽는다."""
+    if name not in LAWS:
+        return "", None, False
+    law, n, sub, mt, end0 = LAWS[name]
+    tag = law_tag(law, n, sub)
+    short = tag.replace("조세특례제한법", "조특법")
+    it = items.get(tag)
+    end = end0
+    got = bool(it and it.get("text"))
+    if got:
+        ys = [int(y) for y in _END_RE.findall(it["text"][:1500])]
+        end = max(ys) if ys else end0   # 첫 항의 기한 (여러 개면 가장 늦은 해)
+    parts = [short]
+    if got:
+        sd = str(it.get("시행일자") or "")
+        parts.append("시행 %s-%s-%s" % (sd[:4], sd[4:6], sd[6:8]) if len(sd) == 8 else "시행일 모름")
+        parts.append("조문 받음 %s" % (it.get("seen") or "")[:10])
+        if it.get("changed"):
+            parts.append("개정 %s 알림" % it["changed"][:10])
+    else:
+        parts.append("조문 아직 안 받음 (창 '개정 확인 받기')")
+    if end:
+        parts.append("법 기한 %d년%s" % (end, " — 지남" if end < year else ""))
+    parts.append("최저한세 적용" if mt else "최저한세 안 걸림")
+    return " · ".join(parts), end, got
+
+
+def _acct_sum(input_dir, year, words):
+    """계정별비용.csv(장부 비용, 달·계정) 에서 그해 계정과목 이름에 words 중 하나가 든 비용 합 -> (합, [계정들]) 또는 (None, [])."""
+    rows = _read_csv(os.path.join(input_dir, "계정별비용.csv"))
+    if not rows:
+        return None, []
+    tot, names = 0, set()
+    for r in rows:
+        nm = (r.get("계정과목") or "")
+        if (r.get("연월") or "")[:4] == str(year) and any(w in nm for w in words):
+            try:
+                tot += int(float(r.get("금액") or 0))
+                names.add(nm)
+            except ValueError:
+                pass
+    return tot, sorted(names)
+
+
+def _stay_pay(input_dir, year, ex):
+    """두 해 모두 급여를 받은 직원(주주·임원 뺌)의 1인당 월평균 지급액 -> (전년, 올해, 인원) 또는 None.
+    고용유지 공제 요건은 그해 새로 들어온 사람을 빼고 견준다 (조특법 30조의3 ①1·3호) — 새 직원이 많으면 평균이 내려가 보이는 것을 막음."""
+    amt = pay_amounts(input_dir)
+    officers, _ = _staff_info(input_dir)
+    ex = set(ex) | officers
+    by = collections.defaultdict(lambda: collections.defaultdict(list))
+    for (ym, name), v in amt.items():
+        if name and name not in ex and ym[:4] in (str(year - 1), str(year)):
+            by[name][int(ym[:4])].append(v)
+    both = [n for n, d in by.items() if d.get(year - 1) and d.get(year)]
+    if not both:
+        return None
+    def med(v):
+        v = sorted(v)
+        return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2.0
+    # 사람마다 '보통 달' 급여(가운데 값)로 견준다: 연말 상여·첫 달 정산이 한 해에만 있어 평균이 흔들리는 것을 막음 (2026-11-17 실제 자료: 12월 상여)
+    avg = lambda y: sum(med(by[n][y]) for n in both) / float(len(both))
+    return avg(year - 1), avg(year), len(both)
+
+
+def review_more(input_dir, year, a, filed, holders=()):
+    """기존 후보(창업·특별감면·고용·연구·투자·근로소득) 밖의 감면·공제 후보 줄들. 세금 계산·합계에는 넣지 않는다 ('해당' 안 씀)."""
+    rows = []
+    # 연구·인력개발비 중 인력개발비: 교육훈련비 계정 (중소기업 25%, 최저한세 안 걸림)
+    edu, names = _acct_sum(input_dir, year, ("교육훈련",))
+    if edu:
+        rows.append(("인력개발비(교육훈련비) 세액공제", "확인 필요", int(edu * 0.25),
+                     "장부 %s %s원 × 중소기업 25%%. 연구소가 없어도 되는 공제지만, 인정되는 교육(위탁훈련·직업능력개발훈련 등 시행령 별표 6)만 됨"
+                     % ("·".join(names), W(edu)),
+                     "세무사에게 교육훈련비 중 인력개발비로 인정되는 몫 확인 (최저한세와 상관없이 바로 세금이 줄어듦)"))
+    elif edu == 0:
+        rows.append(("인력개발비(교육훈련비) 세액공제", "나중", None,
+                     "%d년 장부에 교육훈련비 없음. 직원 위탁훈련·직업능력개발훈련 비용의 25%%를 공제 (최저한세 안 걸림)" % year,
+                     "직원 교육을 보내면 교육훈련비 계정으로 처리"))
+    rows.append(("상생결제 지급금액 세액공제", "나중", None,
+                 "중소·중견기업 거래처 대금을 은행 '상생결제'로 15일·30일·60일 안에 주면 지급액의 일정 비율 (법인세의 10% 한도). "
+                 "장부로는 결제 방식을 알 수 없어 일반 통장 이체로 봄", "큰 거래처 대금을 상생결제로 주는 방법을 거래 은행에 물어볼 수 있음"))
+    don, dn = _acct_sum(input_dir, year, ("기부",))
+    rows.append(("상생협력 출연금 세액공제", "나중", None,
+                 "기술보증기금·신용보증기금·대중소기업농어업협력재단 등에 상생협력 출연을 하면 출연금의 10%%. %s" %
+                 ("장부 기부금 %s원 — 출연처가 위 기관이면 해당" % W(don) if don else "장부에 그런 출연(기부금) 없음"),
+                 "출연 계획이 없으면 할 일 없음"))
+    bonus, bn = _acct_sum(input_dir, year, ("상여",))
+    rows.append(("성과공유 중소기업 경영성과급 세액공제", "나중", None,
+                 "중소벤처기업부 '성과공유 중소기업' 확인을 받고 경영성과급을 주면 그 10%% (직원 수가 줄지 않을 때, 2027년까지). %s"
+                 % ("장부 상여금 %s원은 성과공유 확인 전이라 해당 없음으로 봄" % W(bonus) if bonus else "장부에 상여금 계정 없음"),
+                 "연말 성과급을 줄 계획이면 성과공유기업 확인(중소벤처기업부)을 먼저 받는지 세무사와 검토"))
+    rows.append(("영상콘텐츠 제작비용 세액공제", "해당 없음", None,
+                 "방송사 방송 프로그램·영화·등급분류 받은 OTT 영상의 제작비만 됨 (중소기업 15%+추가 15%). 행사 영상·홍보 영상 제작은 대상이 아님으로 봄", ""))
+    rows.append(("고용을 늘린 기업 세액공제(옛)", "해당 없음", None,
+                 "2024년까지 늘어난 인원만 대상 (지금은 통합고용세액공제로 바뀜). 회사가 %d년에 세워져 해당 없음" % FOUNDED, ""))
+    rows.append(("중소기업 사회보험료 세액공제", "해당 없음", None,
+                 "2024년까지 늘어난 인원만 대상 (통합고용세액공제로 바뀜). 회사가 %d년에 세워져 해당 없음" % FOUNDED, ""))
+    # 고용유지: 1인당 연간 임금이 줄었는데(근무시간 나눔) 시간당 임금·인원은 유지한 경우 — 2026년까지
+    sp = _stay_pay(input_dir, year, holders)
+    if sp is None:
+        rows.append(("고용유지중소기업 세액공제", "확인 필요", None,
+                     "1인당 임금을 견줄 %d·%d년 위하고 급여 화면이 없음" % (year - 1, year), "위하고 '결산·인사급여 모두 받기'로 급여 화면을 받으면 자동 판단"))
+    elif sp[1] >= sp[0]:
+        rows.append(("고용유지중소기업 세액공제", "해당 없음", None,
+                     "두 해 모두 일한 직원 %d명(주주·임원 뺌)의 1인당 보통 달 급여(상여 뺀 가운데 값) %d년 %s원 ≥ %d년 %s원 (위하고 급여 화면). 임금을 줄여 고용을 지킨 회사만 대상"
+                     % (sp[2], year, W(sp[1]), year - 1, W(sp[0])), ""))
+    else:
+        rows.append(("고용유지중소기업 세액공제", "확인 필요", None,
+                     "두 해 모두 일한 직원 %d명의 1인당 보통 달 급여(상여 뺀 가운데 값) %d년 %s원 < %d년 %s원. 근무시간을 줄여 고용을 지킨 경우라면 대상일 수 있음 (시간당 임금은 줄면 안 됨)"
+                     % (sp[2], year, W(sp[1]), year - 1, W(sp[0])), "세무사에게 고용유지 공제 요건(시간당 임금·인원 유지) 확인"))
+    by_agent = bool(filed and "외부" in str(filed.get("조정") or ""))
+    rows.append(("전자신고 세액공제", "해당 없음" if by_agent else "확인 필요", None,
+                 ("%d년 법인세를 세무법인이 대신 신고 — 이 공제(2만원)는 회사가 직접 전자신고할 때만 됨" % (year - 1)) if by_agent
+                 else "회사가 직접 홈택스로 법인세를 신고하면 2만원", ""))
+    fx, _ = _acct_sum(input_dir, year, ("외국",))
+    rows.append(("외국납부세액공제", "해당 없음" if not fx else "확인 필요", None,
+                 "외국에서 번 돈에 외국 세금을 낸 경우만" + ("" if not fx else " — 장부에 외국 관련 비용 %s원" % W(fx)), ""))
+    rows.append(("재해손실세액공제", "해당 없음", None, "화재·홍수 등 재해로 사업용 자산의 20% 이상을 잃은 경우만. 그런 기록 없음", ""))
+    return rows
 
 
 def render(T, esc):
@@ -336,14 +543,24 @@ def render(T, esc):
         return ""
     tag = {"해당": "<span class='tag'>해당</span>", "확인 필요": "<span class='tag e'>확인 필요</span>",
            "해당 없음": "<span class='tag' style='opacity:.5'>해당 없음</span>", "나중": "<span class='tag' style='opacity:.7'>나중</span>"}
-    h = ["<div class='q'>법인세를 줄일 수 있는 감면·공제 (%d년)</div>" % T["year"]]
+    h = ["<div class='q'>법인세를 줄일 수 있는 감면·공제 전체 검토 (%d년)</div>" % T["year"]]
     if T["tax"] is not None:
-        h.append("<div class='say'>%s 법인세 산출세액 %s원 (과세표준 %s원). '해당'만 더하면 법인세 %s원 + 지방소득세 %s원이 줄어듭니다.%s</div>"
+        h.append("<div class='say'>%s 법인세 산출세액 %s원 (과세표준 %s원). '해당'만 더하면 법인세 %s원 + 지방소득세 %s원이 줄어듭니다.%s"
+                 " 이 표는 보여 주기만 하고 법인세 예상 계산에는 넣지 않습니다.</div>"
                  % (esc(T["period"]), W(T["tax"]), W(T["base"]), W(T["total"]), W(T["local"]),
                     " " + esc(T["note"]) + "." if T["note"] else ""))
-    h.append("<table class='re'><tr><th class='l'>감면·공제</th><th>판단</th><th>예상 금액(원)</th><th class='l'>근거</th><th class='l'>할 일</th></tr>%s</table>"
-             % "".join("<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td><td class='l'>%s</td></tr>"
-                       % (esc(n), tag[s], W(v) if v else "–", esc(why), esc(todo)) for n, s, v, why, todo in T["rows"]))
-    h.append("<div class='note'>조세특례제한법 간이 계산 (2025년 창업 당시 기준). 창업 감면과 고용 공제는 함께 받을 수 있지만 "
-             "창업 감면과 중소기업 특별감면은 한 해에 하나만 됩니다. 실제 적용 여부·금액은 세무사 확인이 필요합니다.</div>")
+    if T.get("mt_note"):
+        h.append("<div class='say'>%s</div>" % esc(T["mt_note"]))
+    cnt = dict((k, sum(1 for r in T["rows"] if r[1] == k)) for k in tag)
+    h.append("<div class='note'>%s</div>" % esc("후보 %d개: %s" % (len(T["rows"]), " · ".join("%s %d" % (k, v) for k, v in cnt.items() if v))))
+    order = {"해당": 0, "확인 필요": 1, "나중": 2, "해당 없음": 3}
+    rows = sorted(T["rows"], key=lambda r: order.get(r[1], 9))
+    h.append("<table class='re'><tr><th class='l'>감면·공제</th><th>판단</th><th>예상 금액(원)</th><th class='l'>우리 회사 확인 (요건·자료)</th>"
+             "<th class='l'>근거 조문</th><th class='l'>할 일</th></tr>%s</table>"
+             % "".join("<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td><td class='l'>%s</td><td class='l'>%s</td></tr>"
+                       % (esc(r[0]), tag[r[1]], W(r[2]) if r[2] else "–", esc(r[3]), esc(r[5] if len(r) > 5 else ""), esc(r[4]))
+                       for r in rows))
+    h.append("<div class='note'>조세특례제한법·법인세법 현행 조문 기준 (창 '개정 확인 받기'로 받은 조문의 시행일·법 기한을 표에 씀, 기한이 지난 것은 자동으로 '해당 없음'). "
+             "창업 감면과 고용 공제는 함께 받을 수 있지만 창업 감면과 중소기업 특별감면은 한 해에 하나만 됩니다. "
+             "'확인 필요'·'나중' 금액은 참고용이며 실제 적용 여부·금액은 세무사 확인이 필요합니다.</div>")
     return "".join(h)

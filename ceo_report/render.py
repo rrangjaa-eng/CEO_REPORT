@@ -542,6 +542,12 @@ def _periodic(R, P):
         from . import surplus
         out.append(("c4", "C-4 이익잉여금처분계산서 (반기)",
                     "<h2 id='c4'>C-4 이익잉여금처분계산서 · 배당 판단 (반기 미리보기, 확정은 연간 보고)</h2>" + surplus.render(R.get("re"))))
+    if R.get("kind") == "monthly":   # 법인세 감면·공제 전체 검토: 매달 (사용자 2026-11-17 '최신 법령으로 모두 찾아 적용할 게 있는지 검토')
+        from . import taxbreak
+        tb_ = (R.get("re") or {}).get("tb")
+        out.append(("c6", "C-6 법인세 감면·공제 검토 (매달)",
+                    "<h2 id='c6'>C-6 법인세 감면·공제 전체 검토 (매달, 보여 주기만)</h2>"
+                    + (taxbreak.render(tb_, esc) if tb_ else _na("감면·공제 검토 자료 없음 (자료 변환 뒤 다시 만들면 생김)"))))
     if "prep" in P:
         from . import credit
         out.append(("c5", "C-5 기업신용평가 미리보기 (결산 준비)",

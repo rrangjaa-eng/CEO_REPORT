@@ -48,7 +48,7 @@ class TestReport(unittest.TestCase):
     def test_monthly_without_regular_part_has_no_tax_or_credit(self):
         page = render(self.oct, "mgmt")
         self.assertEqual(area_ids(page)[0], "home")   # 첫 화면 (2026-11-14 주제별 묶기)
-        self.assertFalse([k for k in area_ids(page) if re.fullmatch(r"c\d", k)])
+        self.assertEqual([k for k in area_ids(page) if re.fullmatch(r"c\d", k)], ["c6"])   # 감면·공제 검토만 매달 (2026-11-17)
         for hid in ("c1", "c2", "c3", "c4", "c5"):
             self.assertNotIn("<h2 id='%s'>" % hid, page)
         # 대신 자료 안내에 줄이 있고 언제 들어가는지 적힘 (사용자 2026-11-13)
@@ -83,8 +83,8 @@ class TestReport(unittest.TestCase):
         self.assertTrue(any("확정이라던 입금이 20% 덜" in x for x in s), s)
 
     def test_quarter_half_and_closing_prep(self):
-        self.assertEqual([k for k in area_ids(render(self.jun, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c4"])
-        self.assertEqual([k for k in area_ids(render(self.sep, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c5"])
+        self.assertEqual([k for k in area_ids(render(self.jun, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c4", "c6"])
+        self.assertEqual([k for k in area_ids(render(self.sep, "mgmt")) if re.fullmatch(r"c\d", k)], ["c1", "c2", "c3", "c6", "c5"])
 
     def test_every_old_chapter_is_still_in_the_appendix(self):
         page = render(self.oct, "mgmt")
