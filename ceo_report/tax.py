@@ -596,7 +596,7 @@ def card_due(day, pay, start):
     return _after(due)
 
 
-def cards(journal, asof, card_days, accrued_codes=("26200",), actual=None, actual_upto=None):
+def cards(journal, asof, card_days, accrued_codes=("26200",), actual=None, actual_upto=None, stale=None):
     """카드대금 납부 예상 (사용자 2026-11-03: 카드별 납부일과 기산일을 넣어 계산).
 
     미지급비용 중 거래처가 '카드사_끝번호'인 줄: 대변 = 사용, 차변 = 결제. 사용을 결제일별로 모으고 결제를 오래된 것부터 지운 뒤,
@@ -698,17 +698,60 @@ def cards(journal, asof, card_days, accrued_codes=("26200",), actual=None, actua
                         continue
                     if got < avg * CARD_THIN_RATE:
                         fill.setdefault(k, []).append((card, got, avg, False))
-        left = pay.get(co, 0)
+        # 결제는 카드 번호마다 그 카드 사용에서 지운다 (2026-11-17 사용자 "카드대금이 안 맞는데, 선결제도 반영했어?"):
+        # 예전엔 카드사 전체를 한 덩어리로 지워, 한도 증액 카드(롯데_1842)에 미리 낸 돈(사용 전표 전)이 다른 카드(롯데_7972)의
+        # 11/16 결제 4,315,047원을 지워 주간 보고에서 빠졌다. 카드에 남는 미리 낸 돈은 그 카드의 뒤 사용에만 쓴다.
+        # 결정 카드(2026-11-17, 사용자 '출금에서 빼고 확인할 것으로'): 지난 결제분마다 그 결제 기간(앞 결제일 다음 날~결제일)에 낸 돈으로
+        # 지우고, 기준일 전 마지막 결제분보다 앞선 결제분에 남은 돈은 장부 끝전(사용·결제 금액이 딱 안 맞고 쌓인 것)으로 보고
+        # 출금에 넣지 않는다 → stale 에 모아 확인할 것으로. 남는 결제(미리 낸 돈)는 다음 결제분으로 넘긴다
         by_due = {}
-        for k in sorted(by_bill):
-            take = min(by_bill[k], left)
-            left -= take
-            if by_bill[k] - take <= 0:
-                continue
-            # 결제일이 지났는데 장부에 결제가 없는 금액은 그 결제일 그대로 둔다 (F3: 예전엔 다음 결제일로 미뤄 그 사이 돈이
-            # 남아 보였다). 보고서가 장부 기준일을 보고 다음 금요일로 옮기거나 통장 잔액에 반영된 것으로 본다 (자금계획서 줄과 같은 규칙)
-            due = k
-            by_due[due] = by_due.get(due, 0) + by_bill[k] - take
+        last_due = _last_due(asof, p, s)
+        for card in sorted(use_card.get(co, {})):
+            cb = {}
+            for d, a in use_card[co][card]:
+                k = card_due(d, p, s)
+                cb[k] = cb.get(k, 0) + a
+            pays = sorted(pay_card.get(co, {}).get(card, []))
+            old = 0          # 지난 결제분에 남은 끝전
+            carry, i = 0, 0  # carry = 남은 미리 낸 돈
+            for k in sorted(x for x in cb if x < last_due):
+                while i < len(pays) and pays[i][0] <= k:   # 이 결제일까지 낸 돈
+                    carry += pays[i][1]
+                    i += 1
+                carry -= cb[k]   # 대체(통장 없는 차변)로 사용이 음수면 미리 낸 돈이 늘어남
+                if carry < 0:
+                    old -= carry
+                    carry = 0
+            # 넘기는 미리 낸 돈은 바로 앞 결제 기간에 그 결제분보다 더 낸 만큼까지 (한도 증액 카드의 선결제). 그보다 오래전부터 남은
+            # 더 낸 돈은 장부 끝전(음수)으로 본다 — 예전 끝전이 이번 결제를 줄이지 않게 (실제 신한_5860 −142만)
+            # 쓰는 대로 먼저 갚는 카드(한도 증액 카드: 통장 출금과 같은 금액의 사용이 같은 이용기간 ±7일 안에 있음)는 남은 돈을 모두 넘긴다
+            prev = _prev_due(last_due, p, s)
+            win = sum(a for d, a in pays if _prev_due(prev, p, s) < d <= prev)
+            # (대체로 되돌린 임시 사용은 빼고, 최근 6달만 봄 — 실제 신한_5860 11/05 임시 사용 300만과 11/10 선결제 300만을 쓰는 대로 갚는
+            # 카드로 잘못 보면 예전 끝전 −142만이 남아 10월분 결제가 사라졌음)
+            undo = set(d for d, a in use_card[co][card] if a < 0)
+            since = asof - dt.timedelta(days=183)
+            uses = [(d, a) for d, a in use_card[co][card] if a > 0 and d not in undo and d >= since]
+            ahead = any(abs((d - du).days) <= 7 and a == au and a >= CARD_MIN_AVG and card_due(d, p, s) == card_due(du, p, s)
+                        for d, a in pays if d >= since for du, au in uses)
+            kept = carry if ahead else min(carry, max(0, win - cb.get(prev, 0)))
+            old -= carry - kept
+            left = kept + sum(a for _, a in pays[i:])
+            neg = 0
+            for k in sorted(x for x in cb if x >= last_due):
+                amt = cb[k] + neg
+                neg = min(0, amt)
+                if amt <= 0:
+                    continue
+                take = min(amt, left)
+                left -= take
+                if amt - take <= 0:
+                    continue
+                # 결제일이 지났는데 장부에 결제가 없는 금액은 그 결제일 그대로 둔다 (F3). 보고서가 장부 기준일을 보고 다음 금요일로
+                # 옮기거나 통장 잔액에 반영된 것으로 본다 (자금계획서 줄과 같은 규칙)
+                by_due[k] = by_due.get(k, 0) + amt - take
+            if old and stale is not None and abs(old) >= CARD_STALE_MIN:
+                stale.append((card, old, last_due))
         for due in sorted(set(by_due) | set(fill)):
             if by_due.get(due):
                 rows.append(_row("카드대금", "%s카드 %d월 %d일 결제" % (co, due.month, due.day), due, by_due[due], "확정(전표)",
@@ -764,7 +807,8 @@ def _actual_for(actual, upto, card, lines, bill, pay, start):
         # 평균 채우기까지 건너뛰어 카드대금 예상이 사라졌음. 한 건도 없으면 모르는 것으로 보고 평균 규칙 그대로
         return None
     return sum(got)
-CARD_MIN_AVG = 100000    # 최근 3달 평균이 이보다 적은 카드는 평균으로 채우지 않음
+CARD_MIN_AVG = 100000
+CARD_STALE_MIN = 1000    # 장부 끝전이 이보다 작으면 알리지 않음 (출금에는 어떤 경우도 넣지 않음)    # 최근 3달 평균이 이보다 적은 카드는 평균으로 채우지 않음
 
 
 def _period_end(bill, start):
@@ -773,6 +817,37 @@ def _period_end(bill, start):
     if b > bill:
         b = _day_in(*_next_month(bill.year, bill.month, -1), start)
     return b - dt.timedelta(days=1)
+
+
+CARD_STALE_MARK = "[확인] 카드 장부 끝전"
+
+
+def card_stale_note(stale):
+    """지난 결제분까지 장부의 카드 사용과 결제가 딱 맞지 않고 남은 돈 (2026-11-17 결정: 출금에는 넣지 않고 확인할 것으로)."""
+    def one(card, amt):
+        return "%s %s원(%s)" % (card, "{:+,}".format(amt), "덜 낸 것으로 보임" if amt > 0 else "더 낸 것으로 보임")
+    stale = sorted(stale, key=lambda x: -abs(x[1]))
+    return ("%s — %s 결제분 앞까지 장부의 카드 사용과 결제 금액이 딱 맞지 않고 남은 돈이 있음. 주간·월간 출금에는 넣지 않음: %s. "
+            "카드 명세서와 맞춰 전표를 고치면 사라짐 (미리 낸 한도 카드는 사용 전표가 아직 안 들어온 것일 수 있음)"
+            % (CARD_STALE_MARK, " · ".join(sorted({"%d/%d" % (d.month, d.day) for _, _, d in stale})),
+               ", ".join(one(c, a) for c, a, _ in stale)))
+
+
+def _last_due(asof, pay, start):
+    """기준일 전(같은 날 포함) 마지막 결제일. 그보다 앞선 결제분에 남은 돈은 장부 끝전으로 본다 (2026-11-17)."""
+    d = card_due(asof, pay, start)
+    while d > asof:
+        d = _prev_due(d, pay, start)
+    return d
+
+
+def _prev_due(due, pay, start):
+    """결제일 due 바로 앞 결제일 (due 이용기간 첫날 전날을 쓴 결제분)."""
+    end = _period_end(due, start)
+    first = _day_in(end.year, end.month, start)
+    if first > end:
+        first = _day_in(*_next_month(end.year, end.month, -1), start)
+    return card_due(first - dt.timedelta(days=1), pay, start)
 
 
 def _open_bills(asof, pay, start):

@@ -348,13 +348,13 @@ class TestCards(unittest.TestCase):
         통장 없는 차변(대체)은 결제가 아니라 사용 취소, 쓰는 대로 갚는 카드는 평균으로 채우지 않는다."""
         j = []
         for m in (6, 7, 8, 9, 10):
-            j.append(ln(D(2026, m, 5), "u%d" % m, "26200", credit=1000, vendor="롯데_1842"))
-            j.extend(self.paid(D(2026, m, 6), "p%d" % m, 1000, "롯데_1842"))
-        j.append(ln(D(2026, 11, 6), "t1", "26200", credit=600, vendor="롯데_1842"))      # 임시 사용
-        j.append(ln(D(2026, 11, 6), "t2", "26200", debit=600, vendor="롯데_1842"))       # 대체 (통장 없음)
-        j.extend(self.paid(D(2026, 11, 6), "t3", 600, "롯데_1842"))                       # 은행 출금
+            j.append(ln(D(2026, m, 5), "u%d" % m, "26200", credit=1000000, vendor="롯데_1842"))
+            j.extend(self.paid(D(2026, m, 6), "p%d" % m, 1000000, "롯데_1842"))
+        j.append(ln(D(2026, 11, 6), "t1", "26200", credit=600000, vendor="롯데_1842"))      # 임시 사용
+        j.append(ln(D(2026, 11, 6), "t2", "26200", debit=600000, vendor="롯데_1842"))       # 대체 (통장 없음)
+        j.extend(self.paid(D(2026, 11, 6), "t3", 600000, "롯데_1842"))                       # 은행 출금
         rows = tax.cards(j, D(2026, 11, 12), {"롯데": (14, 1)})
-        self.assertEqual(rows, [])   # 갚을 것 없음, 평균 채움 없음 (11월 사용 전표가 들어오면 미리 낸 600과 상계)
+        self.assertEqual(rows, [])   # 갚을 것 없음, 평균 채움 없음 (11월 사용 전표가 들어오면 미리 낸 60만과 상계. 2026-11-17: 쓰는 대로 갚는 카드는 통장 출금과 같은 금액(10만 원 이상) 사용으로 알아봄)
 
     def test_card_file_and_defaults(self):
         import tempfile, shutil
