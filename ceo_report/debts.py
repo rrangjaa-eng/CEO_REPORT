@@ -15,8 +15,9 @@ import re
 from .util import read_csv
 
 FILE = "장부채무.csv"
-KEYS = ["구분", "계정코드", "계정과목", "거래처코드", "거래처", "잔액", "기준일", "만기일", "만기근거", "전기이월"]
-REQUIRED = KEYS[:7]   # 만기일·만기근거·전기이월 칸이 없는 예전 파일도 읽는다
+KEYS = ["구분", "계정코드", "계정과목", "거래처코드", "거래처", "잔액", "기준일", "만기일", "만기근거", "전기이월", "묵은잔액"]
+REQUIRED = KEYS[:7]   # 만기일·만기근거·전기이월·묵은잔액 칸이 없는 예전 파일도 읽는다
+STALE_DAYS = 180   # 이 날수 동안 한 번도 이 금액 아래로 내려가지 않은 미지급금 = 묵은 잔액 (사용자 결정 2026-11-17 '따로 표시')
 PAYABLE, LOAN, DEPOSIT = "미지급금", "차입금", "정기예금"
 # 적요 속 날짜 (정기예금 만기일, 사용자 2026-11-04: 분개장 정기예금은 만기일까지 쓸 수 없는 돈)
 DATE_RE = re.compile(r"(20\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})")
@@ -70,6 +71,9 @@ def build(books, cfg):
         else:
             sign = 1 if kind == DEPOSIT else -1   # 정기예금은 자산: 차변 − 대변, 채무는 대변 − 차변
             e["sum"] += sign * ((ln["debit"] or 0) - (ln["credit"] or 0))
+            if kind == PAYABLE and ln["date"] is not None:
+                moves = e.setdefault("moves", {})
+                moves[ln["date"]] = moves.get(ln["date"], 0) + sign * ((ln["debit"] or 0) - (ln["credit"] or 0))
         if kind in (DEPOSIT, LOAN):
             # 만기일: 적요 속 날짜 (실제 분개장 차입금 적요 '…[만기일자:2027.04.21]', 정기예금 적요에는 없음)
             md = _memo_date(ln.get("memo"))
@@ -105,7 +109,7 @@ def build(books, cfg):
         rows.append(dict(zip(KEYS, [kind, code, e["account"], e["vcode"], e["vendor"],
                                     "" if e["unknown"] else str(e["sum"]), day, e["due"].isoformat() if e["due"] else "",
                                     "" if not e["due"] else ("지난 정기예금 기간 %d일로 추정" % e["guess"] if e.get("guess") else "적요"),
-                                    "있음" if opening else "없음"])))
+                                    "있음" if opening else "없음", _stale(e, ref) if kind == PAYABLE and opening else ""])))
     tot = {k: sum(int(r["잔액"]) for r in rows if r["구분"] == k and r["잔액"]) for k in (PAYABLE, LOAN, DEPOSIT)}
     note = "장부 채무·정기예금 (%s 기준%s): 미지급금 %d곳 %s원 · 차입금 %d줄 %s원 · 정기예금 %d줄 %s원 (만기일 모름 %d줄)" % (
         day or "날짜 없음", "" if opening else ", 분개장에 전기이월 없음: 올해 늘고 준 금액만", sum(1 for r in rows if r["구분"] == PAYABLE), "{:,}".format(tot[PAYABLE]),
@@ -113,6 +117,22 @@ def build(books, cfg):
         sum(1 for r in rows if r["구분"] == DEPOSIT), "{:,}".format(tot[DEPOSIT]),
         sum(1 for r in rows if r["구분"] == DEPOSIT and not r["만기일"]))
     return rows, note
+
+
+def _stale(e, ref):
+    """미지급금 묵은 잔액: 기준일 앞 STALE_DAYS 일 동안 날마다의 잔액 가운데 가장 작은 값 (양수일 때만) -> 글자, 없으면 ''.
+
+    매달 생긴 만큼만 나가고 예전 금액이 그대로 남은 잔액을 가려낸다 (실제 자료: 거래처 '사업소득' 866만이 2025-12부터 그대로).
+    금액 모르는 줄이 있거나 날짜를 모르면 셈하지 않는다."""
+    if e["unknown"] or ref is None or e["sum"] <= 0:
+        return ""
+    start = ref - dt.timedelta(days=STALE_DAYS)
+    bal = sum(v for d, v in e.get("moves", {}).items() if d <= start)
+    low = bal
+    for d in sorted(d for d in e.get("moves", {}) if start < d <= ref):
+        bal += e["moves"][d]
+        low = min(low, bal)
+    return str(low) if low > 0 else ""
 
 
 def load(folder, iss):
@@ -133,7 +153,8 @@ def load(folder, iss):
                     "balance": num(r.get("잔액")) if (r.get("잔액") or "").strip() else None,
                     "date": (r.get("기준일") or "").strip(), "due": (r.get("만기일") or "").strip(),
                     "due_basis": (r.get("만기근거") or "").strip(),
-                    "opening": (r.get("전기이월") or "").strip() != "없음"})
+                    "opening": (r.get("전기이월") or "").strip() != "없음",
+                    "stale": num(r.get("묵은잔액")) if (r.get("묵은잔액") or "").strip() else 0})
     # 대출만기.csv (사용자가 직접 넣는 새 만기일·매년 연장, 11/14): 위하고·적요의 만기일보다 우선 (결정 A8, 2026-11-15 보고-08)
     from .reconcile import _code, read_maturity
     over = read_maturity(folder)
@@ -234,7 +255,9 @@ def compare(debts, events, asof):
         left = d["balance"] - sched
         if left > 0:
             left_rows.append({"vendor": d["vendor"] or "(거래처 없음)", "vcode": d["vcode"], "balance": d["balance"],
-                              "scheduled": sched, "left": left, "by_name": name_match and sched > 0})
+                              "scheduled": sched, "left": left, "by_name": name_match and sched > 0,
+                              # 일정에 없는 금액 가운데 6달 넘게 그대로인 몫 (줄 돈인지 장부 정리가 빠진 것인지 확인 필요)
+                              "stale": max(min(d.get("stale") or 0, left), 0)})
     left_rows.sort(key=lambda r: -r["left"])
     # 반대 방향 (사용자 2026-11-04 '분개장과 자금계획서 비교 검토'): 미지급금 지급 예정이 장부 잔액보다 큰 거래처
     # = 같은 빚을 두 번 잡았거나(이중 계상) 장부에 아직 없는 빚. 거래처코드로 맞춘다.
@@ -267,6 +290,7 @@ def compare(debts, events, asof):
     known_loans = [d for d in loans if d["balance"] is not None and d["balance"] > 0]
     repaid = [d for d in loans if d["balance"] is not None and d["balance"] < 0]
     return {"opening": all(d.get("opening", True) for d in debts), "repaid_loans": repaid,"unscheduled": left_rows, "unscheduled_total": sum(r["left"] for r in left_rows), "unknown_n": unknown_n,
+            "stale_total": sum(r["stale"] for r in left_rows), "stale_n": sum(1 for r in left_rows if r["stale"]),
             "over": over_rows, "over_total": sum(r["over"] for r in over_rows),
             "payable_total": sum(d["balance"] for d in pays if d["balance"] is not None),
             "loans": known_loans, "loan_total": sum(d["balance"] for d in known_loans),

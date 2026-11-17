@@ -106,5 +106,34 @@ class CardGroupScheduleTest(unittest.TestCase):
         self.assertEqual(D["unscheduled_total"], 3200000)
 
 
+class StalePayableTest(unittest.TestCase):
+    """3번: 6달 동안 한 번도 그 아래로 내려가지 않은 미지급 잔액은 따로 보인다."""
+
+    def test_floor_of_last_180_days(self):
+        debts = mod("debts")
+        ref = dt.date(2026, 11, 17)
+        moves = {dt.date(2025, 12, 31): 9000000, dt.date(2026, 5, 10): -400000}
+        for m in range(6, 12):   # 매달 생긴 만큼만 나감
+            moves[dt.date(2026, m, 5)] = 1000000
+            moves[dt.date(2026, m, 10)] = -1000000
+        e = {"unknown": False, "sum": sum(moves.values()), "moves": moves}
+        self.assertEqual(debts._stale(e, ref), "8600000")
+        fresh = {"unknown": False, "sum": 500000, "moves": {dt.date(2026, 10, 1): 500000}}   # 최근에 생긴 잔액
+        self.assertEqual(debts._stale(fresh, ref), "")
+        self.assertEqual(debts._stale(dict(e, unknown=True), ref), "")
+
+    def test_compare_marks_stale_part_of_unscheduled(self):
+        def pay(vcode, vendor, bal, stale):
+            return {"kind": "미지급금", "code": "26200", "account": "미지급비용", "vcode": vcode, "vendor": vendor,
+                    "balance": bal, "date": "2026-11-16", "due": "", "due_basis": "", "opening": True, "stale": stale}
+        events = [{"io": "out", "amount": 900000, "date": dt.date(2026, 11, 27), "cat": "미지급금 지급", "desc": "가상업체",
+                   "vendor_code": "500"}]
+        D = mod("debts").compare([pay("147", "가상소득", 8600000, 8600000), pay("500", "가상업체", 1000000, 700000),
+                                  pay("501", "새업체", 300000, 0)], events, dt.date(2026, 11, 17))
+        got = dict((r["vendor"], r["stale"]) for r in D["unscheduled"])
+        self.assertEqual(got, {"가상소득": 8600000, "가상업체": 100000, "새업체": 0})   # 일정에 없는 금액을 넘지 않음
+        self.assertEqual((D["stale_total"], D["stale_n"]), (8700000, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

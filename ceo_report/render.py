@@ -781,6 +781,9 @@ def _left_out_lines(R):
             top = D["unscheduled"][0]
             out.append("장부에 있는 미지급금 중 지급일이 일정에 없는 것 %s (%d곳 · 가장 큰 곳 %s %s · 장부 %s 기준)" % (
                 won(D["unscheduled_total"]), len(D["unscheduled"]), top["vendor"], won(top["left"]), D["date"] or "-"))
+            if D.get("stale_total"):   # 사용자 결정 2026-11-17: 오래 그대로인 잔액은 따로 보인다
+                out.append("이 중 6달 넘게 그대로인 잔액 %s (%d곳) — 실제로 줄 돈인지, 장부 정리가 빠진 것인지 확인 필요"
+                           % (won(D["stale_total"]), D["stale_n"]))
         if D.get("over"):
             top = D["over"][0]
             out.append("미지급금 지급 예정이 장부 잔액보다 큰 거래처 %s (%d곳 · 가장 큰 곳 %s 예정 %s · 장부 %s) — 이중 계상이거나 장부에 아직 없는 빚" % (
@@ -926,6 +929,17 @@ def _avail_table(R, mode="mgmt"):
         h.append(_mg(mode, "<div class='wsub'>장부 미지급금 중 지급일이 일정에 없는 것 (장부 %s 기준 · %d곳 · %s)</div>"
                      "<table class='pt xr'><thead><tr><th>거래처</th><th>장부 미지급금</th><th>일정에 있는 지급</th><th>일정에 없는 금액</th></tr></thead>"
                      "<tbody>%s</tbody></table>" % (esc(D["date"] or "-"), len(D["unscheduled"]), esc(won(D["unscheduled_total"])), rows)))
+        old = [r for r in D["unscheduled"] if r.get("stale")]
+        if old:   # 사용자 결정 2026-11-17: 6달 넘게 그대로인 잔액은 따로 (지금 줄 돈으로 단정하지 않는다)
+            rows = "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+                esc("%s [%s]" % (r["vendor"], r["vcode"]) if r.get("vcode") else r["vendor"]), esc(won(r["left"])),
+                esc(won(r["stale"]))) for r in old)
+            h.append(_mg(mode, "<div class='wsub'>위 표 가운데 6달 넘게 그대로인 잔액 — 확인 필요 (%d곳 · %s)</div>"
+                         "<table class='pt xr'><thead><tr><th>거래처</th><th>일정에 없는 금액</th><th>6달 넘게 그대로인 금액</th></tr></thead>"
+                         "<tbody>%s</tbody></table>"
+                         "<div class='note'>6달 동안 한 번도 이 금액 아래로 내려가지 않은 잔액입니다. 실제로 줄 돈이면 지급일을 일정에 넣고, "
+                         "이미 준 돈이면 장부에 지급 전표가 빠졌는지 확인하세요.</div>"
+                         % (len(old), esc(won(D["stale_total"])), rows)))
     h.append("</div>")
     return "".join(h)
 
