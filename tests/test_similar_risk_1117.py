@@ -135,5 +135,28 @@ class StalePayableTest(unittest.TestCase):
         self.assertEqual((D["stale_total"], D["stale_n"]), (8700000, 2))
 
 
+class SplitInvoiceAmongOthersTest(unittest.TestCase):
+    """4번: 같은 날 같은 거래처 계산서가 여러 장이어도 나눈 계산서 두 줄은 자금계획서 한 줄과 합쳐 맞춘다 (두 번 잡지 않음)."""
+
+    def ev(self, amount, project):
+        return {"date": dt.date(2026, 12, 21), "io": "in", "amount": amount, "firm": False, "cat": "", "desc": "가상고객",
+                "basis": "", "project": project, "source": "계산서", "vendor_code": "",
+                "inv_key": ("가상고객", dt.date(2026, 10, 22))}
+
+    def plan(self, amount):
+        return {"date": dt.date(2026, 12, 24), "io": "입금", "cat": "", "vendor": "가상고객", "vendor_code": "", "amount": amount,
+                "ym": "2026-12", "stamp": dt.date(2026, 11, 16), "state": "예정", "basis": "", "file": ""}
+
+    def test_subset_of_same_day_invoices(self):
+        inv = [self.ev(48000000, "P0"), self.ev(124000000, "P1"), self.ev(15000000, "P2")]
+        new, _ = mod("fundplan").apply(inv, [self.plan(139000000), self.plan(48000000)], dt.date(2026, 11, 17), 7)
+        self.assertEqual(sorted((e["source"], e["amount"]) for e in new), [("자금계획서", 48000000), ("자금계획서", 139000000)])
+
+    def test_two_possible_subsets_are_left(self):
+        inv = [self.ev(70000000, "P1"), self.ev(30000000, "P2"), self.ev(60000000, "P3"), self.ev(40000000, "P4")]
+        new, _ = mod("fundplan").apply(inv, [self.plan(100000000)], dt.date(2026, 11, 17), 7)
+        self.assertEqual(sum(1 for e in new if e["source"] == "계산서"), 4)   # 어느 묶음인지 몰라 그대로 둠
+
+
 if __name__ == "__main__":
     unittest.main()

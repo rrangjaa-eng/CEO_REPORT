@@ -439,7 +439,10 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         for (pid, amount), v, got in zip(parts, vats, gots):
             mine_old = split_prev.get((inv["vendor_norm"], inv["date"], amount))
             d2, f2 = due, firm
-            if old is None and mine_old is not None:   # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다
+            if old is None and mine_old is not None and cell_date(parse_date(mine_old.get("입금예정일"))):
+                # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다. 지난번 줄이 빈칸이면 옮기지 않는다 — 빈칸을 옮기면
+                # 작성일 + 60일로 채운 날짜가 지워져 나눈 계산서가 언제까지나 '날짜 없는 입금'으로 남았다 (실제 자료 2026-11-17:
+                # 구글클라우드 [26226]·[26257] 1억 3,975만, 사용자 결정 '고치기')
                 d2 = cell_date(parse_date(mine_old.get("입금예정일")))
                 f2 = (mine_old.get("예정일확정") or "").strip()
                 f2 = f2 if f2 in _FIRM else ""
