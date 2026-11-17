@@ -210,6 +210,12 @@ def overstated(input_dir, L, kinds, names, ytd, Y, M, adj, T_all, nin_rows):
         ym = (r.get("연월") or "").strip()
         if ym[:4] == str(Y) and ym <= "%04d-%02d" % (Y, M):
             dept[(r.get("부서") or "").strip()] += _int(r.get("판관비")) or 0
+    # 퇴직급여·상여 같은 급여성 계정도 빼서 사람별 금액이 드러나지 않게 (팀장용과 같은 기준, 11/17 전수 점검 F11)
+    from .teamreport import _is_pay_account
+    for r in _rows(os.path.join(input_dir, "부서계정비용.csv")):
+        ym = (r.get("연월") or "").strip()
+        if ym[:4] == str(Y) and ym <= "%04d-%02d" % (Y, M) and _is_pay_account(r.get("계정과목") or ""):
+            dept[(r.get("부서") or "").strip()] -= _int(r.get("금액")) or 0
     for word, label, why in (
             ("경영관리", "경영관리 부서 비용 (급여 빼고)",
              "회사 전체를 위해 쓰는 돈(사무실·세무·보험·대표 관련 비용 등)입니다. 기획본부가 쓰지 않았고 내역도 보기 어렵지만 회사 전체 비용이라 판관비에 들어 있습니다. "

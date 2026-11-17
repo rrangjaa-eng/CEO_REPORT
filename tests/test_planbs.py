@@ -80,6 +80,13 @@ class TestPlanBS(unittest.TestCase):
         self.assertAlmostEqual(C["rate1"], 0.11, places=3)   # 과세표준 2억 이하: 10% + 지방 1%
         self.assertAlmostEqual(C["rate0"], 0.099, places=3)  # 2025년: 9% + 0.9%
 
+    def test_pay_like_accounts_left_out_of_dept_cost(self):
+        # 퇴직급여 같은 급여성 계정은 부서 비용에서 뺀다 (팀장용과 같은 기준)
+        with open(os.path.join(self.d, "부서계정비용.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            f.write("연월,부서,계정코드,계정과목,금액\n2026-02,경영관리,80600,퇴직급여(판),1000000\n2026-02,경영관리,81200,여비교통비,2000000\n")
+        C = planbs.compute(self.d, D(2026, 11, 17))
+        self.assertEqual(dict((x[0], x[1]) for x in C["over"])["경영관리 부서 비용 (급여 빼고)"], 2_000_000)
+
     def test_overstated_items(self):
         names = [x[0] for x in self.C["over"]]
         self.assertIn("경영관리 부서 비용 (급여 빼고)", names)
