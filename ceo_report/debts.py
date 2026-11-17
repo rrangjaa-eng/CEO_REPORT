@@ -184,8 +184,19 @@ def compare(debts, events, asof):
         return None
     from .wehago import norm_vendor, norm_code
     by_code, by_name, plan_code, plan_name = {}, {}, {}, {}
+    by_group, group_of = {}, {}   # 거래처코드 묶음 -> 지급 예정 합, 코드 -> 묶음
     for ev in events:
         if ev["io"] != "out" or ev["amount"] is None or (ev["date"] is not None and ev["date"] <= asof):
+            continue
+        many = str(ev.get("vendor_code") or "").split()
+        if len(many) > 1:
+            # 카드대금처럼 한 줄에 거래처코드가 여럿인 지급 예정 (세금예상 카드사 한 줄 = 그 카드사 카드 거래처 모두):
+            # 그 거래처들의 장부 잔액에서 함께 뺀다. 예전엔 코드를 한 글자로 붙여 읽어 아무 거래처와도 안 맞았고,
+            # 이미 카드값 일정에 든 신한·비씨 2,589만이 '지급일이 일정에 없는 미지급금'으로 나왔다 (사용자 결정 2026-11-17)
+            group = tuple(sorted(set(norm_code(c) for c in many)))
+            by_group[group] = by_group.get(group, 0) + ev["amount"]
+            for c in group:
+                group_of.setdefault(c, group)
             continue
         vc = norm_code(ev.get("vendor_code"))
         if vc:
@@ -212,6 +223,8 @@ def compare(debts, events, asof):
         vc = norm_code(d["vcode"])
         if vc and vc in by_code:
             sched, name_match, key = by_code[vc], False, ("c", vc)
+        elif vc and vc in group_of:
+            sched, name_match, key = by_group[group_of[vc]], False, ("g", group_of[vc])
         else:
             nm = norm_vendor(d["vendor"])
             sched, name_match, key = by_name.get(nm, 0), True, ("n", nm)

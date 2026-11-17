@@ -86,5 +86,25 @@ class TempSlipOffsetTest(unittest.TestCase):
         self.assertEqual(out["offset"], [])
 
 
+class CardGroupScheduleTest(unittest.TestCase):
+    """2번: 카드값 일정(한 줄에 카드 거래처코드 여럿)에 든 카드 잔액은 '지급일이 일정에 없는 미지급금'에 넣지 않는다."""
+
+    def test_card_event_covers_all_cards_once(self):
+        asof = dt.date(2026, 11, 17)
+
+        def pay(vcode, vendor, bal):
+            return {"kind": "미지급금", "code": "26200", "account": "미지급비용", "vcode": vcode, "vendor": vendor,
+                    "balance": bal, "date": "2026-11-16", "due": "", "due_basis": "", "opening": True}
+        debts = [pay("137", "가상_1111", 4000000), pay("138", "가상_2222", 3000000), pay("1439", "다른_3333", 2000000),
+                 pay("500", "가상업체", 700000)]
+        events = [{"io": "out", "amount": 6500000, "date": dt.date(2026, 11, 20), "cat": "카드대금", "desc": "가상카드 11월 결제",
+                   "vendor_code": "137 138 141"}]
+        D = mod("debts").compare(debts, events, asof)
+        left = dict((r["vendor"], r["left"]) for r in D["unscheduled"])
+        # 가상카드 두 장 700만 중 650만은 일정에 있음 → 남는 50만만, 다른 카드사·일반 거래처는 그대로
+        self.assertEqual(left, {"가상_2222": 500000, "다른_3333": 2000000, "가상업체": 700000})
+        self.assertEqual(D["unscheduled_total"], 3200000)
+
+
 if __name__ == "__main__":
     unittest.main()
