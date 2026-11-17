@@ -37,7 +37,7 @@ from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  
 
 # 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(결정 카드 ①② 2026-11-16: 대표 주간에서 마감 전 영업이익 빼기,
 # 예정일 지난·당일 입금을 이번 주 예상 입금으로). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "5fb28bb"   # 2026-11-17 전수 점검: 머리 사용한 자료(F4)·영업외수익은 비용 표에서 뺌(F10)·매출 기준 금액(F2)
+BASELINE = "69edc07"   # 2026-11-17 빌드 합치기: 프로젝트 표 매출 기준(F2) · 2026-11-17 전수 점검: 머리 사용한 자료(F4)·영업외수익은 비용 표에서 뺌(F10)·매출 기준 금액(F2)
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
