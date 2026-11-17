@@ -153,6 +153,60 @@ class TestPlanBS(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestClosingCosts(unittest.TestCase):
+    """사용자 2026-11-17: 진행 중 프로젝트 남은 원가만 빼고 결산 때 들어갈 비용(감가상각·대손충당금·카드·4대보험·퇴직급여)을 넣음."""
+    def setUp(self):
+        from ceo_report import tax
+        self.d = make_input()
+        j = journal() + [ln(D(2026, 4, 1), "20", "80200", "직원급여", dr=120_000_000), ln(D(2026, 4, 1), "20", "10300", "보통예금", cr=120_000_000)]
+        t = K.build_table(types.SimpleNamespace(state="ok", journal=j))
+        with open(os.path.join(self.d, K.FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, K.KEYS)
+            w.writeheader()
+            w.writerows(t.rows)
+        rows = [["법인세", "2026년 (1월~10월 장부 기준)", "2027-03-31", "1", "예상",
+                 "세전 이익 1 − 감가상각비 예상 10,000,000 = 과세표준 60,000,000 → 법인세", "60000000", "", "", "4000000", "0"],
+                ["카드대금", "신한카드 11월 15일 결제 (전표 입력 전 추정)", "2026-11-15", "1,100,000", "예상", tax.CARD_THIN_MARK + " 신한", "", "", "", "", ""],
+                ["카드대금", "롯데카드 12월 15일 결제 (이번 달 사용 추정)", "2026-12-15", "9,900,000", "예상", tax.CARD_OPEN_MARK + " 롯데", "", "", "", "", ""],
+                ["4대보험", "2026년 10월분", "2026-11-10", "5,250,000", "예상", "예수금 중 공단 거래처 대변(직원분) 2,500,000원 + 회사분 = 직원분 × 1.10 (x)", "", "", "", "", ""],
+                ["4대보험", "2026년 11월분", "2026-12-10", "5,250,000", "예상", "급여 전표 전 → 2026-10 납부액(직원분+회사분)으로 봄", "", "", "", "", ""]]
+        with open(os.path.join(self.d, "세금예상.csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["세목", "대상기간", "납부예정일", "금액", "상태", "근거", "과세표준", "산출세액", "기납부", "대손충당금", "세무조정"])
+            w.writerows(rows)
+        self.C = planbs.compute(self.d, D(2026, 11, 17))
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_costs(self):
+        got = dict((c["key"], (c["amount"], c["in_base"])) for c in self.C["costs"])
+        self.assertEqual(got, {"dep": (10_000_000, True), "bad": (4_000_000, False), "card": (1_000_000, False),
+                               "ins": (2_750_000, False), "ret": (10_000_000, False)})
+        base = 60_000_000
+        cut = 6_000_000 + 17_750_000
+        self.assertEqual(self.C["T1"], planbs.tax_total(base, 2026, self.d) - planbs.tax_total(base - cut, 2026, self.d))
+
+    def test_sheet_balances(self):
+        bk = planbs.build(self.C)
+        cells = self.C["_cells"]
+        self.assertEqual(bk.value(cells["K"]), 27_750_000)
+        for a in cells["check"]:
+            self.assertEqual(bk.value(a), 0)
+        cn, en = (bk.value(a) for a in cells["net"])
+        t1 = round((6_000_000 + 17_750_000) * round(self.C["rate1"], 4))
+        self.assertEqual(cn - en, 6_000_000 + 27_750_000 - t1)
+        sh = bk.sheets[0]
+        for (r, c), (v, f, s) in list(sh.cells.items()):
+            if v == "예" and s == "inc":
+                sh.cells[(r, c)] = ("아니오", None, s)
+        bk._memo = {}
+        self.assertEqual(bk.value(cells["net"][0]), bk.value(cells["net"][1]))
+        self.assertEqual(bk.value(cells["equity"][0]), bk.value(cells["equity"][1]))
+        for a in cells["check"]:
+            self.assertEqual(bk.value(a), 0)
+
+
 class TestRun(unittest.TestCase):
     def test_task_and_cli(self):
         from ceo_report import app, gate
