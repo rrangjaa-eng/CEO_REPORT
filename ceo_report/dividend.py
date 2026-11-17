@@ -598,13 +598,38 @@ def save_settings(input_dir, values, strict=False, group=None, exclude=None):
     return cur
 
 
+def _filed_breaks(input_dir):
+    """법인세신고.csv(작년 실제 신고서)로 '작년에 받은 감면·공제' 답 -> 문장 또는 None."""
+    try:
+        from . import taxreturn
+        T = taxreturn.load(input_dir)
+    except Exception:
+        return None
+    if not T:
+        return None
+    y = max(k[0] for k in T)
+    d = T.get((y, "확정")) or next(v for k, v in T.items() if k[0] == y)
+    sp, emp, tot = d.get("특별감면") or 0, d.get("고용공제") or 0, d.get("공제감면세액") or 0
+    if not tot and not sp and not emp:
+        return "없음 (%d년 법인세 신고서)" % y
+    parts = (["중소기업 특별세액감면 %s원" % W(sp)] if sp else []) + (["통합고용 세액공제 %s원" % W(emp)] if emp else [])
+    rest = tot - sp - emp
+    if rest > 0:
+        parts.append("그 밖 %s원" % W(rest))
+    tail = (["창업 감면은 받지 않음"] if rest <= 0 else []) + (["공제 이월 %s원" % W(d["공제이월"])] if d.get("공제이월") else [])
+    return "%d년 법인세 신고서: %s%s" % (y, " · ".join(parts), " (%s)" % ", ".join(tail) if tail else "")
+
+
 def checklist(input_dir):
     """-> [(키, 질문, 넣은 값 또는 None, 꼭 필요, 쓰는 값)] (+ 주주 줄). 쓰는 값 = 넣은 값 또는 기본값."""
     st = read_settings(input_dir) if input_dir else {}
     out = []
     cond = set(m for (k, v), more in NEEDS_IF.items() if st.get(k) == v for m in more)
+    filed = _filed_breaks(input_dir) if input_dir else None
     for k, _, q, _, _, dflt, need in QUESTIONS:
         v = st.get(k)
+        if k == "작년감면" and filed and v in (None, "모름"):
+            v = filed   # 11/17 규칙: 받은 자료(작년 법인세 신고서)에 답이 있으면 그 값으로 (묻지 않음)
         out.append((k, q.strip(), v, need or k in cond, v or dflt))
     rows = read(input_dir) if input_dir else []
     tot = sum(float(r.get("지분율") or 0) for r in rows)

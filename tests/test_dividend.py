@@ -280,3 +280,16 @@ class LimitThisYear1117(unittest.TestCase):
         self.assertEqual(S["year"], 2026)
         self.assertEqual(S["div"]["limit"], 210000000)   # 2억2천 − 이익준비금 1천만(자본금 절반) — 예전엔 ÷1.1 = 2억
         self.assertIn("작년까지 벌어", dv.render(S["div"], lambda x: x, S))
+
+
+class FiledAnswer1117(unittest.TestCase):
+    def test_last_year_breaks_filled_from_return(self):
+        """11/17 규칙: 작년 신고서(법인세신고.csv)에 답이 있으면 '작년 받은 감면·공제'를 '모름'으로 두지 않는다. (가짜 숫자)"""
+        import tempfile
+        from ceo_report import taxreturn
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, taxreturn.FILE), "w", encoding="utf-8-sig") as f:
+            f.write("연도,구분,공제감면세액,특별감면,고용공제,공제이월\n2025,확정,300,200,100,5000\n")
+        got = dict((k, v) for k, _, v, _, _ in dv.checklist(d))["작년감면"]
+        self.assertIn("중소기업 특별세액감면 200원", got)
+        self.assertIn("창업 감면은 받지 않음", got)
