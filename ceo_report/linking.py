@@ -413,6 +413,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
         d, c = row.get("debit"), row.get("credit")
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
                            row.get("line_project") or slips.get(keys[i][:2])))
+    lines, offset = _drop_offsets(lines, overrides)
     used = set()
     pending = []
     for ln in lines:
@@ -480,7 +481,44 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
             if ln["date"] is None:
                 ln["reason"] = (ln["reason"] + " · " if ln["reason"] else "") + "날짜 없음"
             _unlinked(ln, "자동 연결 후보 0건")
-    return {"lines": lines, "summary": _summary(lines), "used": used}
+    return {"lines": lines, "summary": _summary(lines), "used": used, "offset": offset}
+
+
+def _drop_offsets(lines, overrides):
+    """임시 전표와 그 되돌림 전표를 원가 줄에서 뺀다 -> (남은 줄, 뺀 줄).
+
+    카드 한도결제 때 '원가 차변 / 카드 미지급비용 대변'으로 임시 전표를 넣고(프로젝트 번호 있음) 같은 달에 번호 없는
+    전표로 되돌리면, 임시 원가는 프로젝트에 남고 되돌림만 미연결로 빠져 프로젝트 원가가 두 번 잡혔다 (실제 자료
+    2026-10: 6,680만, 사용자 결정 2026-11-17 '고치기'). 장부에서는 두 줄이 서로 지워지므로 둘 다 원가 줄로 세지 않는다.
+
+    짝: 프로젝트 번호가 없는 음수 줄(되돌림)과 계정·거래처·달이 같고 날짜가 같거나 앞선 양수 줄.
+    금액이 같은 줄이 정확히 하나이거나, 같은 날 양수 줄 합이 같은 날이 정확히 하나일 때만 (애매하면 그대로 둔다).
+    수동 지정(프로젝트연결.csv)한 줄은 건드리지 않는다.
+    """
+    def free(ln):
+        return (ln["key"] not in overrides and ln["amount"] is not None and ln["date"] is not None and ln["vendor_norm"]
+                and not _prior(ln))   # 지난해 줄은 참고로만 세므로 그대로 둔다
+
+    taken = set()
+    for neg in lines:
+        if not (free(neg) and neg["amount"] < 0 and neg["slip_code"] is None and neg["code"] is None):
+            continue
+        pool = [p for p in lines if free(p) and p["amount"] > 0 and p["index"] not in taken
+                and p["account_code"] == neg["account_code"] and p["vendor_norm"] == neg["vendor_norm"]
+                and p["date"] <= neg["date"] and (p["date"].year, p["date"].month) == (neg["date"].year, neg["date"].month)]
+        same = [p for p in pool if p["amount"] == -neg["amount"]]
+        if len(same) == 1:
+            pair = same
+        else:
+            days = {}
+            for p in pool:
+                days.setdefault(p["date"], []).append(p)
+            hits = [v for v in days.values() if sum(p["amount"] for p in v) == -neg["amount"]]
+            pair = hits[0] if len(hits) == 1 and not same else []
+        if pair:
+            taken.add(neg["index"])
+            taken.update(p["index"] for p in pair)
+    return [ln for ln in lines if ln["index"] not in taken], [ln for ln in lines if ln["index"] in taken]
 
 
 # ───────────── 매출 줄 연결 ─────────────

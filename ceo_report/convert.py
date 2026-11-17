@@ -486,6 +486,10 @@ def link_lines(links):
     out = ["[연결] 프로젝트 연결",
            "  원가 줄: " + _basis_text(links["costs"]["summary"]),
            "  매출 줄: " + _basis_text(links["revenue"]["summary"])]
+    off = links["costs"].get("offset") or []
+    if off:   # 2026-11-17: 임시 전표와 되돌림 전표는 서로 지워지므로 프로젝트 원가에서 뺀다
+        out.append("  임시 전표와 되돌림 전표 %d줄은 원가 줄에서 뺌 (임시로 넣은 금액 %s, 서로 지워짐)"
+                   % (len(off), won(sum(x["amount"] for x in off if x["amount"] > 0))))
     listed = 0
     for kind, result in (("원가", links["costs"]), ("매출", links["revenue"])):
         for ln in sorted((x for x in result["lines"] if x["basis"] == "미연결" and not x.get("prior")), key=_list_order):
