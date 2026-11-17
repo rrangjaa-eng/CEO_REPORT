@@ -63,6 +63,7 @@ def projects_of(snap, old=None):
 
     old: 예전 인트라넷(old_intranet.load). 지금 인트라넷에 없는 번호만 뒤에 더하고 old=True (사용자 2026-11-05)."""
     out = OrderedDict()
+    out.dropped = []   # 예전 인트라넷에서 읽고도 빠진 프로젝트 (번호 없음·번호 겹침) — '확인할 것'에 (사용자 2026-11-17)
     if old is None:
         old = getattr(snap, "old", None)
     if snap is not None:
@@ -107,15 +108,26 @@ def approval_words(rows):
     return " · ".join(out)
 
 
+def _dropped(p, key, why):
+    return {"key": key, "name": re.sub(r"^\s*\[\d+\]\s*", "", p.get("행사명", "")), "why": why,
+            "quote": num(p.get("견적금액")), "budget": num(p.get("실행가")), "event": (p.get("행사일") or "").strip()}
+
+
 def _add_projects(out, rows, is_old):
     for p in rows:
         title = p.get("행사명", "")
         key = project_code(title) or norm_project(p.get("번호", ""))
+        dropped = getattr(out, "dropped", None)
         if not key:
+            if is_old and dropped is not None:
+                dropped.append(_dropped(p, "", "행사명·번호에 프로젝트 번호가 없음"))
             continue
         if key in out:
-            if is_old:
-                continue   # 지금 인트라넷(또는 앞 해 예전 목록)에 있는 번호: 그쪽이 맞음
+            if is_old:   # 지금 인트라넷(또는 앞 해 예전 목록)에 있는 번호: 그쪽이 맞음 — 빠진 쪽은 알린다
+                if dropped is not None:
+                    dropped.append(_dropped(p, key, "번호 [%s]가 %s '%s'에도 쓰임" % (
+                        key, "예전 인트라넷 다른 프로젝트" if out[key]["old"] else "지금 인트라넷", out[key]["name"])))
+                continue
             out[key]["dup"] = True
             continue
         out[key] = {"key": key, "old": is_old, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),

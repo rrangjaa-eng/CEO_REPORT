@@ -3889,8 +3889,11 @@ def _profit_rows(X, R):
             bcost = 0
         lines = (c.get("wehago_lines") or 0) + (p.get("cost_lines") or 0)
         linked_prior = False
-        if P.get("state") == PRIOR_STATE:   # 작년 프로젝트: '참고' 줄을 옛 번호로 모은 합을 더함 (사용자 2026-11-16)
-            got = (X.get("prior_link") or {}).get(k) or {}
+        got = (X.get("prior_link") or {}).get(k) or {}
+        # 작년 프로젝트: '참고' 줄을 옛 번호로 모은 합을 더함 (사용자 2026-11-16). 상태 칸이 '완료(예전 인트라넷)'가 아니어도
+        # 옛 번호로 이은 작년 줄이 있으면 더한다 (11/17 점검: 상태가 다른 작년 프로젝트 13개가 장부 0·'행사 전'으로 보였음)
+        is_prior = P.get("state") == PRIOR_STATE or bool(got)
+        if is_prior:
             pc, pr = got.get("원가"), got.get("매출")
             if pc or pr:
                 linked_prior = True
@@ -3902,7 +3905,7 @@ def _profit_rows(X, R):
         ev = _event_date(P.get("event_date"))
         r = {"key": k, "name": P.get("name") or p.get("name") or c.get("name") or "", "approval": P.get("approval") or "",
              "event": ev, "irev": irev, "ib": ib, "brev": brev, "bcost": bcost, "parts": OrderedDict(), "known": True,
-             "prior": P.get("state") == PRIOR_STATE, "linked_prior": linked_prior}
+             "prior": is_prior, "linked_prior": linked_prior}
         if irev is not None and ib is not None:
             r["iprofit"] = irev - ib
         else:
