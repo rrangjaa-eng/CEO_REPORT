@@ -125,6 +125,16 @@ async function saveJournal(msg) {
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg) return;
+  if (msg.type === "programTrigger") {   // 프로그램이 연 받기 주소가 화면에 열림 (탭 알림을 놓친 때)
+    const tab = sender.tab;
+    if (tab && isTrigger(tab.url) && msg.fresh) startFromProgram(tab.id);
+    else if (tab && !handledTabs.has(tab.id)) {
+      const why = "받기 주소가 새 탭이 아닌 곳에서 열려 받지 않음 — 대표보고 프로그램의 '위하고에서 받기'를 다시 누르세요";
+      setStatus({error: why, badge: "!"});
+      writeMark("끝", 1, why);
+    }
+    return;
+  }
   if (msg.type === "captured") {
     if (!(pending && sender.tab && pending.tabId === sender.tab.id)) return;   // 사용자가 화면에서 직접 [조회]한 것은 저장하지 않음
     saveJournal(msg).then((r) => {
@@ -570,7 +580,8 @@ async function collectBooks() {
 
 // 대표보고 프로그램 '위하고에서 받기' 단추 (사용자 2026-11-17 결정 카드 A): 프로그램이 크롬으로 아래 주소를 열면
 // 그 탭을 바로 닫고 '모두 받기'를 시작한다. 받기는 사용자가 프로그램 단추를 눌렀을 때만 (단추 위치만 팝업 → 프로그램).
-// 웹 페이지가 연 탭(openerTabId 있음)이나 이미 있던 탭이 이 주소로 바뀐 것은 무시한다. 위하고에서는 지금처럼 읽기만 한다.
+// 이미 있던 탭이 이 주소로 바뀐 것은 무시한다(새로 연 탭만). 위하고에서는 지금처럼 읽기만 한다.
+// 11/17 PC 고침: 크롬은 명령줄로 연 탭에도 '연 탭'(openerTabId)을 붙일 수 있어 그 조건은 뺐다.
 const TRIGGER = "https://smarta.wehago.com/ceo-report-collect";
 const TRIGGER_FRESH_MS = 15000;
 const startedAt = Date.now();
@@ -605,14 +616,13 @@ async function startFromProgram(tabId) {
 }
 
 function fromProgram(tab) {
-  if (!tab || tab.openerTabId !== undefined) return false;
+  if (!tab) return false;
   const t = freshTabs.get(tab.id);
   // 크롬이 꺼져 있다가 프로그램이 켠 때는 탭 생김 알림을 놓칠 수 있어, 확장이 막 깨어난 뒤 잠깐은 그것도 받는다
   return (t !== undefined && Date.now() - t < TRIGGER_FRESH_MS) || Date.now() - startedAt < TRIGGER_FRESH_MS;
 }
 
 chrome.tabs.onCreated.addListener((tab) => {
-  if (tab.openerTabId !== undefined) return;
   freshTabs.set(tab.id, Date.now());
   for (const [id, t] of freshTabs) if (Date.now() - t > TRIGGER_FRESH_MS) freshTabs.delete(id);
   if (isTrigger(tab.pendingUrl || tab.url) && fromProgram(tab)) startFromProgram(tab.id);

@@ -23,7 +23,11 @@ vm.runInContext("collectAll = async (m) => { __hit(m); return {parts: {}}; }", O
 const T = "https://smarta.wehago.com/ceo-report-collect";
 const fire = (name, ...a) => ev[name].listeners.forEach((f) => f(...a));
 (async () => {
-  if (scenario === "opener") fire("onCreated", {id: 5, openerTabId: 3, pendingUrl: T});
+  if (scenario === "content" || scenario === "content_opener" || scenario === "content_old") {   // 탭 알림 없이 쪽의 스크립트만 알림
+    vm.runInContext("const __n = Date.now; Date.now = () => __n() + 60000", ctx);
+    const tab = {id: 9, url: T}; if (scenario === "content_opener") tab.openerTabId = 2;
+    fire("onMessage", {type: "programTrigger", fresh: scenario !== "content_old"}, {tab}, () => {});
+  } else if (scenario === "opener") fire("onCreated", {id: 5, openerTabId: 3, pendingUrl: T});
   else if (scenario === "existing") {   // 확장이 깨어난 지 한참 뒤, 예전부터 있던 탭이 그 주소로 바뀜
     vm.runInContext("Date.now = () => startedAt + 60000", ctx);
     fire("onUpdated", 8, {url: T}, {id: 8, url: T});

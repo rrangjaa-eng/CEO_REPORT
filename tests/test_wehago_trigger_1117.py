@@ -107,14 +107,32 @@ class TestExtensionTrigger(unittest.TestCase):
     def test_program_tab_works_long_after_extension_woke(self):
         self.assertEqual(self.run_sim("late")["collectAll"], 1)
 
+    def test_page_script_starts_when_tab_events_missed(self):
+        """11/17 PC: 404 쪽이 그대로 남음 → 쪽에 뜬 스크립트가 알려도 받는다."""
+        r = self.run_sim("content")
+        self.assertEqual((r["collectAll"], r["removed"]), (1, [9]))
+
+    def test_page_script_old_history_refused_with_reason(self):
+        r = self.run_sim("content_old")
+        self.assertEqual((r["collectAll"], r["removed"]), (0, []))
+        self.assertIn("받지 않음", r["marks"][-1]["오류"])
+        self.assertEqual(self.run_sim("content_opener")["collectAll"], 1)
+
+    def test_bridge_tells_background(self):
+        with open(os.path.join(ROOT, "chrome_extension", "bridge.js"), encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn('"/ceo-report-collect"', js)
+        self.assertIn('type: "programTrigger"', js)
+
     def test_second_press_while_busy_only_closes_tab(self):
         r = self.run_sim("double")
         self.assertEqual(r["collectAll"], 1)
         self.assertEqual(sorted(r["removed"]), [5, 6])
 
-    def test_page_opened_tab_ignored(self):
+    def test_new_tab_with_opener_still_works(self):
+        """11/17 PC: 크롬이 명령줄로 연 탭에도 openerTabId 를 붙일 수 있어 그것으로 막지 않는다."""
         r = self.run_sim("opener")
-        self.assertEqual((r["collectAll"], r["removed"]), (0, []))
+        self.assertEqual((r["collectAll"], r["removed"]), (1, [5]))
 
     def test_existing_tab_navigating_ignored(self):
         r = self.run_sim("existing")
