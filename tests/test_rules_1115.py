@@ -1376,7 +1376,10 @@ class TestProjectProfitOneBasis(unittest.TestCase):
         self.assertLess(a["remain_all"], 0)          # 장부 전 요청까지 넣으면 예산 초과
         self.assertGreater(a["remain"], 0)           # 자금 일정의 남은 예산(장부 전 요청 뺀 것)은 그대로
         self.assertIn("A사 연례 컨퍼런스", render._over_line(self.R))
-        self.assertTrue(any("P26201" in str(r) and "등록 지출(장부 전 지급요청 포함)" in str(r) for r in self.R["risks"]))
+        # 사용자 2026-11-17: 경영관리 알림은 120% 넘는 것만 — 예시 A사(약 113%)는 위험 분석에 없음 (대표 '예산 초과' 줄은 그대로)
+        a_pct = a["committed"] * 100.0 / a["budget"]
+        self.assertLess(a_pct, 120)
+        self.assertFalse(any("P26201" in str(r) and "등록 지출(장부 전 지급요청 포함)" in str(r) for r in self.R["risks"]))
 
 
 

@@ -269,7 +269,10 @@ def _projects(projects, req_all):
                      "requested_unknown": unknown, "remaining": remaining, "state": state})
     keys = set(count)
     unlinked = _agg([r for r in known if r["code"] not in keys])
-    unrequested = sorted((r for r in rows if r["state"] == "" and r["remaining"] > 0),
+    # 사용자 2026-11-17: 대표 승인까지 끝난(회색) 프로젝트는 완료 — 남은 실행가는 '미요청'으로 보이지 않는다
+    from .linking import approval_stage
+    done = set(k for k, p in keyed if approval_stage(p) == "대표이사")
+    unrequested = sorted((r for r in rows if r["state"] == "" and r["remaining"] > 0 and r["code"] not in done),
                          key=lambda r: -r["remaining"])
     over = sum(1 for r in rows if r["state"] == "" and r["remaining"] <= 0)
     return rows, unrequested, unlinked, over

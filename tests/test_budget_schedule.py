@@ -144,8 +144,8 @@ class TestTeamBudget(unittest.TestCase):
         t1 = self.team("기획1팀")   # P26201 210,000,000 · P26204 예산 미지정 · P26205 31,500,000 · P26208 14,000,000
         self.assertEqual((t1["n"], t1["budget"], t1["no_budget"]), (4, 255500000, 1))
         self.assertEqual(t1["expected"], 238200000 + 18000000 + 31000000 + 350000)
-        # 잔여: P26201 −28,200,000 + P26205 500,000 + P26208 13,650,000 (예산 지정분만)
-        self.assertEqual((t1["remain"], t1["remain_unknown"]), (-14050000, 0))
+        # 잔여: P26201 −28,200,000 + P26205 0 (끝남 — 사용자 2026-11-17 남은 예산 지움, 원래 500,000) + P26208 13,650,000
+        self.assertEqual((t1["remain"], t1["remain_unknown"]), (-14550000, 0))
         self.assertEqual(t1["planned_pay"], 15015000)   # 진행 중 남은 예산 지급 예정(부가세 포함): P26208
 
     def test_unknown_remain_is_counted_not_zero(self):

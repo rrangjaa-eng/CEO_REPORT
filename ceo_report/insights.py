@@ -290,11 +290,11 @@ def alerts(R):
         b = p.get("budget")
         used = p.get("committed") if "committed" in p else p.get("paid_total")
         name = "[%s] %s" % (p.get("id"), p.get("name"))
-        if b and used is not None and used > b:
+        # 사용자 2026-11-17: 예산 대비 실행가가 120%를 넘는 것만 알림 (예전: 100% 넘으면 높음, 80% 넘으면 주의)
+        from .calc import OVER_ALERT_PCT
+        if b and used is not None and used * 100.0 > OVER_ALERT_PCT * b:
             out.append(("높음", "%s 쓴 돈·요청·계획 %s원이 추정 예산 %s원을 넘음 (%.0f%%, %s원 초과)" % (
                 name, "{:,}".format(used), "{:,}".format(b), 100.0 * used / b, "{:,}".format(used - b))))
-        elif b and used is not None and used >= 0.8 * b:
-            out.append(("주의", "%s 쓴 돈·요청·계획이 추정 예산의 %.0f%%" % (name, 100.0 * used / b)))
         now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if now is not None and now < 0:
             out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-now))))

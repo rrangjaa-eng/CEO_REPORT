@@ -206,3 +206,31 @@ class TestMonthlyMgmtHasNewParts(unittest.TestCase):
             ceo = open(os.path.join(out, "2026-10-31_월간_대표보고.html"), encoding="utf-8").read()
             for k in ("손익분기", "고객사별 이익", "당분간 안 쓸 돈", "id='trust'"):
                 self.assertNotIn(k, ceo)
+
+
+class TestUserRules1117Night(unittest.TestCase):
+    """사용자 2026-11-17 밤: 대표 승인 끝난(회색) 프로젝트 남은 예산 지움 · 예산 대비 실행가 120% 넘는 것만 경영관리에 알림."""
+    @classmethod
+    def setUpClass(cls):
+        from ceo_report import calc, data
+        cls.calc = calc
+        cls.R = calc.compute(data.load(os.path.join(os.path.dirname(HERE), "입력양식", "샘플")), "weekly", D(2026, 11, 2))
+
+    def test_closed_remain_cleared(self):
+        for P in self.R["s3"]["projects"]:
+            if P["closed"]:
+                self.assertTrue(P["remain"] is None or P["remain"] <= 0, P["id"])
+                self.assertIsNone(P["remain_cash"])
+        self.assertTrue(any(P.get("remain_cleared") for P in self.R["s3"]["projects"]))
+
+    def test_risk_only_over_120(self):
+        R = self.R
+        P = [p for p in R["s3"]["projects"] if p["id"] == "P26201"][0]
+        keep = P["budget"]
+        try:
+            P["budget"] = int(P["committed"] / 1.15)
+            self.assertFalse(any("P26201" in r["fact"] and "예산" in r["fact"] for r in self.calc.risks(R)))
+            P["budget"] = int(P["committed"] / 1.25)
+            self.assertTrue(any("P26201" in r["fact"] and "예산" in r["fact"] for r in self.calc.risks(R)))
+        finally:
+            P["budget"] = keep

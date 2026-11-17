@@ -76,6 +76,7 @@ def _event_date(text):
 
 BUDGET_VAT = 0.1      # 남은 예산은 공급가 기준이므로 지급(현금)은 부가세 10%를 더한다 (적게 보이지 않게)
 DONE_STATES = ("완료", "완료(예전 인트라넷)")
+OVER_ALERT_PCT = 120   # 사용자 2026-11-17: 예산 대비 실행가 120% 넘는 것만 경영관리에 알림
 CEO_APPROVED = "대표이사"   # 프로젝트.csv 승인단계: 인트라넷에서 대표이사 승인까지 끝남 = 종결 (사용자 2026-11-11)
 
 
@@ -364,6 +365,13 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         # 예산에서 남은 돈·예산 초과 (1차 점검 E1·B5·B6, 2026-11-15): 장부 전 지급요청까지 넣은 등록 지출로 본다 — 대표 '예산 초과'
         # 줄·프로젝트 칸·위험표가 팀장 경보(T1)와 같은 기준 (예전엔 장부 전 요청을 빼 A사 113% 초과를 놓쳤음)
         P["remain_all"] = None if (b is None or P["committed"] is None) else b - P["committed"]
+        # 사용자 2026-11-17: 인트라넷에서 대표 승인까지 끝난(회색) 프로젝트는 완료 → 남은 예산은 지운다 (0). 예산 초과(음수)는 그대로 보임
+        P["remain_cleared"] = None
+        if P["closed"]:
+            if P["remain"] is not None and P["remain"] > 0:
+                P["remain_cleared"], P["remain"] = P["remain"], 0
+            if P["remain_all"] is not None and P["remain_all"] > 0:
+                P["remain_all"] = 0
         # 종료 시점 예상 원가·이익 = 지금 예상 이익(profit_now)과 같은 식: 진행 중은 추정 예산과 등록 지출 중 큰 쪽, 끝난 것은 등록 지출.
         # 예산이 없으면 등록 지출까지만 (예전엔 장부 전 요청·남은 예산을 안 봐 화면마다 4,000만~4,500만 달랐음)
         if P["committed"] is None:
@@ -1364,7 +1372,8 @@ def risks(R):
     ar_days = sn["위험_미수경과일"]
     ui_days = sn["위험_미발행경과일"]
     data_days = sn["위험_자료경과일"]
-    over_pct = sn["위험_예산초과율"]
+    # 사용자 2026-11-17: 예산 대비 실행가(등록 지출)가 120%를 넘는 것만 경영관리에 알림 (설정이 더 높으면 설정값)
+    over_pct = max(sn["위험_예산초과율"] or 0, OVER_ALERT_PCT)
     s2 = R["s2"]
     for mode, label in (("firm", "확정·정기 지출"), ("all", "확정+추정")):
         low, low_d = s2["min"][mode]
