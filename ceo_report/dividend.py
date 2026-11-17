@@ -363,6 +363,7 @@ QUESTIONS = [
 # 답에 따라 꼭 넣어야 하는 칸: (키, 그 값일 때) -> 함께 넣을 키
 NEEDS_IF = {("큰지출", "있음"): ("큰지출금액", "큰지출시기"), ("퇴직금계획", "있음"): ("퇴직금유보",)}
 LABEL = dict((k, q) for k, _, q, _, _, _, _ in QUESTIONS)
+GROUP_OF = dict((k, g) for k, g, _, _, _, _, _ in QUESTIONS)
 
 
 def read_settings(input_dir):
@@ -377,17 +378,27 @@ def read_settings(input_dir):
     return out
 
 
-def missing_required(st):
-    """꼭 넣을 값 중 빈 것 -> [질문]. 답에 따라 함께 넣어야 하는 칸(큰 지출 금액·시기 등)도 본다."""
-    out = [q.strip() for k, _, q, _, _, dflt, need in QUESTIONS if need and not st.get(k) and not dflt]
+TAX_GROUP = "법인세 감면"   # 사용자 2026-11-17: 감면·공제 고르기는 '배당 판단 질문' 창에서 빼 목록에 따로 둔다
+
+
+def _in_group(k, group=None, exclude=None):
+    g = GROUP_OF.get(k)
+    return (group is None or g == group) and (exclude is None or g != exclude)
+
+
+def missing_required(st, group=None, exclude=None):
+    """꼭 넣을 값 중 빈 것 -> [질문]. 답에 따라 함께 넣어야 하는 칸(큰 지출 금액·시기 등)도 본다.
+    group/exclude: 그 묶음만(또는 그 묶음 빼고) 본다 — 창마다 자기 칸만 막는다."""
+    out = [q.strip() for k, _, q, _, _, dflt, need in QUESTIONS if need and not st.get(k) and not dflt and _in_group(k, group, exclude)]
     for (k, v), more in NEEDS_IF.items():
-        if st.get(k) == v:
+        if st.get(k) == v and _in_group(k, group, exclude):
             out += ["%s → %s" % (LABEL[k].strip(), LABEL[m].strip().replace("있으면 ", "")) for m in more if not st.get(m)]
     return out
 
 
-def save_settings(input_dir, values, strict=False):
-    """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict."""
+def save_settings(input_dir, values, strict=False, group=None, exclude=None):
+    """values = {키: 값}. 빈 값은 지운다. strict=True(창에서 저장)면 꼭 넣을 값이 비었을 때 저장하지 않는다. -> 저장된 값 dict.
+    group/exclude 는 strict 로 볼 묶음 (감면·공제 창은 그 묶음만, 배당 질문 창은 그 묶음 빼고)."""
     from .util import guard_save
     guard_save(os.path.join(input_dir, SET_FILE))   # 못 읽은 파일을 새 줄만으로 덮지 않음 (C5)
     cur = read_settings(input_dir)
@@ -411,7 +422,7 @@ def save_settings(input_dir, values, strict=False):
             raise ValueError("%s: 날짜 형식 YYYY-MM-DD" % LABEL[k].strip())
         cur[k] = v
     if strict:
-        miss = missing_required(cur)
+        miss = missing_required(cur, group, exclude)
         if miss:
             raise ValueError("꼭 넣을 값 %d개가 비어 있어 저장하지 않았습니다: %s" % (len(miss), " / ".join(miss)))
     if cur.get("큰지출") == "있음" and not cur.get("큰지출금액"):

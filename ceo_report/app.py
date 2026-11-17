@@ -944,9 +944,10 @@ def question_text(input_dir):
         CL = dividend.checklist(input_dir)
     except Exception:
         return ""
-    miss = [k for k, q, v, need, u in CL if need and u is None]
-    done = sum(1 for k, q, v, need, u in CL if v and k != "주주")
-    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당·감면 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
+    tax = set(k for k, g in dividend.GROUP_OF.items() if g == dividend.TAX_GROUP)   # 감면·공제는 창 '법인세 감면·공제'에서 (2026-11-17)
+    miss = [k for k, q, v, need, u in CL if need and u is None and k not in tax]
+    done = sum(1 for k, q, v, need, u in CL if v and k != "주주" and k not in tax)
+    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
 
 
 def holder_settings(input_dir):
@@ -957,10 +958,38 @@ def holder_settings(input_dir):
         return {}
 
 
-def save_holder_settings(input_dir, values):
-    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12)."""
+def save_holder_settings(input_dir, values, group=None, exclude=None):
+    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12). group/exclude = 그 창이 맡은 묶음만 막음."""
     from . import dividend
-    return dividend.save_settings(input_dir, values, strict=True)
+    return dividend.save_settings(input_dir, values, strict=True, group=group, exclude=exclude)
+
+
+def taxbreak_text(input_dir):
+    """창 '법인세 감면·공제' 상태 (사용자 2026-11-17: 공제·감면 '받음' 체크를 목록에 따로) -> 여러 줄 글."""
+    from . import dividend, taxbreak
+    try:
+        a = dividend.read_settings(input_dir)
+        rows = taxbreak.pick_states(a)
+        miss = dividend.missing_required(a, group=dividend.TAX_GROUP)
+    except Exception:
+        return ""
+    on = [n for n, ok, _ in rows if ok]
+    off = [n for n, ok, _ in rows if not ok]
+    out = ["법인세 예상에 넣는 것 %d개: %s" % (len(on), " · ".join(on) if on else "없음"),
+           "안 넣는 것 %d개: %s" % (len(off), " · ".join(off) if off else "없음")]
+    if miss:
+        out.append("★ 꼭 넣을 값 %d개 비어 있음 — 감면 후보를 판단하지 못합니다" % len(miss))
+    return "\n".join(out)
+
+
+def taxbreak_count(input_dir):
+    """목록 옆 짧은 글: '넣는 것 n개'."""
+    from . import dividend, taxbreak
+    try:
+        rows = taxbreak.pick_states(dividend.read_settings(input_dir))
+    except Exception:
+        return ""
+    return "넣는 것 %d개" % sum(1 for _, ok, _ in rows if ok)
 
 
 def holder_text(input_dir):

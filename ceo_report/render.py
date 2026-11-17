@@ -450,7 +450,8 @@ def render(R, mode):
                  "<tr class='sg'><td></td><td></td></tr></table>")
     h.append("<table class='dinfo'><tr><th>보고 기준일</th><td>%s</td><th>집계 기간</th><td>%s ~ %s</td></tr>"
              "<tr><th>작성</th><td>%s</td><th>금액 단위</th><td>원</td></tr></table>"
-             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")))
+             % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+                + ("" if mode == "ceo" else _ins(" · 프로그램 판 %s" % esc(_build())))))   # 사용자 2026-11-17: 예전 exe 로 만든 보고인지 알 수 있게
     from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-12: 자금계획서 없이 계산한 보고가 다시 나오면 안 됨)
     h.append("<div class='meta dsrc'>%s%s</div>" % (esc(
         "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])),
@@ -1920,7 +1921,8 @@ def _nonop_rows(N, before, after):
         rows.append(("− 대손충당금 (예상%s)" % N.get("bad_note", ""), N["bad"], "mut"))
     rows.append(("세전 이익", N["pretax"], "tot"))
     if "tax" in N:   # 누적만: 법인세 예상(지방소득세 포함)을 빼 당기순이익 예상 (사용자 2026-11-04)
-        rows.append(("− 법인세·지방소득세 (지금까지 이익 기준 예상)", N["tax"], "mut"))
+        # 사용자 2026-11-17: 자금 일정의 3/31 출금(마감 달까지·중간예납 뺀 값)과 헷갈림 → 무엇인지 줄 이름에 적음
+        rows.append(("− 법인세·지방소득세 (지금까지 이익 기준 올해 세금 전체 예상 · 이미 낸 중간예납 포함)", N["tax"], "mut"))
         rows.append(("당기순이익 (예상)", N["net_income"], "tot"))
     return "".join("<tr class='%s nonop'><td colspan='%d'>%s</td><td>%s</td>%s</tr>"
                    % (c, before + 1, esc(label), W(v), "<td colspan='%d'></td>" % after if after else "") for label, v, c in rows)
@@ -2664,6 +2666,11 @@ def _ins_css():
 
 
 INS_A, INS_B = "<!--ins-->", "<!--/ins-->"   # 자동 분석 조각 표시: 예전과 비교하는 시험이 빼고 본다 (areas.strip_ui)
+
+
+def _build():
+    from .version import build
+    return build()
 
 
 def _ins(x):

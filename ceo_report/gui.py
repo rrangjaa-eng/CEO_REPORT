@@ -35,7 +35,7 @@ AUTO_CHECK_MS = 30000   # 새 자료 확인 간격 (창이 켜져 있을 때만)
 AUTO_WAIT_MS = 10000    # 받는 중·기다리는 중엔 더 자주 본다 (편의성 27)
 RECOUNT_MS = 800        # 기준일을 고친 뒤 이만큼 조용하면 다시 셈 (편의성 5)
 FOCUS_SEC = 20          # 창으로 돌아올 때 다시 세는 최소 간격
-RARE = ("주주", "배당 판단 질문", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기")   # 운영-05: 1년에 몇 번 쓰는 것
+RARE = ("주주", "배당 판단 질문", "법인세 감면·공제", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기")   # 사용자 2026-11-17: 감면·공제를 따로   # 운영-05: 1년에 몇 번 쓰는 것
 
 # 색 (목업과 같게)
 C = {"bg": "#f5f3ef", "card": "#ffffff", "line": "#e2ded6", "text": "#141b26", "sub": "#5b6475",
@@ -961,6 +961,15 @@ class Window(object):
         r = self._row(p, (6, 0))
         self._btn(r, "배당 판단 질문 열기", self.open_questions)
 
+        # 법인세 감면·공제 (사용자 2026-11-17: '받음' 체크가 배당 질문 창 안에 숨어 찾기 어려웠음 → 목록에 따로)
+        p = panel("법인세 감면·공제")
+        self.tb_now = tk.StringVar(value=app.taxbreak_text(self.paths.input))
+        self._hint(p, "", self.tb_now, wrap=560)
+        self._hint(p, "'받음'으로 고른 감면·공제만 법인세 예상에 들어갑니다. 고른 뒤 보고를 다시 만드세요. "
+                      "후보마다 금액·조건·신청 방법은 월간 경영관리 보고 부록 '감면·공제 검토'에 있습니다", wrap=560)
+        r = self._row(p, (6, 0))
+        self._btn(r, "감면·공제 고르기 열기", self.open_taxbreak)
+
         # 세법·노동법 기준 확인 (사용자 2026-11-12: 해마다 개정부터 확인, 법령정보센터에서 조문 받아 비교)
         p = panel("세법 기준 확인")
         self.law_now = tk.StringVar(value=app.law_text(self.paths.input, self.today.year))
@@ -1051,6 +1060,8 @@ class Window(object):
             if name == "배당 판단 질문":
                 t = app.question_text(inp)
                 return "넣을 값 남음" if "비어" in t else "넣음"
+            if name == "법인세 감면·공제":
+                return app.taxbreak_count(inp)
             if name == "세법 기준 확인":
                 t = app.law_text(inp, self.today.year)
                 return "미확인 있음" if "미확인" in t else "확인함"
@@ -2536,22 +2547,36 @@ class Window(object):
             top.destroy()
         self._go(r, "저장", save).pack(side="right")
         ttk.Button(r, text="닫기", command=top.destroy).pack(side="right", padx=6)
-    def open_questions(self):
-        """배당 판단 전 질문 창: ★ 꼭 넣을 값, 나머지는 비우면 기본값·장부 값을 씀."""
+    def open_taxbreak(self):
+        """법인세 감면·공제 고르기 창 (사용자 2026-11-17): 배당 질문 창의 '법인세 감면' 묶음만 따로 연다."""
+        from . import dividend
+        self.open_questions(group=dividend.TAX_GROUP)
+
+    def open_questions(self, group=None):
+        """배당 판단 전 질문 창: ★ 꼭 넣을 값, 나머지는 비우면 기본값·장부 값을 씀.
+        group=법인세 감면 이면 그 묶음만 (창 '법인세 감면·공제'), 아니면 그 묶음을 뺀 배당 질문만."""
         from . import dividend
         if getattr(self, "q_win", None) is not None and self.q_win.winfo_exists():
-            self.q_win.lift()
-            return
+            if getattr(self, "q_group", None) == group:
+                self.q_win.lift()
+                return
+            self.q_win.destroy()
+        self.q_group = group
+        self.q_exclude = None if group else dividend.TAX_GROUP
         w = self.q_win = tk.Toplevel(self.root)
-        w.title("배당 판단 질문")
+        w.title("법인세 감면·공제 고르기" if group else "배당 판단 질문")
         w.transient(self.root)
         body = ttk.Frame(w, style="Card.TFrame", padding=(14, 10, 14, 10))
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="★ 는 꼭 넣어야 판단합니다. 나머지는 비우면 [ ] 안 기본값이나 장부 값을 씁니다.",
-                  style="S.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        ttk.Label(body, text=("감면·공제마다 '받음'을 고르면 법인세 예상에 넣고, '안 받음'이면 뺍니다. '기본'은 위의 기본 규칙을 따릅니다 "
+                              "(작년 신고서의 특별감면·넘어온 공제는 기본이 '받음'). ★ 는 꼭 넣어야 감면 후보를 판단합니다."
+                              if group else "★ 는 꼭 넣어야 판단합니다. 나머지는 비우면 [ ] 안 기본값이나 장부 값을 씁니다."),
+                  style="S.TLabel", wraplength=640, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         cur = app.holder_settings(self.paths.input)
         self.q_vars, self.q_labs, row, group = {}, {}, 1, None
         for k, g, q, kind, opts, dflt, need in dividend.QUESTIONS:
+            if (self.q_group and g != self.q_group) or (self.q_exclude and g == self.q_exclude):
+                continue
             if g != group:
                 group = g
                 ttk.Label(body, text=g, style="Sec.TLabel").grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 2))
@@ -2681,10 +2706,10 @@ class Window(object):
         """꼭 넣을 값 중 빈 칸은 빨간 글씨 (답에 따라 필요한 칸 포함)."""
         from . import dividend
         st = dict((k, v.get().strip()) for k, v in self.q_vars.items())
-        need = set(k for k, _, _, _, _, dflt, n in dividend.QUESTIONS if n and not dflt)
+        need = set(k for k, _, _, _, _, dflt, n in dividend.QUESTIONS if n and not dflt and k in self.q_vars)
         for (k, val), more in dividend.NEEDS_IF.items():
             if st.get(k) == val:
-                need.update(more)
+                need.update(m for m in more if m in self.q_vars)
         for k, lab in self.q_labs.items():
             lab.configure(style="Need.TLabel" if k in need and not st.get(k) else "TLabel")
         left = sum(1 for k in need if not st.get(k))
@@ -2693,15 +2718,21 @@ class Window(object):
 
     def save_questions(self):
         try:
-            cur = app.save_holder_settings(self.paths.input, dict((k, v.get()) for k, v in self.q_vars.items()))
+            cur = app.save_holder_settings(self.paths.input, dict((k, v.get()) for k, v in self.q_vars.items()),
+                                           group=getattr(self, "q_group", None), exclude=getattr(self, "q_exclude", None))
         except (ValueError, OSError) as e:
             msg = "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__))
             self.q_msg.set(msg)
             self.say(msg)
             return
         self.q_now.set(app.question_text(self.paths.input))
-        self.q_msg.set("저장됨 — " + self.q_now.get())
-        self.say("배당 판단 질문 저장 (%d개) — 다음 월간 보고부터 반영" % len(cur))
+        self.tb_now.set(app.taxbreak_text(self.paths.input))
+        if getattr(self, "q_group", None):
+            self.q_msg.set("저장됨 — " + self.tb_now.get().split("\n")[0])
+            self.say("법인세 감면·공제 저장 — 보고를 다시 만들면 법인세 예상에 반영 (%s)" % self.tb_now.get().split("\n")[0])
+        else:
+            self.q_msg.set("저장됨 — " + self.q_now.get())
+            self.say("배당 판단 질문 저장 (%d개) — 다음 월간 보고부터 반영" % len(cur))
         self.refresh_rare()
         self._flash(self.f_sh, "질문 저장됨", lambda: "")
 
