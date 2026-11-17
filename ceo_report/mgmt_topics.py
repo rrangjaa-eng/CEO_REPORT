@@ -492,7 +492,7 @@ font-weight:700;font-size:13.5px;break-after:avoid;margin-bottom:6px}
 .tb{margin:16px 0 20px}
 .tb-h{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid #17202b;padding-bottom:5px;margin-bottom:2px;break-after:avoid}
 .tb-h small{color:#556070;font-size:11px}.tb-h b{font-size:14.5px}.tb-h a{margin-left:auto;font-size:11px;color:#1e4b91}
-.tb h3{margin:6px 0 4px}
+.tb h3{margin:6px 0 4px}.tb table td:first-child{white-space:nowrap}
 .tb table thead th{background:#f4f5f7;color:#3a4452}
 .tb table tbody tr:nth-child(even) td{background:#fafbfc}
 tr.wsub td{background:#eef2f8!important;font-weight:700;border-top:1px solid #c9d1dc;border-bottom:1px solid #c9d1dc}
