@@ -482,14 +482,43 @@ class Window(object):
             chip.nav.configure(text=text)
 
     def _amount(self, entry, var):
-        """금액 칸: 치는 동안 쉼표 (사용자 2026-11-05 개선 2)."""
+        """금액 칸: 치는 동안 쉼표 (사용자 2026-11-05 개선 2). 편의성 45: 가운데 숫자를 고쳐도 커서가 그 자리에 남는다."""
         def fix(event=None):
             v = var.get()
             m = winstate.money(v)
             if m != v:
+                try:
+                    at = entry.index("insert")
+                except tk.TclError:
+                    at = len(v)
                 var.set(m)
-                entry.icursor("end")
+                entry.icursor(winstate.caret_after_money(v, m, at))
         entry.bind("<KeyRelease>", fix)
+
+    def _dialog(self, top, on_close=None):
+        """보조 창 공통 (편의성 45): 첫 입력 칸에 커서, Esc 로 닫기 (on_close 가 있으면 그것으로)."""
+        close = on_close or top.destroy
+        top.bind("<Escape>", lambda e: close())
+        if on_close:
+            top.protocol("WM_DELETE_WINDOW", on_close)
+
+        def first(x):
+            for c in x.winfo_children():
+                if isinstance(c, (ttk.Entry, tk.Entry, ttk.Combobox, ttk.Spinbox)) and str(c.cget("state")) not in ("disabled", "readonly"):
+                    return c
+                f = first(c)
+                if f is not None:
+                    return f
+            return None
+
+        def focus():
+            try:
+                if top.winfo_exists():
+                    f = first(top)
+                    (f or top).focus_set()
+            except tk.TclError:
+                pass
+        top.after_idle(focus)
 
     def _enter(self, widgets, cmd):
         """Enter 로 넣기·저장 (사용자 2026-11-05 개선 7).
@@ -510,6 +539,14 @@ class Window(object):
         def back():
             card.sub.configure(text=keep() if keep else "", foreground=C["sub"])
         self.root.after(4000, back)
+
+    def _fail(self, card, text):
+        """저장·지우기 실패를 그 카드 안에도 빨강으로 (편의성 34: 예전엔 오른쪽 진행 글에만 나옴)."""
+        self.say(text)
+        try:
+            card.sub.configure(text="✗ " + text, foreground=C["red"])
+        except (AttributeError, tk.TclError):
+            pass
 
     # ───────────── 탭 1: 이번 주 할 일 ─────────────
     def _step(self, parent, col, num, title):
@@ -634,6 +671,22 @@ class Window(object):
 
         # 3 보고 만들기
         s3 = self.s3 = self._step(tab, 2, 3, STEPS[2])
+        # 주간 출금 목록: 건별 / 모두 합침 / 고른 곳만 합침 (사용자 2026-11-05 · 편의성 9: 셋을 따로 고름 · 편의성 39: 보고 단추 위로)
+        c = self._box(s3, "주간 출금 목록")
+        g0, o0 = app.load_merge(self.paths)
+        self.group = tk.StringVar(value=g0)
+        self.only = tk.StringVar(value=o0)
+        r = self._row(c, (0, 0))
+        self.merge_radios = []
+        for text, value in (("건별", "건별"), ("모두 합침", "거래처별"), ("고른 곳만 합침", "고른곳만")):
+            rb = ttk.Radiobutton(r, text=text, value=value, variable=self.group, command=self.merge_changed)
+            rb.pack(side="left", padx=(0, 8))
+            self.merge_radios.append(rb)
+        r = self._row(c)
+        self.merge_btn = self._btn(r, "합칠 거래처 고르기…", self.pick_merge)
+        self.merge_info = tk.StringVar(value="")
+        ttk.Label(r, textvariable=self.merge_info, style="S.TLabel").pack(side="left")
+
         c = self._box(s3)
         r = self._row(c, (0, 0))
         self._main(r, "report", "주간 보고", lambda: self.report("주간")).pack(side="left", padx=(0, 8))
@@ -662,22 +715,6 @@ class Window(object):
         self.buttons.append(b)
         ttk.Spinbox(r, from_=2025, to=2100, width=6, textvariable=self.year).pack(side="left", padx=(6, 2))
         ttk.Label(r, text="년 (결산 뒤 분개장 다시 받고 변환)", style="S.TLabel").pack(side="left")
-        # 주간 출금 목록: 건별 / 모두 합침 / 고른 곳만 합침 (사용자 2026-11-05 · 편의성 9: 셋을 따로 고름)
-        c = self._box(s3, "주간 출금 목록")
-        g0, o0 = app.load_merge(self.paths)
-        self.group = tk.StringVar(value=g0)
-        self.only = tk.StringVar(value=o0)
-        r = self._row(c, (0, 0))
-        self.merge_radios = []
-        for text, value in (("건별", "건별"), ("모두 합침", "거래처별"), ("고른 곳만 합침", "고른곳만")):
-            rb = ttk.Radiobutton(r, text=text, value=value, variable=self.group, command=self.merge_changed)
-            rb.pack(side="left", padx=(0, 8))
-            self.merge_radios.append(rb)
-        r = self._row(c)
-        self.merge_btn = self._btn(r, "합칠 거래처 고르기…", self.pick_merge)
-        self.merge_info = tk.StringVar(value="")
-        ttk.Label(r, textvariable=self.merge_info, style="S.TLabel").pack(side="left")
-
         # 4 보내기 — 만든 뒤 보낼 파일 (편의성 7): 이번 기준일의 주간·월간 대표, 팀장용, 경영관리를 상태와 함께
         s4 = self.s4 = self._step(tab, 3, 4, STEPS[3])
         c = self._box(s4, "보낼 파일", "이번 기준일")
@@ -1224,14 +1261,14 @@ class Window(object):
         asof = self.asof_date()
         for var, lab, empty in ((self.asof, self.asof_day, "넣으세요"),
                                 (self.payday, self.payday_day, ""),
-                                (self.pick, self.pick_day, "선택")):
+                                (self.pick, self.pick_day, "선택 사항")):   # 편의성 40: 고르는 칸처럼 읽히지 않게
             text, bad = winstate.day_label(var.get(), empty)
             if var is self.asof and not bad:   # 편의성 4: 직접 고친 날짜는 그대로 두되 오늘과 다르면 알린다
                 note = winstate.asof_note(var.get(), self.today)
                 text = text + (" · " + note if note else "")
             if var is self.payday and not var.get().strip() and asof:
                 d = winstate.next_friday(asof)
-                text = "비우면 %d/%d(금)" % (d.month, d.day)
+                text = "기본 %d/%d(금)" % (d.month, d.day)   # 편의성 40: 짧게 (잘리지 않게)
             if var is self.payday and not bad and asof and self._day(self.payday) and self._day(self.payday) <= asof:
                 text, bad = "기준일보다 뒤로", True
             lab.configure(text=text, style="Bad.TLabel" if bad else "Day.TLabel")
@@ -1338,6 +1375,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("날짜 고르기")
         top.transient(self.root)
+        self._dialog(top)
         top.resizable(False, False)
         cur = self._day(var) or self.asof_date() or self.today
         state = {"y": cur.year, "m": cur.month}
@@ -1420,7 +1458,8 @@ class Window(object):
             self.conv_info.set("마지막 변환 %s · 그 뒤 새 자료 없음" % short(S["convert"]))
             self._set_chip(self.s2.chip, "완료 " + short(S["convert"]), "ok")
         ig = runs.get("정합성")
-        self.integ_info.set(("마지막 %s %s" % (ig["at"][5:].replace("-", "/"), "끝" if ig["ok"] else "오류")) if ig else "")
+        # 편의성 41: 언제 누르는지·걸리는 시간을 단추 옆에
+        self.integ_info.set("숫자가 서로 안 맞아 보일 때 · 1~2분" + ((" · 마지막 %s %s" % (ig["at"][5:].replace("-", "/"), "끝" if ig["ok"] else "오류")) if ig else ""))
         # 3단계 (편의성 1): '완료'는 이번 기준일 대표 PDF 가 실제로 생겼을 때만. 막혔으면 빨강 '보고 만들지 않음 — 까닭'
         rep = S["report"]
         self.last_rep = rep
@@ -1569,6 +1608,9 @@ class Window(object):
     def _pump_one(self, kind, val):
         if kind == "line":
             val, detail = val if isinstance(val, tuple) else (val, False)
+            if self.busy and val.strip() and not val.startswith("────"):
+                t = val.strip().split("\n")[0]
+                self.busy_last = t if len(t) <= 48 else t[:47] + "…"
             self.log.configure(state="normal")
             if detail:
                 self.log.insert("end", val + "\n", ("detail",))
@@ -1624,12 +1666,26 @@ class Window(object):
         if busy:
             self.bar.pack(fill="x", before=self.open_row)
             self.bar.start(12)
+            # 편의성 47: 작업 중엔 걸린 시간과 지금 하는 일(마지막 진행 글)을 맨 위 줄에
+            self.busy_since, self.busy_base, self.busy_last = dt.datetime.now(), text, ""
+            if not getattr(self, "busy_ticking", False):
+                self.busy_ticking = True
+                self.root.after(1000, self._busy_tick)
         else:
             self.bar.stop()
             self.bar.pack_forget()
             self.merge_changed(save=False)
             if getattr(self, "close_when_done", False):   # 작업 중에 닫기를 눌렀던 창 (C6)
                 self.root.after(300, self.close)
+
+    def _busy_tick(self):
+        if not self.busy:
+            self.busy_ticking = False
+            return
+        sec = int((dt.datetime.now() - self.busy_since).total_seconds())
+        last = getattr(self, "busy_last", "")
+        self.status.set("%s · %d분 %02d초%s" % (self.busy_base, sec // 60, sec % 60, (" · 지금: " + last) if last else ""))
+        self.root.after(1000, self._busy_tick)
 
     # ───────────── 작업 ─────────────
     def report(self, kind):
@@ -1642,16 +1698,47 @@ class Window(object):
             S = getattr(self, "state", None) or {"convert": None, "new_since": []}
         if S["convert"] is None or S["new_since"]:
             what = ", ".join(S["new_since"]) if S["new_since"] else "변환한 자료 없음"
-            ans = messagebox.askyesnocancel(
-                "변환부터 할까요?", "마지막 변환 뒤 새 자료가 있습니다 (%s).\n\n예: 자료 변환 후 %s 보고\n아니오: 지금 자료로 %s 보고"
-                % (what, kind, kind), parent=self.root)
-            if ans is None:
+            # 편의성 38 (2026-11-17): 예/아니오/취소 대신 뜻이 보이는 단추 이름
+            ans = self.ask_choice("변환부터 할까요?", "마지막 변환 뒤 새 자료가 있습니다 (%s)." % what,
+                                  ("변환하고 %s 보고" % kind, "지금 자료로 %s 보고" % kind, "취소"))
+            if ans in (None, 2):
                 return
-            if ans:
+            if ans == 0:
                 self.then = kind
                 self.start("변환")
                 return
         self.start(kind)
+
+    def ask_choice(self, title, msg, options):
+        """단추 이름이 뜻을 말하는 작은 물음 창 -> 고른 번호 (Esc·창 닫기면 None). 편의성 38."""
+        top = tk.Toplevel(self.root)
+        top.title(title)
+        top.transient(self.root)
+        self._dialog(top)
+        top.resizable(False, False)
+        body = ttk.Frame(top, style="Card.TFrame", padding=(16, 12, 16, 12))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=msg, wraplength=420, justify="left").pack(anchor="w", pady=(0, 10))
+        row = ttk.Frame(body, style="Card.TFrame")
+        row.pack(anchor="e")
+        got = {"v": None}
+
+        def pick(i):
+            got["v"] = i
+            top.destroy()
+        for i, t in enumerate(options):
+            b = ttk.Button(row, text=t, command=lambda i=i: pick(i))
+            b.pack(side="left", padx=(0, 6))
+            if i == 0:
+                b.focus_set()
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.bind("<Return>", lambda e: pick(0))
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        self.root.wait_window(top)
+        return got["v"]
 
     def watch(self):
         """날이 바뀌었는지, 새 분개장·자금계획서가 들어왔는지 본다 (창이 켜져 있는 동안)."""
@@ -1721,7 +1808,8 @@ class Window(object):
         path = os.path.join(self.paths.output, live.FILE)
         # 1차 E11 (2026-11-15): 없을 때뿐 아니라, 마지막 변환보다 오래됐거나 '못 만듦' 안내면 새로 만든 뒤 연다.
         # 편의성 33 (2026-11-16): 창에서 넣은 지급·입금 예정·통장 잔액·카드 납부일이 그 뒤에 바뀌었을 때도
-        if winstate.live_stale(self.paths):
+        d = self.asof_date()
+        if winstate.live_stale(self.paths, d.isoformat() if d else None):
             app.build_live(self.paths, self.say, self.asof.get().strip())
         if os.path.exists(path):
             open_path(path)
@@ -1884,7 +1972,7 @@ class Window(object):
         try:
             day, amt = checklist.save_bank(self.paths.input, self.b_day.get(), self.b_amt.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_bank, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("통장 잔액 저장: %s %s원 — %s" % (day.isoformat(), "{:,}".format(amt), checklist.bank_line(self.paths.input, day)))
         self.b_amt.set("")
@@ -1951,6 +2039,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("합칠 거래처 고르기")
         top.transient(self.root)
+        self._dialog(top)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="%d/%d(%s) 출금 목록에서 2건 이상 나가는 거래처입니다. 체크한 곳만 한 줄로 합칩니다."
@@ -2017,6 +2106,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("근거자료 PDF")
         top.transient(self.root)
+        self._dialog(top)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
         kv = tk.StringVar(value=kind)
@@ -2032,6 +2122,9 @@ class Window(object):
             vars_.clear()
             name, rows = winstate.evidence_choices(self.paths.output, kv.get(), self.asof_date())
             shown["name"] = name
+            if "btn" in shown:   # 편의성 37: 고를 것이 없으면 단추를 흐리게
+                shown["btn"].configure(state="normal" if rows else "disabled")
+                ev_msg.set("")
             if not rows:
                 ttk.Label(body, text="%s 경영관리 보고가 없습니다. 먼저 %s 보고를 만드세요." % (kv.get(), kv.get())).pack(anchor="w")
                 return
@@ -2044,9 +2137,12 @@ class Window(object):
             ttk.Radiobutton(r, text=k, value=k, variable=kv, command=load).pack(side="left", padx=(0, 10))
         body.pack(fill="both", expand=True, pady=(8, 0))
 
+        ev_msg = tk.StringVar(value="")
+
         def make():
             nums = [n for v, n in vars_ if v.get()]
             if not nums:
+                ev_msg.set("근거를 하나 이상 체크하세요")   # 편의성 37: 눌러도 반응이 없던 것
                 return
             self.ev_nums = ", ".join(nums)
             # 2차 P4-15 (2026-11-15): 화면에 보여 준 보고(그 기준일)에서 뽑는다 — 예전엔 기준일 칸 날짜로 실행해 다른 날 보고를 찾다 멈췄음
@@ -2055,7 +2151,10 @@ class Window(object):
             self.start("근거" + kv.get())
         b = ttk.Frame(frm)
         b.pack(fill="x", pady=(10, 0))
-        self._go(b, "고른 근거로 PDF 만들기", make).pack(side="right")
+        shown["btn"] = self._go(b, "고른 근거로 PDF 만들기", make)
+        shown["btn"].pack(side="right")
+        ttk.Label(b, textvariable=ev_msg, style="Bad.TLabel").pack(side="left")
+        top.bind("<Escape>", lambda e: top.destroy())
         load()
 
     # ───────────── 수정 모드 (사용자 2026-11-04: 대표 보고를 손으로 고치기) ─────────────
@@ -2148,6 +2247,7 @@ class Window(object):
         w = self.sch_win = tk.Toplevel(self.root)
         w.title("장부에 없는 지급·입금 예정 — 목록")
         w.transient(self.root)
+        self._dialog(w)
         frm = ttk.Frame(w, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="고칠 줄을 고르면 아래 칸에 채워집니다. 칸을 고쳐 '고치기', 없앨 줄은 '지우기'. 보고를 다시 만들면 반영됩니다.",
@@ -2244,7 +2344,7 @@ class Window(object):
         try:
             rows = app.save_card(self.paths.input, self.c_co.get(), self.c_pay.get(), self.c_start.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_card, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.cards_now.set("저장된 값: " + app.card_list(self.paths.input))
         self.say("카드 납부일 저장: %s — '자료 변환'을 다시 하면 카드대금 예상에 반영됩니다"
@@ -2262,7 +2362,7 @@ class Window(object):
         try:
             occasional.delete_card(self.paths.input, self.c_co.get())
         except (ValueError, OSError) as e:
-            self.say("지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_card, "지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.cards_now.set("저장된 값: " + app.card_list(self.paths.input))
         self.say("카드 납부일 지움: %s — '자료 변환'을 다시 하면 반영됩니다" % self.c_co.get().strip())
@@ -2379,7 +2479,7 @@ class Window(object):
                 action, n = transfer.save_account(self.paths.input, code, name, self.a_bank.get(), self.a_no.get(),
                                                   self.a_holder.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_acc, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("거래처 계좌 %s: %s [%s] — 목록 %d줄. 다음 이체 파일부터 씁니다" % (action, name or "-", code, n))
         self.refresh_accounts()
@@ -2425,7 +2525,7 @@ class Window(object):
         try:
             occasional.delete_target(self.paths.input, self.g_year.get(), self.g_team.get())
         except (ValueError, OSError) as e:
-            self.say("지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_goal, "지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("팀 목표 지움: %s년 %s — 다음 월간 보고부터 반영" % (self.g_year.get().strip(), self.g_team.get().strip()))
         self.g_rev.set("")
@@ -2443,7 +2543,7 @@ class Window(object):
         try:
             n = app.save_team_target(self.paths.input, self.g_year.get(), self.g_team.get(), self.g_rev.get(), self.g_rate.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_goal, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("팀 목표 저장: %s년 %s 매출 %s원 · 수익률 %s%% (그 해 %d팀) — 다음 월간 보고부터 반영"
                  % (self.g_year.get().strip(), self.g_team.get().strip(), self.g_rev.get().strip(), self.g_rate.get().strip(), n))
@@ -2474,7 +2574,7 @@ class Window(object):
         try:
             n = app.save_budget_values(self.paths.input, self.b_year.get(), items)
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_budget, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("내년 예산 값 %s: %s년 %s (그 해 %d줄) — '예산 초안 만들기'를 누르면 다시 계산합니다"
                  % ("지움" if delete else "저장", self.b_year.get().strip(), what, n))
@@ -2517,6 +2617,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("신용평가 체크리스트")
         top.transient(self.root)
+        self._dialog(top)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="9월분 월간(결산 준비)·연간 보고(대표용·경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
@@ -2536,17 +2637,21 @@ class Window(object):
             vars_[k] = v
         r = ttk.Frame(frm)
         r.grid(row=999, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        err = tk.StringVar(value="")
+        ttk.Label(r, textvariable=err, foreground=C["red"]).pack(side="left")   # 편의성 34: 실패는 이 창 안에도
 
         def save():
             try:
                 credit.save_inputs(self.paths.input, dict((k, v.get()) for k, v in vars_.items()))
             except OSError as e:
-                self.say("저장하지 못함: %s" % (e.strerror or type(e).__name__))
+                err.set("저장하지 못함: %s" % (e.strerror or type(e).__name__))
+                self.say(err.get())
                 return
             self.say("신용평가 체크리스트 저장 — 다음 9월분 월간(결산 준비)·연간 보고부터 반영")
             top.destroy()
         self._go(r, "저장", save).pack(side="right")
         ttk.Button(r, text="닫기", command=top.destroy).pack(side="right", padx=6)
+
     def open_taxbreak(self):
         """법인세 감면·공제 고르기 창 (사용자 2026-11-17): 배당 질문 창의 '법인세 감면' 묶음만 따로 연다."""
         from . import dividend
@@ -2560,12 +2665,16 @@ class Window(object):
             if getattr(self, "q_group", None) == group:
                 self.q_win.lift()
                 return
-            self.q_win.destroy()
+            self.close_questions()   # 다른 묶음 창이 열려 있으면 (저장 안 한 답은 물은 뒤) 닫고 연다
+            if self.q_win.winfo_exists():
+                self.q_win.lift()
+                return
         self.q_group = group
         self.q_exclude = None if group else dividend.TAX_GROUP
         w = self.q_win = tk.Toplevel(self.root)
         w.title("법인세 감면·공제 고르기" if group else "배당 판단 질문")
         w.transient(self.root)
+        self._dialog(w, self.close_questions)
         body = ttk.Frame(w, style="Card.TFrame", padding=(14, 10, 14, 10))
         body.pack(fill="both", expand=True)
         ttk.Label(body, text=("감면·공제마다 '받음'을 고르면 법인세 예상에 넣고, '안 받음'이면 뺍니다. '기본'은 위의 기본 규칙을 따릅니다 "
@@ -2600,8 +2709,26 @@ class Window(object):
         b = ttk.Frame(body, style="Card.TFrame")
         b.grid(row=row + 1, column=0, columnspan=2, sticky="e", pady=(8, 0))
         self._btn(b, "저장", self.save_questions)
-        self._btn(b, "닫기", w.destroy)
+        self._btn(b, "닫기", self.close_questions)
+        self.q_saved = dict((k, v.get()) for k, v in self.q_vars.items())
         self._mark_questions()
+
+    def close_questions(self):
+        """편의성 46: 저장 안 한 답이 있으면 닫기 전에 한 번 묻는다 (꼭 넣을 값 규칙은 그대로)."""
+        w = getattr(self, "q_win", None)
+        if w is None or not w.winfo_exists():
+            return
+        now = dict((k, v.get()) for k, v in self.q_vars.items())
+        if now != getattr(self, "q_saved", now):
+            ans = self.ask_choice("저장하지 않은 답", "저장하지 않은 답이 있습니다. 닫으면 지금 고친 답은 사라집니다.",
+                                  ("저장하고 닫기", "저장 안 하고 닫기", "취소"))
+            if ans in (None, 2):
+                return
+            if ans == 0:
+                self.save_questions()
+                if dict((k, v.get()) for k, v in self.q_vars.items()) != getattr(self, "q_saved", None):
+                    return   # 꼭 넣을 값이 비어 저장 못 함 — 창을 그대로 둔다 (빨간 칸 안내)
+        w.destroy()
 
     def open_law(self):
         """세법·노동법 기준 확인 창: OC 아이디, 조문 받아 개정 확인, 항목별 값 확인(세무사 확인 값 입력)."""
@@ -2613,6 +2740,7 @@ class Window(object):
         w = self.law_win = tk.Toplevel(self.root)
         w.title("%d년 세법·노동법 기준 확인" % year)
         w.transient(self.root)
+        self._dialog(w)
         body = ttk.Frame(w, style="Card.TFrame", padding=(14, 10, 14, 10))
         body.pack(fill="both", expand=True)
         top = ttk.Frame(body, style="Card.TFrame")
@@ -2725,6 +2853,7 @@ class Window(object):
             self.q_msg.set(msg)
             self.say(msg)
             return
+        self.q_saved = dict((k, v.get()) for k, v in self.q_vars.items())
         self.q_now.set(app.question_text(self.paths.input))
         self.tb_now.set(app.taxbreak_text(self.paths.input))
         if getattr(self, "q_group", None):
@@ -2742,7 +2871,7 @@ class Window(object):
                                                self.h_wage.get(), self.h_int.get(), self.h_other.get(), delete,
                                                self.h_dep.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_sh, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("주주 %s: %s — %d명, 지분율 합 %g%% · 다음 월간 보고부터 배당 권장에 반영" % (action, self.h_name.get().strip(), n, total))
         self.sh_now.set(app.holder_text(self.paths.input))
@@ -2785,6 +2914,7 @@ class Window(object):
         w = self.mat_win = tk.Toplevel(self.root)
         w.title("대출 만기")
         w.transient(self.root)
+        self._dialog(w)
         frm = ttk.Frame(w, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="은행에서 연장한 새 만기일을 대출마다 넣습니다. 새 만기일을 넣으면 근거(언제·누가 확인했는지)를 메모에 적어야 저장됩니다. "
@@ -2871,7 +3001,7 @@ class Window(object):
         try:
             n = app.save_depreciation(self.paths.input, self.v_year.get(), self.v_amt.get())
         except (ValueError, OSError) as e:
-            self.say("저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_dep, "저장하지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("감가상각비 저장: %s년 %s원 — 다음 월간 보고 법인세 예상부터 반영 (저장된 해 %d개)"
                  % (self.v_year.get().strip(), self.v_amt.get().strip(), n))
@@ -2885,7 +3015,7 @@ class Window(object):
         try:
             app.save_depreciation(self.paths.input, self.v_year.get(), "")
         except (ValueError, OSError) as e:
-            self.say("지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
+            self._fail(self.f_dep, "지우지 못함: %s" % (e if isinstance(e, ValueError) else (e.strerror or type(e).__name__)))
             return
         self.say("감가상각비 지움: %s년 — 작년 장부 금액을 씁니다 (다음 월간 보고부터)" % self.v_year.get().strip())
         self.v_amt.set("")
@@ -2908,6 +3038,12 @@ class Window(object):
         missing, multi = [], []
         splits = getattr(self, "_splits", None) or {}
         result = {}
+        self.show_transfer_result("이체 파일 만드는 중…", False)   # 편의성 47: 멈춘 듯 보이지 않게
+        try:
+            self.root.configure(cursor="watch")
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
         try:
             path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing,
                                       splits=splits, multi=multi, collect_dir=self.paths.wehago, override=override, result=result)
@@ -2915,6 +3051,11 @@ class Window(object):
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             self.show_transfer_result("만들지 못함 (%s) — 진행 상황 참고" % type(e).__name__, True)
             return
+        finally:
+            try:
+                self.root.configure(cursor="")
+            except tk.TclError:
+                pass
         # 편의성 11: 넣은 건수·합계, 못 넣은 지급, 중복 의심을 이체 칸에 남긴다 (중복 의심이면 빨강)
         self.show_transfer_result(*winstate.transfer_summary(result))
         if result.get("blocked") and not path and not override:
@@ -2962,6 +3103,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("예금주별 금액 %d곳" % len(multi))
         top.transient(self.root)
+        self._dialog(top)
         frm = ttk.Frame(top, padding=10)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="한 거래처에 예금주가 다른 계좌가 여럿입니다. 사람마다 보낼 금액을 넣으세요 (합계가 지급액과 같아야 함). "
@@ -2979,6 +3121,12 @@ class Window(object):
                 fields.append((m, h, v))
                 r += 1
 
+        sp_err = tk.StringVar(value="")
+
+        def bad(text):   # 편의성 34: 이 창 안에도 빨강으로
+            sp_err.set(text)
+            self.say(text)
+
         def apply():
             plan, sums = {}, {}
             for m, h, v in fields:
@@ -2986,13 +3134,13 @@ class Window(object):
                 try:
                     amt = int(t) if t else 0
                 except ValueError:
-                    self.say("금액 숫자 오류: %s %s" % (m["vendor"], h))
+                    bad("금액 숫자 오류: %s %s" % (m["vendor"], h))
                     return
                 plan.setdefault(transfer.code_key(m["code"]), {})[h] = amt
                 sums[m["code"]] = sums.get(m["code"], 0) + amt
             for m in multi:
                 if sums.get(m["code"], 0) != m["amount"]:
-                    self.say("합계가 맞지 않음: %s 지급 %s원, 넣은 합계 %s원" % (
+                    bad("합계가 맞지 않음: %s 지급 %s원, 넣은 합계 %s원" % (
                         m["vendor"], "{:,}".format(m["amount"]), "{:,}".format(sums.get(m["code"], 0))))
                     return
             self._splits = dict(getattr(self, "_splits", None) or {}, **plan)
@@ -3003,6 +3151,7 @@ class Window(object):
         b.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
         ttk.Button(b, text="나눠서 다시 만들기", command=apply, style="Big.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(b, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
+        ttk.Label(b, textvariable=sp_err, foreground=C["red"], wraplength=360).pack(side="left", padx=(8, 0))
 
     def ask_accounts(self, missing):
         """계좌 없는 거래처 창: 줄마다 거래처코드·은행·계좌번호·예금주 → 저장하고 이체 파일 다시 만들기."""
@@ -3010,6 +3159,7 @@ class Window(object):
         top = tk.Toplevel(self.root)
         top.title("계좌 없는 거래처 %d곳" % len(missing))
         top.transient(self.root)
+        self._dialog(top)
         frm = ttk.Frame(top, padding=10)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="이체 파일에 넣지 못한 거래처입니다. 아는 곳만 넣고 '저장하고 다시 만들기'를 누르세요. "
@@ -3042,6 +3192,8 @@ class Window(object):
         inner.update_idletasks()
         canvas.configure(scrollregion=canvas.bbox("all"))
 
+        acc_err = tk.StringVar(value="")
+
         def save_all():
             n = 0
             for m, v in rows:
@@ -3052,7 +3204,8 @@ class Window(object):
                                           v["holder"].get())
                     n += 1
                 except (ValueError, OSError) as e:
-                    self.say("계좌 저장 못함 %s: %s" % (m["vendor"], e if isinstance(e, ValueError) else type(e).__name__))
+                    acc_err.set("계좌 저장 못함 %s: %s" % (m["vendor"], e if isinstance(e, ValueError) else type(e).__name__))
+                    self.say(acc_err.get())   # 편의성 34: 이 창 안에도 빨강으로
                     return
             self.say("계좌 %d곳 저장 — 이체 파일을 다시 만듭니다" % n)
             top.destroy()
@@ -3063,6 +3216,7 @@ class Window(object):
         r.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
         ttk.Button(r, text="저장하고 다시 만들기", command=save_all, style="Big.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(r, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
+        ttk.Label(r, textvariable=acc_err, foreground=C["red"], wraplength=420).pack(side="left", padx=(8, 0))
 
     def open_dir(self, path):
         if not open_path(path):

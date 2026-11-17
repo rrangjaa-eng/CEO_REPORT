@@ -235,7 +235,7 @@ def stop_page(title, probs):
     return ("<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>%s — 만들지 않음</title><style>"
             "body{font-family:sans-serif;margin:40px;color:#1d2433}%s</style></head><body><h1>%s</h1>"
             "<div class='gate'>자금계획서·분개장이 반영되지 않아 이 보고를 만들지 않았습니다<ul>%s</ul></div>"
-            "<p>위하고 확장으로 분개장과 자금계획서를 받은 뒤 자료 변환을 다시 하면 만들어집니다.</p></body></html>"
+            "<p>위하고 확장으로 분개장과 자금계획서를 받은 뒤 주간·월간 보고 단추를 누르면(자동 반영을 켜 두었으면 저절로) 만들어집니다.</p></body></html>"
             % (html.escape(title), BANNER_CSS, html.escape(title), "".join("<li>%s</li>" % html.escape(p) for p in probs)))
 
 

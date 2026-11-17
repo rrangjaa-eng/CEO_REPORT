@@ -563,7 +563,7 @@ def _periodic(R, P):
         from . import taxbreak
         tb_ = (R.get("re") or {}).get("tb")
         out.append(("c6", "C-6 법인세 감면·공제 검토 (매달)",
-                    "<h2 id='c6'>C-6 법인세 감면·공제 전체 검토 (매달, 보여 주기만)</h2>"
+                    "<h2 id='c6'>C-6 법인세 감면·공제 전체 검토 (매달, '받음'으로 고른 것만 법인세 예상에)</h2>"
                     + (taxbreak.render(tb_, esc) if tb_ else _na("감면·공제 검토 자료 없음 (자료 변환 뒤 다시 만들면 생김)"))))
     if "prep" in P:
         from . import credit
@@ -2152,7 +2152,7 @@ def _corptax_table(R, Y, ym, mode="mgmt"):
                                                                    esc(d2s(E["due"])), esc(d2s(E["local_due"]))),
          "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td></tr></tbody></table>"
          % (W(N["pretax"]), W(base), W(nat), W(prepaid, "미확인"), W(pay), W(local), W(total))]
-    d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ⑨에 연간 금액 입력)"
+    d_txt = "감가상각비 예상 뺀 세전 이익" if N.get("dep") is not None else "세전 이익 (감가상각비 모름, 창 ‘가끔 넣는 값 › 감가상각비’에 연간 금액 입력)"
     if N.get("bad"):   # 계산-08 (사용자 2026-11-17): 대손충당금 예상도 뺌
         d_txt += ", 대손충당금 예상 뺀 값"
     d_txt += (" + 세무조정 예상 (자금 일정과 같은 계산)" if base != N["pretax"] else " (자금 일정과 같은 계산)") if E["same"] \
@@ -2261,7 +2261,7 @@ def _target_table(R, Y, ym):
                     "%.1f%%" % (sum_g * 100.0 / sum_r) if g_known and sum_r else ""))
     h.append("</tbody></table>")
     if not T:
-        h.append("<div class='note'>팀 목표 없음 — 대표보고 창 '⑧ 팀 목표'에 연간 매출 목표와 목표 수익률을 넣으면 보입니다</div>")
+        h.append("<div class='note'>팀 목표 없음 — 대표보고 창 ‘가끔 넣는 값 › 팀 목표’에 연간 매출 목표와 목표 수익률을 넣으면 보입니다</div>")
     return "".join(h)
 
 
@@ -2644,7 +2644,7 @@ def _ev_change_table(R):
 
 def _ev_targets(R):
     T = R.get("targets") or {}
-    h = ["<div class='note'>입력/팀목표.csv (창 ⑧). 달성률 = 누적 매출 ÷ 연간 매출 목표, 진도 = 보고 달 ÷ 12. 수익률 = 누적 매출총이익 ÷ 누적 매출.</div>",
+    h = ["<div class='note'>입력/팀목표.csv (창 ‘가끔 넣는 값 › 팀 목표’). 달성률 = 누적 매출 ÷ 연간 매출 목표, 진도 = 보고 달 ÷ 12. 수익률 = 누적 매출총이익 ÷ 누적 매출.</div>",
          "<table class='pt evt'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>목표 수익률</th></tr></thead><tbody>"]
     for team, t in sorted(T.items()):
         h.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (esc(team), W(t.get("revenue")),
@@ -2664,7 +2664,7 @@ def _evidence(R, base_no):
         esc(n), esc(t), "<a href='#ev-%s'>아래</a>" % esc(n) if w == "block" else "<a href='#%s'>%s</a>" % (w, titles.get(w, w)))
         for n, t, w in idx)
     h = ["<div class='sec'>%s<div class='note'>대표가 번호로 요청하면 이 번호의 근거를 제출합니다. "
-         "창 ②의 '근거자료 PDF'에 번호를 넣으면 그 근거만 PDF로 만듭니다.</div>"
+         "창 4단계 ‘보내기’의 ‘근거자료 PDF…’에서 번호를 고르면 그 근거만 PDF로 만듭니다.</div>"
          "<table class='pt evt'><thead><tr><th>번호</th><th>대표용 항목</th><th>근거 위치</th></tr></thead><tbody>%s</tbody></table></div>"
          % (_q(base_no, "근거자료 (대표 요청 때 제출)"), rows)]
     blocks = []

@@ -1442,7 +1442,7 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         try:
             added = transfer.register_vendors(input_dir, transfer.paid_vendors(books.journal))
             if added:
-                out.append("거래처 계좌 목록에 새 거래처 %d곳 등록 (코드·이름만 — 계좌는 창 ⑦에서)" % added)
+                out.append("거래처 계좌 목록에 새 거래처 %d곳 등록 (코드·이름만 — 계좌는 창 ‘가끔 넣는 값 › 거래처 계좌’에서)" % added)
         except (OSError, ValueError) as e:
             out.append("거래처 계좌 목록을 고치지 못함: %s" % (e if isinstance(e, ValueError) else type(e).__name__))
     if books.state != "ok":

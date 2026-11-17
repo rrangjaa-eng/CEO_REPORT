@@ -153,7 +153,7 @@ def _car_dep(input_dir, year, lim_info, wehago_dir=None, months=12):
     else:
         adj = last_dep - allowed
         why = head + ("올해 감가상각비 예상은 작년 금액이라 이 차는 %s원만 들어 있지만, 올해 1년 치 약 %s원 중 세법이 인정하는 건 한도 %s원 → 과세표준 %s원 %s. "
-                      "장부 감가상각비 예상은 1년 치보다 약 %s원 적게 잡혀 있음 (창 ⑨에 올해 감가상각비를 넣으면 장부 이익도 맞춰짐)"
+                      "장부 감가상각비 예상은 1년 치보다 약 %s원 적게 잡혀 있음 (창 ‘가끔 넣는 값 › 감가상각비’에 올해 감가상각비를 넣으면 장부 이익도 맞춰짐)"
                       % ("{:,}".format(last_dep), "{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(abs(adj)),
                          "줄어듦" if adj < 0 else "늘어남", "{:,}".format(max(annual - last_dep, 0))))
     from .corptax import DEP_MODE

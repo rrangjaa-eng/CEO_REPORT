@@ -415,7 +415,7 @@ def _report_items(input_dir, asof):
                         "date": "", "amount": sum(m["amount"] for m in miss), "vendor": "",
                         "title": "다음 7일 지급할 거래처 %d곳에 계좌가 없음 (이체 파일에 못 넣음)" % len(miss),
                         "detail": " · ".join("%s %s원" % (vendor_label(m["vendor"], m["code"]), won(m["amount"])) for m in miss)
-                                  + " — ⑥ 이체 파일 만들기를 누르면 뜨는 창에서 바로 넣을 수 있음",
+                                  + " — 4단계 ‘보내기’의 ‘이체 파일 만들기’를 누르면 뜨는 창에서 바로 넣을 수 있음",
                         "choices": ["계좌 넣음", "이번엔 은행에서 직접 이체"]})
     except Exception:
         pass
@@ -584,7 +584,7 @@ JS = """
           if(r.state==='done'){it.classList.add('just'); it._t=setTimeout(function(){it.classList.remove('just');},8000);}}
         else st.textContent='결정 지움';}
       else st.textContent='저장 못함: '+(r.msg||'프로그램 창이 닫혔는지 확인');};
-    x.onerror=function(){st.textContent='저장 못함: 프로그램 창이 닫혔는지 확인';};
+    x.onerror=function(){st.textContent='저장 못함: 이 화면은 닫힌 예전 화면입니다'; gone();};
     x.send(JSON.stringify({id:it.dataset.id,choice:choice,memo:memo,content:it.dataset.c}));
   }
   function counts(c){ if(!c) return;
@@ -597,6 +597,23 @@ JS = """
     it.querySelector('button.clr').onclick=function(){undo(it);};
   });
   document.getElementById('reload').onclick=function(){location.href='/'+KEY+'?fresh=1';};
+  // 편의성 21 (2026-11-17): 새 화면을 열었거나 창이 닫혔으면 이 탭에, 열어 둔 사이 새 자료가 오면 위에 알린다
+  function note(html,color){var d=document.getElementById('stale-note');
+    if(!d){d=document.createElement('div'); d.id='stale-note';
+      d.style.cssText='position:sticky;top:0;z-index:999;padding:10px 16px;font-weight:700;border-radius:6px;margin:0 0 8px';
+      document.body.insertBefore(d,document.body.firstChild);}
+    d.style.background=color; d.innerHTML=html;}
+  var dead=false;
+  function gone(){ if(dead) return; dead=true;
+    note('새 확인할 것 화면이 열렸거나 프로그램 창이 닫혔습니다 — 이 탭은 닫으세요 (여기서 고른 결정은 저장되지 않음)','#fde2e2');
+    document.querySelectorAll('button.ok,button.clr').forEach(function(b){b.disabled=true;});}
+  setInterval(function(){ if(dead) return;
+    var x=new XMLHttpRequest(); x.open('GET','/state?k='+KEY);
+    x.onload=function(){ if(x.status!==200){gone();return;}
+      try{ if(JSON.parse(x.responseText).changed)
+        note('새 자료가 들어왔습니다 — <a href="/'+KEY+'?fresh=1">다시 모으기</a>','#fff4d6'); }catch(e){} };
+    x.onerror=gone; x.send();
+  },15000);
 })();
 """
 
@@ -734,6 +751,10 @@ class Session(object):
                 self.G["counts"] = apply_decisions(self.G["items"], read_decisions(self.input_dir))
             return render(self.G, self.key)
 
+    def changed(self):
+        """화면을 모은 뒤 자료(변환 결과 등)가 바뀌었는가."""
+        return self.G_sig is not None and _sources_sig(self.app_dir, self.input_dir) != self.G_sig
+
     def counts(self):
         """지금 결정으로 다시 센 건수 (계산은 다시 안 함)."""
         with self.lock:
@@ -775,6 +796,11 @@ class Session(object):
 
             def do_GET(self):
                 u = urlparse(self.path)
+                if u.path == "/state":   # 편의성 21: 열어 둔 화면이 새 자료가 왔는지 묻는다
+                    q = dict(p.split("=", 1) for p in u.query.split("&") if "=" in p)
+                    if not secrets.compare_digest(q.get("k", ""), sess.key):
+                        return self._send(403, "{}")
+                    return self._send(200, json.dumps({"changed": sess.changed()}))
                 if u.path != "/" + sess.key:
                     return self._send(404, "{}")
                 return self._send(200, sess.page(fresh="fresh=1" in u.query), "text/html; charset=utf-8")

@@ -749,7 +749,7 @@ def auto_line(state, failed="", running=False):
 LIVE_INPUTS = ("자금일정.csv", "통장잔액.csv", "카드결제일.csv")   # 창에서 넣는 값 중 지금 현황의 숫자를 바꾸는 것
 
 
-def live_stale(paths):
+def live_stale(paths, asof=None):
     """'지금 현황' 화면을 새로 만들어야 하는가: 없거나, 못 만듦 안내이거나, 마지막 변환·창에서 넣은 값보다 오래됐을 때.
     편의성 33 (2026-11-16): 예전엔 변환 시각만 봐서, 지급·입금 예정을 넣은 뒤에도 예전 화면을 열었다."""
     from . import live
@@ -757,7 +757,23 @@ def live_stale(paths):
     made = _mtime(path)
     if made is None or live.is_failed_page(path):
         return True
+    if asof and live.page_asof(path) not in (None, str(asof)):   # 편의성 36: 창 기준일을 바꿨으면 그 날짜로 새로
+        return True
     conv = convert_time(paths.input)
     if conv is not None and made < conv:
         return True
     return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))
+
+
+def caret_after_money(old, new, at):
+    """쉼표를 다시 붙인 뒤 커서 자리 (편의성 45): 커서 왼쪽 숫자 개수가 같은 자리."""
+    k = sum(1 for ch in old[:at] if ch.isdigit())
+    if k == 0:
+        return 0 if at == 0 else len(new) - len(new.lstrip("-"))
+    seen = 0
+    for i, ch in enumerate(new):
+        if ch.isdigit():
+            seen += 1
+            if seen == k:
+                return i + 1
+    return len(new)

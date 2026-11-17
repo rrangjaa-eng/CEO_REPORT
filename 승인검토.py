@@ -217,7 +217,7 @@ def main(argv=None):
         _say("스냅숏을 읽지 못했습니다: %s" % e)
         return 2
     except OSError as e:
-        _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s) — --출력 <폴더> 로 다른 폴더를 지정하세요"
+        _say("출력 폴더에 파일을 쓰지 못했습니다: %s (%s) — 프로그램 폴더의 '출력' 폴더와 그 안 파일이 열려 있지 않은지 확인하세요"
              % (a.출력, e.strerror or type(e).__name__))
         return 7
     except Exception as e:   # 트레이스백을 보이지 않는다 (02-REVIEW WR-02)

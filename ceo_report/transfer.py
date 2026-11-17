@@ -138,7 +138,7 @@ def read_accounts(input_dir):
     if problem:
         return {}, [problem]
     if not rows and not os.path.exists(os.path.join(input_dir, ACCOUNT_FILE)):
-        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ⑦ 거래처 계좌에서 넣으세요)" % ACCOUNT_FILE]
+        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)" % ACCOUNT_FILE]
     out = {}
     for r in rows:
         c = code_key(r["거래처코드"])
@@ -254,14 +254,14 @@ def find_account(accounts, ln):
             return None, "계좌 %d개 (%s) — 사람별 금액 필요, 은행 화면에서 나눠 넣으세요" % (
                 len(found), ", ".join(r["예금주"] for r in found))
         if not found[0]["계좌번호"]:
-            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ⑦에서 넣으세요)"
+            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)"
         return found[0], None
     acc = accounts.get(vendor_key(ln["vendor"]))
     if acc is AMBIGUOUS:
         return None, "같은 이름 거래처가 여럿 (거래처코드로 넣으세요)"
     if acc is not None and c and code_key(acc.get("거래처코드")) != c:
         # 안전-01 (P5-3, 2026-11-15): 코드가 있는 지급은 같은 코드 계좌만. 코드 없는 옛 줄을 이름으로 고르지 않는다
-        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ⑦에서 코드와 함께 넣으세요)" % (
+        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ‘가끔 넣는 값 › 거래처 계좌’에서 코드와 함께 넣으세요)" % (
             ln["code"], "코드 없는" if not code_key(acc.get("거래처코드")) else "다른 코드")
     if acc is None:
         return None, "계좌 정보 없음" + (" (거래처코드 %s)" % ln["code"] if c else "")
