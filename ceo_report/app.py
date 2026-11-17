@@ -92,6 +92,8 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
         if y and not (y.isdigit() and len(y) == 4):
             raise ValueError("연도 형식 오류: %s (예: 2026)" % y)
         return "보고서", ["연간"] + day + (["--연도", y] if y else []) + ["--입력", paths.input, "--출력", paths.output]
+    if task == "기획본부":   # 기획본부용 재무상태표 엑셀 (사용자 2026-11-17)
+        return "보고서", ["기획본부"] + day + ["--입력", paths.input, "--출력", paths.output]
     if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
         from .evidence import parse_nums
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
