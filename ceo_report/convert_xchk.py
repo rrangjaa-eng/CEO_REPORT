@@ -489,6 +489,14 @@ def prior_fix_items(books, projects, costs, revenue):
                 "detail": "합계 %s원%s. 금액이 작아 묶었습니다. 고치려면 위하고 분개장에서 프로젝트 칸을 넣으세요."
                           % (_won(total), (" (금액 모르는 줄 %d)" % unknown) if unknown else ""),
                 "choices": ["그대로 둠 (괜찮음)", "고칠 것"]})
+    for d in getattr(projects, "dropped", None) or []:
+        items.append({
+            "id": "예전빠짐|%s|%s" % (d["key"], d["name"]), "kind": PRIOR_FIX_KIND, "date": d["event"], "amount": d["quote"],
+            "vendor": "", "title": "예전 인트라넷 프로젝트가 비교에서 빠짐: %s%s" % (("[%s] " % d["key"]) if d["key"] else "", d["name"]),
+            "detail": "%s. 견적 %s원 · 실행가 %s원. 프로그램은 번호 하나에 프로젝트 하나만 두어서 이 프로젝트는 이익 비교에 들어가지 "
+                      "않습니다. 예전 인트라넷 자료(수집\\예전인트라넷)의 번호를 겹치지 않게 고치거나, 같은 행사면 그대로 두세요."
+                      % (d["why"], _won(d["quote"]), _won(d["budget"])),
+            "choices": ["인트라넷 자료에서 고칠 것", "같은 행사 — 그대로 둠", "확인함"]})
     # 원가 줄이 있는지는 연결 여부·해와 상관없이 본다 (2026-11-17 실제 자료: 2026년 1~3월 행사 [26037] 등은 올해 장부에 이어진
     # 원가 줄이 수백 줄인데, 작년·안 이어진 줄만 보아 '장부 원가 0원'으로 잘못 나왔다)
     has_cost = set()
