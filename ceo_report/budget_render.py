@@ -318,16 +318,19 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
             # 결정 e (2026-11-15): 가용자금과 같은 작성일 뒤 60일. 장부 평균은 입금 끝난 계산서만 세어 짧게 나오므로 참고로만
             dtext = "작성일 뒤 %d일, 가용자금과 같은 기준%s" % (c["days_used"], (" — 입금된 계산서 %d건 평균 %.0f일은 아직 못 받은 계산서가 빠져 짧게 나와 쓰지 않음" % (c["n_days"], c["days"]))
                                                        if c["days"] is not None else "")
+            k = c.get("known") or {}
             if c.get("avail0") is not None:
                 start_text = "%s 쓸 수 있는 돈 %s (은행 잔액 날짜 뒤 통장 입출금 반영, 사용 제한 뺌, 주간 보고와 같은 값)" % (B["asof"].isoformat(), won(c["avail0"]))
             else:
                 start_text = "%s 장부 통장 잔액 %s − 사용 제한 %s" % (c["bal_date"].isoformat() if c["bal_date"] else "-", won(c["bal0"]), won(c["restricted"]))
             ct.append("<div class='note'>1월 월초 = %s%s (1월에 실제 잔액으로 바꿈). 매출 입금 = 매출 × 1.1을 회수 기간(%s)만큼 늦춰 받음. "
                       "매입 지급 = 매출원가 × 1.1을 행사 달 40%%·다음 달 60%% (가정). 1~2월 입금에는 %d년 말 매출, 1월 지급에는 %d년 12월 매입이 들어 있습니다. 판관비 지급 = 판관비 × 1.05. "
-                      "대출 원금 등 = 자금일정·자금계획서의 %d년 대출 원금·보증금·설비 지급.</div>"
+                      "대출 원금 등 = 자금일정·자금계획서의 %d년 대출 원금·보증금·설비 지급.%s</div>"
                       % (start_text,
                          (" %s 연말까지 들어오고 나갈 돈 예상 %d건 %s" % ("+" if c.get("roll", 0) >= 0 else "−", c.get("roll_n", 0), won(abs(c.get("roll", 0)))))
-                         if c.get("roll_n") else "", dtext, base, base, y))
+                         if c.get("roll_n") else "", dtext, base, base, y,
+                         (" 자금계획서·계산서에 이미 있는 %d년 입금 %d건 %s·지급 %d건 %s은 그 날짜와 금액 그대로 넣었고, 위 공식은 아직 장부에 안 잡힌 매출·매입에만 썼습니다."
+                          % (y, k["in_n"], won(sum(k["in"])), k["out_n"], won(sum(k["out"])))) if (k.get("in_n") or k.get("out_n")) else ""))
             h.append("".join(ct))
         else:
             lo = c["lo"]

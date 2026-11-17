@@ -12,7 +12,8 @@
 - 매출원가 = 매출 × (1 − 목표 수익률). 급여 = 지금 1달 급여 × (1 + 인상률) + 늘릴 인원 × 1인 평균 × (1 + 인상률) (입사 월부터).
 - 그 밖의 판관비 = 계정별 올해 실적(1년으로 늘림) × 기준(인원·물가·그대로). 감가상각비 = 올해 예상(직접 입력 또는 작년 장부).
 - 영업외 수익 = 이자수익만 (지원금 등은 확정 전이라 넣지 않음). 영업외 비용 = 올해 실적을 1년으로 늘림.
-- 자금: 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
+- 자금: 자금계획서·계산서에 이미 있는 예산 연도 입금·지급은 그 날짜·금액 그대로 (받은 자료 먼저, 사용자 2026-11-17). 아직 장부에 안 잡힌
+  매출·매입만 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
 """
 import collections
 import csv
@@ -426,6 +427,8 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         rv = [0] * 12
         gp = [0] * 12
         fc = [False] * 12
+        lf = [0] * 12   # 그중 아직 장부에 안 잡힌 매출·그 이익 (자금표: 장부에 잡힌 매출의 입금은 자금계획서·계산서 일정이 잡는다)
+        lg = [0] * 12
         # 장부에 잡힌 매출은 모두 (진행 중인 달에 이미 잡힌 것 포함 — 2026-11-14 오후 점검 G5: 예전엔 진행 중 달 매출을
         # 실적에서도 예상에서도 빼서 줄었음)
         for p in all_rows:
@@ -447,11 +450,13 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
             i = (min(last_m + 1, 12) if x["prior"] else max(x["event"].month, min(last_m + 1, 12))) - 1
             rv[i] += x["left"]
             gp[i] += x["left"] * ((rr / 100.0) if rr is not None else (1 - cost_rate))
+            lf[i] += x["left"]
+            lg[i] += x["left"] * ((rr / 100.0) if rr is not None else (1 - cost_rate))
             fc[i] = True
             if x["prior"]:
                 prior_add[0] += 1
                 prior_add[1] += x["left"]
-        T[t] = {"rev26": rv, "gp26": [int(v) for v in gp], "fc": fc}
+        T[t] = {"rev26": rv, "gp26": [int(v) for v in gp], "fc": fc, "left26": lf, "leftgp26": [int(v) for v in lg]}
     if left_unknown:
         notes.append("%d년 행사 %d건은 장부 매출(매출반영누계)을 몰라 남은 매출을 넣지 못함: %s" % (base, len(left_unknown), ", ".join(sorted(left_unknown))))
     if prior_add[0]:
@@ -715,6 +720,36 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
                         "amount": e["amount"], "how": "%s%s" % ("확정" if e.get("firm") else "예상", " · %s" % e["basis"] if e.get("basis") else ""),
                         "src": e.get("source") or "자금일정", "kind": "fixed"})
     FIX.sort(key=lambda f: (f["month"], int(f["day"].split("/")[1])))
+    # 받은 자료 먼저 (사용자 2026-11-17 결정 카드 '고치기'): 자금계획서(없으면 계산서 입금예정일)에 이미 있는 예산 연도 입금·지급은
+    # 그 날짜·금액 그대로 넣고, 공식(입금 = 작성일 뒤 60일, 매입 지급 = 행사 달 40%·다음 달 60%)은 아직 장부에 안 잡힌 매출·매입에만 쓴다.
+    # 예전엔 올해 11~12월 매출 전체를 공식으로 내년 초 입금에 넣고(이미 발행한 계산서의 실제 예정일을 안 봄), 이미 장부에 잡힌
+    # 매입 중 내년에 나갈 미지급금은 어디에도 없었다. 연말 전 줄은 연초 잔액(roll)이 이미 쓴다. 예산 연도 전에 만든 예산만.
+    known = {"in": [0] * 12, "out": [0] * 12, "in_n": 0, "out_n": 0, "used": False}
+    if W is not None and asof < y0:
+        known["used"] = True
+        for e in W.get("events") or []:
+            if e.get("amount") is None or not e.get("date") or e["date"].year != year:
+                continue
+            cat = str(e.get("cat") or "")
+            if e.get("io") == "in" and e.get("source") in ("자금계획서", "계산서"):
+                known["in"][e["date"].month - 1] += e["amount"]
+                known["in_n"] += 1
+            elif (e.get("io") == "out" and e.get("source") == "자금계획서" and not is_loan(e)
+                    and not any(w in cat for w in FIXED_WORDS)):   # FIXED_WORDS 줄은 위 '정해진 지급'이 이미 넣음
+                known["out"][e["date"].month - 1] += e["amount"]
+                known["out_n"] += 1
+        left_rev_m = [sum(T[t]["left26"][i] for t in teams) for i in range(12)]
+        left_gp_m = [sum(T[t]["leftgp26"][i] for t in teams) for i in range(12)]
+        ext_left = left_rev_m + rev
+        cin = [_r4((1 + VAT) * sum(w * ext_left[12 + i - l] for l, w in split.items() if 12 + i - l >= 0) + known["in"][i])
+               for i in range(12)]
+        left_cogs_dec = left_rev_m[11] - left_gp_m[11]
+        cpay = [_r4((1 + VAT) * (AP_SPLIT[0] * cogs[i] + AP_SPLIT[1] * (cogs[i - 1] if i else left_cogs_dec)) + known["out"][i])
+                for i in range(12)]
+        if known["in_n"] or known["out_n"]:
+            notes.append("자금계획서·계산서에 이미 있는 %d년 입금 %d건 %s원, 지급 %d건 %s원은 그 날짜·금액 그대로 넣음. "
+                         "아직 장부에 안 잡힌 매출·매입만 공식(입금 60일, 지급 행사 달 40%%·다음 달 60%%)으로 계산"
+                         % (year, known["in_n"], format(sum(known["in"]), ","), known["out_n"], format(sum(known["out"]), ",")))
     cout = [None if sal[i] is None else cpay[i] + sal[i] + sga_pay[i] + tax_m[i] + fixed[i] for i in range(12)]
     bal = []
     # 연초 잔액 = 오늘 쓸 수 있는 돈(주간 보고와 같은 값: 은행 잔액 날짜 뒤 통장 입출금까지 반영, 사용 제한 뺌)
@@ -756,7 +791,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         "raise": raise_, "infl": infl, "cost_rate": cost_rate,
         "cash": {"bal0": bal0, "bal_date": bal_date, "restricted": restricted, "roll": roll, "roll_n": roll_n, "start": start, "cin": cin, "cpay": cpay, "sga_pay": sga_pay,
                  "tax": tax_m, "fixed": fixed, "nio": nio, "bal": bal, "lo": lo, "min_cash": min_cash, "days": days, "n_days": n_days,
-                 "days_used": days_used, "split": split, "avail0": avail0},
+                 "days_used": days_used, "split": split, "avail0": avail0, "known": known},
         "fix": FIX, "notes": notes,
         "missing": [k for k, v in (("성장률", any(not T[t]["growth_set"] for t in teams)), ("목표 수익률", any(not T[t]["rate_set"] for t in teams)),
                                    ("급여 인상률", raise_ is None), ("물가 인상률", infl is None)) if v],
