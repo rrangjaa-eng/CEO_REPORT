@@ -78,3 +78,26 @@ class Check(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRefusedAnswer1117(unittest.TestCase):
+    """2026-11-17 PC 확인: Referer 없이 부르면 200 + '사용자 정보 검증에 실패' JSON. 실패로 알리고, 머리글엔 Referer 를 넣는다."""
+
+    def test_refused_json_is_an_error(self):
+        import io
+        from ceo_report import lawwatch
+
+        class R(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        body = '{ "result" : "사용자 정보 검증에 실패하였습니다.", "msg" : "IP주소 및 도메인주소를 등록해 주세요." }'.encode("utf-8")
+        with self.assertRaises(ValueError) as c:
+            lawwatch._get("https://x", opener=lambda url, timeout=None: R(body))
+        self.assertIn("사용자 정보 검증에 실패", str(c.exception))
+
+    def test_referer_header(self):
+        from ceo_report import lawwatch
+        self.assertEqual(lawwatch.HEADERS["Referer"], "https://www.law.go.kr/")

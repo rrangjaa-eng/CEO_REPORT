@@ -114,10 +114,15 @@ def _get(url, opener=None, timeout=20):
             raw = r.read()
     text = raw.decode("utf-8", "replace").lstrip("\ufeff").strip()
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except ValueError:
         plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))[:150]
         raise ValueError("JSON이 아닌 응답: %s" % plain)
+    # 2026-11-17 PC 확인: Referer 가 없으면 HTTP 200 에 {"result": "사용자 정보 검증에 실패하였습니다.", "msg": …} 를 준다.
+    # 예전엔 이걸 '법령 이름으로 찾지 못함'으로 넘겨 원인이 안 보였음 → 실패로 알린다
+    if isinstance(data, dict) and isinstance(data.get("result"), str) and "실패" in data["result"]:
+        raise ValueError("법령 사이트가 거절: %s %s" % (data["result"], data.get("msg") or ""))
+    return data
 
 
 def _walk(o):
