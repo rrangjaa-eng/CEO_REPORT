@@ -3137,6 +3137,7 @@ class TestLiveFailureNotStale(unittest.TestCase):
             paths = type("P", (), {"input": inp, "output": out})()
             say = staticmethod(lambda s: None)
             asof = type("V", (), {"get": staticmethod(lambda: "")})()
+            asof_date = staticmethod(lambda: None)   # 편의성 36(11/17): 기준일 다르면 다시 만듦
         with mock.patch.object(winstate, "convert_time", return_value=dt.datetime.now()), \
                 mock.patch.object(app, "build_live", side_effect=lambda *a, **k: built.append(1)), \
                 mock.patch.object(gui, "open_path", side_effect=opened.append):
