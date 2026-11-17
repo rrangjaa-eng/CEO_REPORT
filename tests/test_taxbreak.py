@@ -182,3 +182,12 @@ class EasyWords1117(unittest.TestCase):
         h = tb.render(T, lambda x: x)
         self.assertIn("받는 조건:", h)
         self.assertIn("직원 수가 늘면", h)
+
+
+class OnlyCheckedGoIn1117(unittest.TestCase):
+    """사용자 2026-11-17: 공제·감면은 자동으로 넣지 말고 경영관리가 확인·체크('받음')한 것만 세금 계산에."""
+
+    def test_default_nothing_then_checked_only(self):
+        self.assertEqual(tb.chosen({}, "통합고용세액공제", "해당", 1_000_000)[0], False)
+        self.assertEqual(tb.chosen({"반영_고용": "받음"}, "통합고용세액공제", "확인 필요", 1_000_000)[0], True)
+        self.assertEqual(tb.chosen({"반영_교육훈련": "받음"}, "통합고용세액공제", "해당", 1_000_000)[0], False)

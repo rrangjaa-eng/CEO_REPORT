@@ -155,3 +155,15 @@ class PickedCredits1117(unittest.TestCase):
         self.assertTrue(any(c["from"] == 2026 and c["until"] == 2036 and c["amount"] == hire["carry"] for c in C["carries"]) or hire["carry"] == 0)
         # 농특세: 교육훈련(연구·인력개발비)은 비과세
         self.assertEqual(C["nong"], int((C["used"] + hire["used"]) * 0.2) // 10 * 10)
+
+
+class LastYearSwitch1117(unittest.TestCase):
+    def test_last_year_items_default_in_and_can_be_turned_off(self):
+        d = detail_folder()
+        on = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        self.assertTrue(on["take_sp"] and on["take_carry"])
+        with open(os.path.join(d, "배당설정.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("항목,값\n반영_특별감면,안 받음\n반영_이월공제,안 받음\n")
+        off = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        self.assertEqual((off["sp"], off["used"], off["final"]), (0, 0, 15_000_000))
+        self.assertEqual(off["carry_next"], off["avail"])

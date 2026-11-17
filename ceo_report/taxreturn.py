@@ -62,6 +62,23 @@ def _min_rate(input_dir, year):
         return MIN_RATE
 
 
+LAST_DEFAULT = "받음"   # 사용자 2026-11-17 결정 카드: 작년 (세무법인) 신고서의 특별감면·넘어온 공제는 그대로 넣음 (설정으로 끌 수 있음). 새 후보는 체크한 것만
+
+
+def last_year_taken(input_dir):
+    """작년 신고서의 특별감면·넘어온 공제를 올해 계산에 넣나 -> (특별감면, 이월공제)."""
+    try:
+        from . import dividend
+        a = dividend.read_settings(input_dir)
+    except (OSError, ValueError):
+        a = {}
+
+    def one(k):
+        v = a.get(k) or "기본"
+        return (LAST_DEFAULT if v == "기본" else v) == "받음"
+    return one("반영_특별감면"), one("반영_이월공제")
+
+
 CARRY_YEARS = 10   # 조특법 144조 ①: 다음 과세연도 개시일부터 10년 안에 끝나는 과세연도까지 이월 (2026-11-17 조문 확인)
 
 
@@ -83,13 +100,14 @@ def credits(input_dir, year, base, corp, extra=None):
         except Exception:   # 후보 판단이 실패해도 법인세 예상은 만든다
             extra = []
     Y = int(year)
+    take_sp, take_carry = last_year_taken(input_dir)
     rate = (last["특별감면"] / float(last["산출세액"])) if last.get("산출세액") else 0.0
     floor = int(max(base, 0) * _min_rate(input_dir, Y))
-    sp = min(int(corp * rate), max(corp - floor, 0))
+    sp = min(int(corp * rate), max(corp - floor, 0)) if take_sp else 0
     after = corp - sp
     avail = last["공제이월"]
     room = max(after - floor, 0)
-    used = min(avail, room)                       # 넘어온 공제 먼저
+    used = min(avail, room) if take_carry else 0   # 넘어온 공제 먼저 (체크했을 때만)
     left_room = room - used
     items, nong_base = [], used
     for e in [x for x in extra if x.get("mt")]:   # 올해 생긴 최저한세 적용 공제
@@ -112,7 +130,8 @@ def credits(input_dir, year, base, corp, extra=None):
         if x["carry"] > 0:
             carries.append({"from": Y, "what": x["name"], "amount": x["carry"], "until": Y + CARRY_YEARS})
     new_used = sum(x["used"] for x in items)
-    return {"corp": corp, "sp_rate": rate, "sp": sp, "floor": floor, "avail": avail, "used": used, "room": room,
+    return {"take_sp": take_sp, "take_carry": take_carry, "sp_full": min(int(corp * rate), max(corp - floor, 0)),
+            "corp": corp, "sp_rate": rate, "sp": sp, "floor": floor, "avail": avail, "used": used, "room": room,
             "final": final, "nong": nong, "national": final + nong, "carry_next": sum(c["amount"] for c in carries),
             "at_floor": used == room and room > 0, "last_year": Y - 1, "extra": items, "new_used": new_used, "carries": carries}
 
