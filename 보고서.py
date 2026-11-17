@@ -326,6 +326,8 @@ def _annual_monthly(a, D, year, A):
             _say(law_state["msg"])
         R = compute(D, "monthly", asof)
         R["law_state"] = law_state
+        from ceo_report import insights
+        R["auto_facts"] = insights.read_facts(a.입력)   # 11/17 전수 점검 F3: 연간에 '분개장 날짜 모름' 나오던 것
         from ceo_report import surplus, taxadj, filing, taxreturn, filehelp, payroll
         from ceo_report.util import esc as _esc
         R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)

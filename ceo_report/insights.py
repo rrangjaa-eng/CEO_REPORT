@@ -374,7 +374,9 @@ def invoice_pairs(R):
     return out
 
 
-MISSING_CONTRACT = "계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 계약금액을 넣으면 나옵니다."
+# 11/17 전수 점검 F2: 인트라넷엔 계약금액 칸이 없어 예전 안내('인트라넷에 계약금액을 넣으면')는 할 수 없는 일이었음
+# → 받은 자료(장부 매출·사전견적)로 예상 이익을 내고, 넷 다 없는 것만 센다
+MISSING_CONTRACT = "매출 기준 금액(계약금액·사전견적·장부 매출)이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 사전견적을 넣으면 나옵니다."
 
 
 def missing_contracts(R, team=None):
@@ -382,7 +384,8 @@ def missing_contracts(R, team=None):
     실제 자료 302개 모두 빈칸이라 팀장·대표는 빠진 줄 몰랐음 R3). team 을 주면 그 팀 프로젝트만. 0 은 미등록과 같이 본다
     (profit_flow 도 0 이면 건너뜀)."""
     return sum(1 for p in (R.get("s3") or {}).get("projects") or []
-               if not p.get("contract") and (team is None or (p.get("team") or "") == team))
+               if not (p.get("profit_basis") if "profit_basis" in p else p.get("contract"))
+               and (team is None or (p.get("team") or "") == team))
 
 
 def profit_flow(R):
@@ -393,7 +396,7 @@ def profit_flow(R):
     예전엔 남은 예산이 그대로 '이익 개선'으로 보였음). closed = 끝난 프로젝트 (보고에서 진행 중과 나눠 보인다)."""
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
-        c, b = p.get("contract"), p.get("budget")
+        c, b = (p.get("profit_basis") if "profit_basis" in p else p.get("contract")), p.get("budget")   # F2: 받은 자료 기준 매출
         now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if not c or b is None or now is None:
             continue

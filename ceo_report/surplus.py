@@ -128,11 +128,12 @@ def balances(journal, first_year):
     return out
 
 
-def estimate(journal, cfg, asof, input_dir=None):
-    """아직 결산 안 한 해의 당기순이익 예상 -> (연도, 금액, 근거) 또는 None. 법인세 예상과 같은 계산."""
+def estimate(journal, cfg, asof, input_dir=None, wehago_dir=None):
+    """아직 결산 안 한 해의 당기순이익 예상 -> (연도, 금액, 근거) 또는 None. 법인세 예상과 같은 계산.
+    wehago_dir: 감가상각비를 위하고 고정자산대장 새 파일에서 (11/17 전수 점검 Y7: 새해엔 예전 고정자산.csv 를 읽어 감가상각비 0)"""
     from . import corptax
     try:
-        rows, _ = corptax.from_journal(journal, cfg, asof, None, input_dir)
+        rows, _ = corptax.from_journal(journal, cfg, asof, None, input_dir, wehago_dir)
     except Exception:   # 장부가 모자라면 예상하지 않는다
         return None
     corp = [r for r in rows if r.get("세목") == "법인세"]
@@ -152,9 +153,8 @@ def estimate(journal, cfg, asof, input_dir=None):
 
 def statements(years, first_year, est):
     """연도별 처분계산서 -> [{year, 상태, 항목...}] (오래된 해부터). est = estimate() 결과."""
-    ys = set(y for y, v in years.items() if v)
-    if est:
-        ys.add(est[0])
+    ests = dict((e[0], e) for e in (est if isinstance(est, list) else [est]) if e)   # 11/17 Y1: 결산 전 작년 + 올해 둘 다 예상
+    ys = set(y for y, v in years.items() if v) | set(ests)
     if not ys:
         return []
     out, carry, carry_known = [], 0, True
@@ -177,9 +177,9 @@ def statements(years, first_year, est):
         if v.get("결산있음"):
             ni, ni_state = v["결산이익"], "확정"
             st["why"]["당기순이익"] = "%d년 12월 결산 전표에서 미처분이익잉여금으로 옮긴 금액" % y
-        elif est and est[0] == y:
-            ni, ni_state = est[1], "예상"
-            st["why"]["당기순이익"] = est[2]
+        elif y in ests:
+            ni, ni_state = ests[y][1], "예상"
+            st["why"]["당기순이익"] = ests[y][2]
         else:
             ni, ni_state = None, "모름"
             st["why"]["당기순이익"] = "결산 전표 없음"
@@ -212,7 +212,16 @@ def build_table(books, cfg, asof, wehago_dir=None, input_dir=None):
     if books.state != "ok" or not books.journal:
         return Table(FILE, KEYS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
     years, first = collect(books.journal, cfg.get("closing_sorts", ()))
-    est = estimate(books.journal, cfg, asof, input_dir)
+    est = estimate(books.journal, cfg, asof, input_dir, wehago_dir)
+    # 11/17 전수 점검 Y1: 새해 2~3월 등 작년 결산 전표가 아직 없으면 작년 당기순이익이 '모름'이 되어 올해 전기이월·배당 한도까지 모름
+    # → 작년도 12월 말 기준으로 같은 계산의 예상을 낸다 (결산 전표가 들어오면 '확정'이 이김)
+    prev_y = (int(est[0]) if est else asof.year) - 1
+    has_prev = any(ln.get("date") is not None and ln["date"].year == prev_y for ln in books.journal)
+    if has_prev and not (years.get(prev_y) or {}).get("결산있음") and prev_y >= (first or prev_y):
+        import datetime as _dt
+        est_prev = estimate(books.journal, cfg, _dt.date(prev_y, 12, 31), input_dir, wehago_dir)
+        if est_prev and est_prev[0] == prev_y:
+            est = [est_prev] + ([est] if est else [])
     rows, notes = [], []
     bal = balances(books.journal, first)
     from . import taxbreak

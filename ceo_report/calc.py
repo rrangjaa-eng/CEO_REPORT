@@ -372,13 +372,26 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
             P["cost_end"] = P["committed"]
         else:
             P["cost_end"] = max(P["committed"], b)
-        P["profit_end"] = None if (P["contract"] is None or P["cost_end"] is None) else P["contract"] - P["cost_end"]
+        # 이익 기준 매출 (11/17 전수 점검 F2): 계약금액(수동 입력)이 먼저, 없으면 받은 자료 — 끝난 행사는 매출 반영 누계(장부),
+        # 진행 중은 사전견적과 이미 잡힌 매출 중 큰 쪽 (추정 예산이 사전견적에서 나오므로 같은 기준). 인트라넷엔 계약금액 칸이 없어
+        # 예전엔 144개가 '못 냄'이었음. 견적금액은 승인 단계 금액이라 전체보다 작은 일이 많아(Games on AWS 2,450만 vs 사전견적 2.6억) 쓰지 않음
+        rec, est = P.get("recognized") or 0, P.get("estimate") or 0
+        if P["contract"]:
+            P["profit_basis"], P["profit_basis_src"] = P["contract"], "계약금액"
+        elif P["closed"] and rec:
+            P["profit_basis"], P["profit_basis_src"] = rec, "매출 반영 누계"
+        elif est or rec:
+            P["profit_basis"], P["profit_basis_src"] = (est, "사전견적") if est >= rec else (rec, "매출 반영 누계")
+        else:
+            P["profit_basis"], P["profit_basis_src"] = None, ""
+        pb = P["profit_basis"]
+        P["profit_end"] = None if (pb is None or P["cost_end"] is None) else pb - P["cost_end"]
         # 지금 예상 이익: 끝난 프로젝트 = 계약 − 등록 지출. 진행 중 = 계약 − 추정 예산과 등록 지출 중 큰 쪽
         # (아직 요청·계획으로 올리지 않은 남은 예산도 나갈 돈으로 본다 — 예전엔 남은 예산만큼 늘 '이익 개선'으로 보였음)
-        if P["contract"] is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
+        if pb is None or P["committed"] is None or (not P["closed"] and P["budget"] is None):
             P["profit_now"] = None
         else:
-            P["profit_now"] = P["contract"] - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
+            P["profit_now"] = pb - (P["committed"] if P["closed"] else max(P["committed"], P["budget"]))
     plist = [P for P in proj.values() if (P.get("state") or "").strip() != OLD_STATE]   # 예전 인트라넷 끝난 행사 (사용자 2026-11-05)
     tot = {k: sum(P[k] for P in plist) for k in
            ["paid_period", "paid_total", "paid", "card_paid", "requested", "card_unpaid", "planned", "expected"]}
@@ -949,6 +962,8 @@ def account_year(rows, ym, problem=""):
     names = {}
     for r in rows:
         if r["ym"][:4] != year or not r["ym"][5:7].isdigit() or int(r["ym"][5:7]) > upto:
+            continue
+        if r["group"] == "영업외수익":   # 비용 표라 수익 줄은 넣지 않음 (F10: 예산의 이자수익용으로 계정별비용.csv 에 들어감)
             continue
         k = (r["group"] or "구분 없음", r["code"])
         names.setdefault(k, r["name"])

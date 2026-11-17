@@ -453,9 +453,13 @@ def render(R, mode):
              % (d2s(R["asof"]), d2s(p0), d2s(p1), dt.datetime.now().strftime("%Y-%m-%d %H:%M")
                 + ("" if mode == "ceo" else _ins(" · 프로그램 판 %s" % esc(_build())))))   # 사용자 2026-11-17: 예전 exe 로 만든 보고인지 알 수 있게
     from . import gate   # 사용한 자료와 날짜 (사용자 2026-11-12: 자금계획서 없이 계산한 보고가 다시 나오면 안 됨)
-    h.append("<div class='meta dsrc'>%s%s</div>" % (esc(
-        "자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])),
-        _ins("<br>" + esc(gate.sources_line(R)))))
+    # 11/17 전수 점검 F4: 자료기준일.csv 가 비면 '자료 기준일:' 빈 칸만 남던 것 — 그때는 사용한 자료(분개장·자금계획서 날짜)를 보임
+    dsrc_a = ("자료 기준일: " + " · ".join("%s %s" % (a["name"], d2s(a["date"])) for a in R["s7"]["asof"])) if R["s7"]["asof"] else ""
+    dsrc_b = gate.sources_line(R)
+    if not dsrc_a:
+        h.append("<div class='meta dsrc'>%s</div>" % esc(dsrc_b))
+    else:
+        h.append("<div class='meta dsrc'>%s%s</div>" % (esc(dsrc_a), _ins("<br>" + esc(dsrc_b))))
     h.append("</div>")
     h.append(_ins(gate.banner(gate.problems(R))))
     lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 두 판 모두 한 줄
@@ -2512,6 +2516,9 @@ def _team_notes(R, basis, dept, last, ym):
             "부서비용.csv " + R["s4"].get("dept_problem") if R["s4"].get("dept_problem") else "부서비용.csv 없음"))
     elif last and not last["dept_ok"]:
         notes.append("급여·판관비 미확인: 부서비용.csv에 %s 자료가 없음" % _ym_text(ym))
+    if last and last.get("heads_from"):   # 11/17 전수 점검 F1: 달 중간 보고 — 이번 달 급여 전
+        notes.append("%s 급여가 아직 장부에 없어 이번 달 인원은 %s 인원, 급여는 0 (누적 평균 인원은 급여 들어온 달만)"
+                     % (_ym_text(ym), _ym_text(last["heads_from"])))
     for hq, v in (last or {}).get("hq_nonop", []):
         notes.append("%s 영업외 비용(이자 등) %s은 %s 판관비에 넣어 영업이익에서 뺌 (결산 영업외 비용 줄에는 넣지 않음)" % (hq, won(v), hq))
     if last and last["check"]:

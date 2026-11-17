@@ -590,7 +590,9 @@ def _lv_badge(lv):
 
 
 def _is_na(x):
-    return x["num"] in ("자료 없음", "판단 불가") or (x["key"] == "xchk" and x["num"] != "대조함")
+    # 11/17 전수 점검 F9: 대조는 했는데 차이가 있으면 num 이 '차이 n건' — 그것까지 '자료 없음'(회색)으로 보이던 것
+    return x["num"] in ("자료 없음", "판단 불가") or (x["key"] == "xchk" and x["num"] != "대조함"
+                                                    and not str(x["num"]).startswith("차이 "))
 
 
 def _short(t, n=46):

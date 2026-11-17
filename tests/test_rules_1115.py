@@ -317,7 +317,7 @@ class TestDecisionCMissingContract(unittest.TestCase):
         self.assertEqual(insights.missing_contracts(R), 2)
         self.assertEqual(insights.missing_contracts(R, "기획1팀"), 2)
         self.assertEqual(insights.missing_contracts(R, "기획2팀"), 0)
-        self.assertIn("계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 2개", render._contract_line(R))
+        self.assertIn("이 없어 지금 예상 이익을 못 낸 프로젝트 2개", render._contract_line(R))
         R["s3"]["projects"] = R["s3"]["projects"][1:2]
         self.assertEqual(render._contract_line(R), "")
 
@@ -326,7 +326,7 @@ class TestDecisionCMissingContract(unittest.TestCase):
         I = {"flow": [], "alerts": [], "pairs": []}
         h = insights_render.team_section(I, self.R(), "기획1팀")
         self.assertIn("프로젝트 이익 흐름", h)
-        self.assertIn("계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 2개", h)
+        self.assertIn("이 없어 지금 예상 이익을 못 낸 프로젝트 2개", h)
         self.assertEqual(insights_render.team_section(I, self.R(), "기획2팀"), "")
 
 

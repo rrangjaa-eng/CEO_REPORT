@@ -574,7 +574,8 @@ def _dept_cell():
     return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": {}, "nameless": 0}
 
 
-ACCOUNT_GROUPS = (("direct", "원가"), ("common", "판매비와관리비"), ("common_unmarked", "판매비와관리비"), ("nonop_out", "영업외비용"))
+ACCOUNT_GROUPS = (("direct", "원가"), ("common", "판매비와관리비"), ("common_unmarked", "판매비와관리비"), ("nonop_out", "영업외비용"),
+                  ("nonop_in", "영업외수익"))   # 11/17 전수 점검 F10: 예산의 이자수익·올해 영업외 수익이 늘 0 이던 것 (금액 = 대변 − 차변)
 
 
 def build_accounts(books, cfg, prev_rows=()):
@@ -583,11 +584,13 @@ def build_accounts(books, cfg, prev_rows=()):
     달·계정마다 차변−대변. 구분 = 원가(직접비 (도)) · 판매비와관리비(공통비) · 영업외비용(설정 계정). 손익.csv 와 같은 줄을 쓴다.
     금액 없는 줄이 있는 칸은 비운다 (0으로 치지 않음). 새 분개장에 없는 달의 이전 줄은 그대로 잇는다 (누적)."""
     nout = set(_squash(c) for c in cfg["nonop_out_codes"])
+    nin = set(_squash(c) for c in cfg.get("nonop_in_codes", ()))
     label = dict(ACCOUNT_GROUPS)
     cells = OrderedDict()
     undated = 0
     for ln in books.journal:
-        kind = "nonop_out" if _squash(ln["account_code"]) in nout else _classify(ln, cfg)
+        sq = _squash(ln["account_code"])
+        kind = "nonop_out" if sq in nout else "nonop_in" if sq in nin else _classify(ln, cfg)
         if kind not in label:
             continue
         if ln["date"] is None:
@@ -595,7 +598,7 @@ def build_accounts(books, cfg, prev_rows=()):
             continue
         key = (ln["date"].strftime("%Y-%m"), label[kind], _squash(ln["account_code"]))
         c = cells.setdefault(key, {"name": _squash(ln["account"]), "sum": [0, 0]})
-        amount = _net(ln, "common")
+        amount = _net(ln, "revenue" if kind == "nonop_in" else "common")
         if amount is None:
             c["sum"][1] += 1
         else:
@@ -605,7 +608,7 @@ def build_accounts(books, cfg, prev_rows=()):
     for (ym, group, code), c in sorted(cells.items()):
         rows.append(dict(zip(data.ACCOUNT_KEYS, [ym, group, code, c["name"], cell_amount(_cell(c["sum"]))])))
     rows.sort(key=lambda r: (r.get("연월", ""), r.get("계정코드", "")))
-    notes = ["원가 = 직접비(도) · 판매비와관리비 = 공통비 · 영업외비용 = 계정 %s · 금액 = 차변 − 대변" % ",".join(cfg["nonop_out_codes"])]
+    notes = ["원가 = 직접비(도) · 판매비와관리비 = 공통비 · 영업외비용 = 계정 %s · 금액 = 차변 − 대변 · 영업외수익 = 계정 %s · 금액 = 대변 − 차변" % (",".join(cfg["nonop_out_codes"]), ",".join(cfg.get("nonop_in_codes", ())))]
     if undated:
         notes.append("날짜 없는 비용 줄 %d건 → 넣지 않음" % undated)
     return Table(data.ACCOUNT_FILE, data.ACCOUNT_KEYS, rows, notes=notes)

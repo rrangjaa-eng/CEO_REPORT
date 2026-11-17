@@ -82,6 +82,15 @@ def team_names(d):
     return sorted(n for n in names if n.endswith("팀") and n not in ("팀 미지정", "팀 미확인"))
 
 
+PAY_ACCOUNT_WORDS = ("퇴직급여", "퇴직연금", "상여", "제수당", "임원급여", "급료", "임금")
+
+
+def _is_pay_account(name):
+    """급여성 계정 (팀장용에서 금액을 보이지 않는 계정). 급여(80200)는 부서비용에서 이미 따로라 여기 없음."""
+    n = "".join(str(name or "").split())
+    return any(w in n for w in PAY_ACCOUNT_WORDS)
+
+
 def build(d, R, team):
     """팀 하나의 숫자 묶음. R 은 calc.compute(…, 'monthly', …) 결과."""
     ym = R["s4"]["ym"]
@@ -105,18 +114,29 @@ def build(d, R, team):
             return _sum(r[key] for r in rows)
         return 0 if (key != "heads" and m in dept_months) else None
 
+    # 11/17 전수 점검 F11: 퇴직급여·상여 같은 급여성 계정은 부서비용 '판관비'에 들어 있지만 팀장용엔 급여 금액을 어디에도 보이지 않는다
+    # (사용자 2026-11-05) — 퇴사자 한 사람의 퇴직금이 판관비 표에 그대로 보였음. 판관비·이익·계정 표에서 모두 뺀다
+    pay_by = {}
+    for r in getattr(d, "dept_accounts", None) or []:
+        if "".join(str(r["dept"] or "").split()) == "".join(team.split()) and _is_pay_account(r["account"]) and r["amount"]:
+            pay_by[r["ym"]] = pay_by.get(r["ym"], 0) + r["amount"]
     M = []
     for m in months:
         rev, cost = team_cell(m, "revenue"), team_cell(m, "direct")
         gp = _sub(rev, cost)
-        sga = dept_cell(m, "sga") if d.dept is not None else None
+        sga = _sub(dept_cell(m, "sga"), pay_by.get(m, 0)) if d.dept is not None else None
         sal = dept_cell(m, "salary") if d.dept is not None else None
         op = _sub(gp, sga)
         M.append({"ym": m, "revenue": rev, "cost": cost, "gp": gp, "sga": sga, "op": op,
                   "net": _sub(op, sal), "heads": dept_cell(m, "heads") if d.dept is not None else None})
+    # 11/17 전수 점검 F1: 급여 전인 달(달 중간에 만든 이번 달)은 인원 '급여 전'으로, 평균은 급여 들어온 달만
+    from .teamprofit import paid_months
+    paid = paid_months(d.dept) if d.dept is not None else set()
+    for x in M:
+        x["unpaid"] = d.dept is not None and x["ym"] not in paid
     tot = {k: _sum(x[k] for x in M) for k in ("revenue", "cost", "gp", "sga", "op", "net")}
-    hs = [x["heads"] for x in M]
-    tot["heads"] = None if any(h is None for h in hs) else sum(hs) / float(len(hs))
+    hs = [x["heads"] for x in M if not x["unpaid"]]
+    tot["heads"] = None if not hs or any(h is None for h in hs) else sum(hs) / float(len(hs))
     cum, run = [], 0
     for x in M:
         run = None if run is None or x["gp"] is None else run + x["gp"]
@@ -260,7 +280,8 @@ def build(d, R, team):
 
     acc = None
     if getattr(d, "dept_accounts", None) is not None:
-        rows = [r for r in d.dept_accounts if "".join(str(r["dept"] or "").split()) == "".join(team.split()) and r["ym"] in months]
+        rows = [r for r in d.dept_accounts if "".join(str(r["dept"] or "").split()) == "".join(team.split()) and r["ym"] in months
+                and not _is_pay_account(r["account"])]
         names, order = {}, []
         for r in rows:
             if r["code"] not in names:
@@ -471,7 +492,8 @@ def _months_section(T, title):
     for i, x in enumerate(M):
         a(_tr([_td(_mlabel(x["ym"]), "c"), _num(x["revenue"]), _num(x["cost"]), _num(x["gp"]), _td(esc(P(x["gp"], x["revenue"]))),
                _num(x["sga"]), _num(x["op"], True)] + ([_td(_bs(x["net"]), "c")] if T["show_net"] else [])
-              + [_td("미확인" if x["heads"] is None else "%d" % x["heads"], "c"), _num(T["cum"][i])], "now" if i == len(M) - 1 else ""))
+              + [_td("급여 전" if x.get("unpaid") else ("미확인" if x["heads"] is None else "%d" % x["heads"]), "c"), _num(T["cum"][i])],
+              "now" if i == len(M) - 1 else ""))
     a(_tr([_td("합계", "c"), _num(tot["revenue"]), _num(tot["cost"]), _num(tot["gp"]), _td(esc(P(tot["gp"], tot["revenue"]))),
            _num(tot["sga"]), _num(tot["op"], True)] + ([_td(_bs(tot["net"]), "c")] if T["show_net"] else [])
           + [_td("미확인" if tot["heads"] is None else "%.1f" % tot["heads"], "c"), _num(tot["gp"])], "b tot"))
@@ -559,7 +581,7 @@ def render(T, today=None):
         a(_tr([_td("급여 반영 손익<small> (금액 비공개)</small>", "l"), _td(_bs(cur["net"]), "c"), _td(_bs(pv("net")) if prev else "-", "c"),
                _td("-", "c"), _td(_bs(tot["net"]), "c"), _td("-", "c"), _td("-", "c")], "b"))
     heads = lambda v: "미확인" if v is None else "%d명" % v
-    a(_tr([_td("인원", "l"), _td(heads(cur["heads"])), _td(heads(pv("heads")) if prev else "-", "p"), _td("-"),
+    a(_tr([_td("인원", "l"), _td("급여 전" if cur.get("unpaid") else heads(cur["heads"])), _td(heads(pv("heads")) if prev else "-", "p"), _td("-"),
            _td("미확인" if tot["heads"] is None else "평균 %.1f명" % tot["heads"]), _td("-", "p"), _td("-", "l")]))
     a("</tbody></table>")
     notes = []
@@ -788,7 +810,7 @@ def render_annual(T, X, today=None):
     g = X.get("goal_next")
     got = _sum([p["est"] for p in NX]) if NX else None
     a("<table class='g' style='margin-top:8px'><thead><tr><th>%d년 매출 목표</th><th>%d년 목표 수익률</th><th>목표 중 이미 받은 일 (사전견적)</th></tr></thead><tbody>" % (ny, ny))
-    a(_tr([_td(esc(W(g[0])) if g and g[0] else "입력 전", "c"), _td("%d%%" % round(g[1] * 100) if g and g[1] is not None else "입력 전", "c"),
+    a(_tr([_td(esc(W(g[0])) if g and g[0] else "입력 전", "c"), _td((("%d%%" if round(g[1] * 100, 1) == int(round(g[1] * 100, 1)) else "%.1f%%") % round(g[1] * 100, 1)) if g and g[1] is not None else "입력 전", "c"),
            _td((esc(W(got)) if got is not None else "-") + (" (%s)" % esc(P(got, g[0])) if g and g[0] and got is not None else ""), "c")]))
     a("</tbody></table></div>")
 

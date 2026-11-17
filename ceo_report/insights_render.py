@@ -152,8 +152,8 @@ def ceo_issue(D, top=3, compact=False):
 
 # ───────────── 팀장 보고 조각 ─────────────
 # 이익 흐름 표 설명 (calc profit_now 와 같은 식): 끝난 프로젝트도 요청·계획까지 뺀다 (2026-11-14 통합 때 팀장 보고 글을 바로잡음)
-FLOW_NOTE = ("※ 견적 때 이익 = 계약 − 추정 예산. 지금 예상 이익: 끝남 = 계약 − (쓴 돈 + 요청 + 계획), "
-             "진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산).")
+FLOW_NOTE = ("※ 매출 기준 = 계약금액, 없으면 끝난 행사는 장부 매출·진행 중은 사전견적(이미 잡힌 매출이 더 크면 그것). 견적 때 이익 = 매출 기준 − 추정 예산. "
+             "지금 예상 이익: 끝남 = 매출 기준 − (쓴 돈 + 요청 + 계획), 진행 중 = 매출 기준 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산).")
 
 
 def _team_projects(R, team):
@@ -173,7 +173,7 @@ def team_section(I, R, team, start_no=7):
     # 8 이익 흐름
     # 끝난 프로젝트는 모두, 진행 중은 추정 예산을 넘은 것만 (2026-11-14 오후 점검 T1·7절: 진행 중 '차이'는 넘은 만큼만 뜻이 있음)
     fl = [f for f in I["flow"] if f["name"] in names and (f.get("closed") or f["diff"] < 0)]
-    miss = sum(1 for p in mine.values() if not p.get("contract"))   # 결정 c (2026-11-15): 빠진 줄 모르지 않게 수를 한 줄로
+    miss = sum(1 for p in mine.values() if not (p.get("profit_basis") if "profit_basis" in p else p.get("contract")))   # F2   # 결정 c (2026-11-15): 빠진 줄 모르지 않게 수를 한 줄로
     if fl or miss:
         body = ""
         if fl:
@@ -181,7 +181,7 @@ def team_section(I, R, team, start_no=7):
                            % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
                               "hl neg" if f["diff"] < 0 else "up", T(f["diff"]))
                            for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
-            body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
+            body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>매출 기준</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
                     "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         if miss:
             body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
@@ -360,7 +360,7 @@ def mgmt_section(I, R):
     # 끝남/진행 중 '구분' 칸 (2026-11-14 통합, 팀장 보고 표와 같은 모양): 진행 중은 남은 추정 예산까지 나갈 돈으로 봐 뜻이 다르다
     fl = I["flow"]
     sub(12, "프로젝트 이익 흐름 (견적 때 → 지금, 줄어든 순)",
-        _tbl(["프로젝트", "팀", "구분", "계약", "견적 때 이익", "지금 예상 이익", "차이"],
+        _tbl(["프로젝트", "팀", "구분", "매출 기준", "견적 때 이익", "지금 예상 이익", "차이"],
              [[esc(f["name"]), esc(f["team"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
                S(f["diff"])] for f in fl], nums=(3, 4, 5, 6)) + _none(FLOW_NOTE + " 그래서 진행 중의 차이는 추정 예산을 넘은 만큼만 나옵니다.")
         if fl else _none("계약·추정 예산이 있는 프로젝트 없음"))
