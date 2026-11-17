@@ -3461,11 +3461,14 @@ def _s4(R):
     h.append("<h3>프로젝트 계약·매출 반영·종료 시점 예상이익 (인트라넷·집행자료 기준)</h3>")
     rows = []
     for P in s4["projects"]:
-        rows.append([esc(P["id"]), esc(P["name"]), W(P["contract"], "계약금액 미등록"), W(P["recognized"]),
+        pb = P.get("profit_basis", P["contract"])   # F2 (11/17 결정): 계약금액이 비면 받은 자료(사전견적·장부 매출)로 이익을 냄
+        cell = W(P["contract"], "계약금액 미등록") if P["contract"] is not None or pb is None else \
+            W(pb) + " <span class='na'>(%s)</span>" % esc(P.get("profit_basis_src") or "")
+        rows.append([esc(P["id"]), esc(P["name"]), cell, W(P["recognized"]),
                      W(P["unrecognized"], "판단 불가"), W(P.get("cost_end", P["expected"]), "판단 불가"),
                      W(P["profit_end"], "판단 불가") + (" <span class='na'>(미확인 원가 %d건)</span>" % P["unknown_cost"]
                                                        if P["unknown_cost"] else ""),
-                     esc(pct(P["profit_end"], P["contract"]))])
+                     esc(pct(P["profit_end"], pb))])
     ce = [P.get("cost_end", P["expected"]) for P in s4["projects"]]
     h.append(table(["번호", "프로젝트", "계약금액", "매출 반영 누계", "계약 중 매출 미반영", "종료 예상 원가", "종료 시점 예상이익",
                     "예상이익률"], rows, num_cols=(2, 3, 4, 5, 6, 7),
@@ -3475,6 +3478,7 @@ def _s4(R):
                           "", ""]))
     h.append("<div class='note'>종료 예상 원가 = 등록 지출(누적 지급 + 요청 미지급 + 장부 전 지급요청 + 카드 미결제 + 미요청 계획)과 "
              "추정 예산 중 큰 쪽 (끝난 프로젝트는 등록 지출, 예산 미지정은 등록 지출까지만). 예상이익 = 계약금액 − 종료 예상 원가 — "
+             "계약금액이 비면 끝난 것은 매출 반영 누계, 진행 중은 사전견적과 매출 반영 누계 중 큰 것을 괄호에 출처와 함께 씀 — "
              "팀장 보고 '지금 예상 이익'과 같은 식. 금액 미확인 원가·요청이 있으면 ‘판단 불가’.</div>")
     return "".join(h)
 

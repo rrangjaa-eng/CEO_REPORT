@@ -12,7 +12,7 @@ import re
 from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
 from .old_intranet import OLD_LAST_DAY, OLD_STATE
-from .wehago import journal_from_start, norm_vendor
+from .wehago import journal_from_start, norm_vendor, rq_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
 from .screen_values import is_new_ceo_value
@@ -643,7 +643,7 @@ def _requests_part(groups, requests, match):
             found = mine
             via_link[rq["번호"]] = True
         elif m["status"] in ("계산서 있음", "금액 차이") and rq["amount"] is not None and m.get("invoice_total") is not None:
-            found = [g for g in groups if g["vendor_norm"] == norm_vendor(rq["vendor"]) and g["project"] == (rq["code"] or "")
+            found = [g for g in groups if g["vendor_norm"] == rq_vendor(rq) and g["project"] == (rq["code"] or "")
                      and _group_total(g) == m["invoice_total"]]
         candidates[rq["번호"]] = found
         for g in found:
@@ -757,8 +757,8 @@ def _requests_part(groups, requests, match):
             notes.append("지급요청 %s: 계산서 있음이나 원가 줄을 하나로 정하지 못함 → 요청으로 넣음 (중복 가능)" % no)
         elif linked.get(no):
             notes.append("지급요청 %s: 자동 연결된 원가 줄을 하나로 정하지 못하거나 합계를 몰라 요청으로 넣음 (중복 가능)" % no)
-        elif unpaid_by_vendor.get(norm_vendor(rq["vendor"])):
-            notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[norm_vendor(rq["vendor"])]))
+        elif unpaid_by_vendor.get(rq_vendor(rq)):
+            notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[rq_vendor(rq)]))
     if paired:
         kinds = collections.Counter("지급 끝난 줄" if g["state"] in ("지급완료", "카드결제완료") else "미지급 줄" for g in paired.values())
         notes.append("장부 원가 줄과 프로젝트·금액으로 짝지은 지급요청 %d건 → 요청 줄 넣지 않음 (%s, 원가 줄 근거에 번호 표시)"
@@ -818,7 +818,7 @@ def _pair_with_books(to_add, groups, taken, linked):
             elif g["state"] not in ("요청미지급", "카드사용미결제"):
                 continue
             day = g.get("paid_day") or g.get("day") or dt.date.max
-            cands.append((g["vendor_norm"] != norm_vendor(rq["vendor"]), abs((day - reg).days) if reg and day != dt.date.max else 0,
+            cands.append((g["vendor_norm"] != rq_vendor(rq), abs((day - reg).days) if reg and day != dt.date.max else 0,
                           _row_order(g), g))
         if cands:
             g = min(cands, key=lambda c: c[:3])[3]

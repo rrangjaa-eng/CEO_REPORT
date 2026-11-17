@@ -405,7 +405,10 @@ def annual(rows, year, end_balance, start_balance=None, upto=None):
         return None
     last = max(mine)
     p1 = min(dt.date(year, 12, 31), last) if last.year == year else dt.date(year, 12, 31)
-    CF = compute(rows, dt.date(year, 1, 1), p1, end_balance, label="%d년" % year)
+    nxt = p1 + dt.timedelta(days=1)
+    label = ("%d년" % year if (p1.month, p1.day) == (12, 31) else
+             "%d년 1~%d월" % (year, p1.month) if nxt.day == 1 else "%d년 1/1~%d/%d" % (year, p1.month, p1.day))   # F8: 기간을 이름에
+    CF = compute(rows, dt.date(year, 1, 1), p1, end_balance, label=label)
     if CF and start_balance is not None and CF.get("ystart") is not None:
         CF["start_check"] = ("장부 1월 1일 잔액", start_balance + short_balance(rows, dt.date(year - 1, 12, 31)))
     CF["annual"] = True

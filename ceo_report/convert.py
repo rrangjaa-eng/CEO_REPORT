@@ -448,7 +448,10 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     if old is not None:
         notes = list(notes) + old.notes
     # 예전 인트라넷 지급요청은 원가 줄 연결에만 (requests 에는 넣지 않음: 요청미지급·요청 누계는 지금 인트라넷만)
-    costs = linking.link_costs(books, requests + linking.old_requests(old, asof, now), projects, overrides, cfg["link_days"],
+    # 11/17 전수 점검: 요청 거래처 이름('한진기획 주식회사 (메이)'·'레지스토_김정운')을 장부 이름에 맞춤 — 연결·대조·짝짓기 모두 같은 이름
+    old_rq = wehago.resolve_request_vendors(books, linking.old_requests(old, asof, now))
+    wehago.resolve_request_vendors(books, requests)
+    costs = linking.link_costs(books, requests + old_rq, projects, overrides, cfg["link_days"],
                                cfg["direct_prefixes"], cfg["direct_mark"], cfg["vat_codes"],
                                cfg["common_prefixes"], cfg["common_mark"])
     revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])

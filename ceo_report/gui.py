@@ -716,6 +716,12 @@ class Window(object):
         self.buttons.append(b)
         ttk.Spinbox(r, from_=2025, to=2100, width=6, textvariable=self.year).pack(side="left", padx=(6, 2))
         ttk.Label(r, text="년 (결산 뒤 분개장 다시 받고 변환)", style="S.TLabel").pack(side="left")
+        # 기획본부용 재무상태표 (사용자 2026-11-17): 영업외수익 뺀 엑셀, 노란 칸을 바꾸면 모두 다시 계산
+        r = self._row(c, (6, 0))
+        b = ttk.Button(r, text="기획본부 재무상태표", command=lambda: self.report("기획본부"))
+        b.pack(side="left")
+        self.buttons.append(b)
+        ttk.Label(r, text="엑셀 (영업외수익 뺀 기준)", style="S.TLabel").pack(side="left", padx=(6, 0))
         # 4 보내기 — 만든 뒤 보낼 파일 (편의성 7): 이번 기준일의 주간·월간 대표, 팀장용, 경영관리를 상태와 함께
         s4 = self.s4 = self._step(tab, 3, 4, STEPS[3])
         c = self._box(s4, "보낼 파일", "이번 기준일")
@@ -1991,6 +1997,11 @@ class Window(object):
             return
         if task == "자동":
             self.say(line if rc == 0 else "자동 반영 끝 — 오류가 있습니다 (위 글을 확인하세요)")
+        elif rc == 0 and task == "기획본부":
+            xl = [f for f in files if f.lower().endswith(".xlsx")]
+            if xl:
+                open_path(xl[-1])
+                self.say("열었음: %s" % os.path.basename(xl[-1]))
         elif rc == 0:
             pdfs = [f for f in files if f.lower().endswith(".pdf")
                     and ("대표" in os.path.basename(f) or "근거자료" in os.path.basename(f))]
