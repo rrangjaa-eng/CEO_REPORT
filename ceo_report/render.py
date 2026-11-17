@@ -3239,11 +3239,36 @@ def _s2(R):
         h.append(table(head, ev_rows(sorted(s2["beyond"], key=lambda e: e["date"])), num_cols=(2,)))
     dated = sorted(s2["dated"], key=lambda e: (e["date"], e["io"]))   # 이번 주로 옮긴 지난 입금 포함 (계산에 쓴 목록 그대로)
     h.append("<h3>기간 내 예정 전체 (%d건)</h3>" % len(dated))
-    h.append(table(head, ev_rows(dated), num_cols=(2,)))
+    h.append(table(head, _with_subtotals(dated, s2["buckets"], ev_rows), num_cols=(2,)))
     h.append("<div class='note'>프로젝트 카드 미결제는 카드대금 일정(자금일정)에 포함되므로 여기서 따로 더하지 않음. "
              "프로젝트 지급요청은 공급가액+부가세(실제 출금액)로 반영. "
              "부가세가 비어 있으면 공급가액만 반영하고 ‘부가세 미확인’으로 표시.</div>")
     return "".join(h)
+
+
+def _with_subtotals(dated, buckets, ev_rows):
+    """기간 내 예정 전체: 위 구간 표의 구간(주·월)마다 소계 줄을 끼운다 (사용자 2026-11-17 경영관리 보고 목업: 주마다 소계).
+    소계 = 그 구간 줄들의 입금 합·지급 합·건수, 구간 끝 계산 잔액(확정·정기)은 구간 표 값 그대로. 구간이 하나뿐이면 그대로."""
+    rows = ev_rows(dated)
+    if len(buckets) < 2:
+        return rows
+    out, i = [], 0
+    for b in buckets:
+        mine = []
+        while i < len(dated) and dated[i]["date"] <= b["to"]:
+            mine.append(i)
+            i += 1
+        if not mine:
+            continue
+        out += [rows[j] for j in mine]
+        tin = sum(dated[j]["amount"] or 0 for j in mine if dated[j]["io"] == "in")
+        tout = sum(dated[j]["amount"] or 0 for j in mine if dated[j]["io"] != "in")
+        bal = b.get("bal_firm")
+        out.append(([esc("%s 소계" % b["label"]), "입금<br>지급", "%s<br>%s" % (W(tin), W(tout)), "", "", "",
+                     esc("%s ~ %s · %d건" % (d2s(b["from"]), d2s(b["to"]), len(mine)))
+                     + ("" if bal is None else esc(" · 구간 끝 계산 잔액(확정·정기) %s" % won(bal))), "", ""], "tot wsub"))
+    out += rows[i:]
+    return out
 
 
 def _by_name_notes(R):

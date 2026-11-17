@@ -79,6 +79,9 @@ def first_screen(html):
 
 def section(html, n):
     """상세자료 n번 묶음 HTML (7번은 문서 끝까지)."""
+    if "<!--o:" in html:   # 긴 표는 부록으로 옮겨져 있다(2026-11-17) → 예전 순서로 이은 문서에서 본다
+        from ceo_report import areas
+        html = areas.old_view(html)
     start = html.index("<h2 id='s%d'>" % n)
     nxt = "<h2 id='s%d'>" % (n + 1)
     end = html.index(nxt, start) if nxt in html[start:] else len(html)
