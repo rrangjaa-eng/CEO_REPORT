@@ -68,12 +68,35 @@ class Check(unittest.TestCase):
         res = lw.check(d, 2026, dt.date(2026, 1, 5), broken)
         self.assertTrue(all(r[2] == "실패" for r in res))
 
-    def test_due_in_january_and_july(self):
+    def test_due_when_not_fetched_in_7_days(self):
+        """사용자 2026-11-17: 법령 관련 항목은 최신 법령을 먼저 확인 → 7일 안에 받은 적 없으면 보고 전에 받음 (예전: 1·7월만)."""
         d = tempfile.mkdtemp()
-        self.assertFalse(lw.due(d, dt.date(2027, 1, 3)))
+        self.assertFalse(lw.due(d, dt.date(2027, 1, 3)))   # 아이디 없으면 못 받음
         lw.save_oc(d, "me")
-        self.assertTrue(lw.due(d, dt.date(2027, 1, 3)))
-        self.assertFalse(lw.due(d, dt.date(2027, 2, 3)))
+        self.assertTrue(lw.due(d, dt.date(2027, 2, 3)))
+        S = lw.load(d)
+        S["last"] = "2027-02-01"
+        lw._write(d, S)
+        self.assertFalse(lw.due(d, dt.date(2027, 2, 7)))
+        self.assertTrue(lw.due(d, dt.date(2027, 2, 8)))
+
+    def test_state_message_and_ensure_failure_does_not_stop(self):
+        d = tempfile.mkdtemp()
+        self.assertIn("최신 법령 확인 못 함", lw.state(d, dt.date(2027, 2, 3))["msg"])
+        lw.save_oc(d, "me")
+
+        def broken(url, timeout=0):
+            raise OSError("접속 안 됨")
+        st = lw.ensure(d, 2027, dt.date(2027, 2, 3), broken)
+        self.assertFalse(st["ok"])
+        self.assertIn("받기 실패", st["msg"])
+        S = lw.load(d)
+        S["last"] = "2027-02-01"
+        S["last_try"] = {"날": "2027-02-01", "받음": 31, "전체": 31, "실패": []}
+        lw._write(d, S)
+        st = lw.state(d, dt.date(2027, 2, 3))
+        self.assertTrue(st["ok"])
+        self.assertIn("2027-02-01 (2일 전)", st["msg"])
 
 
 if __name__ == "__main__":

@@ -240,7 +240,12 @@ def status(input_dir, year, today=None):
         rows.append((k, name, v, ok, why, (year, k) in mine and ok and mine[(year, k)][0] == v))
         if not ok:
             todo.append(k)
-    return {"year": year, "rows": rows, "todo": todo, "confirmed": all(r[5] for r in rows), "known": year <= LATEST}
+    try:   # 최신 법령 확인 상태 (사용자 2026-11-17)
+        from . import lawwatch
+        ls = lawwatch.state(input_dir, today)
+    except Exception:
+        ls = None
+    return {"year": year, "rows": rows, "todo": todo, "confirmed": all(r[5] for r in rows), "known": year <= LATEST, "law_state": ls}
 
 
 def show(key, v):
@@ -313,6 +318,9 @@ def render(T, esc):
     if not T:
         return ""
     h = ["<div class='q'>%d년 적용한 세법 기준</div>" % T["year"]]
+    ls = T.get("law_state")
+    if ls:
+        h.append("<div class='%s'>%s</div>" % ("note" if ls.get("ok") else "warn", esc(ls["msg"])))
     b = banner(T)
     if b:
         h.append("<div class='warn'>%s</div>" % esc(b))
@@ -320,6 +328,6 @@ def render(T, esc):
         "<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td></tr>"
         % (esc(n), esc(show(k, v)), "<span class='tag'>확인함</span>" if mine else ("<span class='tag e'>자료확인</span>" if ok else "<b style='color:#c62828'>미확인</b>"),
            esc(why)) for k, n, v, ok, why, mine in T["rows"]))
-    h.append("<div class='note'>프로그램은 인터넷에서 세법 개정을 스스로 읽지 않습니다. 해마다 1월에 기본값을 갱신하고, "
-             "세무사 확인 값은 창에서 넣습니다. '미확인' 값을 쓰는 계산은 '확인 필요'로만 보여 주고 합계에 넣지 않습니다.</div>")
+    h.append("<div class='note'>보고를 만들 때 7일 안에 받은 적이 없으면 국가법령정보에서 조문을 먼저 받아 개정 여부를 봅니다 (창 '개정 확인 받기'로도 받음). "
+             "확인한 값은 창에서 넣습니다. '미확인' 값을 쓰는 계산은 '확인 필요'로만 보여 주고 합계에 넣지 않습니다.</div>")
     return "".join(h)

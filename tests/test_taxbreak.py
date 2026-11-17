@@ -162,7 +162,7 @@ class FullReview1117(unittest.TestCase):
         h = tb.render(tb.check(folder({}), 2026, YES), lambda x: x)
         self.assertIn("근거 조문", h)
         self.assertIn("조특법 10조", h)
-        self.assertIn("보여 주기만", h)
+        self.assertIn("세금 계산", h)
 
 
 class ResearchDeclined1117(unittest.TestCase):

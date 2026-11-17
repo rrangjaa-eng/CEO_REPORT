@@ -133,3 +133,25 @@ class Detail(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickedCredits1117(unittest.TestCase):
+    """사용자 2026-11-17 첫 번째 안: '받음'인 공제만 계산, 최저한세로 못 쓴 세액공제는 10년 이월 (조특법 144조). 숫자는 가짜."""
+
+    def test_order_floor_and_carry(self):
+        d = detail_folder()
+        base_C = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        ex = [{"name": "통합고용세액공제", "amount": 5_000_000, "mt": True, "nong": True},
+              {"name": "인력개발비(교육훈련비) 세액공제", "amount": 100_000, "mt": False, "nong": False}]
+        C = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=ex)
+        hire, edu = C["extra"]
+        # 넘어온 공제를 먼저 쓰고, 남은 최저한세 여유만큼만 새 고용 공제
+        self.assertEqual(hire["used"], base_C["room"] - base_C["used"] if base_C["room"] > base_C["used"] else 0)
+        self.assertEqual(hire["used"] + hire["carry"], 5_000_000)
+        # 최저한세 밖 공제는 최저한세 밑으로도 줄임
+        self.assertEqual(edu["used"], 100_000)
+        self.assertEqual(C["final"], base_C["final"] - hire["used"] - 100_000)
+        # 이월: 연도·기한(10년)
+        self.assertTrue(any(c["from"] == 2026 and c["until"] == 2036 and c["amount"] == hire["carry"] for c in C["carries"]) or hire["carry"] == 0)
+        # 농특세: 교육훈련(연구·인력개발비)은 비과세
+        self.assertEqual(C["nong"], int((C["used"] + hire["used"]) * 0.2) // 10 * 10)
