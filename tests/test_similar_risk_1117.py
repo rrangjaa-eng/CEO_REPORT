@@ -158,5 +158,17 @@ class SplitInvoiceAmongOthersTest(unittest.TestCase):
         self.assertEqual(sum(1 for e in new if e["source"] == "계산서"), 4)   # 어느 묶음인지 몰라 그대로 둠
 
 
+class CorpLocalTaxKindTest(unittest.TestCase):
+    """6번: 법인지방소득세는 원천세가 아니다."""
+
+    def test_regular_kind(self):
+        rk = mod("render").regular_kind
+        self.assertEqual(rk({"cat": "법인지방소득세 (장부 계산)", "desc": "2026년 귀속"}), "기타 세금")
+        self.assertEqual(rk({"cat": "세금", "desc": "법인지방소득세 4월 납부"}), "기타 세금")
+        self.assertEqual(rk({"cat": "법인세 (장부 계산)", "desc": ""}), "기타 세금")
+        self.assertEqual(rk({"cat": "원천세 (장부 계산)", "desc": "근로소득세·지방소득세"}), "원천세")
+        self.assertEqual(rk({"cat": "", "desc": "지방소득세 특별징수"}), "원천세")
+
+
 if __name__ == "__main__":
     unittest.main()

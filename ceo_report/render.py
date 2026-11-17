@@ -1224,6 +1224,10 @@ def regular_kind(e, tax_of=None):
     else:
         k = (e.get("cat") or "").replace(" (장부 계산)", "")
     text = "%s %s %s" % (k, e.get("cat") or "", e.get("desc") or "")
+    # 법인지방소득세는 이름에 '소득세'·'지방소득'이 들어 있어 원천세로 묶였다 (1차 점검 자금-15·E3, 사용자 결정 2026-11-17
+    # '고치기': 월간 대표 보고 원천세 칸에 1,617,187원이 섞임). 세목이 법인세·법인지방소득세면 낱말을 보기 전에 가른다
+    if k in ("법인세", "법인지방소득세") or "법인지방소득세" in text:
+        return "기타 세금"
     for kind, words in REGULAR_KINDS:
         if k == kind or any(w in text for w in words):
             return kind
