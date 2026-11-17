@@ -410,13 +410,23 @@ def profit_flow(R):
 def pay_habits(R, d_invoices=None):
     """9: 거래처마다 입금이 예정일보다 며칠 늦었나 -> {'clients': [(거래처, 평균 늦은 날, 건수)], 'avail': (firm, all) 늦춰 본 여유 자금}."""
     invs = d_invoices if d_invoices is not None else (R.get("_invoices") or [])
-    delay = collections.defaultdict(list)
+    # E3 (2026-11-17, 계산-01): 거래처는 코드로 묶는다 (코드가 없는 옛 계산서만 이름). 보이는 이름은 그 코드의 이름 '이름 [코드]'
+    delay, label, names = collections.defaultdict(list), {}, collections.defaultdict(set)
     for r in invs:
+        code = (r.get("client_code") or "").strip()
+        key = ("c", code) if code else ("n", r.get("client") or "")
+        names[key].add(r.get("client") or "")
+        label[key] = "%s [%s]" % (r.get("client") or "", code) if code else (r.get("client") or "")
         if r.get("due") and r.get("paid_date"):
-            delay[r.get("client") or ""].append((r["paid_date"] - r["due"]).days)
-    habit = dict((k, statistics.mean(v)) for k, v in delay.items() if k and len(v) >= 2)
-    clients = sorted(((k, round(v, 1), len(delay[k])) for k, v in habit.items()), key=lambda x: -x[1])
-    late = dict((k, int(round(v))) for k, v in habit.items() if v > 0)
+            delay[key].append((r["paid_date"] - r["due"]).days)
+    habit = dict((k, statistics.mean(v)) for k, v in delay.items() if k[1] and len(v) >= 2)
+    clients = sorted(((label[k], round(v, 1), len(delay[k])) for k, v in habit.items()), key=lambda x: -x[1])
+    late = {}
+    for k, v in habit.items():   # 일정 줄(desc = 거래처 이름)에 늦춤을 적용: 그 코드에 쓰인 이름 모두
+        if v > 0:
+            for n in names[k]:
+                if n:
+                    late[n] = int(round(v))
     moved = []
     for e in R["s2"].get("dated") or []:
         k = (e.get("desc") or "").strip()

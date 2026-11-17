@@ -57,6 +57,7 @@ BOOK_NOTE_KEYS = ["알림"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
+INVOICE_OPTIONAL = ["거래처코드"]   # 계산서.csv 선택 칸 (E3, 2026-11-17): 매출 거래처코드 — 입금 습관·고객사별 이익을 코드로 묶음. 옛 파일은 빈칸
 SCHED_OPTIONAL = ["거래처코드"]   # 자금일정.csv 선택 칸 (2026-11-14): 없는 옛 파일도 그대로 읽는다. 새 파일·양식에는 넣는다
 TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
 
@@ -462,6 +463,7 @@ def load(folder):
     d.invoices = []
     for r in raw["계산서.csv"]:
         v = {"project": r.get("프로젝트번호", ""), "client": r.get("거래처", ""),
+             "client_code": (r.get("거래처코드") or "").strip().lstrip("0"),
              "date": date(r.get("발행일"), iss, r, "발행일"), "kind": r.get("구분", "") or "발행",
              "supply": num(r.get("공급가액"), iss, r, "공급가액"), "vat": num(r.get("부가세"), iss, r, "부가세"),
              "due": date(r.get("입금예정일"), iss, r, "입금예정일"), "due_firm": r.get("예정일확정", "") in ("Y", "확정"),

@@ -16,7 +16,7 @@ from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 FILE = "세무조정.csv"
 COLUMNS = ["연도", "항목", "금액", "반영", "근거"]
-PENALTY = re.compile(r"벌금|과태료|가산세|과징금|범칙금|교통위반|주정차")
+PENALTY = re.compile(r"벌금|벌과금|과태료|가산세|과징금|범칙금|교통위반|주정차")
 
 
 def _sq(t):
@@ -31,7 +31,7 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
     def law(k):
         return taxlaw.value(input_dir, year, k)
     ent = car = gift = 0
-    pen, pen_n = 0, 0
+    pen, pen_n, pen_acct, pen_memo = 0, 0, 0, []
     loan_bal, loan_months, opening = 0, [], False
     by_month = {}
     for ln in journal or []:
@@ -53,9 +53,13 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
             car += dr - cr
         elif "기부금" in name:
             gift += dr - cr
-        if dr and code[:1] in ("5", "8", "9") and PENALTY.search(_sq(ln.get("memo"))):
-            pen += dr
+        if dr and code[:1] in ("5", "8", "9") and PENALTY.search(name):
+            pen += dr   # E3 (2026-11-17, 계산-11): 계정과목(벌과금·가산세 등)으로 먼저
+            pen_acct += 1
+        elif dr and code[:1] in ("5", "8", "9") and PENALTY.search(_sq(ln.get("memo"))):
+            pen += dr   # 계정에 없으면 적요 낱말로 — 근거에 줄을 보여 확인받는다
             pen_n += 1
+            pen_memo.append("%s %s %s원" % (d.isoformat(), ln.get("vendor") or ln.get("account") or "", "{:,}".format(int(dr))))
     items = []
     # 접대비
     base_lim, ok1, _ = law("접대비기본한도")
@@ -70,8 +74,13 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
         else:
             items.append(("접대비 한도 초과", None, False, "매출이나 세법 기준을 몰라 계산 못 함"))
     # 벌금·과태료
+    why = []
+    if pen_acct:
+        why.append("벌과금·가산세 등 계정 %d건" % pen_acct)
+    if pen_n:
+        why.append("적요 낱말로 찾은 비용 %d건 (확인: %s%s)" % (pen_n, ", ".join(pen_memo[:5]), " 외" if pen_n > 5 else ""))
     items.append(("벌금·과태료·가산세", pen, pen > 0,
-                  ("적요에 벌금·과태료·가산세 등이 적힌 비용 전표 %d건" % pen_n) if pen_n else "적요에서 찾은 건 없음 (적요가 없는 건은 못 찾음)"))
+                  " · ".join(why) if why else "계정·적요에서 찾은 건 없음 (적요가 없는 건은 못 찾음)"))
     # 업무용 승용차
     lim_car, ok3, _ = law("승용차기록없음한도")
     rec = (answers or {}).get("승용차기록")

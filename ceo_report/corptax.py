@@ -17,6 +17,7 @@ DEP_COLUMNS = ["연도", "연간감가상각비"]
 BRACKETS_2026 = ((200_000_000, 0.10), (20_000_000_000, 0.20), (300_000_000_000, 0.22), (None, 0.25))
 BRACKETS_2023 = ((200_000_000, 0.09), (20_000_000_000, 0.19), (300_000_000_000, 0.21), (None, 0.24))
 LOCAL_RATE = 0.10   # 법인지방소득세 = 법인세의 10%
+LOCAL_WORDS = ("지방", "구청", "시청", "군청")   # 선납세금 중 지방소득세 줄 (코드가 없어 낱말, 근거에 건수를 보임 — E3)
 
 
 def brackets(year):
@@ -292,6 +293,7 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
     pretax, unknown, prepaid, local_prepaid, dep_lines = 0, 0, 0, 0, []
     by_month = {}   # E1: 달마다 세전 이익 (남은 달 예상에 씀)
+    local_lines = []
     for ln in journal:
         ln = closing_pl_line(ln, closing)   # 결산 전표: 원가·손익 대체는 빼고 감가상각비 차변만 (변환과 같게)
         if ln is None or ln["date"] is None:
@@ -304,8 +306,11 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
             continue
         if code in prepaid_codes:
             # 11/17 최종 점검: 원천징수된 지방소득세(거래처·적요에 '지방')는 법인세가 아니라 지방소득세에서 뺀다
-            if "지방" in _squash(ln.get("vendor")) + _squash(ln.get("memo")):
+            # E3 (2026-11-17, 계산-11): 선납세금 계정 안에서 지방소득세를 가르는 코드가 없어 거래처·적요 낱말로 가른다 →
+            # 낱말로 가른 줄은 근거에 건수·금액을 보여 확인받는다 (거래처가 구청·시청·군청이어도 지방세)
+            if any(w in _squash(ln.get("vendor")) + _squash(ln.get("memo")) for w in LOCAL_WORDS):
                 local_prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+                local_lines.append(ln)
             else:
                 prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
             continue
@@ -353,6 +358,9 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     basis += " · 대손충당금 = " + bd["note"]
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
+    if local_lines:
+        basis += " · 선납세금 중 지방소득세로 가른 줄 %d건 %s원 (거래처·적요에 '지방'·구청 등 — 한 줄에 국세·지방세를 함께 넣었으면 확인)" % (
+            len(local_lines), "{:,}".format(local_prepaid))
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
                  과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"])),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",

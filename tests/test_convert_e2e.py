@@ -169,6 +169,7 @@ class TestConvertEndToEnd(unittest.TestCase):
         want = dict((n, data.SCHEMA[n]) for n in GENERATED_CSV if n in data.SCHEMA)
         want["프로젝트.csv"] = data.SCHEMA["프로젝트.csv"] + ["실행가", "견적금액", "승인단계"]
         want["위하고대조.csv"] = XCHK_COLUMNS
+        want["계산서.csv"] = data.SCHEMA["계산서.csv"] + data.INVOICE_OPTIONAL   # E3 (2026-11-17): 거래처코드 선택 칸
         for name in GENERATED_CSV:
             self.assertEqual(read_csv_rows(os.path.join(self.input_dir, name))[0], want[name], name)
 

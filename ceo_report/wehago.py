@@ -675,12 +675,14 @@ def invoices_from_journal(journal):
         vat = sum(ln[side] or 0 for ln in lines if _squash(ln["account_code"]) in vat_codes)
         main = [ln for ln in lines if ln[side] and _squash(ln["account_code"]) not in vat_codes]
         party = [ln for ln in lines if ln[other] and ln["vendor"]]
-        vendor = (party or [ln for ln in lines if ln["vendor"]] or [{"vendor": ""}])[0]["vendor"]
+        vline = (party or [ln for ln in lines if ln["vendor"]] or [{"vendor": ""}])[0]
+        vendor = vline["vendor"]
+        vcode = str(vline.get("vendor_code") or "").strip().lstrip("0")   # E3 (2026-11-17): 거래처는 코드로 묶는다 (계산-01)
         item = main[0]["memo"] if main else (lines[0]["memo"] or "")
         code = next((project_code(ln.get("project_name", "")) for ln in lines if project_code(ln.get("project_name", ""))),
                     None) or project_code(item)
         row = {"date": date, "no": no, "vendor": vendor, "item": item, "supply": total - vat, "vat": vat, "total": total,
-               "code": code, "vendor_norm": norm_vendor(vendor)}
+               "code": code, "vendor_norm": norm_vendor(vendor), "vendor_code": vcode}
         if kind == "매출":
             row["type"] = ""
             # 선금 계산서: 품명 낱말이 아니라 대변에 선수금 계정 줄이 있는지로 판단 (사용자 2026-11-14 "계정과목으로 판단")
