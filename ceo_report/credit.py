@@ -876,6 +876,31 @@ def _bar(sc):
             "<div class='scale'>%s</div>" % (lo, max(hi - lo, 1), mid, lab))
 
 
+def render_brief(C):
+    """연간 대표 보고 7절 (사용자 2026-11-17 '연간 보고에 기업신용평가 미리 보기가 없잖아'): 추정 등급·점수와 재무 지표 값만.
+    쉬운 설명·판정·할 일은 넣지 않는다 (대표·팀장 보고는 안내 문구 없이 — 사용자 2026-11-17). 전체는 경영관리 9장."""
+    if C is None:
+        return CSS + "<div class='crx'><div class='note'>분개장 계정 자료가 없어 계산하지 못했습니다.</div></div>"
+    V = C["V"]
+    LY = C.get("last") or {}
+    when = "%d년 결산 기준 (%d월까지 장부 반영)" % (C["year"], C["mon"]) if not C["annual"] else "%d년 결산 기준" % C["year"]
+    cards = [("추정 등급 범위", grade_text(C["grade"]), when),
+             ("점수 (0~100점)", "%.0f점" % C["score"][1], "모르는 칸에 따라 %.0f~%.0f점" % (C["score"][0], C["score"][2])),
+             ("작년 실제 등급", esc(LY["grade"]) if LY.get("grade") else "—", esc(LY.get("agency") or "") if LY.get("grade") else "입력 전")]
+    h = [CSS, "<div class='crx'><div class='top'>%s</div>" % "".join(
+        "<div class='c'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>" % (esc(l), b, esc(f)) for l, b, f in cards)]
+    h.append("<table class='cr'><thead><tr><th>영역</th><th>항목 · 계산</th><th style='text-align:right'>우리 회사</th><th>기준</th></tr></thead><tbody>")
+    for area in AREA_W:
+        ks = [f for f in FIN if f[1] == area]
+        for i, f in enumerate(ks):
+            v = V[f[0]]
+            h.append("<tr>%s<td>%s<span class='sub'>%s</span></td><td class='n'>%s</td><td style='font-size:10.8px'>%s</td></tr>" % (
+                "<td class='a' rowspan='%d'>%s</td>" % (len(ks), area) if i == 0 else "", esc(f[2]), esc(f[3]),
+                esc(fmt(f[0], v)) if v is not None else "<span style='font-weight:400;color:#888'>자료 없음</span>", esc(threshold_text(f[0]))))
+    h.append("</tbody></table><div class='note'>평가 회사의 실제 모형은 공개되지 않아 등급은 추정 범위입니다.</div></div>")
+    return "".join(h)
+
+
 def render(C):
     if C is None:
         return CSS + "<div class='crx'><div class='note'>분개장 계정 자료(계정잔액.csv)가 없어 계산하지 못했습니다. '자료 변환'을 다시 하면 생깁니다.</div></div>"

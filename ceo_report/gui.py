@@ -682,7 +682,7 @@ class Window(object):
         s4 = self.s4 = self._step(tab, 3, 4, STEPS[3])
         c = self._box(s4, "보낼 파일", "이번 기준일")
         r = self._row(c, (0, 0))
-        self.send_list = tk.Listbox(r, height=7, font=self.fonts["small"], activestyle="none", exportselection=False,
+        self.send_list = tk.Listbox(r, height=8, font=self.fonts["small"], activestyle="none", exportselection=False,
                                     highlightthickness=1, highlightbackground=C["line"], relief="flat", background="#faf9f6",
                                     selectbackground="#dbe4ff", selectforeground=C["text"])
         self.send_list.pack(side="left", fill="x", expand=True)
@@ -971,7 +971,7 @@ class Window(object):
 
         # 기업신용평가 미리보기 체크리스트 (사용자 2026-11-12): 비재무 항목·대출 만기·작년 평가 결과
         p = panel("신용평가 체크리스트")
-        self._hint(p, "9월분 월간(결산 준비)·연간 경영관리 보고의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다",
+        self._hint(p, "9월분 월간(결산 준비)·연간 보고(대표용·경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다",
                    wrap=560)
         r = self._row(p, (6, 0))
         self._btn(r, "신용평가 체크리스트 열기", self.credit_checklist)
@@ -2508,7 +2508,7 @@ class Window(object):
         top.transient(self.root)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="9월분 월간(결산 준비)·연간 경영관리 보고의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
+        ttk.Label(frm, text="9월분 월간(결산 준비)·연간 보고(대표용·경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
                   wraplength=560).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         vars_ = {}
         for i, (k, hint) in enumerate(credit.INPUT_ITEMS, 1):
@@ -2532,7 +2532,7 @@ class Window(object):
             except OSError as e:
                 self.say("저장하지 못함: %s" % (e.strerror or type(e).__name__))
                 return
-            self.say("신용평가 체크리스트 저장 — 다음 9월분 월간(결산 준비)·연간 경영관리 보고부터 반영")
+            self.say("신용평가 체크리스트 저장 — 다음 9월분 월간(결산 준비)·연간 보고부터 반영")
             top.destroy()
         self._go(r, "저장", save).pack(side="right")
         ttk.Button(r, text="닫기", command=top.destroy).pack(side="right", padx=6)

@@ -2065,6 +2065,25 @@ def _corp_est(R, Y, ym):
             "local_due": lrow["due"] if lrow and lrow.get("due") else _workday(dt.date(nxt, 4, 30))}
 
 
+def annual_pack(R):
+    """연간 보고가 월간과 같은 계산을 쓰게 (사용자 2026-11-17 '연간 보고에 넣어야 할 항목 전부'): 그 달까지 누적 결산 줄
+    (감가상각비 예상 달 수만큼·대손충당금 예상)과 법인세 예상(자금 일정과 같은 과세표준·감면·기납부), 법인세 표, 예산 대비 표.
+    -> {"ym", "N"(누적 결산 줄), "E"(법인세 예상), "tax_table", "tax_line", "budget"} 또는 None (팀별 자료 없음)."""
+    from .teamprofit import build
+    src = (R.get("s4") or {}).get("sources", {}).get("WEHAGO")
+    if not src:
+        return None
+    ym, dept = R["s4"]["ym"], R["s4"].get("dept")
+    Y = build(src["table"], dept, ym, True)
+    if Y is None or Y["nonop"].get("pretax") is None:
+        return None
+    _dep_into(R, Y, True)
+    _bad_into(R, Y, ym)
+    _tax_into(R, Y, ym)
+    return {"ym": ym, "N": Y["nonop"], "E": _corp_est(R, Y, ym), "tax_table": _corptax_table(R, Y, ym, "mgmt"),
+            "tax_line": _corptax_line(R, Y, ym), "budget": _budget_table(R, Y, ym)}
+
+
 def _tax_into(R, Y, ym):
     """누적 결산 줄 끝: 세전 이익 − 법인세 예상(지방소득세 포함) = 당기순이익 예상 (사용자 2026-11-04).
     법인세 예상 표·자금 일정과 같은 계산 (중간예납은 미리 낸 세금이라 빼지 않음). 작년 신고서가 있으면 감면·이월공제 뒤 금액."""

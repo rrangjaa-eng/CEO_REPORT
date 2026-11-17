@@ -712,6 +712,11 @@ ANNUAL_EXPLAIN = {
     "d7": EXPLAIN["s9"],
     "d8": EXPLAIN["c4"],
     "d9": EXPLAIN["c5"],
+    "d10": EXPLAIN["c1"],
+    "d11": EXPLAIN["c6"],
+    "d12": EXPLAIN["c2"],
+    "d13": EXPLAIN["c3"],
+    "d14": "한 해 실적을 확정한 예산과 견줍니다. 예산보다 덜 벌었거나 더 쓴 곳이 어디인지 보는 곳입니다.",
 }
 ANNUAL_AREA = {"d4": ("거래처", "수금"), "d5": ("팀", "프로젝트", "비용"), "d1": ("자료",)}
 
@@ -727,6 +732,8 @@ def annual_box(key, A, risks):
         sg = suggest("c4", {"re": A.get("re")})
     elif key == "d9":
         sg = suggest("c5", {"credit": A.get("credit")})
+    elif key in ("d10", "d11", "d12", "d13") and A.get("M"):   # 월간 경영관리의 같은 절 제안 그대로 (사용자 2026-11-17)
+        sg = suggest({"d10": "c1", "d11": "c6", "d12": "c2", "d13": "c3"}[key], A["M"])
     else:
         sg = _uniq([r[3] for r in risks if r[1] in ANNUAL_AREA.get(key, ())], 3)
     return ("<style>%s</style><div class='gbox'><div><b class='gk'>쉬운 설명</b> %s</div><div style='margin-top:4px'><b class='gk'>제안</b>%s</div></div><!-- /gbox -->"

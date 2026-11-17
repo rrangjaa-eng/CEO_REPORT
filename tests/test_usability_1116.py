@@ -268,7 +268,7 @@ class TestItem1BlockedIsNotDone(WinCase):
         self.assertEqual(winstate.open_label(os.path.join(self.P.output, "2026-11-16_주간_대표보고.html")), "까닭 보기")
 
     def test_annual_reports_show_both_editions_once_made(self):
-        """연간 보고도 대표용·경영관리용 두 가지가 보낼 파일에 보인다 (사용자 2026-11-17). 만든 적이 없으면 줄을 늘리지 않는다."""
+        """연간 보고도 대표용·팀장용·경영관리용이 보낼 파일에 보인다 (사용자 2026-11-17). 만든 적이 없으면 줄을 늘리지 않는다."""
         A = D(2026, 11, 16)
         self.assertEqual([r["label"] for r in winstate.reports_for(self.P.output, A)],
                          ["주간 대표", "월간 대표", "팀장용 (월간)", "주간 경영관리", "월간 경영관리"])
@@ -278,10 +278,14 @@ class TestItem1BlockedIsNotDone(WinCase):
         self.out("2026_연간_경영관리보고.html", dt.datetime(2026, 11, 16, 9, 40))
         rows = winstate.reports_for(self.P.output, A)
         ann = [r for r in rows if "연간" in r["label"]]
-        self.assertEqual([r["label"] for r in ann], ["2026년 연간 대표", "2026년 연간 경영관리"])
-        self.assertEqual([r["state"] for r in ann], ["만듦", "만듦"])
+        self.assertEqual([r["label"] for r in ann], ["2026년 연간 대표", "2026년 연간 팀장용", "2026년 연간 경영관리"])
+        self.assertEqual([r["state"] for r in ann], ["만듦", "없음", "만듦"])   # 팀장용은 아직 안 만듦
         self.assertTrue(ann[0]["path"].endswith(".pdf"))
-        self.assertTrue(ann[1]["path"].endswith("2026_연간_경영관리보고.html"))
+        self.assertTrue(ann[2]["path"].endswith("2026_연간_경영관리보고.html"))
+        self.out(os.path.join("팀장용", "2026_연간_팀장_기획1팀.html"), dt.datetime(2026, 11, 16, 9, 41))   # 팀장용 연간 (사용자 2026-11-17: 세 가지)
+        self.out(os.path.join("팀장용", "2026_연간_팀장_기획1팀 (11-16 09시41분 만듦).pdf"), dt.datetime(2026, 11, 16, 9, 41))
+        team = [r for r in winstate.reports_for(self.P.output, A) if r["label"] == "2026년 연간 팀장용"][0]
+        self.assertEqual((team["state"], team["why"]), ("만듦", "1팀"))
         self.out("2026_연간_대표보고.html", dt.datetime(2026, 11, 16, 10, 0), self.STOP)   # 자료 확인에서 막힘
         self.assertEqual([r["state"] for r in winstate.reports_for(self.P.output, A) if "연간 대표" in r["label"]], ["막힘"])
 

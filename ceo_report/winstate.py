@@ -367,7 +367,7 @@ def gate_line(G):
 
 
 def reports_for(output_dir, asof):
-    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순, 연간 보고를 만든 적이 있으면 연간 대표·연간 경영관리도).
+    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순, 연간 보고를 만든 적이 있으면 연간 대표·연간 팀장용·연간 경영관리도).
     state: '만듦' · '막힘'(자료 확인에서 막혀 만들지 않음) · 'PDF 못 만듦'(HTML 만 새로 생김) · '없음'.
     막힌 보고는 예전 PDF 를 넣지 않고 '만들지 않음' 안내를 가리킨다 (path)."""
     from . import gate, pdfname
@@ -395,17 +395,19 @@ def reports_for(output_dir, asof):
     out.append(one("주간 대표", os.path.join(output_dir, "%s_주간_대표보고" % day)))
     out.append(one("월간 대표", os.path.join(output_dir, "%s_월간_대표보고" % day)))
     folder = os.path.join(output_dir, "팀장용")
-    pages = sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day)))
-    team = {"label": "팀장용 (월간)", "state": "없음", "at": None, "path": None, "why": ""}
-    if pages:
-        ones = [one("", p[:-5]) for p in pages]
-        at = max(r["at"] for r in ones if r["at"] is not None)
-        if any(r["state"] == "막힘" for r in ones):
-            team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
-        elif all(r["state"] == "만듦" for r in ones):
-            team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
-        else:
-            team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+    def teams(label, pages):
+        team = {"label": label, "state": "없음", "at": None, "path": None, "why": ""}
+        if pages:
+            ones = [one("", p[:-5]) for p in pages]
+            at = max(r["at"] for r in ones if r["at"] is not None)
+            if any(r["state"] == "막힘" for r in ones):
+                team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
+            elif all(r["state"] == "만듦" for r in ones):
+                team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
+            else:
+                team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+        return team
+    team = teams("팀장용 (월간)", sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day))))
     out.append(team)
     out.append(one("주간 경영관리", os.path.join(output_dir, "%s_주간_경영관리보고" % day), want_pdf=False))
     out.append(one("월간 경영관리", os.path.join(output_dir, "%s_월간_경영관리보고" % day), want_pdf=False))
@@ -415,6 +417,7 @@ def reports_for(output_dir, asof):
     if years:
         y = years[-1]
         out.append(one("%s년 연간 대표" % y, os.path.join(output_dir, "%s_연간_대표보고" % y)))
+        out.append(teams("%s년 연간 팀장용" % y, sorted(glob.glob(os.path.join(folder, "%s_연간_팀장_*.html" % y)))))
         out.append(one("%s년 연간 경영관리" % y, os.path.join(output_dir, "%s_연간_경영관리보고" % y), want_pdf=False))
     return out
 

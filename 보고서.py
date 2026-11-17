@@ -308,6 +308,39 @@ def _evidence(a, kind, asof):
     return 0
 
 
+def _annual_monthly(a, D, year, A):
+    """연간 보고가 월간과 같은 계산을 쓰게 (사용자 2026-11-17): 끝난 달 말일 기준 월간 계산 한 벌 + 분기·반기 절 자료.
+    -> (R, pack) 또는 (None, None). 실패해도 연간 보고는 만든다 (까닭을 알림)."""
+    from ceo_report import annual, render as RD
+    cut = A.get("cut") or 0
+    if not cut or A.get("Y") is None:
+        return None, None
+    asof = annual._month_end(year, cut)
+    try:
+        from ceo_report import lawwatch   # 법령 관련 항목은 최신 법령을 먼저 확인 (사용자 2026-11-17)
+        try:
+            law_state = lawwatch.ensure(a.입력, asof.year, max(asof, dt.date.today()))
+        except Exception as e:
+            law_state = {"ok": False, "msg": "최신 법령 확인 못 함 — %s" % type(e).__name__}
+        if not law_state.get("ok"):
+            _say(law_state["msg"])
+        R = compute(D, "monthly", asof)
+        R["law_state"] = law_state
+        from ceo_report import surplus, taxadj, filing, taxreturn, filehelp, payroll
+        from ceo_report.util import esc as _esc
+        R["re"] = surplus.for_report(a.입력, asof.year if asof.month > 3 else asof.year - 1, R)
+        R["taxadj"] = taxadj.load(a.입력)
+        R["taxret_dir"] = a.입력 if taxreturn.load(a.입력) else None
+        R["filing"] = filing.load(a.입력)
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        R["payroll"] = payroll.for_report(a.입력, asof)
+        return R, RD.annual_pack(R)
+    except Exception as e:   # 이 계산 때문에 연간 보고를 못 만들면 안 된다
+        _say("연간 보고: 월간과 같은 계산(법인세·세무조정·급여 점검 등)을 붙이지 못했습니다 (%s) — 그 절은 비고 법인세는 '세전 이익 × 세율'로 나옵니다"
+             % type(e).__name__)
+        return None, None
+
+
 def _annual(a):
     """연간 보고 (사용자 2026-11-10 목업 승인): 대표용·경영관리용 HTML·PDF. 숫자는 변환이 만든 CSV에서 (월간과 같은 기준)."""
     from ceo_report import annual
@@ -338,6 +371,14 @@ def _annual(a):
     if A["Y"] is None:
         _say("%d년 손익 자료가 없습니다 — 위하고 분개장을 받아 '자료 변환'을 먼저 하세요." % year)
         return 2
+    M, pack = _annual_monthly(a, D, year, A)
+    annual.apply_monthly(A, M, pack)
+    if M is not None:   # 8장 결산 처리 제안 (배당 판단)은 월간 계산이 있어야 붙는다
+        try:
+            from ceo_report import surplus
+            A["re"] = surplus.for_report(a.입력, year - 1 if A["cut"] < 12 else year, M, strict=True) or A["re"]
+        except Exception:
+            pass
     browser = find_browser() if a.pdf == "만듦" else None
     made, pdf_failed = [], False
     for mode, who in (("ceo", "대표보고"), ("mgmt", "경영관리보고")):
@@ -368,6 +409,38 @@ def _annual(a):
                 made.append(pdf)
                 for gone in pdfname.prune(base):
                     _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+    # 팀장용 연간 실적 (사용자 2026-11-17: 연간 보고도 대표용·경영관리용·팀장용). 월간 팀장 보고와 같은 숫자·같은 규칙(급여 금액 없음)
+    if a.팀장용 == "만듦":
+        from ceo_report import teamreport
+        folder = os.path.join(a.출력, "팀장용")
+        team_pages = []
+        try:
+            if stop:
+                os.makedirs(folder, exist_ok=True)
+                for team in teamreport.team_names(D):
+                    _write_page(os.path.join(folder, "%d_연간_팀장_%s.html" % (year, team)), gate.stop_page("%d년 연간 팀장 보고 · %s" % (year, team), stop))
+            elif M is not None:
+                team_pages = teamreport.write_annual(D, M, A, a.출력)
+                if M.get("_team_failed"):
+                    _say("연간 팀장 보고를 쓰지 못한 팀: %s — 출력\\팀장용 파일이 열려 있으면 닫고 다시 만드세요" % ", ".join(M["_team_failed"]))
+            else:
+                _say("연간 팀장 보고를 만들지 못했습니다 — 월간과 같은 계산 자료가 없음 (끝난 달이 없거나 계산 실패)")
+        except OSError as e:
+            _say(_write_help(folder, e))
+        except Exception as e:   # 팀장 보고 때문에 연간 보고 전체가 실패하면 안 된다
+            _say("연간 팀장 보고를 만들지 못했습니다 (%s)" % type(e).__name__)
+        for page_path in team_pages:
+            made.append(page_path)
+            if browser:
+                pdf_path = pdfname.stamped(page_path[:-5])
+                err = to_pdf(browser, page_path, pdf_path)
+                if err:
+                    _say("%s — %s" % (err, os.path.basename(pdf_path)))
+                    pdf_failed = True
+                else:
+                    made.append(pdf_path)
+                    for gone in pdfname.prune(page_path[:-5]):
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("%d년 연간 보고 · 손익 %d개월 · 결산 전표 %s" % (year, len(A["Y"]["months"]), "반영" if A["closed"] else "없음 (감가상각비·법인세 예상)"))
     if not A.get("has_annual"):
         _say("연간자료.csv 없음 — '자료 변환'을 다시 하면 거래처·통장 흐름·결산 법인세가 들어갑니다.")
@@ -394,7 +467,7 @@ def main(argv=None):
     ap.add_argument("--입력", default=os.path.join(HERE, "입력"))
     ap.add_argument("--출력", default=os.path.join(HERE, "출력"))
     ap.add_argument("--pdf", default="만듦", choices=["만듦", "안함"])
-    ap.add_argument("--팀장용", default="만듦", choices=["만듦", "안함"], help="월간: 팀마다 팀장용 실적 문서 (출력/팀장용/)")
+    ap.add_argument("--팀장용", default="만듦", choices=["만듦", "안함"], help="월간·연간: 팀마다 팀장용 실적 문서 (출력/팀장용/)")
     ap.add_argument("--근거", default=None, help="대표가 요청한 근거 번호 (예: 1-1,3-2). 이미 만든 경영관리 보고에서 그 근거만 따로 만듦")
     ap.add_argument("--연도", default=None, help="연간: 보고할 해 (기본: 기준일의 해, 1~3월이면 지난해)")
     a = ap.parse_args(argv)
