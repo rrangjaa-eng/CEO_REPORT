@@ -102,7 +102,7 @@ class TestReport(unittest.TestCase):
     def test_one_page_summary_parts(self):
         page = render(self.oct, "mgmt")
         one = page[page.index("id='a-home'"):page.index("id='a-cash'")]   # 첫 화면 (2026-11-14 주제별 묶기)
-        for word in ("자료 상태", "대표에게 나간 숫자", "주제별 신호", "할 일", "지난 예상 대비 실제", "이번 달 기한 신고"):
+        for word in ("자료 상태", "대표에게 나간 숫자", "주제별 상태", "할 일", "지난 예상 대비 실제", "이번 달 기한 신고"):
             self.assertIn(word, one)
         self.assertEqual(one.count("<a class='tq-sg "), 8)   # 월간 8주제
         week = compute(load(SAMPLE), "weekly", dt.date(2026, 11, 2))

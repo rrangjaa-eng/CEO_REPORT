@@ -29,6 +29,11 @@ def area(page, key):
     return m.group(0) if m else ""
 
 
+def self_chap(page, n):
+    """예전 번호 n 장의 조각을 차례로 이은 것."""
+    return "".join(m.group(2) for m in re.finditer(r"<!--o:(%s(?:\.\d\d)?)-->(.*?)<!--/o:\1-->" % n, page, re.S))
+
+
 def tables(html):
     return re.findall(r"<table\b.*?</table>", html, re.S)
 
@@ -86,12 +91,79 @@ class TestTopics(unittest.TestCase):
 
     def test_each_topic_has_the_six_layers_in_order(self):
         for kind, page in self.pages.items():
-            keys = ("cash", "proj", "pl", "ar", "other", "data") + (("xchk", "cf") if kind == "monthly" else ())
-            for k in keys:
+            for k in ("cash", "proj", "pl", "ar", "other", "data"):
                 with self.subTest(kind=kind, topic=k):
                     a = area(page, k)
                     pos = [a.index("%s %s" % (c, n)) for c, n in zip(mgmt_topics.CIRCLE, mgmt_topics.LAYERS)]
                     self.assertEqual(pos, sorted(pos))
+
+    def test_topic_without_data_is_short(self):
+        """자료가 없어 못 만든 주제(샘플 월간 7·8)는 결론 한 줄과 받을 자료 안내만: 빈 층(③④⑥)을 늘어놓지 않는다 (2026-11-17 목업)."""
+        page = self.pages["monthly"]
+        for k in ("xchk", "cf"):
+            a = area(page, k)
+            self.assertIn("① 결론", a)
+            self.assertIn("⑤ 상세 표", a)
+            for gone in ("③ 지난 보고 뒤 바뀐 것", "④ 자동 분석 · 위험", "tq-tiles"):
+                self.assertNotIn(gone, a)
+        self.assertIn("#a-xchk{page:mgna}", page)
+        self.assertIn("#a-cf{page:mgna}", page)   # 같은 쪽 이름 → 두 주제 사이에 쪽을 넘기지 않음
+
+    def test_long_tables_move_to_appendix_and_come_back_in_old_order(self):
+        """긴 표(LONG_ROWS 줄 넘음)는 부록 '긴 표'로, 주제 ⑤에는 가는 곳 한 줄. 예전 순서로 되돌리면 장 안 순서 그대로."""
+        for kind, page in self.pages.items():
+            with self.subTest(kind):
+                tb = area(page, "tbl")
+                n = tb.count("<div class='tb ly5'>")
+                self.assertGreaterEqual(n, 3)
+                self.assertIn("기간 내 예정 전체", tb)
+                self.assertNotIn("<h3>기간 내 예정 전체", area(page, "cash"))
+                for i in range(1, n + 1):
+                    self.assertIn("id='tb-%d'" % i, tb)
+                    self.assertEqual(page.count("href='#tb-%d'" % i), 1)
+                old = areas.old_view(page)
+                s2 = old[old.index("<h2 id='s2'>"):old.index("<h2 id='s3'>")]
+                heads = re.findall(r"<h3>(.*?)</h3>", s2)
+                self.assertTrue(heads[-1].startswith("기간 내 예정 전체"))
+                self.assertLess(s2.index("<h3>날짜 없는 예정금액"), s2.index("<h3>기간 내 예정 전체"))
+                for piece in mgmt_topics.split_long(self_chap(page, "042")):
+                    self.assertEqual(piece[0].count("<div"), piece[0].count("</div>"))
+
+    def test_split_long_keeps_everything(self):
+        body = "<h2 id='s9'>머리</h2><p>앞</p><h3>짧은 표</h3><table><tbody><tr><td>1</td></tr></tbody></table>" \
+               "<h3>긴 표 (20건)</h3><div class='tw'><table><tbody>%s</tbody></table></div><div class='note'>뒤</div>" % ("<tr><td>1</td></tr>" * 20)
+        ps = mgmt_topics.split_long(body)
+        self.assertEqual("".join(p for p, _, _ in ps), body)
+        self.assertEqual([(t, lg) for _, t, lg in ps], [(None, False), ("짧은 표", False), ("긴 표 (20건)", True)])
+        odd = "<h2>x</h2><div><h3>a</h3></div>"   # h3 가 div 안에 있으면 나누지 않는다
+        self.assertEqual(mgmt_topics.split_long(odd), [(odd, None, False)])
+        self.assertEqual(mgmt_topics.restore("<!--/head--><!--o:042.01-->B<!--/o:042.01--><!--o:041-->A<!--/o:041--><!--o:042.00-->Z<!--/o:042.00-->"),
+                         "AZB</div></body></html>")
+
+    def test_schedule_has_a_subtotal_per_bucket_that_adds_up(self):
+        """기간 내 예정 전체: 구간(주·월)마다 소계 줄. 소계의 입금·지급 합은 위 구간 표의 그 구간 합과 같다."""
+        from ceo_report.render import _with_subtotals
+        for R in (self.week, self.month):
+            s2 = R["s2"]
+            dated = sorted(s2["dated"], key=lambda e: (e["date"], e["io"]))
+            rows = _with_subtotals(dated, s2["buckets"], lambda evs: [[e] for e in evs])
+            subs = [r for r in rows if isinstance(r, tuple)]
+            self.assertEqual(len(rows) - len(subs), len(dated))
+            self.assertTrue(subs)
+            self.assertTrue(all(c == "tot wsub" for _, c in subs))
+            by = dict((b["label"] + " 소계", b) for b in s2["buckets"])
+            for cells, _ in subs:
+                b = by[cells[0]]
+                tin, tout = (int(x.replace(",", "").replace("−", "-")) for x in re.sub(r"<[^b][^>]*>|</[^>]+>", "", cells[2]).split("<br>"))
+                self.assertEqual(tin, b["in_firm"] + b["in_est"], cells[0])
+                self.assertEqual(tout, b["out_firm"] + b["out_est"], cells[0])
+
+    def test_print_footer_names_the_report_and_topic(self):
+        page = self.pages["monthly"]
+        self.assertIn('content:"월간 경영관리 보고 · 기준일 2026-10-31 · 1. 자금"', page)
+        self.assertIn('counter(page) " / " counter(pages)', page)
+        self.assertIn("body>.wrap{page:mg}", page)
+        self.assertNotIn("@page mg", render(self.month, "ceo"))
 
     def test_every_risk_row_and_auto_analysis_is_in_a_topic(self):
         page = self.month and self.pages["monthly"]
@@ -126,7 +198,7 @@ class TestTopics(unittest.TestCase):
     def test_ceo_edition_is_unchanged(self):
         for R in (self.week, self.month):
             page = render(R, "ceo")
-            for bad in ("<!--o:", "tq-", "<section", "<script", "주제별 신호"):
+            for bad in ("<!--o:", "tq-", "<section", "<script", "주제별 상태"):
                 self.assertNotIn(bad, page)
 
     def test_first_screen_ceo_numbers_are_the_ceo_cards(self):

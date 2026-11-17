@@ -35,10 +35,12 @@ def _block(mgmt_html, target):
         return m.group(0) if m else None
     # 영역별 보기(2026-11-11): 장 끝에 이전·다음 단추(apager)와 </section> 이 붙는다 → 그 앞에서 끊는다
     # 주제별 묶기(2026-11-14): 장은 <!--o:번호--> … <!--/o:번호--> 조각으로 주제 ⑤ 안에 있다 → 조각 끝에서 끊고, 숨긴 예전 번호를 되살린다
-    m = re.search(r"<h2 id='%s'>.*?(?=<h2 id=|<div class='apager'>|</section>|</div></body>|<!--/o:|$)" % re.escape(target), mgmt_html, re.S)
+    # 긴 표를 부록으로 옮김(2026-11-17): 한 장이 여러 조각(<!--o:042.03-->)으로 나뉘어 있을 수 있다 → 예전 순서로 이은 문서에서 찾는다
+    from .mgmt_topics import _unlabel, restore
+    doc = restore(mgmt_html) if "<!--o:" in mgmt_html else mgmt_html
+    m = re.search(r"<h2 id='%s'>.*?(?=<h2 id=|<div class='apager'>|</section>|</div></body>|<!--/o:|$)" % re.escape(target), doc, re.S)
     if not m:
         return None
-    from .mgmt_topics import _unlabel
     return _unlabel(m.group(0))
 
 
