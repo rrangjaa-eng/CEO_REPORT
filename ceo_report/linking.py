@@ -391,13 +391,17 @@ def _window_end(start, days):
 
 
 def link_costs(books, requests, projects, overrides, link_days=90, direct_prefixes=("6",), direct_mark="(도)",
-               vat_codes=("13500",)):
+               vat_codes=("13500",), sga_prefixes=("8",), sga_mark="(판)"):
     """(도) 원가 줄을 프로젝트에 잇는다 -> {"lines": [...], "summary": {기준: {count, sum, unknown}}, "used": {수동 열쇠}}.
 
     자동 연결 후보 요청: 금액·등록일을 읽을 수 있고, 행사명 코드가 프로젝트 목록에 있고, 파트너(norm_vendor)가 줄의
     거래처와 같고, 줄 날짜가 등록일부터 link_days 일 안(양끝 포함), 금액이 줄 금액 A 또는 부가세를 더한 T 와 같다.
     T = A + 같은 전표·같은 거래처 부가세대급금 차변 합 (그 전표에 그 거래처 원가 줄이 하나일 때만).
     후보가 정확히 하나이고 그 요청이 다른 어떤 줄의 후보도 아닐 때만 연결한다 (요청 상태는 가리지 않는다).
+
+    판관비 계정(sga_prefixes·sga_mark) 줄도 프로젝트 번호가 달려 있고 그 번호가 프로젝트 목록에 있으면 그 프로젝트 원가 줄로
+    넣는다 (사용자 결정 2026-11-17 '프로젝트 원가에 넣기', 줄에 sga=True). 번호가 없거나 목록에 없는 판관비 줄은 넣지 않는다 —
+    회사·팀 손익(위하고 양식)의 원가·판관비 구분은 바뀌지 않고 프로젝트별 원가만 커진다. 결과의 "sga" = {합계, 달별 합계}.
     """
     journal = books.journal
     keys = line_keys(journal)
@@ -413,6 +417,20 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
         d, c = row.get("debit"), row.get("credit")
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
                            row.get("line_project") or slips.get(keys[i][:2])))
+    sga_pre, sga_mark_ = tuple(str(p) for p in sga_prefixes or ()), _squash(sga_mark)
+    if sga_pre and projects:
+        for i, row in enumerate(journal):
+            code = _squash(row.get("account_code"))
+            if not (re.match(r"^\d{5}$", code) and code.startswith(sga_pre) and sga_mark_ in _squash(row.get("account"))):
+                continue
+            d, c = row.get("debit"), row.get("credit")
+            ln = _line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
+                       row.get("line_project") or slips.get(keys[i][:2]))
+            want = overrides.get(ln["key"]) or ln["slip_code"] or ln["code"]
+            if want in projects and (ln["key"] in overrides or not _prior(ln)):
+                ln["sga"] = True
+                lines.append(ln)
+        lines.sort(key=lambda ln: ln["index"])
     lines, offset = _drop_offsets(lines, overrides)
     used = set()
     pending = []
@@ -481,7 +499,17 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
             if ln["date"] is None:
                 ln["reason"] = (ln["reason"] + " · " if ln["reason"] else "") + "날짜 없음"
             _unlinked(ln, "자동 연결 후보 0건")
-    return {"lines": lines, "summary": _summary(lines), "used": used, "offset": offset}
+    sga = {"total": 0, "months": {}, "count": 0, "unknown": 0}
+    for ln in lines:
+        if ln.get("sga"):
+            sga["count"] += 1
+            if ln["amount"] is None:
+                sga["unknown"] += 1
+                continue
+            sga["total"] += ln["amount"]
+            ym = ln["date"].strftime("%Y-%m") if ln["date"] else ""
+            sga["months"][ym] = sga["months"].get(ym, 0) + ln["amount"]
+    return {"lines": lines, "summary": _summary(lines), "used": used, "offset": offset, "sga": sga}
 
 
 def _drop_offsets(lines, overrides):

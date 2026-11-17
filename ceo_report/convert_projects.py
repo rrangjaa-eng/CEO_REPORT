@@ -497,6 +497,8 @@ def _wehago_rows(books, costs, cfg):
     for g in groups.values():
         if g.get("prior"):
             g["basis"] += " · " + data.PRIOR_TAG + (" [%s]" % g["old_code"] if g["old_code"] else "")
+        if any(ln.get("sga") for ln in g["lines"]):   # 사용자 결정 2026-11-17: 프로젝트 번호 달린 판관비도 프로젝트 원가
+            g["basis"] += " · 판관비 계정"
     if mixed:
         notes.append("현금·미지급 대변이 함께 있는 전표의 원가 줄 %d건 → 지급 전(요청미지급)으로 둠 (일부 현금 지급일 수 있음)" % mixed)
     for day, no, vendor_norm, amount in unplaced:
@@ -1054,4 +1056,5 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
             cv[0] += g["vat"]
             cv[1] += 1
     return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes,
-                 extra={"cost_portions": portions, "card_vat": card_vat})
+                 extra={"cost_portions": portions, "card_vat": card_vat,
+                        "sga_total": (costs.get("sga") or {}).get("total", 0)})

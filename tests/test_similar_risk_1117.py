@@ -170,5 +170,29 @@ class CorpLocalTaxKindTest(unittest.TestCase):
         self.assertEqual(rk({"cat": "", "desc": "지방소득세 특별징수"}), "원천세")
 
 
+class ProjectSgaCostTest(unittest.TestCase):
+    """7번: 판관비 계정이라도 프로젝트 번호가 달려 있으면 그 프로젝트 원가 줄로 넣는다 (번호 없거나 목록에 없으면 안 넣음)."""
+
+    def test_only_coded_sga_lines_join(self):
+        journal = [
+            _row(D16, "1", "64500", "행사장임대료(도)", 1000000, None, "가상호텔"),
+            _row(D16, "5", "81201", "여비교통비_택시(판)", 30000, None, "가상택시", "[26116] 행사장 이동"),
+            _row(D16, "6", "81201", "여비교통비_택시(판)", 20000, None, "가상택시", "사무실 이동"),
+            _row(D16, "7", "81201", "여비교통비_택시(판)", 10000, None, "가상택시", "[99999] 없는 번호"),
+            _row(D16, "8", "82600", "운반비(판)", 50000, None, "가상운송"),
+        ]
+        slips = {(D16.isoformat(), "1"): "26116", (D16.isoformat(), "8"): "26218"}
+        out = mod("linking").link_costs(_Books(journal, slips), [], PROJECTS, {})
+        got = sorted((ln["project"], ln["amount"], bool(ln.get("sga"))) for ln in out["lines"])
+        self.assertEqual(got, [("26116", 30000, True), ("26116", 1000000, False), ("26218", 50000, True)])
+        self.assertEqual((out["sga"]["count"], out["sga"]["total"], out["sga"]["months"]), (2, 80000, {"2026-10": 80000}))
+        self.assertEqual(out["summary"]["미연결"]["count"], 0)
+
+    def test_no_project_list_means_no_sga_lines(self):
+        journal = [_row(D16, "5", "81201", "여비교통비_택시(판)", 30000, None, "가상택시", "[26116] 행사장 이동")]
+        out = mod("linking").link_costs(_Books(journal), [], {}, {})
+        self.assertEqual(out["lines"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

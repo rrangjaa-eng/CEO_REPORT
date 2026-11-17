@@ -534,7 +534,11 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     checks = []
     wehago_cells = _period_cells(cost_rows, "WEHAGO 원가")
     total_row = [r for r in unlinked_rows if r["구분"] == "미연결원가"][0]
-    checks.append(Check("(도) 원가 = 프로젝트원가 + 미연결원가", _source_total(books, cfg, "direct"),
+    # 프로젝트원가에는 프로젝트 번호 달린 판관비도 들어 있다 (사용자 결정 2026-11-17) → 장부 (도) 원가에 그만큼 더해 맞춘다
+    direct_total, sga = _source_total(books, cfg, "direct"), costs.get("sga") or {}
+    if direct_total is not None:
+        direct_total = None if sga.get("unknown") else direct_total + sga.get("total", 0)
+    checks.append(Check("(도) 원가 = 프로젝트원가 + 미연결원가", direct_total,
                         _sum_cells(wehago_cells + [total_row])))
     sales = _period_cells(revenue_rows, "WEHAGO 매출")
     sales_total = [r for r in unlinked_revenue if r["구분"] == "매출미연결"][0]
@@ -553,7 +557,8 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
         notes.append("기간 밖 이력이 있는 프로젝트 %d건: WEHAGO 원가·매출 누계 판단 불가 (분개장 기간 합계는 따로 한 줄): %s"
                      % (len(history), "; ".join("%s (%s)" % (k, v) for k, v in history.items())))
     return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, notes,
-                 extra={"check_items": prior_fix_items(books, projects, costs, revenue)})
+                 extra={"check_items": prior_fix_items(books, projects, costs, revenue),
+                        "sga_total": (costs.get("sga") or {}).get("total", 0)})
 
 
 # ───────────── load_xchk ─────────────
