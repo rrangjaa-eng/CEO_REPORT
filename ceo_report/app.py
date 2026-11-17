@@ -477,7 +477,7 @@ def start_wehago_collect(chrome=None, popen=None):
         (popen or subprocess.Popen)([chrome, WEHAGO_TRIGGER])
     except OSError as e:
         return False, "크롬을 열지 못함 (%s) — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요" % (e.strerror or type(e).__name__)
-    return True, ("크롬에 받기 요청을 보냄 — 위하고 화면이 잠깐 앞에 떴다 닫힙니다(1~3분). 다 받으면 자동 반영이 이어갑니다. "
+    return True, ("크롬에 받기 요청을 보냄 — 분개장·대조·자금계획에 이어 결산·인사급여·연말정산까지 받으며 위하고 화면이 앞에 떴다 닫힙니다(3~5분, 그동안 다른 탭으로 옮기지 마세요). 다 받으면 자동 반영이 이어갑니다. "
                   "위하고에 로그인돼 있지 않으면 크롬에 위하고가 열립니다: 로그인해 회사 [회계]를 연 뒤 다시 누르세요")
 
 

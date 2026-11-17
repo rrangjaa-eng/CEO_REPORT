@@ -101,6 +101,10 @@ class TestExtensionTrigger(unittest.TestCase):
     def test_program_tab_starts_collect_all_once_and_closes(self):
         r = self.run_sim("normal")
         self.assertEqual(r["collectAll"], 1)
+        # 사용자 11/17: 결산·인사급여·연말정산 모두 받기(자동)도 이어서, 표시는 둘 다 끝난 뒤 '끝' 한 번
+        self.assertEqual((r["books"], r["order"], r["allMarks"]), (1, "AB", False))
+        self.assertEqual([m["상태"] for m in r["marks"]], ["받는 중", "끝"])
+        self.assertEqual(r["marks"][-1]["못받음"], 0)
         self.assertEqual(r["months"], 3)
         self.assertEqual(r["removed"], [5])
 
@@ -123,6 +127,11 @@ class TestExtensionTrigger(unittest.TestCase):
             js = f.read()
         self.assertIn('"/ceo-report-collect"', js)
         self.assertIn('type: "programTrigger"', js)
+
+    def test_books_error_reported(self):
+        r = self.run_sim("bookserr")
+        self.assertEqual(r["collectAll"], 1)
+        self.assertIn("결산·인사급여: 2026 사업소득조회", r["marks"][-1]["오류"])
 
     def test_second_press_while_busy_only_closes_tab(self):
         r = self.run_sim("double")

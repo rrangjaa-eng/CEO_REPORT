@@ -19,7 +19,9 @@ const ctx = {chrome, console, setTimeout, clearTimeout, URL, TextEncoder, crypto
   importScripts() {}, writeToFolder: async (name, text) => { if (name === "받기상태.txt") log.marks.push(JSON.parse(text)); return "ok"; }};
 vm.createContext(ctx);
 vm.runInContext(src, ctx);
-vm.runInContext("collectAll = async (m) => { __hit(m); return {parts: {}}; }", Object.assign(ctx, {__hit: (m) => { log.collectAll++; log.months = m; }}));
+vm.runInContext("collectAll = async (m, marks) => { __hit(m, marks); return {parts: {}}; }; collectBooks = async () => { __books(); return {done: 1, error: __booksErr || undefined}; }",
+  Object.assign(ctx, {__hit: (m, marks) => { log.collectAll++; log.months = m; log.allMarks = marks; }, __books: () => { log.order = (log.order || "") + (log.collectAll ? "AB" : "B"); log.books = (log.books || 0) + 1; },
+                      __booksErr: scenario === "bookserr" ? "2026 사업소득조회: 응답이 오지 않음" : ""}));
 const T = "https://smarta.wehago.com/ceo-report-collect";
 const fire = (name, ...a) => ev[name].listeners.forEach((f) => f(...a));
 (async () => {
