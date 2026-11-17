@@ -208,8 +208,9 @@ def value(input_dir, year, key, today=None):
         day = _day(mine[1])
         if eff and day and day < eff <= (today or dt.date.today()):
             return mine[0], False, "%s 확인 뒤 %s 시행 개정이 있어 다시 확인 필요" % (mine[1], eff.isoformat())
-        if fl and day and _day(fl[2]) and day < _day(fl[2]):
-            return mine[0], False, "%s 확인 뒤 %s 조문이 바뀜 (%s 받음) — 다시 확인 필요" % (mine[1], fl[0], fl[2])
+        changed = _day(fl[3]) if fl and len(fl) > 3 else (_day(fl[2]) if fl else None)   # 예전 파일(3칸)은 받은 날로
+        if changed and day and day < changed:
+            return mine[0], False, "%s 확인 뒤 %s 조문이 바뀜 (%s 받음) — 다시 확인 필요" % (mine[1], fl[0], fl[3] if len(fl) > 3 else fl[2])
         return mine[0], True, "확인함 %s%s" % (mine[1], " · " + mine[2] if mine[2] else "")
     if fl:
         return v, False, "법령 조문 확인 필요: %s (시행 %s, %s 받음)" % (fl[0], fl[1] or "?", fl[2])
