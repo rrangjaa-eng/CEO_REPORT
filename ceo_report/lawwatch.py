@@ -332,11 +332,59 @@ def flags(input_dir):
     return out
 
 
+FRESH_DAYS = 7   # 사용자 2026-11-17: 법령 관련 항목은 최신 법령을 먼저 확인하고 만든다 → 7일 안에 받은 적 없으면 보고 만들 때 먼저 받음
+
+
+def _last(S):
+    try:
+        return dt.date.fromisoformat(str(S.get("last") or "")[:10])
+    except ValueError:
+        return None
+
+
 def due(input_dir, today=None):
-    """자동 확인할 때인가: 1월·7월이고 이번 달에 아직 안 받았으면 True (OC 있을 때만)."""
+    """먼저 받아야 하나: 아이디(OC)가 있고 마지막으로 다 받은 날이 7일보다 오래됐거나 없으면 True.
+    (예전: 1월·7월에만 — 사용자 2026-11-17 규칙으로 바꿈)"""
     today = today or dt.date.today()
     try:
         S = load(input_dir)
     except (OSError, ValueError):
         return False
-    return bool(S.get("oc")) and today.month in (1, 7) and not str(S.get("last", "")).startswith(today.strftime("%Y-%m"))
+    last = _last(S)
+    return bool(S.get("oc")) and (last is None or (today - last).days >= FRESH_DAYS)
+
+
+def state(input_dir, today=None):
+    """법령 최신 확인 상태 -> {ok, last, days, msg}. 보고서 법령 관련 표 위에 그대로 적는다."""
+    today = today or dt.date.today()
+    try:
+        S = load(input_dir)
+    except (OSError, ValueError):
+        S = {}
+    last = _last(S)
+    tr = S.get("last_try") or {}
+    if last is None:
+        why = ("아이디(OC)가 없어 받지 못함" if not S.get("oc") else
+               "받기 실패: " + "; ".join(tr.get("실패") or [])[:150] if tr else "아직 한 번도 받지 않음")
+        return {"ok": False, "last": None, "days": None,
+                "msg": "최신 법령 확인 못 함 — %s. 아래 법령 관련 판단은 프로그램에 넣어 둔 기준(확인 안 된 최신 여부)으로 만든 것입니다" % why}
+    days = (today - last).days
+    fail = tr.get("날") == today.isoformat() and tr.get("실패")
+    if days < FRESH_DAYS and not fail:
+        return {"ok": True, "last": last, "days": days,
+                "msg": "최신 법령 확인함: %s%s 국가법령정보에서 조문 %s개 받음" % (last.isoformat(), " (오늘)" if days == 0 else " (%d일 전)" % days,
+                                                                tr.get("받음", "?"))}
+    return {"ok": False, "last": last, "days": days,
+            "msg": "최신 법령 확인 못 함 — 마지막 확인 %s (%d일 전)%s. 그 뒤 바뀐 법령은 반영되지 않았을 수 있습니다"
+                   % (last.isoformat(), days, ", 오늘 받기 실패: " + "; ".join(fail)[:150] if fail else "")}
+
+
+def ensure(input_dir, year, today=None, opener=None):
+    """보고 만들기 전에: 받을 때가 됐으면 먼저 받아 본다 (실패해도 멈추지 않음). -> state()."""
+    today = today or dt.date.today()
+    if due(input_dir, today):
+        try:
+            check(input_dir, year, today, opener)
+        except Exception:   # 아이디 없음·통신 실패 — 상태 글로 알림
+            pass
+    return state(input_dir, today)

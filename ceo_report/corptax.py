@@ -334,8 +334,13 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
              % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
                 "{:,}".format(corp), "{:,}".format(prepaid)))
     if C:
-        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
-                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
+        newc = [x for x in C.get("extra") or [] if x["used"] or x["carry"]]
+        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제%s) − 중간예납 등"
+                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"]),
+                                 "".join(" · 받음: %s %s원 중 %s원 사용" % (x["name"], "{:,}".format(x["amount"]), "{:,}".format(x["used"])) for x in newc)), 1)
+        if C.get("carries"):
+            basis += " · 내년으로 넘어갈 공제 %s원 (%s)" % ("{:,}".format(C["carry_next"]),
+                                                     ", ".join("%d년분 %d년까지" % (c["from"], c["until"]) for c in C["carries"]))
     if adj["total"]:
         basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
     basis += " · 대손충당금 = " + bd["note"]

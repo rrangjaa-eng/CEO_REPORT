@@ -438,8 +438,16 @@ def main(argv=None):
     except OSError as e:
         _say(_write_help(a.출력, e))
         return 7
+    from ceo_report import lawwatch   # 사용자 2026-11-17: 법령 관련 항목은 최신 법령을 먼저 확인하고 만든다 (7일 안에 받은 적 없으면 먼저 받음)
+    try:
+        law_state = lawwatch.ensure(a.입력, asof.year, asof if asof > dt.date.today() else dt.date.today())
+    except Exception as e:
+        law_state = {"ok": False, "msg": "최신 법령 확인 못 함 — %s" % type(e).__name__}
+    if not law_state.get("ok"):
+        _say(law_state["msg"])
     data = load(a.입력)
     R = compute(data, kind, asof, start, pick, payday)
+    R["law_state"] = law_state
     R["out_group"] = a.출금목록   # 사용자 2026-11-05: 출금 목록 건별 / 거래처별 합침을 창에서 고름
     R["out_merge_only"] = [x.strip() for x in a.합칠거래처.split(",") if x.strip()]   # 특정 거래처만 합침 (사용자 2026-11-05)
     if kind == "monthly":

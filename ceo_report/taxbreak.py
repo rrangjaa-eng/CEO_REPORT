@@ -323,7 +323,11 @@ def check(input_dir, year, answers, holders=(), assets=None):
                          "세무사에게 %d년 신고서의 감면·공제 내역 확인" % (year - 1)))
     # 5) 연구·인력개발비 세액공제 (조특법 10조)
     eq, rd = assets if assets else (None, None)
-    if a.get("연구전담") == "예":
+    if a.get("연구전담") == "예" and a.get("연구공제") == "안 받음":   # 사용자 2026-11-17: 대표만 소속, 나중 문제 소지로 2025·2026 안 받음
+        rows.append(("연구·인력개발비 세액공제", "해당 없음", None,
+                     "연구전담부서는 있지만 회사가 공제를 받지 않기로 함 (설정 '연구공제: 안 받음' — 부서에 대표만 소속, 나중 문제 소지)",
+                     "직원 연구원이 생기면 다시 검토"))
+    elif a.get("연구전담") == "예":
         rd_filed = filed is not None and not ((filed.get("공제감면세액") or 0) - (filed.get("특별감면") or 0) - (filed.get("고용공제") or 0))
         rows.append(("연구·인력개발비 세액공제", "확인 필요", int(rd * 0.25) if rd else None,
                      "연구소·전담부서 있음(설정 답). 중소기업은 연구개발비(연구 전담 직원 인건비 등)의 25%%, 최저한세에 안 걸려 바로 세금이 줄어듦%s%s" % (
@@ -358,7 +362,9 @@ def check(input_dir, year, answers, holders=(), assets=None):
         cell, end, _ = law_cell(r[0], items, year)
         if end and end < year and r[1] != "해당 없음":
             r = (r[0], "해당 없음", None, "법 기한(%d년)이 지남 · " % end + r[3], "")
-        out.append(tuple(r[:5]) + (cell,))
+        ok, why_ = chosen(a, r[0], r[1], r[2])
+        pk = ("넣음 · " + why_) if ok else (("안 넣음 · " + why_) if why_ else "")
+        out.append(tuple(r[:5]) + (cell, pk))
     rows = out
     total = sum(r[2] for r in rows if r[1] == "해당" and r[2])
     note = ""
@@ -370,11 +376,138 @@ def check(input_dir, year, answers, holders=(), assets=None):
             note = "최저한세(과세표준의 7%% = %s원) 때문에 줄일 수 있는 세금은 %s원까지" % (W(floor), W(cap))
             total = cap
         total = min(total, tax)
+    credit = None
+    if base is not None and tax is not None:   # '받음'인 공제를 넣은 법인세 계산과 이월 (사용자 2026-11-17)
+        ex = [{"name": r[0], "amount": int(r[2]), "mt": _pick_of(r[0])[2], "nong": _pick_of(r[0])[3]}
+              for r in rows if len(r) > 6 and r[6].startswith("넣음")]
+        try:
+            credit = taxreturn.credits(input_dir, year, base, tax, extra=ex)
+        except Exception:
+            credit = None
+    # 체크 전이라도 후보마다 '받으면' 금액을 모두 계산 (사용자 2026-11-17: 법령·회사 기준 계산은 전부 해 두고, 세금엔 체크한 것만)
+    calc = {}
+    for r in rows:
+        calc[r[0]] = _calc_cell(input_dir, year, base, tax, r)
+    rows = [tuple(r) + (calc[r[0]],) for r in rows]
+    try:   # 최신 법령 확인 상태 (사용자 2026-11-17: 법령 관련 항목은 최신 법령을 먼저 확인하고 만든다)
+        from . import lawwatch
+        law_state = lawwatch.state(input_dir)
+    except Exception:
+        law_state = None
     carry = (filed or {}).get("공제이월") or 0
     mt_note = ("%d년 신고 때 최저한세 때문에 못 쓴 공제 %s원이 넘어와 있음 → '최저한세 적용' 공제는 새로 생겨도 올해 세금이 바로 줄지 않고 "
                "다음 해로 넘어갈 가능성이 큼. 바로 줄어드는 것은 '최저한세 안 걸림'(중소기업 연구·인력개발비)뿐" % (year - 1, W(carry))) if carry else ""
-    return {"year": year, "rows": rows, "total": total, "mt_note": mt_note, "local": int(total * LOCAL_RATE), "base": base, "tax": tax,
+    return {"year": year, "rows": rows, "total": total, "mt_note": mt_note, "law_state": law_state, "credit": credit, "local": int(total * LOCAL_RATE), "base": base, "tax": tax,
             "period": period, "note": note}
+
+
+# ───────────── 후보를 법인세 계산에 넣기 (사용자 2026-11-17 첫 번째 안: '받음' 표시한 것만 계산, 세액공제 남는 몫은 이월) ─────────────
+# 후보 이름 앞부분 -> (설정 키, 최저한세 적용, 농어촌특별세 냄, 금액 근거 종류)
+# 최저한세: 조특법 132조 ①3호 (10조는 중소기업이 아닌 자만). 농특세 비과세: 농특세법 시행령 4조 ⑦1호(조특법 10조·30조의3) — 2026-11-17 조문 확인
+# 금액 근거: 'law' = 법령 금액 × 회사 자료로 계산됨, 'advisor' = 세무사가 인정 범위를 봐야 함
+PICK = [
+    ("통합고용세액공제", "반영_고용", True, True, "law"),
+    ("인력개발비(교육훈련비)", "반영_교육훈련", False, False, "advisor"),
+    ("통합투자세액공제", "반영_투자", True, True, "advisor"),
+    ("연구·인력개발비", "반영_연구", False, False, "advisor"),
+]
+
+
+def _pick_of(name):
+    for p in PICK:
+        if name.startswith(p[0]) and not name.startswith("통합고용세액공제 (넘어온"):
+            return p
+    return None
+
+
+def chosen(a, name, status, amount):
+    """후보 하나를 계산에 넣나 -> (넣음 True/False, 이유 글)."""
+    p = _pick_of(name)
+    if not p or not amount or status in ("해당 없음", "나중"):
+        return False, ""
+    own = (a or {}).get(p[1]) or "기본"
+    if own == "받음":
+        return True, "설정 '받음'"
+    if own == "안 받음":
+        return False, "설정 '안 받음'"
+    rule = (a or {}).get("반영기본") or "모두 안 받음"   # 사용자 2026-11-17: 자동으로 넣지 말고 경영관리가 확인·체크('받음')한 것만
+    if rule == "모두 받음":
+        return True, "기본 규칙 '모두 받음'"
+    if rule == "모두 안 받음":
+        return False, "기본 규칙 '모두 안 받음'"
+    return (True, "기본: 법령 금액으로 계산됨") if p[4] == "law" else (False, "기본: 세무사 인정 범위 확인 전")
+
+
+NO_CALC = [   # 금액을 못 셀 때 없는 자료 (사용자 2026-11-17: 계산 못 하는 후보는 무슨 자료가 없어서인지)
+    ("상생결제", "은행 상생결제로 준 금액 자료 없음 (상생결제를 쓰면 은행 이용 내역서)"),
+    ("상생협력 출연금", "출연한 금액 없음"),
+    ("성과공유", "성과공유기업 확인서·경영성과급 지급액 없음"),
+    ("연구·인력개발비", "연구 전담 직원 인건비를 따로 나눈 자료 없음"),
+    ("통합투자", "올해 장부에 새로 산 사업용 장비 금액 없음"),
+    ("통합고용세액공제", "올해·작년 급여 자료(직원 수)가 모자람"),
+    ("고용유지", "두 해 급여 화면(위하고 급여명세) 없음"),
+    ("전자신고", "직접 신고하면 2만원 — 신고 방법이 정해지지 않음"),
+]
+
+
+def _calc_cell(input_dir, year, base, tax, r):
+    """후보 한 줄 -> '받으면' 계산 글: 올해 줄어드는 세금·이월 몫, 이미 들어간 것, 못 센 이유."""
+    name, st, amt = r[0], r[1], r[2]
+    if name.startswith("중소기업 특별세액감면") and st == "해당" or name.startswith("통합고용세액공제 (넘어온"):
+        from . import taxreturn
+        sp_, cr_ = taxreturn.last_year_taken(input_dir)
+        on = sp_ if name.startswith("중소기업") else cr_
+        return ("작년 신고서 기준으로 법인세 예상에 넣음 (설정으로 끌 수 있음)" if on else
+                "설정 '안 받음' — 법인세 예상에 안 넣음 (%s원)" % W(amt or 0))
+    if not amt:
+        if st == "해당 없음":
+            return "해당 없음 — 계산 안 함"
+        if st == "나중" and not any(name.startswith(k) for k, _ in NO_CALC):
+            return "지금 조건이 안 돼 계산 안 함"
+        why = next((w for k, w in NO_CALC if name.startswith(k)), "금액을 셀 자료 없음")
+        return "계산 못 함: " + why
+    p = _pick_of(name)
+    if not p:
+        return "%s원 (법인세 예상 계산 방식에 없는 항목 — 세무사 확인)" % W(amt)
+    if base is None or tax is None:
+        return "%s원 · 올해 법인세 예상이 없어 올해 쓸 몫을 못 나눔" % W(amt)
+    from . import taxreturn
+    try:
+        C = taxreturn.credits(input_dir, year, base, tax, extra=[{"name": name, "amount": int(amt), "mt": p[2], "nong": p[3]}])
+    except Exception:
+        C = None
+    if not C or not C.get("extra"):
+        return "%s원 · 작년 신고서가 없어 올해 쓸 몫을 못 나눔" % W(amt)
+    x = C["extra"][0]
+    nong = int(x["used"] * 0.2) if p[3] else 0
+    return "받으면: 공제 %s원 → 올해 법인세 %s원 줄어듦%s · %s원은 이월 (%d년까지)%s" % (
+        W(amt), W(x["used"]), " (농어촌특별세 %s원 더 냄)" % W(nong) if nong else "", W(x["carry"]), year + 10,
+        "" if p[2] else " · 최저한세와 상관없음")
+
+
+def picked(input_dir, year, answers=None, holders=None, assets=None):
+    """'받음'인 세액공제 -> [{name, amount, mt(최저한세), nong(농특세)}]. 법인세 예상(taxreturn.credits)이 쓴다."""
+    from . import dividend
+    try:
+        a = answers if answers is not None else dividend.read_settings(input_dir)
+        hd = holders if holders is not None else [r["이름"] for r in dividend.read(input_dir)]
+    except (OSError, ValueError):
+        return []
+    if assets is None:
+        for r in _read_csv(os.path.join(input_dir, "잉여금.csv")):
+            if (r.get("연도") or "") == str(year) and (r.get("항목") or "") in ("장비구입",):
+                try:
+                    assets = (int(float(r.get("금액") or 0)), 0)
+                except ValueError:
+                    pass
+    T = check(input_dir, year, a, hd, assets)
+    out = []
+    for r in T["rows"]:
+        ok, _ = chosen(a, r[0], r[1], r[2])
+        if ok:
+            p = _pick_of(r[0])
+            out.append({"name": r[0], "amount": int(r[2]), "mt": p[2], "nong": p[3]})
+    return out
 
 
 # ───────────── 감면·공제 전체 검토 (사용자 2026-11-17: 법인세 감면·공제를 모두 최신 법령 기준으로 찾아 적용할 게 있는지 검토) ─────────────
@@ -538,29 +671,138 @@ def review_more(input_dir, year, a, filed, holders=()):
     return rows
 
 
+# 쉬운 설명 (사용자 2026-11-17: 각 감면·공제 종류와 조건을 일반인도 알기 쉬운 말로) — 후보 이름 앞부분 -> (무엇인가, 받는 조건)
+EASY = [
+    ("창업중소기업 세액감면", "새로 차린 작은 회사의 법인세를 5년 동안 깎아 줌 (지역·대표 나이에 따라 50~100%)",
+     "완전히 새로 시작한 사업 · 정해진 업종 · 서울 등 과밀지역 밖이거나 대표가 만 34세 이하. 특별세액감면과 한 해에 하나만"),
+    ("중소기업 특별세액감면", "작은 회사가 번 돈에 붙는 법인세를 일정 비율(5~30%) 깎아 줌",
+     "중소기업 · 정해진 업종 · 회사 크기와 지역에 따라 비율이 다름. 창업 감면과 한 해에 하나만"),
+    ("통합고용세액공제 (넘어온", "작년에 받을 수 있었지만 세금이 너무 적어 못 쓴 고용 공제를 올해 이후에 씀",
+     "10년 안에 쓰면 됨 · 올해도 최저한세까지만 쓸 수 있음"),
+    ("통합고용세액공제", "직원 수가 늘면 늘어난 1명마다 법인세를 정해진 금액만큼 깎아 줌 (청년·60세 이상은 더 큼)",
+     "1년 평균 직원 수가 전년보다 늘어야 함 · 대표·주주 가족·임원·단시간 근로자는 안 셈 · 다음 해에 줄면 토해 냄"),
+    ("%d년분 경정청구", "지난 신고 때 놓친 감면·공제를 5년 안에 다시 신청해 세금을 돌려받는 것", "놓친 감면이 있어야 함 · 최저한세에 걸렸으면 돌려받을 게 거의 없음"),
+    ("연구·인력개발비", "연구 전담 직원 인건비 등 연구에 쓴 돈의 25%를 법인세에서 빼 줌 (작은 회사는 최저한세와 상관없이 바로 줄어듦)",
+     "기업부설연구소나 연구전담부서 인정서가 있어야 함 · 연구만 하는 직원의 인건비여야 함 (지분 많은 대표 등은 빠짐)"),
+    ("인력개발비(교육훈련비)", "직원 교육에 쓴 돈의 25%를 법인세에서 빼 줌 (최저한세와 상관없음)",
+     "정해진 교육기관에 맡긴 훈련·직업능력개발훈련 등 인정되는 교육만 · 연구소가 없어도 됨"),
+    ("통합투자세액공제", "사업에 쓰는 기계·장비를 사면 산 값의 10%(작은 회사)를 법인세에서 빼 줌",
+     "새 사업용 자산이어야 함 · 승용차·건물·중고품·임대용은 안 됨 · 산 해에 공제"),
+    ("근로소득을 늘린", "직원 평균 월급을 다른 회사보다 많이 올리면 더 올린 몫의 20%를 깎아 줌",
+     "직원 수가 줄지 않아야 함 · 최근 3년 월급 인상률 기록이 있어야 함 (새 회사는 안 됨) · 계약직을 정규직으로 바꾼 경우는 따로 가능"),
+    ("상생결제", "작은 거래처에 대금을 은행 '상생결제'로 빨리 주면 준 금액의 일부를 깎아 줌",
+     "은행 상생결제 제도로 주어야 함 · 어음 결제 비율이 늘지 않아야 함 · 법인세의 10%까지"),
+    ("상생협력 출연금", "작은 협력회사를 돕는 기금(보증기금·협력재단 등)에 돈을 내면 낸 돈의 10%를 깎아 줌",
+     "법에 정한 기관에 '상생협력' 목적으로 내야 함 · 특수관계 회사 지원용이면 안 됨"),
+    ("성과공유 중소기업", "직원에게 회사 성과를 나누는 성과급을 주면 그 10%를 깎아 줌 (직원도 소득세 절반 감면)",
+     "중소벤처기업부 '성과공유 중소기업' 확인 · 미리 정한 성과급 제도로 지급 · 직원 수가 줄지 않아야 함"),
+    ("영상콘텐츠", "방송·영화·OTT 영상을 만든 비용의 15%(작은 회사, 조건 맞으면 +15%)를 깎아 줌",
+     "방송사에서 방송된 프로그램, 영화, 등급 받은 OTT 영상만 · 행사·홍보 영상은 안 됨"),
+    ("고용을 늘린 기업", "예전(2024년까지) 직원을 늘린 회사에 주던 공제 — 지금은 통합고용세액공제로 바뀜", "2024년까지 늘어난 인원만"),
+    ("중소기업 사회보험료", "예전(2024년까지) 늘어난 직원의 4대보험 회사 부담분을 깎아 주던 공제 — 지금은 통합고용세액공제로 바뀜", "2024년까지 늘어난 인원만"),
+    ("고용유지중소기업", "경기가 어려워 해고 대신 근무시간·월급을 나눠 줄인 회사에 주는 공제",
+     "직원 1인당 연봉은 줄었지만 시간당 임금과 직원 수는 유지 · 2026년까지"),
+    ("전자신고", "회사가 직접 홈택스로 법인세를 신고하면 2만원을 깎아 줌", "세무사가 대신 신고하면 회사는 못 받음"),
+    ("외국납부", "외국에서 번 돈에 외국 세금을 이미 냈으면 그만큼 한국 법인세에서 빼 줌 (이중 과세 방지)", "외국에서 세금을 낸 증빙이 있어야 함"),
+    ("재해손실", "화재·홍수 등으로 회사 재산을 크게 잃으면 법인세를 그 비율만큼 깎아 줌", "사업용 자산의 20% 이상을 잃어야 함"),
+    ("벤처기업", "벤처 확인을 받으면 창업 감면 기간·비율이 달라질 수 있음", "벤처기업 확인서가 있어야 함"),
+]
+
+
+def easy(name, year=None):
+    """후보 이름 -> (무엇인가, 받는 조건) 또는 None."""
+    for key, what, cond in EASY:
+        k = key % (year - 1) if "%d" in key and year else key
+        if name.startswith(k):
+            return what, cond
+    return None
+
+
+# 필요한 자료·신청 방법 (사용자 2026-11-17: 공제·감면에 필요한 자료와 조건, 신청 방법도 같이 보이게) — 이름 앞부분 -> (필요한 자료, 신청 방법)
+# 신청은 모두 법인세 신고(다음 해 3월 31일까지) 때 신고서에 붙여 내는 방식. 기한 뒤에는 5년 안에 경정청구로 받을 수 있음 (국세기본법 45조의2)
+HOW = [
+    ("창업중소기업 세액감면", "사업자등록증·법인등기부(설립일), 대표 나이 증빙, 업종이 감면 업종인지 세무사 확인",
+     "법인세 신고 때 '세액감면신청서'를 함께 냄 (세무사가 작성)"),
+    ("중소기업 특별세액감면", "중소기업 기준 확인(매출·자산), 업종별 매출 구분, 본점·사업장 소재지",
+     "법인세 신고 때 '세액감면신청서'를 함께 냄"),
+    ("통합고용세액공제 (넘어온", "작년 '세액공제조정명세서'(이월 금액)", "법인세 신고 때 세액공제조정명세서에 이월분으로 적음"),
+    ("통합고용세액공제", "매달 말 직원 명단(원천징수이행상황신고서·4대보험 가입 명단), 직원 생년월일(청년·60세 이상), 임원·주주 가족 명단",
+     "법인세 신고 때 '세액공제신청서'와 '상시근로자 수 계산서'를 냄"),
+    ("%d년분 경정청구", "작년 법인세 신고서, 놓친 공제·감면의 증빙", "법정 신고기한 뒤 5년 안에 홈택스 '경정청구'로 신청 (세무사 대행)"),
+    ("연구·인력개발비", "연구소·전담부서 인정서(한국산업기술진흥협회), 연구원 명단·근무 기록, 연구노트, 연구 인건비 지급 내역",
+     "법인세 신고 때 '세액공제신청서'와 '연구 및 인력개발비 명세서'를 냄"),
+    ("인력개발비(교육훈련비)", "교육 기관·과정 안내, 수료증, 교육비 영수증·세금계산서, 교육받은 직원 명단",
+     "법인세 신고 때 '세액공제신청서'와 '연구 및 인력개발비 명세서'를 냄"),
+    ("통합투자세액공제", "자산을 산 세금계산서, 고정자산대장, 사업용으로 쓰는 증빙", "법인세 신고 때 '세액공제신청서'를 냄 (투자한 해)"),
+    ("근로소득을 늘린", "직원별 연간 급여(원천징수부), 최근 3년 평균 급여, 정규직 전환 근로계약서", "법인세 신고 때 '세액공제신청서'와 증대 명세서를 냄"),
+    ("상생결제", "은행 상생결제 이용 내역서, 거래처가 중소·중견기업인지 확인", "법인세 신고 때 '세액공제신청서'와 상생결제 지급명세서를 냄"),
+    ("상생협력 출연금", "출연 영수증(기관 발행), 출연 목적 증빙", "법인세 신고 때 '세액공제신청서'를 냄"),
+    ("성과공유 중소기업", "중소벤처기업부 성과공유기업 확인서, 성과급 지급 규정·지급 내역", "법인세 신고 때 '세액공제신청서'를 냄 (직원 소득세 감면은 연말정산 때)"),
+    ("영상콘텐츠", "방송·상영 확인서, 제작비 명세(국내·국외 구분)", "처음 방송·상영한 해의 법인세 신고 때 '세액공제신청서'를 냄"),
+    ("고용을 늘린 기업", "(지금은 신청 대상 아님)", "–"),
+    ("중소기업 사회보험료", "(지금은 신청 대상 아님)", "–"),
+    ("고용유지중소기업", "직원별 근로시간·시간당 임금·연간 임금 비교표(2년)", "법인세 신고 때 '세액공제신청서'를 냄"),
+    ("전자신고", "–", "회사가 홈택스로 직접 신고하면 자동으로 빠짐"),
+    ("외국납부", "외국 세금 납부 영수증·원천징수 증명서", "법인세 신고 때 '외국납부세액공제 신청서'를 냄"),
+    ("재해손실", "재해 확인서(소방서·지자체), 잃은 자산 목록과 장부 금액", "재해가 난 날부터 3개월 안에 '재해손실세액공제신청서'를 세무서에 냄"),
+    ("벤처기업", "벤처기업 확인서", "창업 감면 신청 때 함께 냄"),
+]
+
+
+def how(name, year=None):
+    """후보 이름 -> (필요한 자료, 신청 방법) 또는 None."""
+    for key, need, apply_ in HOW:
+        k = key % (year - 1) if "%d" in key and year else key
+        if name.startswith(k):
+            return need, apply_
+    return None
+
+
+def _easy_html(name, year, esc):
+    e = easy(name, year)
+    if not e:
+        return ""
+    hw = how(name, year)
+    return ("<div style='font-size:11px;color:#555;margin-top:3px'><b>무엇:</b> %s<br><b>받는 조건:</b> %s%s</div>" % (
+        esc(e[0]), esc(e[1]), ("<br><b>필요한 자료:</b> %s<br><b>신청 방법:</b> %s" % (esc(hw[0]), esc(hw[1]))) if hw else ""))
+
+
 def render(T, esc):
     if not T:
         return ""
     tag = {"해당": "<span class='tag'>해당</span>", "확인 필요": "<span class='tag e'>확인 필요</span>",
            "해당 없음": "<span class='tag' style='opacity:.5'>해당 없음</span>", "나중": "<span class='tag' style='opacity:.7'>나중</span>"}
     h = ["<div class='q'>법인세를 줄일 수 있는 감면·공제 전체 검토 (%d년)</div>" % T["year"]]
+    ls = T.get("law_state")
+    if ls:
+        h.append("<div class='%s'>%s</div>" % ("note" if ls.get("ok") else "warn", esc(ls["msg"])))
+    C = T.get("credit")
     if T["tax"] is not None:
-        h.append("<div class='say'>%s 법인세 산출세액 %s원 (과세표준 %s원). '해당'만 더하면 법인세 %s원 + 지방소득세 %s원이 줄어듭니다.%s"
-                 " 이 표는 보여 주기만 하고 법인세 예상 계산에는 넣지 않습니다.</div>"
-                 % (esc(T["period"]), W(T["tax"]), W(T["base"]), W(T["total"]), W(T["local"]),
-                    " " + esc(T["note"]) + "." if T["note"] else ""))
+        h.append("<div class='say'>%s 법인세 산출세액 %s원 (과세표준 %s원).</div>" % (esc(T["period"]), W(T["tax"]), W(T["base"])))
+    ins = [r for r in T["rows"] if len(r) > 6 and r[6].startswith("넣음")]
+    if ins:
+        h.append("<div class='say'>법인세 예상에 넣은 공제: %s.%s</div>" % (esc(" · ".join("%s %s원" % (r[0], W(r[2])) for r in ins)), (
+            " 최저한세 때문에 올해 %s원만 쓰고 나머지는 이월" % W(C["new_used"]) if C and C.get("new_used") is not None and C["new_used"] < sum(r[2] for r in ins) else "")))
+    else:
+        h.append("<div class='say'>법인세 예상에 넣은 새 공제는 없습니다 (작년 신고서의 특별감면·넘어온 고용 공제는 원래대로 넣음).</div>")
+    if C and C.get("carries"):
+        h.append("<div class='say'>%s</div>" % esc("내년으로 넘어갈 공제 %s원: %s. 기한 안에 못 쓰면 없어집니다 (조특법 144조: 세액공제만 10년 이월, 감면은 이월 없음)." % (
+            W(C["carry_next"]), " · ".join("%s %s원 (%d년분, %d년까지 사용)" % (c["what"], W(c["amount"]), c["from"], c["until"]) for c in C["carries"]))))
     if T.get("mt_note"):
         h.append("<div class='say'>%s</div>" % esc(T["mt_note"]))
     cnt = dict((k, sum(1 for r in T["rows"] if r[1] == k)) for k in tag)
     h.append("<div class='note'>%s</div>" % esc("후보 %d개: %s" % (len(T["rows"]), " · ".join("%s %d" % (k, v) for k, v in cnt.items() if v))))
     order = {"해당": 0, "확인 필요": 1, "나중": 2, "해당 없음": 3}
     rows = sorted(T["rows"], key=lambda r: order.get(r[1], 9))
-    h.append("<table class='re'><tr><th class='l'>감면·공제</th><th>판단</th><th>예상 금액(원)</th><th class='l'>우리 회사 확인 (요건·자료)</th>"
-             "<th class='l'>근거 조문</th><th class='l'>할 일</th></tr>%s</table>"
-             % "".join("<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td><td class='l'>%s</td><td class='l'>%s</td></tr>"
-                       % (esc(r[0]), tag[r[1]], W(r[2]) if r[2] else "–", esc(r[3]), esc(r[5] if len(r) > 5 else ""), esc(r[4]))
+    h.append("<table class='re'><tr><th class='l'>감면·공제 (쉬운 설명 · 필요한 자료 · 신청 방법)</th><th>판단</th><th>예상 금액(원)</th><th class='l'>법령·회사 기준 계산 (받으면)</th><th>세금 계산</th>"
+             "<th class='l'>우리 회사 확인 (요건·자료)</th><th class='l'>근거 조문</th><th class='l'>할 일</th></tr>%s</table>"
+             % "".join("<tr><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td><td>%s</td><td class='l'>%s</td><td class='l'>%s</td><td class='l'>%s</td></tr>"
+                       % (esc(r[0]) + _easy_html(r[0], T["year"], esc), tag[r[1]], W(r[2]) if r[2] else "–", esc(r[7] if len(r) > 7 else ""),
+                          esc(r[6] if len(r) > 6 and r[6] else "–"),
+                          esc(r[3]), esc(r[5] if len(r) > 5 else ""), esc(r[4]))
                        for r in rows))
-    h.append("<div class='note'>조세특례제한법·법인세법 현행 조문 기준 (창 '개정 확인 받기'로 받은 조문의 시행일·법 기한을 표에 씀, 기한이 지난 것은 자동으로 '해당 없음'). "
-             "창업 감면과 고용 공제는 함께 받을 수 있지만 창업 감면과 중소기업 특별감면은 한 해에 하나만 됩니다. "
-             "'확인 필요'·'나중' 금액은 참고용이며 실제 적용 여부·금액은 세무사 확인이 필요합니다.</div>")
+    h.append("<div class='note'>조세특례제한법·법인세법 최신 조문 기준 (받은 조문의 시행일·법 기한을 표에 씀, 기한이 지난 것은 자동으로 '해당 없음'). "
+             "계산은 체크와 상관없이 모두 해 두고, '세금 계산'이 '넣음'(경영관리가 확인하고 '받음'으로 체크)인 공제만 법인세 예상에 들어갑니다 (기본은 모두 안 넣음): 넘어온 공제 → 올해 공제(최저한세까지) → 최저한세 밖 공제 순서로 쓰고, 못 쓴 몫은 이월. "
+             "넣을지는 창 '배당 판단 질문'의 '법인세 감면' 묶음(반영 기본 규칙·항목별 받음/안 받음)에서 바꿉니다. "
+             "창업 감면과 중소기업 특별감면은 한 해에 하나만 됩니다. 실제 적용 여부·금액은 세무사 확인이 필요합니다.</div>")
     return "".join(h)

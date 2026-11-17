@@ -162,4 +162,32 @@ class FullReview1117(unittest.TestCase):
         h = tb.render(tb.check(folder({}), 2026, YES), lambda x: x)
         self.assertIn("근거 조문", h)
         self.assertIn("조특법 10조", h)
-        self.assertIn("보여 주기만", h)
+        self.assertIn("세금 계산", h)
+
+
+class ResearchDeclined1117(unittest.TestCase):
+    def test_company_decided_not_to_claim(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 연구공제="안 받음"))
+        r = row(T, "연구·인력개발비")
+        self.assertEqual(r[1], "해당 없음")
+        self.assertIn("회사가 공제를 받지 않기로", r[3])
+        self.assertEqual(row(tb.check(folder({}), 2026, dict(YES, 연구전담="예")), "연구·인력개발비")[1], "확인 필요")
+
+
+class EasyWords1117(unittest.TestCase):
+    def test_every_candidate_has_plain_explanation(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 벤처="예"))
+        for r in T["rows"]:
+            self.assertIsNotNone(tb.easy(r[0], 2026), r[0])
+        h = tb.render(T, lambda x: x)
+        self.assertIn("받는 조건:", h)
+        self.assertIn("직원 수가 늘면", h)
+
+
+class OnlyCheckedGoIn1117(unittest.TestCase):
+    """사용자 2026-11-17: 공제·감면은 자동으로 넣지 말고 경영관리가 확인·체크('받음')한 것만 세금 계산에."""
+
+    def test_default_nothing_then_checked_only(self):
+        self.assertEqual(tb.chosen({}, "통합고용세액공제", "해당", 1_000_000)[0], False)
+        self.assertEqual(tb.chosen({"반영_고용": "받음"}, "통합고용세액공제", "확인 필요", 1_000_000)[0], True)
+        self.assertEqual(tb.chosen({"반영_교육훈련": "받음"}, "통합고용세액공제", "해당", 1_000_000)[0], False)
