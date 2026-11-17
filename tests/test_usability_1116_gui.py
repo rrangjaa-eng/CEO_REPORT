@@ -484,7 +484,7 @@ class TestRuleOps05RareList(GuiCase):
     def test_rare_cards_are_a_list_and_only_chosen_opens(self):
         """운영-05 (25): 주주·배당·세법·신용평가·내년 예산(+대출 만기)은 이름 목록으로 두고 고른 것만 입력이 열린다."""
         w = self.w
-        self.assertEqual(tuple(w.rare_names), ("주주", "배당 판단 질문", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기"))
+        self.assertEqual(tuple(w.rare_names), ("주주", "배당 판단 질문", "법인세 감면·공제", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기"))
         self.assertEqual([w.rare_list.get(i).split(" · ")[0] for i in range(w.rare_list.size())], list(w.rare_names))
         w.nb.select(1)
         self.root.update()
