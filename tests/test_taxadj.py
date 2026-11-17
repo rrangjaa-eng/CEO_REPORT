@@ -25,10 +25,20 @@ class Adjust(unittest.TestCase):
              L(dt.date(2026, 1, 1), "가지급금", "13400", debit=100_000_000)]
         A = taxadj.adjust(J, {}, "2026-12", tempfile.mkdtemp(), revenue=0)
         car = [i for i in A["items"] if "승용차" in i[0]][0]
-        self.assertFalse(car[2])                      # 승용차인지 몰라 확인 필요
+        self.assertFalse(car[2])                      # 한도 1,500만 안 넘음 → 0
         loan = [i for i in A["items"] if "인정이자" in i[0]][0]
         self.assertEqual(loan[1], 4_600_000)          # 1억 × 4.6% × 12/12
         self.assertEqual(A["total"], 4_600_000)
+
+    def test_car_over_limit_is_added_1117(self):
+        # 사용자 2026-11-17 (카드): 운행기록부 없음·1대로 보고 넘는 몫을 바로 과세표준에 더함
+        J = [L(dt.date(2026, 1, 5), "차량유지비(판)", "82200", debit=18_000_000)]
+        A = taxadj.adjust(J, {}, "2026-12", tempfile.mkdtemp(), revenue=0)
+        car = [i for i in A["items"] if "승용차" in i[0]][0]
+        self.assertEqual((car[1], car[2]), (3_000_000, True))
+        self.assertEqual(A["total"], 3_000_000)
+        A = taxadj.adjust(J, {}, "2026-12", tempfile.mkdtemp(), revenue=0, answers={"승용차기록": "씀"})
+        self.assertEqual(A["total"], 0)
 
     def test_bad_debt(self):
         J = [L(dt.date(2025, 3, 1), "외상매출금", "10800", debit=300_000_000),

@@ -3,7 +3,7 @@
 장부 이익과 세법 이익의 차이 중 장부로 셀 수 있는 것만 어림한다 (1월~보고 달 누적, 한도는 달 수만큼 나눠 비교):
   · 접대비(기업업무추진비) 한도 초과 → 비용 인정 안 함 (+)
   · 벌금·과태료·가산세·과징금·범칙금 (적요로 찾음) → 비용 인정 안 함 (+)
-  · 업무용 승용차 비용: 운행기록부 없으면 1대 연 1,500만 원 넘는 몫 (+, 승용차인지 몰라 '확인 필요')
+  · 업무용 승용차 비용: 운행기록부 없으면 1대 연 1,500만 원 넘는 몫 (+, 사용자 2026-11-17: 1대·기록부 없음으로 보고 넣음)
   · 업무용 승용차 감가상각비: 작년 신고서의 승용차 상각비로 올해 1년 치 한도(연 800만) 조정 (±)
   · 대표·임직원 가지급금 인정이자 → 수익으로 더함 (+)
   · 기부금 → 한도 계산은 세무사 (확인 필요)
@@ -81,9 +81,11 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
         if rec == "씀" or rec == "승용차 없음":
             items.append(("업무용 승용차 비용", 0, False, why + " — 운행기록부를 쓰거나 승용차가 아니라 조정 없음"))
         else:
-            items.append(("업무용 승용차 비용", over, False, why + " — 승용차 대수·운행기록부 확인 필요 (차가 여러 대면 한도도 늘어남)"))
+            # 사용자 2026-11-17 (카드): 세무사 답을 기다리지 않고 운행기록부 없음·승용차 1대로 보고 넘는 몫을 바로 더한다
+            items.append(("업무용 승용차 비용", over, over > 0 and ok3,
+                          why + " — 운행기록부 없음·승용차 1대로 보고 넣음 (기록부를 쓰거나 차가 여러 대면 창에서 고치면 줄어듦)"))
     # 업무용 승용차 감가상각비 한도 (사용자 2026-11-13: 작년 상세 신고서의 업무용승용차 관련비용 명세서)
-    car_dep = _car_dep(input_dir, year, law("승용차상각한도"), wehago_dir)
+    car_dep = _car_dep(input_dir, year, law("승용차상각한도"), wehago_dir, months)
     if car_dep:
         items.append(car_dep)
     # 가지급금 인정이자
@@ -107,7 +109,7 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
     return {"items": items, "total": total}
 
 
-def _car_dep(input_dir, year, lim_info, wehago_dir=None):
+def _car_dep(input_dir, year, lim_info, wehago_dir=None, months=12):
     """작년 신고서의 승용차 감가상각비로 올해 조정 -> (이름, 금액, 넣음, 근거) 또는 None.
 
     법인세 예상의 감가상각비는 작년 장부 금액(이 차는 산 달부터 몇 달 치만)으로 먼저 잡는다. 올해는 1년 치를 상각하지만
@@ -151,6 +153,11 @@ def _car_dep(input_dir, year, lim_info, wehago_dir=None):
                       "장부 감가상각비 예상은 1년 치보다 약 %s원 적게 잡혀 있음 (창 ⑨에 올해 감가상각비를 넣으면 장부 이익도 맞춰짐)"
                       % ("{:,}".format(last_dep), "{:,}".format(annual), "{:,}".format(allowed), "{:,}".format(abs(adj)),
                          "줄어듦" if adj < 0 else "늘어남", "{:,}".format(max(annual - last_dep, 0))))
+    from .corptax import DEP_MODE
+    if DEP_MODE == "prorate" and months < 12:   # 사용자 2026-11-17 (카드): 감가상각비 예상처럼 지난 달 수만큼만 (결정 M5와 같은 기준)
+        full = adj
+        adj = int(round(full * months / 12.0))
+        why += " · 1~%d월 몫 %s원 = 1년 치 %s원 × %d/12 (감가상각비 예상과 같은 기준)" % (months, "{:,}".format(adj), "{:,}".format(full), months)
     return ("업무용 승용차 감가상각비 한도", adj, bool(ok), why)
 
 

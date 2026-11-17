@@ -117,6 +117,10 @@ class Detail(unittest.TestCase):
         self.assertIn("고정자산대장", why)
         D = corptax.depreciation([], {}, "2026-10", ledger=corptax.read_ledger(d))
         self.assertEqual((D["annual"], D["source"]), (10_000_000, "고정자산대장"))
+        # 사용자 2026-11-17 (카드): 감가상각비 예상처럼 지난 달 수만큼 — 10월까지면 200만 × 10/12
+        n, v, on, why = taxadj._car_dep(d, 2026, (8_000_000, True, ""), months=10)
+        self.assertEqual(v, 1_666_667)
+        self.assertIn("× 10/12", why)
 
     def test_taxbreak_rows(self):
         from ceo_report import taxbreak

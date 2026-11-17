@@ -2,9 +2,17 @@ import datetime as dt
 import tempfile
 import unittest
 
+from unittest import mock
+
 from ceo_report import taxlaw as tl
 
+# 2026-11-17: 실제 2026 기준표엔 이제 미확인 값이 없음(통합고용 금액을 법령으로 확인) → 미확인·시행일 처리 시험은 가짜 미확인 값으로
+UNVERIFIED = mock.patch.dict(tl.DEFAULTS[2026], {
+    "고용공제_수도권": (None, "미확인", "시험용 미확인", dt.date(2026, 7, 1)),
+    "고용공제_지방": (None, "미확인", "시험용 미확인", dt.date(2026, 7, 1))})
 
+
+@UNVERIFIED
 class Law(unittest.TestCase):
     def test_defaults_and_unverified(self):
         d = tempfile.mkdtemp()
@@ -39,6 +47,7 @@ class Law(unittest.TestCase):
         self.assertIn("적용한 세법 기준", tl.render(T, esc))
 
 
+@UNVERIFIED
 class AppLines(unittest.TestCase):
     def test_law_text_and_percent_without_sign(self):
         import tempfile
@@ -49,6 +58,14 @@ class AppLines(unittest.TestCase):
         self.assertEqual(taxlaw.value(d, 2026, "국민연금요율")[0], 0.095)
         with self.assertRaises(ValueError):
             app.law_check(d, 2026)   # OC 아이디 없음
+
+
+class Hire2026Defaults(unittest.TestCase):
+    def test_hire_amounts_from_law_1117(self):
+        # 조특법 29조의8 (2025-12-23 개정) 중소기업 직전 해 대비 1명당: 수도권 400만·청년 등 700만, 밖 700만·1,000만
+        d = tempfile.mkdtemp()
+        self.assertEqual([tl.value(d, 2026, k)[:2] for k in ("고용공제_수도권", "고용공제_수도권청년", "고용공제_지방", "고용공제_지방청년")],
+                         [(4_000_000, True), (7_000_000, True), (7_000_000, True), (10_000_000, True)])
 
 
 if __name__ == "__main__":

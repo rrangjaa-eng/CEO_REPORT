@@ -20,6 +20,14 @@ LOCAL_RATE = 0.10       # 법인지방소득세도 같은 비율로 줄어든다
 SME_START_YEARS = 5     # 창업중소기업 감면: 창업 후 처음 소득 난 해부터 5년
 # 통합고용 공제액·창업 감면율·최저한세율은 taxlaw.py 연도별 기준표에서 읽는다 (사용자 2026-11-12)
 
+# 통합고용세액공제 개편 (조특법 29조의8, 2025-12-23 개정, 2026-12-31이 속하는 과세연도부터 — 2026-11-17 법령 조문 확인).
+# 중소기업 1명당: (직전 해 대비, 전전 해 대비, 전전전 해 대비) 증가 인원 × 금액. 2024년 이전 시작 연도와는 비교 안 함.
+# 2025년에 늘어난 인원은 부칙 34조대로 옛 규정(3년 같은 금액)을 2027년까지 계속 (사용자 2026-11-17 카드: 공개 자료 금액으로 계산)
+NEW_HIRE_YEAR = 2026
+NEW_HIRE_FIRST_BASE = 2025
+TIERS_2026 = {("수도권", True): (7_000_000, 16_000_000, 17_000_000), ("지방", True): (10_000_000, 19_000_000, 20_000_000),
+              ("수도권", False): (4_000_000, 9_000_000, 10_000_000), ("지방", False): (7_000_000, 12_000_000, 13_000_000)}
+
 
 def W(v):
     return "{:,}".format(int(round(v)))
@@ -84,6 +92,68 @@ def headcount(input_dir, exclude=(), young=False):
     for ym, names in per.items():
         years[int(ym[:4])].append(len(names))
     return dict((y, (sum(v) / float(len(v)), len(v))) for y, v in years.items())
+
+
+def _tier_incs(cnt, Y):
+    """{연도: 인원} -> (직전 대비, 전전 대비, 전전전 대비) 증가 인원 (조특법 29조의8 개정: 음수는 0, 2024년 이전 시작 연도는 빼고 0)."""
+    def c(y):
+        return cnt.get(y) if y >= NEW_HIRE_FIRST_BASE else None
+    out, low = [], c(Y)
+    for k in (1, 2, 3):
+        base = c(Y - k)
+        if low is None or base is None:
+            out.append(0.0)
+        else:
+            out.append(max(low - base, 0.0))
+            low = min(low, base)
+    return out
+
+
+def _hire_2026(input_dir, holders, year, zone, hc, law):
+    """2026년부터의 통합고용세액공제 -> 후보 줄 (이름, 상태, 금액, 근거, 할 일).
+    새 규정(직전·전전·전전전 해 대비 증가, 청년 등과 그 외 금액 다름) + 2025년 늘어난 인원의 옛 규정 이어받기(부칙 34조)."""
+    cur = hc.get(year)
+    total = dict((y, v[0]) for y, v in hc.items())
+    if FOUNDED - 1 not in total:
+        total[FOUNDED - 1] = 0.0   # 설립 전 해는 0명 (옛 규정 2025년 증가 계산용)
+    _, births = _staff_info(input_dir)
+    young = dict((y, v[0]) for y, v in headcount(input_dir, holders, young=True).items()) if births else {}
+    other = dict((y, total[y] - young.get(y, 0.0)) for y in total)
+    T = _tier_incs(total, year)
+    Yi = [min(a, t) for a, t in zip(_tier_incs(young, year), T)] if births else [0.0, 0.0, 0.0]
+    Oi = [min(a, max(t - y, 0.0)) for a, t, y in zip(_tier_incs(other, year), T, Yi)] if births else T
+    ty, to = TIERS_2026[(zone, True)], TIERS_2026[(zone, False)]
+    first_o, ok_o, why_o = law("고용공제_" + zone)            # 1년차 금액은 창 '세법 기준 확인'에서 고칠 수 있음
+    first_y, ok_y, _ = law("고용공제_%s청년" % zone)
+    to = ((first_o if ok_o and first_o else to[0]),) + to[1:]
+    ty = ((first_y if ok_y and first_y else ty[0]),) + ty[1:]
+    new_amt = int(sum(n * v for n, v in zip(Yi, ty)) + sum(n * v for n, v in zip(Oi, to)))
+    parts = ["%s %.1f명×%s" % (lab, n, W(v)) for lab, ns, vs in (("청년 등", Yi, ty), ("그 외", Oi, to))
+             for n, v, lab in zip(ns, vs, (lab + " 직전 해 대비", lab + " 전전 해 대비", lab + " 전전전 해 대비")) if n > 0]
+    # 옛 규정: 2025년(이하)에 늘어난 인원, 늘어난 해부터 3년 (인원 유지 시) — 부칙 34조
+    old_amt, old_txt = 0, ""
+    for y in range(max(year - 2, FOUNDED), min(year, NEW_HIRE_YEAR)):
+        c, p = hc.get(y), (hc.get(y - 1) if y - 1 >= FOUNDED else (0.0, 12))
+        if c and p is not None and c[0] > p[0] and cur and cur[0] >= c[0] - 1e-9:
+            per, ok, _ = law_old(input_dir, zone)
+            if per:
+                old_amt += int((c[0] - p[0]) * per)
+                old_txt = " · %d년 늘어난 %.1f명은 옛 규정 1명당 %s원 (부칙 34조, %d년까지)" % (y, c[0] - p[0], W(per), y + 2)
+    amt = new_amt + old_amt
+    why = "월평균 직원(주주 뺌) %d년 %.1f명%s. 새 규정(조특법 29조의8, 2025-12-23 개정): %s%s%s" % (
+        year, cur[0], " (%d달만 있음)" % cur[1] if cur[1] < 12 else "",
+        " + ".join(parts) if parts else "늘어난 인원 없음", old_txt,
+        "" if births else " · 사원 생년월일이 없어 모두 '그 외' 금액으로 셈 (청년 등은 더 큼)")
+    if amt <= 0:
+        return ("통합고용세액공제", "해당 없음", None, why, "직원이 늘면 1명당 공제 (3년)")
+    return ("통합고용세액공제", "해당" if cur[1] >= 12 else "확인 필요", amt, why,
+            "임원·주주 가족·단시간 근로자는 빼고 세무사가 다시 셈")
+
+
+def law_old(input_dir, zone):
+    """옛 규정(2025년) 1명당 금액 (청년 외) -> (값, 확인, 설명)."""
+    from . import taxlaw
+    return taxlaw.value(input_dir, NEW_HIRE_FIRST_BASE, "고용공제_" + zone)
 
 
 def assets_by_year(journal):
@@ -175,6 +245,8 @@ def check(input_dir, year, answers, holders=(), assets=None):
         rows.append(("통합고용세액공제", "확인 필요", None,
                      "%d년 월평균 직원 %.1f명 (주주 뺌, %d달). %d년 인원을 몰라 늘어난 인원을 아직 못 셈" % (year, cur[0], cur[1], year - 1),
                      "%d년 분개장이 들어오면 자동 계산" % (year - 1)))
+    elif year >= NEW_HIRE_YEAR and zone:
+        rows.append(_hire_2026(input_dir, holders, year, zone, hc, law))
     else:
         inc = []
         for y in range(max(year - 2, FOUNDED), year + 1):   # 공제는 늘어난 해부터 3년 (인원 유지 시)

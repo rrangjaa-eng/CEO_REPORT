@@ -58,13 +58,11 @@ class Hiring(unittest.TestCase):
         pay.update(("2026-%02d" % m, ["대표", "a", "b", "c", "d"]) for m in range(1, 13))
         d = folder(pay)
         r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
-        self.assertEqual(r[1], "확인 필요")   # 2026 개편 1명당 금액 미확인 → 합계에 안 넣음
-        self.assertIn("세법 기준 확인", r[4])
-        from ceo_report import taxlaw
-        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000"}, "세무사")
-        r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
+        # 2026-11-17 법령 확인 (조특법 29조의8 개정 + 부칙 34조): 2026년 +2명은 새 규정 직전 해 대비 1명당 400만(수도권, 청년 외),
+        # 2025년 +2명(0명에서)은 옛 규정 850만을 2027년까지 → 800만 + 1,700만
         self.assertEqual(r[1], "해당")
-        self.assertEqual(r[2], 4 * 8_500_000)   # 2025년 +2명(첫해, 0명에서) + 2026년 +2명, 수도권 그 밖 850만
+        self.assertEqual(r[2], 2 * 4_000_000 + 2 * 8_500_000)
+        self.assertIn("부칙 34조", r[3])
 
     def test_young_and_officer_from_staff_file(self):
         pay = dict(("2025-%02d" % m, ["대표", "임원", "a", "b"]) for m in range(1, 13))
@@ -75,12 +73,15 @@ class Hiring(unittest.TestCase):
             w.writerow(["사원명", "생년월일", "임원"])
             w.writerows([["임원", "1970-01-01", "예"], ["a", "1980-01-01", ""], ["b", "1980-01-01", ""],
                          ["c", "2000-01-01", ""], ["d", "1980-01-01", ""]])
-        from ceo_report import taxlaw
-        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000", "고용공제_수도권청년": "14,500,000"}, "세무사")
         r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
-        # 2025 +2명(a,b, 청년 0) · 2026 +2명(c 청년 26세, d) → 청년 1명 1,450만 + 3명 850만
-        self.assertEqual(r[2], 14_500_000 + 3 * 8_500_000)
-        self.assertIn("청년·60세 이상 늘어난 1.0명", r[3])
+        # 2026 +2명(c 청년 26세, d): 청년 등 1명 700만 + 그 외 1명 400만 (새 규정) · 2025 +2명(a,b) 옛 규정 850만씩
+        self.assertEqual(r[2], 7_000_000 + 4_000_000 + 2 * 8_500_000)
+        self.assertIn("청년 등 직전 해 대비 1.0명", r[3])
+
+    def test_tiers_2027(self):
+        from ceo_report.taxbreak import _tier_incs
+        # 2025 2명 → 2026 4명 → 2027 5명: 직전 대비 +1, 전전(2025) 대비 min(5,4)−2 = +2, 전전전(2024)은 비교 안 함
+        self.assertEqual(_tier_incs({2025: 2.0, 2026: 4.0, 2027: 5.0}, 2027), [1.0, 2.0, 0.0])
 
     def test_prev_year_unknown(self):
         pay = dict(("2026-%02d" % m, ["a"]) for m in range(1, 11))
