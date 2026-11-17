@@ -619,6 +619,7 @@ def find_docs(out_dir, asof):
         return (sub + sorted(names)[-1]) if names else None
     found["budget"] = newest(os.path.join(out_dir, "예산"), r"^\d{4}_예산_경영관리용\.html$", "예산/")
     found["annual"] = newest(out_dir, r"^\d{4}_연간_경영관리보고\.html$")
+    found["planbs"] = newest(os.path.join(out_dir, "기획본부"), r"^\d{4}-\d{2}-\d{2}_기획본부_재무상태표(_\d+)?\.xlsx$", "기획본부/")
     found["team"] = newest(os.path.join(out_dir, "팀장용"), r"^\d{4}-\d{2}-\d{2}_월간_팀장_.*\.html$", "팀장용/")
     try:
         names = os.listdir(out_dir)
@@ -691,6 +692,9 @@ def docs_section(R, I, L):
         "팀별 성장률·인원·인상률로 내년 매출·비용·이익을 미리 짠 초안입니다.")
     add("팀장용 팀 실적", file("team", "마지막 팀장용") or esc("월간 보고 때 출력\\팀장용 에 생김"),
         esc("월간 보고 때 함께"), [], "팀마다 이번 달 매출·이익·진행 프로젝트 예산을 보여 주는 팀장 전달용 문서입니다 (급여 금액 없음).")
+    add("기획본부용 재무상태표 (영업외수익 뺀 엑셀)", file("planbs", "마지막 기획본부 재무상태표") or esc("창 3단계 ‘기획본부 재무상태표’로 만듦"),
+        esc("따로 만듦"), ["노란 칸(뺄 영업외수익·세금 비율·법인세 예상)을 바꾸면 손익·재무상태표가 다시 계산됩니다."],
+        "회사 전체 장부에서 영업외수익(이자·지원금·잡이익)과 그 세금만 뺀 재무상태표입니다. 비용이 크게 잡혔을 수 있는 항목(경영관리·플랜트8 비용 등)도 표시합니다.")
     add("세법 기준 확인 (해마다)", esc("창 ‘세법 기준 확인’"), esc("1·7월 자동 확인"), [],
         "세율·공제 금액이 바뀌었는지 법령 조문을 받아 확인하고, 확인 안 된 값은 계산에서 ‘확인 필요’로 둡니다.")
     return ("<style>%s</style><div class='dg1'><h2 id='docs'>자료 안내 · 요청하신 자료 전부</h2>%s"
