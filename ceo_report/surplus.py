@@ -279,7 +279,24 @@ def load(input_dir):
     return dict(out) or None
 
 
-def for_report(input_dir, year, R=None, strict=False):
+def _carry(S, y, key, alt=None):
+    """그 해 자본금·이익준비금 잔액이 없으면(올해 장부에 자본 전표가 없어 줄이 안 생김) 앞 해 잔액을 그대로 쓴다.
+    이익준비금은 앞 해 처분으로 쌓은 몫을 더한다. -> (값, 근거) 또는 (None, "")."""
+    v = (S.get(y) or {}).get(key, (None,))[0]
+    if v is not None:
+        return v, ""
+    if alt and (S.get(y) or {}).get(alt, (None,))[0] is not None:
+        return S[y][alt][0], "위하고 결산 화면"
+    for k in sorted((k for k in S if k < y), reverse=True):
+        pv = S[k].get(key, (None,))[0]
+        if pv is not None:
+            if key == "이익준비금잔액":
+                pv += S[k].get("이익준비금", (0,))[0] or 0
+            return pv, "%d년 말 잔액 그대로 (올해 변동 전표 없음)" % k
+    return None, ""
+
+
+def for_report(input_dir, year, R=None, strict=False, asof=None):
     """보고서용: 그 해(없으면 가장 최근 해) 계산서 + 앞 해들 + 배당 계산(주주 있을 때) + 이번 시기 제안(월간 보고 R 있을 때).
     strict = 그 해보다 뒤 해는 쓰지 않음 (연중 연간 보고가 연말 잉여금을 미리 쓰던 것, 1차 C7). -> dict 또는 None."""
     S = load(input_dir)
@@ -294,9 +311,12 @@ def for_report(input_dir, year, R=None, strict=False):
     out = {"year": y, "cur": S[y], "years": [(k, S[k]) for k in ys if k <= y], "input_dir": input_dir}
     from . import dividend
     first = S[y].get("미처분", (None,))[0]
-    asof = R["asof"] if R else dt.date(y, 12, 31)
+    asof = R["asof"] if R else (asof or dt.date(y, 12, 31))
+    out["asof"] = asof
     try:
-        cap, res = S[y].get("자본금", (None,))[0], S[y].get("이익준비금잔액", (None,))[0]
+        # 2026-11-17: 올해 줄에 자본금·이익준비금 잔액이 없어 한도를 '÷1.1'로만 셈(1,400만 작게) → 앞 해 잔액을 이어 씀
+        cap, _ = _carry(S, y, "자본금", "위하고_자본금")
+        res, _ = _carry(S, y, "이익준비금잔액")
         out["div"] = dividend.plan(input_dir, asof, None if first is None else dividend.div_limit(first, cap, res),
                                    interim=(S.get(y + 1) or {}).get("중간배당", (0,))[0] or 0)   # 같은 해(지급 연도) 중간배당만 금융소득에 더함
     except (ValueError, OSError):
@@ -421,7 +441,7 @@ def render(S, brief=False):
         h.append(taxbreak.render(S.get("tb"), esc))
         from . import taxlaw
         h.append(taxlaw.render(S.get("law"), esc))
-    h.append(dividend.render(S.get("div"), esc))
+    h.append(dividend.render(S.get("div"), esc, S))
     # 정관 규칙 (사용자 2026-11-13: 정관 제공)
     from . import articles
     h.append(articles.render(dividend.read_settings(S["input_dir"]) if S.get("input_dir") else {}, esc))

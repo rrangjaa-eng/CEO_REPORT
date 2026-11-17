@@ -330,7 +330,15 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 결산 기준
     A["credit"] = credit.compute(input_dir, asof, annual=True)
     from . import surplus   # 이익잉여금처분계산서 (사용자 2026-11-12): 연간 경영관리용 8장
-    A["re"] = surplus.for_report(input_dir, year - 1 if cut < 12 else year, strict=True)   # 1차 C7: 연중이면 지난해 결산 것
+    # 사용자 2026-11-17: 배당 한도·권장은 올해 이익(기준일까지 예상)과 작년에서 넘어온 이익잉여금을 합쳐 봐야 한다 → 연중이어도 올해 것.
+    # 1차 C7(기준일 뒤 자료 금지): 올해 당기순이익 예상이 기준일 달보다 뒤 달까지의 장부로 만든 것이면 지난해 결산 것을 쓴다.
+    y_re = year
+    if cut < 12:
+        ni = ((surplus.load(input_dir) or {}).get(year) or {}).get("당기순이익")
+        mm = re.search(r"1~(\d+)월", ni[2]) if ni else None
+        if not ni or ni[0] is None or (mm and int(mm.group(1)) > asof.month):
+            y_re = year - 1
+    A["re"] = surplus.for_report(input_dir, y_re, strict=True, asof=asof)
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:

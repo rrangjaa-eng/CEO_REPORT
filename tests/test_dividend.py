@@ -208,3 +208,75 @@ class Advise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WageSources1117(unittest.TestCase):
+    """사용자 2026-11-17: '대표가 급여를 받는다고 했잖아! 왜 근로소득을 못 찾는데?' — 연중 연간 보고는 지난해를 봐서
+    올해 장부만 있는 사원급여.csv 에서 못 찾았다. 원천징수부 → 위하고 급여 → 장부 → 연말정산 순서로 찾는다. (가짜 숫자)"""
+
+    def _dir(self, files):
+        import tempfile
+        d = tempfile.mkdtemp()
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w", encoding="utf-8-sig") as f:
+                f.write(text)
+        return d
+
+    def test_withholding_book_first_last_12_months(self):
+        from ceo_report import dividend
+        rows = "".join("%s,가대표,%d,위하고\n" % (ym, v) for ym, v in
+                       [("2025-%02d" % m, 3000000) for m in range(2, 12)] + [("2025-12", 10000000)] + [("2026-%02d" % m, 4000000) for m in range(1, 11)])
+        d = self._dir({"근로소득.csv": "연월,사원명,과세급여,자료\n" + rows,
+                       "사원급여.csv": "연월,부서,사원명,급여\n2026-01,본부,가대표,999\n"})
+        w = dividend.wage_info(d, "가대표", dt.date(2026, 11, 17))
+        self.assertEqual(w["span"], "2025-11~2026-10")
+        self.assertEqual(w["wage"], 3000000 + 10000000 + 4000000 * 10)
+        self.assertIn("원천징수부", w["src"])
+
+    def test_last_year_window_uses_wehago_not_this_year_book(self):
+        from ceo_report import dividend
+        d = self._dir({"사원급여.csv": "연월,부서,사원명,급여\n2026-01,본부,가대표,5000000\n",
+                       "급여명세.csv": "연월,사원명,구분,항목,금액\n" + "".join("2025-%02d,가대표,지급,지급합계,5000000\n" % m for m in range(7, 13))})
+        w = dividend.wage_info(d, "가대표", dt.date(2025, 12, 31))
+        self.assertEqual((w["wage"], w["months"]), (60000000, 6))   # 6달치를 12달로
+
+    def test_yearend_then_not_found_lists_what_was_missing(self):
+        from ceo_report import dividend
+        d = self._dir({"연말정산.csv": "귀속연도,사원명,총급여\n2025,가대표,70000000\n"})
+        self.assertEqual(dividend.wage_info(d, "가대표", dt.date(2026, 3, 1))["wage"], 70000000)
+        w = dividend.wage_info(d, "없는사람", dt.date(2026, 3, 1))
+        self.assertIsNone(w["wage"])
+        self.assertIn("근로소득.csv 없음", w["looked"])
+
+    def test_found_wage_counts_even_if_flag_says_no_and_explanation(self):
+        from ceo_report import dividend
+        d = self._dir({"주주.csv": "이름,지분율,미성년자,회사급여\n가대표,50,아니오,아니오\n자녀,50,예,아니오\n",
+                       "근로소득.csv": "연월,사원명,과세급여,자료\n" + "".join("2026-%02d,가대표,7000000,위하고\n" % m for m in range(1, 13))})
+        D = dividend.plan(d, dt.date(2026, 12, 31), 200_000_000)
+        p = D["people"][0]
+        self.assertEqual(p["wage"], 84000000)
+        self.assertTrue(p["salaried"])
+        self.assertEqual(D["best"], 40_000_000)   # 대표 50% 몫이 2천만에 닿는 선
+        h = dividend.why_html(D, None, lambda x: x)
+        for word in ("24%", "26.4%", "지분율대로", "가장 작은 값", "84,000,000"):
+            self.assertIn(word, h)
+
+
+class LimitThisYear1117(unittest.TestCase):
+    """사용자 2026-11-17: 배당 한도는 올해 이익 + 작년에서 넘어온 이익잉여금으로. 올해 줄에 자본금·이익준비금 잔액이 없으면
+    앞 해 잔액을 이어 써서 '÷1.1'로 작게 셈하지 않는다. (가짜 숫자)"""
+
+    def test_limit_uses_this_year_and_carries_capital(self):
+        import tempfile
+        from ceo_report import surplus
+        d = tempfile.mkdtemp()
+        rows = [("2025", "미처분", "100000000", "확정"), ("2025", "자본금", "20000000", "확정"), ("2025", "이익준비금잔액", "0", "확정"),
+                ("2026", "전기이월", "100000000", "확정"), ("2026", "당기순이익", "120000000", "예상"), ("2026", "미처분", "220000000", "예상")]
+        with open(os.path.join(d, surplus.FILE), "w", encoding="utf-8-sig") as f:
+            f.write("연도,항목,금액,상태,근거\n" + "".join("%s,%s,%s,%s,\n" % r for r in rows))
+        with open(os.path.join(d, "주주.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("이름,지분율,미성년자,회사급여\n가대표,100,아니오,예\n")
+        S = surplus.for_report(d, 2026, strict=True, asof=dt.date(2026, 11, 17))
+        self.assertEqual(S["year"], 2026)
+        self.assertEqual(S["div"]["limit"], 210000000)   # 2억2천 − 이익준비금 1천만(자본금 절반) — 예전엔 ÷1.1 = 2억
+        self.assertIn("작년까지 벌어", dv.render(S["div"], lambda x: x, S))
