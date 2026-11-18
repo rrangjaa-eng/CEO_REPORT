@@ -103,7 +103,7 @@ class TestPlanBS(unittest.TestCase):
         path, bk = planbs.write(self.C, self.d)
         texts = [v[0] for x in bk.sheets for v in x.cells.values() if isinstance(v[0], str)]
         self.assertTrue(any("그중 경영관리 부서 (급여 5,000,000원" in t for t in texts))
-        self.assertTrue(any("그중 플랜트8 부서" in t for t in texts))
+        self.assertTrue(any("그중 회사 공통 비용 (장부 부서명 '플랜트8')" in t for t in texts))
         ck = [bk.value(a) for a in self.C["_cells"]["check"]]
         self.assertEqual(ck, [0, 0])   # 보여 주기 줄이 합계를 바꾸지 않음
 
