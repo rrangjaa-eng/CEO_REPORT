@@ -622,7 +622,9 @@ class TestP5P6MonthStrip(unittest.TestCase):
             self.assertNotIn("11월말", h, m)
             self.assertNotIn("월말 잔액", h, m)
             self.assertIn("11/14 잔액", h, m)
-            self.assertIn("11월 영업이익 (11/14까지)", h, m)
+            # 2차 전수조사 A2 (2026-11-18): 달 중간에는 이번 달 영업이익 대신 매출 (이익은 경영관리용 '마감 전' 표에만)
+            self.assertIn("11월 매출 (11/14까지)", h, m)
+            self.assertNotIn("11월 영업이익 (11/14까지)", h, m)
         for m, h in self.end.items():   # 말일에 만든 월간은 그대로
             self.assertIn("월말 잔액", h, m)
             self.assertNotIn("(10/31까지)", h, m)

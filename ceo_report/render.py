@@ -1212,6 +1212,16 @@ def _project_bars(R, per, flagged_only=False, active_only=False):
     return "".join(h)
 
 
+def _closed(R):
+    """-> (누적 손익을 볼 마지막 달 'YYYY-MM' 또는 None, 손익 표 열쇠, 이번 달이 마감 전인가). calc.month_scope (2차 전수조사 A2).
+    기준일이 달 중간이면 그 달 이익은 급여·카드 전표가 덜 들어온 값이라 대표·팀장 보고에는 매출만 보이고,
+    누적 손익·세금·순이익은 다 끝난 달까지로 낸다 (경영관리 보고에는 이번 달 '마감 전' 손익을 따로 남김)."""
+    s4 = R["s4"]
+    if s4.get("open"):
+        return s4.get("closed_ym"), "ytd_closed", True
+    return s4["ym"], "ytd", False
+
+
 def _results(R, cum=True, mode=None):
     """실적 칸 4개: 매출 · 이익(마감 전) · 미수금 · 행사 후 세금계산서 미발행. cum=False(월간)면 누적은 따로 보이므로 빼고 그 달 숫자만.
     대표 주간(cum=True, mode='ceo')엔 영업이익 칸이 없다 (사용자 2026-11-16 결정: 마감 전 이번 달 영업이익은 8달 중 5달
@@ -1241,14 +1251,19 @@ def _results(R, cum=True, mode=None):
                               "영업이익률 %s · 올해 누적 %s" % (esc(pct(c["np"], c["revenue"])), W(y["np"], "확인 필요") if y else _na("자료 없음")),
                               mg_np))
         else:
-            cards.append(("%s 매출" % ym, W(c["revenue"]), "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
+            # 달 중간에는 원가 전표도 덜 들어와 매출총이익률이 높게 보인다 (11/18 실제 50.0%, 누적 23.1%) → 마감 뒤에만
+            cards.append(("%s 매출" % ym, W(c["revenue"]), "" if _closed(R)[2] else
+                          "매출총이익 %s (매출총이익률 %s)" % (W(c["gp"]), esc(pct(c["gp"], c["revenue"])))))
             np_, foot = c["np"], ""
             if src and s4.get("dept") is not None:   # 월간 이익 = 팀 표 회사 영업이익 (사용자 2026-11-04)
                 from .teamprofit import build as _tp_build
                 T = _tp_build(src["table"], s4["dept"], s4["ym"], False)
                 if T is not None and T["company"]["net"] is not None:
                     np_ = T["company"]["net"]   # 월간 이익 = 팀 표 회사 영업이익 (본부 영업외 비용은 영업외 비용 줄, 사용자 2026-11-04)
-            cards.append(("%s 영업이익%s" % (esc(ym), tag), W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot))))
+            # 달 중간 월간: 이번 달 영업이익은 경영관리용에만 (2차 전수조사 A2, 주간과 같은 방식)
+            open_ = _closed(R)[2]
+            cards.append(("%s 영업이익%s" % (esc(ym), tag if tag or not open_ else " <span class='chip c-q'>마감 전</span>"),
+                          W(np_, "확인 필요"), "영업이익률 %s%s" % (esc(pct(np_, c["revenue"])), esc(foot)), open_))
     else:
         why = "자료 없음" if not src else "자료 없음 (최근 %s)" % (src["latest"] or "-")
         cards.append(("%s 매출" % ym, _na(why), ""))
@@ -1276,7 +1291,8 @@ def _results(R, cum=True, mode=None):
         due = unissued_due(E)
         cards.append(("행사 후 세금계산서 미발행", W(due), foot + ("<i class='od'></i>" if due else "")))   # od = 대표용 양식의 주의 칸 표시
     # 주간은 칸 수가 판마다 달라(대표용 2칸 · 경영관리용 3칸) 같은 줄을 나눠 쓰는 flex 줄 (fx)
-    h = ["<div class='four fx'>" if cum else "<div class='four%s'>" % (" c3" if len(cards) == 3 else "")]
+    shown = [c_ for c_ in cards if mode == "mgmt" or not (len(c_) > 3 and c_[3])]   # 대표용에 보이는 칸 수로 줄을 나눈다
+    h = ["<div class='four fx'>" if cum or len(shown) != len(cards) else "<div class='four%s'>" % (" c3" if len(cards) == 3 else "")]
     for card in cards:
         lab, v, foot = card[:3]
         lab_html = lab if "<span" in lab else esc(lab)
@@ -1951,6 +1967,18 @@ def _team_table(R, part="month", mode="mgmt"):
     basis = "heads"   # 본부·공통 비용을 기획팀에 나누는 기준: 인원 비율 (사용자 2026-11-03 제안안)
     out, last = ["<div class='card brk'>"], None   # 쪽이 넘어가면 표 사이·줄 사이에서 나뉜다 (A4 세로 2쪽)
     T = build(src["table"], dept, ym, False)
+    ym_c, key_c, open_ = _closed(R)
+    full_at = None
+    if T is not None and open_:
+        # 달 중간 (2차 전수조사 A2): 대표용엔 팀별 매출만. 이익 칸이 있는 표는 '마감 전' 표시와 함께 경영관리용에만
+        out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출 <span class='chip c-q'>마감 전</span></th></tr></thead><tbody>")
+        for r in [x for x in T["rows"] if x["kind"] in ("team", "hq_total") and x["has_rev"]] + [T["company"]]:
+            cls = {"company": " class='tot'", "hq_total": " class='hq'"}.get(r["kind"], "")
+            out.append("<tr%s><td>%s</td><td>%s</td></tr>" % (cls, esc(r["label"].replace(" (영업이익)", "")), W(r["revenue"])))
+        out.append("</tbody></table>")
+        full_at = len(out)
+        out.append("<div class='lab'>%s 손익 <span class='chip c-q'>마감 전</span> <small>급여·카드 등 전표가 다 들어오기 전 값</small></div>"
+                   % esc(_ym_text(ym)))
     if T is not None:
         _dep_into(R, T, False)
         last = allocate(T, basis)
@@ -1982,14 +2010,22 @@ def _team_table(R, part="month", mode="mgmt"):
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
         out.append(_nonop_rows(T["nonop"], 5, 4))
         out.append("</tbody></table>")
+    if full_at is not None:
+        out[full_at:] = [_mg(mode, "".join(out[full_at:]))]
     notes_html = _team_notes(R, basis, dept, last, ym)   # 표 설명은 누적 표 아래에 한 번 (이번 달 절을 1쪽에 담기 위해)
     out.append("</div>")
     if part == "month":
         return "".join(out)
     # 누적도 이번 달과 같은 모양: 위에 큰 숫자 칸, 아래 흰 카드에 기간 이름과 표 (사용자 2026-11-04)
-    Y = build(src["table"], dept, ym, True)
+    # 달 중간이면 누적 손익은 다 끝난 달까지 (2차 전수조사 A2·A3: 세금·순이익이 연간·주간·자금 일정과 같은 값이 된다)
+    if ym_c is None:
+        return _expected_strip(R, mode) + "<div class='card brk'>%s</div>" % _na("올해 끝난 달이 아직 없음 (1월 마감 뒤부터)")
+    by_month_c = [(m_, t_) for m_, t_ in src.get("by_month", []) if m_ <= ym_c]
+    src = dict(src, by_month=by_month_c)
+    ym = ym_c
+    Y = build(src["table"], dept, ym, True, key=key_c)
     if Y is not None:
-        _dep_into(R, Y, True)
+        _dep_into(R, Y, True, R.get("dep_closed") if open_ else None)
         _bad_into(R, Y, ym)
         _tax_into(R, Y, ym)
         out = [_expected_strip(R, mode, Y), _ytd_strip(Y, ym), "<div class='card brk'><div class='lab'>1월~%s</div>" % esc(_ym_text(ym))]
@@ -2096,11 +2132,14 @@ def annual_pack(R):
     src = (R.get("s4") or {}).get("sources", {}).get("WEHAGO")
     if not src:
         return None
-    ym, dept = R["s4"]["ym"], R["s4"].get("dept")
-    Y = build(src["table"], dept, ym, True)
+    ym, key, open_ = _closed(R)   # 달 중간이면 다 끝난 달까지 (월간 누적과 같은 계산)
+    dept = R["s4"].get("dept")
+    if ym is None:
+        return None
+    Y = build(src["table"], dept, ym, True, key=key)
     if Y is None or Y["nonop"].get("pretax") is None:
         return None
-    _dep_into(R, Y, True)
+    _dep_into(R, Y, True, R.get("dep_closed") if open_ else None)
     _bad_into(R, Y, ym)
     _tax_into(R, Y, ym)
     return {"ym": ym, "N": Y["nonop"], "E": _corp_est(R, Y, ym), "tax_table": _corptax_table(R, Y, ym, "mgmt"),
@@ -2136,10 +2175,11 @@ def _bad_into(R, T, ym):
     N["bad_note"] = ", " + note if note else ""
 
 
-def _dep_into(R, T, ytd):
-    """감가상각비 예상을 결산 줄에 넣고 세전 이익에서 뺀다 (사용자 2026-11-04). 작년 금액을 모르면 줄을 넣지 않는다."""
+def _dep_into(R, T, ytd, dep=None):
+    """감가상각비 예상을 결산 줄에 넣고 세전 이익에서 뺀다 (사용자 2026-11-04). 작년 금액을 모르면 줄을 넣지 않는다.
+    dep: 다 끝난 달까지로 낸 감가상각비 (달 중간 보고의 누적, calc R['dep_closed'])."""
     from .corptax import apply
-    dep = R.get("dep") or {}
+    dep = dep or R.get("dep") or {}
     amount = dep.get("extra" if ytd else "cur")
     if amount is None:
         return
@@ -2431,6 +2471,8 @@ def _month_series(R):
             T = _tp_build(table, s4["dept"], m, False)
             if T is not None and T["company"]["net"] is not None:
                 np_ = T["company"]["net"]
+        if m == s4["ym"] and s4.get("open"):
+            np_ = None   # 마감 전 달의 영업이익은 그림에 넣지 않는다 (2차 전수조사 A2)
         pl[m] = (c["revenue"], np_)
     months = set(pl)
     if ev is not None:
@@ -2816,9 +2858,9 @@ def _first_screen(R, mode, per):
         blocks = ([("이번 달 자금 흐름", _flow_card(s1, per, "월말" if p1 == _month_end(p1) else _md(p1)))] + funds + past + [("부가세·원천세 (분기·반기별)", _regular_box(R))]   # 밀린 돈 → 앞으로 낼 세금 (사용자 2026-11-05)
                   # 쪽 맞춤 줄임(_issue_compact, 보고서.py 가 정한 쪽 수를 넘을 때만): 월별 그림을 낮게 — 2쪽 빈 곳을 채우던 그림이라
                   # 2쪽에 ⑤가 다 안 들어가면 ⑤가 통째로 3쪽, ⑥이 4쪽으로 밀리던 것 (2026-11-16 실제 자료 4쪽). 목록은 줄이지 않는다
-                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False) + over + _team_table(R, mode=mode)
+                  + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False, mode=mode) + over + _team_table(R, mode=mode)
                       + _month_chart(R, H=120 if R.get("_issue_compact") else (150 if mode == "ceo" else 250))),
-                     ("올해 누적 실적 (1월~%s) · 목표 대비" % ymt, _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % (_ym_text(_closed(R)[0]) if _closed(R)[0] else ymt), _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
     else:
         wo = week_outflows(R)
@@ -2953,7 +2995,10 @@ def _mon_strip(R, mode="ceo", tax=""):
     rev, np_ = _month_rev_np(R)
     p1 = R["period"][1]
     upto = "" if p1 == _month_end(p1) else " (%s까지)" % _md(p1)   # 월 중간에 만든 월간 (2026-11-14 P6)
-    cells.append(("%s 영업이익%s" % (ym, upto), W(np_, "확인 필요"), ""))
+    if _closed(R)[2]:   # 달 중간: 이번 달은 매출만 (2차 전수조사 A2)
+        cells.append(("%s 매출%s" % (ym, upto), W(rev, "확인 필요"), ""))
+    else:
+        cells.append(("%s 영업이익%s" % (ym, upto), W(np_, "확인 필요"), ""))
     cells.append(_overdue_cell(s5))
     return _strip(cells)
 

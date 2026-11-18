@@ -791,6 +791,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # ───────────── 4. 매출·손익 ─────────────
     ym = asof.strftime("%Y-%m")
     year = asof.strftime("%Y")
+    # 2차 전수조사 A2 (2026-11-18): 기준일이 달 중간이면 그 달은 '마감 전' — 급여·카드 전표가 덜 들어와 이익이 크게 좋게 보인다
+    # (11/18 실제: 11월 영업이익률 49.2%, 누적은 8.1%). 누적 손익·세금은 다 끝난 달(closed_ym)까지만 본다. 1월 중간이면 끝난 달 없음(None)
+    open_month, closed_ym = month_scope(asof)
     pl_out = OrderedDict()
     for src in sorted(set(p["source"] for p in d.pl), key=lambda x: (x != "WEHAGO", x)):
         rows = [p for p in d.pl if p["source"] == src]
@@ -802,13 +805,14 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         for (unit, target), ps in units.items():
             cur = [p for p in ps if p["ym"] == ym]
             ytd = [p for p in ps if p["ym"][:4] == year and p["ym"] <= ym]
-            table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd)})
+            done = [p for p in ytd if closed_ym and p["ym"] <= closed_ym]
+            table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd), "ytd_closed": _pl_sum(done)})
         # 올해 달마다의 표 (팀 순수익의 '비용 나눈 뒤' 누적: 달마다 인원이 달라 달마다 나눠 더함, 사용자 2026-11-03)
         by_month = [(m, [{"unit": unit, "target": target, "cur": _pl_sum([p for p in ps if p["ym"] == m]), "ytd": None}
                          for (unit, target), ps in units.items()])
                     for m in months if m[:4] == year and m <= ym]
         pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months, "by_month": by_month}
-    R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
+    R["s4"] = {"ym": ym, "open": open_month, "closed_ym": closed_ym, "sources": pl_out, "projects": plist,
                "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
                "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None),
                # 부서별 급여·판관비 (선택 파일 부서비용.csv, 사용자 2026-11-03). None = 파일 없음, 팀 순수익은 미확인
@@ -929,6 +933,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     from .corptax import depreciation   # 법인세 예상용 감가상각비 (사용자 2026-11-04)
     R["evid_month"] = getattr(d, "evid_month", None)   # 증빙 작성일자 기준 달별 매출·매입 (월간 흐름 그림)
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
+    R["dep_closed"] = (depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, closed_ym)
+                       if open_month and closed_ym else None)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["last_pay"] = last_payday_out(d.txns, R["payday"])
     from .gate import blank_plan_gaps   # F8 (2026-11-14): 자금계획서 빠진 달까지 걸친 기간 여유 자금은 비움 (경고·분석보다 먼저)
@@ -1353,6 +1359,16 @@ def _blank_proj(p, rate):
     else:
         P["budget"] = int(round(est * rate))
     return P
+
+
+def month_scope(asof):
+    """-> (이번 달이 마감 전인가, 누적 손익을 볼 마지막 달 'YYYY-MM' 또는 None).
+    기준일이 그 달 말일이면 (False, 그 달). 달 중간이면 (True, 지난달) — 지난달이 작년이면 올해 끝난 달이 없으므로 None."""
+    import calendar
+    ym = asof.strftime("%Y-%m")
+    if asof.day == calendar.monthrange(asof.year, asof.month)[1]:
+        return False, ym
+    return True, ("%d-%02d" % (asof.year, asof.month - 1) if asof.month > 1 else None)
 
 
 def _pl_sum(rows):

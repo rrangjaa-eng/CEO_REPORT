@@ -132,13 +132,21 @@ def build(d, R, team):
     # 11/17 전수 점검 F1: 급여 전인 달(달 중간에 만든 이번 달)은 인원 '급여 전'으로, 평균은 급여 들어온 달만
     from .teamprofit import paid_months
     paid = paid_months(d.dept) if d.dept is not None else set()
+    # 2차 전수조사 A2 (2026-11-18): 달 중간에 만든 월간이면 이번 달은 '마감 전' — 원가·판관비 전표가 덜 들어와 이익이 좋게 보인다.
+    # 이번 달은 매출만 보이고, 누계·달성률·누계 프로젝트·판관비 누계는 다 끝난 달까지 (연간 팀장 보고와 같은 기간).
+    # '올해 예상'만 오늘까지 장부(tot_all)에서 이어 간다 (남은 매출·남은 원가가 오늘 기준이라)
+    open_ = bool(R["s4"].get("open"))
     for x in M:
         x["unpaid"] = d.dept is not None and x["ym"] not in paid
-    tot = {k: _sum(x[k] for x in M) for k in ("revenue", "cost", "gp", "sga", "op", "net")}
-    hs = [x["heads"] for x in M if not x["unpaid"]]
+        x["open"] = open_ and x["ym"] == ym
+    Mc = [x for x in M if not x["open"]]
+    months_c = [x["ym"] for x in Mc]
+    tot_all = {k: _sum(x[k] for x in M) for k in ("revenue", "cost", "gp", "sga", "op", "net")}
+    tot = {k: _sum(x[k] for x in Mc) for k in ("revenue", "cost", "gp", "sga", "op", "net")}
+    hs = [x["heads"] for x in Mc if not x["unpaid"]]
     tot["heads"] = None if not hs or any(h is None for h in hs) else sum(hs) / float(len(hs))
     cum, run = [], 0
-    for x in M:
+    for x in Mc:
         run = None if run is None or x["gp"] is None else run + x["gp"]
         cum.append(run)
 
@@ -147,7 +155,7 @@ def build(d, R, team):
     t_rate = tg.get("rate")
     t_gp = None if t_rev is None or t_rate is None else int(round(t_rev * t_rate / 100.0))
 
-    comp = [r for r in pl if r["unit"] == "회사" and r["ym"] in months]
+    comp = [r for r in pl if r["unit"] == "회사" and r["ym"] in months_c]
     c_rev, c_cost = _sum(r["revenue"] for r in comp), _sum(r["direct"] for r in comp)
     company_rate = None if not comp or c_rev in (None, 0) or c_cost is None else (c_rev - c_cost) * 100.0 / c_rev
 
@@ -179,7 +187,7 @@ def build(d, R, team):
 
     cur = sorted([prow(pid, {ym}) for pid in per if ym in per[pid]], key=ev_key)
     cur = [r for r in cur if r["revenue"] or r["cost"]]
-    ytd = sorted([prow(pid, set(months)) for pid in per], key=ev_key)
+    ytd = sorted([prow(pid, set(months_c)) for pid in per], key=ev_key)
     ytd = [r for r in ytd if r["revenue"] or r["cost"]]
 
     def gap(rows, rev, cost):
@@ -283,8 +291,8 @@ def build(d, R, team):
     up_tot["avail"] = None if up_avail_unknown else sum(r["avail"] for r in known)
     up_missing = len(up) - len(known)
     up_gp = add_gp
-    exp_rev = None if tot["revenue"] is None else tot["revenue"] + add_rev
-    exp_gp = None if tot["gp"] is None else tot["gp"] + add_gp
+    exp_rev = None if tot_all["revenue"] is None else tot_all["revenue"] + add_rev
+    exp_gp = None if tot_all["gp"] is None else tot_all["gp"] + add_gp
 
     acc = None
     if getattr(d, "dept_accounts", None) is not None:
@@ -302,13 +310,14 @@ def build(d, R, team):
                 if r["code"] == code:
                     by[r["ym"]] = None if by.get(r["ym"], 0) is None or r["amount"] is None else by.get(r["ym"], 0) + r["amount"]
             cur_v, prev_v = by.get(ym, 0), by.get(_prev(ym), 0) if _prev(ym)[:4] == year else None
-            total = _sum(by.get(m, 0) for m in months)
+            total = _sum(by.get(m, 0) for m in months_c)
             acc.append({"code": code, "name": re.sub(r"\((판|제)\)$", "", names[code]), "cur": cur_v, "prev": prev_v,
                         "total": total})
         acc.sort(key=lambda a: -(a["total"] or 0))
 
     show_net = (d.settings or {}).get(NET_SETTING, "").strip() == "표시"
-    return {"asof": R.get("asof"), "team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
+    return {"asof": R.get("asof"), "team": team, "ym": ym, "year": year, "months": M, "tot": tot, "cum": cum,
+            "open": open_, "closed_n": len(Mc), "tot_all": tot_all, "t_rev": t_rev, "t_rate": t_rate, "t_gp": t_gp,
             "company_rate": company_rate, "cur": cur, "ytd": ytd, "cur_gap": cur_gap, "ytd_gap": ytd_gap,
             "has_projects": bool(per), "up": up, "up_tot": up_tot, "up_missing": up_missing, "up_paid_unknown": up_paid_unknown, "up_avail_unknown": up_avail_unknown,
             "up_gp": up_gp, "exp_rev": exp_rev, "exp_gp": exp_gp, "add_rev": add_rev, "miss_rev": miss_rev, "miss_gp": miss_gp, "closed_left": closed_left,
@@ -487,6 +496,9 @@ def _project_table(T, rows, g, label_total, with_months):
     return "".join(out)
 
 
+OPEN_TEXT = "마감 전"   # 달 중간에 만든 월간의 이번 달 이익 칸 (2차 전수조사 A2)
+
+
 def _months_section(T, title):
     """달별 실적 그림과 표 (월간 2절·연간 2절이 같이 씀)."""
     M, tot = T["months"], T["tot"]
@@ -498,6 +510,11 @@ def _months_section(T, title):
       "<th>판관비<br><small>(급여 제외)</small></th><th>판관비 차감 후 이익</th>" + ("<th>급여 반영<br>손익</th>" if T["show_net"] else "")
       + "<th>인원</th><th>누계 매출총이익</th></tr></thead><tbody>")
     for i, x in enumerate(M):
+        if x.get("open"):   # 마감 전인 이번 달: 매출만 (2차 전수조사 A2)
+            wait = _td(OPEN_TEXT, "c")
+            a(_tr([_td(_mlabel(x["ym"]), "c"), _num(x["revenue"]), wait, wait, wait, wait, wait] + ([wait] if T["show_net"] else [])
+                  + [wait, _td("-", "c")], "now"))
+            continue
         a(_tr([_td(_mlabel(x["ym"]), "c"), _num(x["revenue"]), _num(x["cost"]), _num(x["gp"]), _td(esc(P(x["gp"], x["revenue"]))),
                _num(x["sga"]), _num(x["op"], True)] + ([_td(_bs(x["net"]), "c")] if T["show_net"] else [])
               + [_td("급여 전" if x.get("unpaid") else ("미확인" if x["heads"] is None else "%d" % x["heads"]), "c"), _num(T["cum"][i])],
@@ -540,6 +557,7 @@ def _upcoming_section(T, title):
             a("<p class='note'>※ 집행·요청 금액 미확인 %d건: 그 건의 집행액·잔여·남은 예산과 합계는 미확인 (아래 매출·이익 예상에는 넣음)</p>"
               % max(T.get("up_paid_unknown") or 0, T.get("up_avail_unknown") or 0))
     tr_, tg_ = T["t_rev"], T["t_gp"]
+    ta = T.get("tot_all") or tot
     upto = "1월~%d월 장부" % int(T["ym"][5:7])
 
     def card(label, v, how, tgt):
@@ -547,8 +565,8 @@ def _upcoming_section(T, title):
                 % (label, "<b>목표 대비 %s</b>" % esc(P(v, tgt)) if tgt else "", esc(W(v)), esc(how)))
     a("<div class='two'>%s%s</div>" % (
         # 11/18: 월간(이번 달까지)과 연간(끝난 달까지) 숫자가 다른 까닭이 보이게 누계 기간을 붙인다 (어느 장부까지로 셈했는지)
-        card("올해 매출 예상", T["exp_rev"], "= 누계 매출(%s) %s + 아직 매출로 안 잡힌 금액 %s" % (upto, W(tot["revenue"]), W(T["add_rev"])), tr_),
-        card("올해 매출총이익 예상", T["exp_gp"], "= 누계(%s) %s + 남은 매출에서 남은 원가를 뺀 %s" % (upto, W(tot["gp"]), W(T["up_gp"])), tg_)))
+        card("올해 매출 예상", T["exp_rev"], "= 누계 매출(%s) %s + 아직 매출로 안 잡힌 금액 %s" % (upto, W(ta["revenue"]), W(T["add_rev"])), tr_),
+        card("올해 매출총이익 예상", T["exp_gp"], "= 누계(%s) %s + 남은 매출에서 남은 원가를 뺀 %s" % (upto, W(ta["gp"]), W(T["up_gp"])), tg_)))
     a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
       "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0, 다만 표 기간 뒤 달에 이미 장부에 잡힌 원가는 뺌)%s%s%s</p>"
       % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
@@ -573,22 +591,27 @@ def render(T, today=None):
     # 1. 요약
     a("<div class='sec'><h2>1. 실적 요약</h2>")
     a("<table class='g'><colgroup><col style='width:19%'>" + "<col>" * 6 + "</colgroup>")
+    cm = T.get("closed_n", mon) if T.get("open") else mon   # 누계를 낸 마지막 달 (달 중간이면 지난달)
     a("<thead><tr><th rowspan='2'>구분</th><th colspan='3' class='gl'>당월</th><th colspan='3' class='gl'>누계 (1월~%d월)</th></tr>"
-      "<tr><th><b>%d월</b></th><th>%s</th><th>증감</th><th><b>실적</b></th><th>연간 목표</th><th class='l'>달성률</th></tr></thead><tbody>" % (mon, mon, pl))
+      "<tr><th><b>%d월</b>%s</th><th>%s</th><th>증감</th><th><b>실적</b></th><th>연간 목표</th><th class='l'>달성률</th></tr></thead><tbody>"
+      % (cm, mon, "<br><small>%s</small>" % OPEN_TEXT if T.get("open") else "", pl))
+    op_ = bool(T.get("open"))
+    wait = _td(OPEN_TEXT, "k")
     for name, k, tgt, cls in (("매출", "revenue", T["t_rev"], ""), ("매출원가", "cost", None, ""), ("매출총이익", "gp", T["t_gp"], "b")):
-        a(_tr([_td(name, "l"), _num(cur[k], cls="k"), _num(pv(k), cls="p"), _dnum(_sub(cur[k], pv(k))), _num(tot[k], cls="k"),
-               _td(esc(W(tgt)) if tgt else "-", "p"), _rate_bar(tot[k], tgt)], cls))
-    rc = None if cur["revenue"] in (None, 0) or cur["gp"] is None else cur["gp"] * 100.0 / cur["revenue"]
+        hide = op_ and k != "revenue"
+        a(_tr([_td(name, "l"), wait if hide else _num(cur[k], cls="k"), _num(pv(k), cls="p"), _td("-") if op_ else _dnum(_sub(cur[k], pv(k))),   # 달 중간 매출을 지난달 한 달과 견주지 않는다
+               _num(tot[k], cls="k"), _td(esc(W(tgt)) if tgt else "-", "p"), _rate_bar(tot[k], tgt)], cls))
+    rc = None if op_ or cur["revenue"] in (None, 0) or cur["gp"] is None else cur["gp"] * 100.0 / cur["revenue"]
     rp = None if not prev or prev["revenue"] in (None, 0) or prev["gp"] is None else prev["gp"] * 100.0 / prev["revenue"]
-    a(_tr([_td("수익률", "l"), _td(esc(P(cur["gp"], cur["revenue"])), "k"), _td(esc(P(pv("gp"), pv("revenue"))), "p"),
+    a(_tr([_td("수익률", "l"), wait if op_ else _td(esc(P(cur["gp"], cur["revenue"])), "k"), _td(esc(P(pv("gp"), pv("revenue"))), "p"),
            _td("-" if rc is None or rp is None else "%+.1f%%p" % (rc - rp)), _td(esc(P(tot["gp"], tot["revenue"])), "k"),
            _td("%.1f%%" % T["t_rate"] if T["t_rate"] is not None else "-", "p"), _td("-", "l")], "b"))
-    a(_tr([_td("팀 판관비<small> (급여 제외)</small>", "l"), _num(cur["sga"]), _num(pv("sga"), cls="p"), _dnum(_sub(cur["sga"], pv("sga"))),
-           _num(tot["sga"]), _td("-", "p"), _td("-", "l")]))
-    a(_tr([_td("판관비 차감 후 이익", "l"), _num(cur["op"], True), _num(pv("op"), True, "p"), _dnum(_sub(cur["op"], pv("op"))),
-           _num(tot["op"], True), _td("-", "p"), _td("-", "l")], "b"))
+    a(_tr([_td("팀 판관비<small> (급여 제외)</small>", "l"), wait if op_ else _num(cur["sga"]), _num(pv("sga"), cls="p"),
+           _td("-") if op_ else _dnum(_sub(cur["sga"], pv("sga"))), _num(tot["sga"]), _td("-", "p"), _td("-", "l")]))
+    a(_tr([_td("판관비 차감 후 이익", "l"), wait if op_ else _num(cur["op"], True), _num(pv("op"), True, "p"),
+           _td("-") if op_ else _dnum(_sub(cur["op"], pv("op"))), _num(tot["op"], True), _td("-", "p"), _td("-", "l")], "b"))
     if T["show_net"]:
-        a(_tr([_td("급여 반영 손익<small> (금액 비공개)</small>", "l"), _td(_bs(cur["net"]), "c"), _td(_bs(pv("net")) if prev else "-", "c"),
+        a(_tr([_td("급여 반영 손익<small> (금액 비공개)</small>", "l"), wait if op_ else _td(_bs(cur["net"]), "c"), _td(_bs(pv("net")) if prev else "-", "c"),
                _td("-", "c"), _td(_bs(tot["net"]), "c"), _td("-", "c"), _td("-", "c")], "b"))
     heads = lambda v: "미확인" if v is None else "%d명" % v
     a(_tr([_td("인원", "l"), _td("급여 전" if cur.get("unpaid") else heads(cur["heads"])), _td(heads(pv("heads")) if prev else "-", "p"), _td("-"),
@@ -612,7 +635,7 @@ def render(T, today=None):
     project_table = lambda rows, g, label_total, with_months: _project_table(T, rows, g, label_total, with_months)
 
     # 3. 당월 프로젝트
-    a("<div class='sec'><h2>3. %d월 프로젝트별 실적</h2>" % mon)
+    a("<div class='sec'><h2>3. %d월 프로젝트별 실적%s</h2>" % (mon, " <small>(%s · 지금까지 장부에 잡힌 것)</small>" % OPEN_TEXT if op_ else ""))
     if not T["has_projects"]:
         a("<p class='none'>프로젝트별 자료 없음</p>")
     else:
@@ -620,7 +643,7 @@ def render(T, today=None):
     a("</div>")
 
     # 4. 누계 프로젝트
-    a("<h2>4. 누계 프로젝트별 실적 (1월~%d월)</h2>" % mon)
+    a("<h2>4. 누계 프로젝트별 실적 (1월~%d월)</h2>" % cm)
     if not T["has_projects"]:
         a("<p class='none'>프로젝트별 자료 없음</p>")
     else:
@@ -632,21 +655,22 @@ def render(T, today=None):
     a(_upcoming_section(T, "5. 진행·예정 프로젝트"))
 
     # 6. 판관비
+    mon_h = "%d월<br><small>(마감 전, 지금까지)</small>" % mon if op_ else "%d월" % mon
     a("<div class='sec'><h2>6. 팀 판관비 내역 <small>(급여 제외)</small></h2>")
     if T["acc"] is None:
-        a("<table class='g'><thead><tr><th>구분</th><th>%d월</th><th>%s</th><th>증감</th><th>누계 (1월~%d월)</th><th>월평균</th></tr></thead><tbody>"
-          % (mon, pl, mon))
+        a("<table class='g'><thead><tr><th>구분</th><th>%s</th><th>%s</th><th>증감</th><th>누계 (1월~%d월)</th><th>월평균</th></tr></thead><tbody>"
+          % (mon_h, pl, cm))
         a(_tr([_td("판관비 합계", "c"), _num(cur["sga"]), _num(pv("sga")), _num(_sub(cur["sga"], pv("sga"))), _num(tot["sga"]),
-               _num(None if tot["sga"] is None else tot["sga"] / float(len(M)))], "b tot"))
+               _num(None if tot["sga"] is None else tot["sga"] / float(T.get("closed_n") or len(M)))], "b tot"))
         a("</tbody></table><p class='note'>※ 계정별 내역은 다음 자료 변환부터 나옵니다. 팀 급여는 이 표에 포함하지 않음.</p>")
     else:
-        a("<table class='g'><thead><tr><th>계정</th><th>%d월</th><th>%s</th><th>증감</th><th>누계 (1월~%d월)</th><th>월평균</th></tr></thead><tbody>"
-          % (mon, pl, mon))
+        a("<table class='g'><thead><tr><th>계정</th><th>%s</th><th>%s</th><th>증감</th><th>누계 (1월~%d월)</th><th>월평균</th></tr></thead><tbody>"
+          % (mon_h, pl, cm))
         for r in T["acc"]:
             a(_tr([_td(esc(r["name"]), "l"), _num(r["cur"], cls="k"), _num(r["prev"], cls="p"), _dnum(_sub(r["cur"], r["prev"])), _num(r["total"]),
-                   _num(None if r["total"] is None else r["total"] / float(len(M)))]))
+                   _num(None if r["total"] is None else r["total"] / float(T.get("closed_n") or len(M)))]))
         a(_tr([_td("합계", "c"), _num(cur["sga"]), _num(pv("sga")), _num(_sub(cur["sga"], pv("sga"))), _num(tot["sga"]),
-               _num(None if tot["sga"] is None else tot["sga"] / float(len(M)))], "b tot"))
+               _num(None if tot["sga"] is None else tot["sga"] / float(T.get("closed_n") or len(M)))], "b tot"))
         a("</tbody></table><p class='note'>※ 팀 급여는 이 표에 포함하지 않음.</p>")
     a("</div>")
 
@@ -664,16 +688,20 @@ def render(T, today=None):
     ad = T.get("asof")   # 월 중간에 만들면 기간 끝 = 기준일 (2026-11-14 점검 P6: 11/14에 만들어도 11/30로 찍혔음)
     if isinstance(ad, dt.date) and (ad.year, ad.month) == (y, m) and ad.day < last_day:
         last_day = ad.day
+    cy = y, m, last_day
+    if T.get("open"):   # 달 중간: 누계는 지난달 말까지
+        ce = dt.date(y, m, 1) - dt.timedelta(days=1)
+        cy = (ce.year, ce.month, ce.day) if T.get("closed_n") else None
     excl = "※ 이 자료의 판관비·이익 금액에는 <b>팀 급여가 제외</b>되어 있습니다." + (
         " 급여 반영 손익은 흑자·적자로만 표시합니다." if T["show_net"] else "")
     title = "%d년 %d월 %s 실적 보고" % (y, m, T["team"])
     head = ("<div class='top'><span>%s · 경영관리</span><b>대외비 · %s 배포용</b></div>"
             "<h1>%s</h1>"
             "<div class='meta'><span><i>수신</i>%s장</span><span><i>작성</i>경영관리 · %s</span>"
-            "<span><i>당월</i>%d.%02d.01 ~ %02d.%02d</span><span><i>누계</i>%d.01.01 ~ %02d.%02d</span></div>"
+            "<span><i>당월</i>%d.%02d.01 ~ %02d.%02d</span><span><i>누계</i>%s</span></div>"
             "<div class='excl'>%s</div><div class='unit'>(단위: 원)</div><hr class='hr'>"
             % (esc(T["company"]), esc(T["team"]), esc(title), esc(T["team"]), today.strftime("%Y.%m.%d"),
-               y, m, m, last_day, y, m, last_day, excl))
+               y, m, m, last_day, "%d.01.01 ~ %02d.%02d" % cy if cy else "끝난 달 없음", excl))
     foot = re.sub(r'["\\\n]', " ", "%s · 대외비" % title)   # 쪽 아래 왼쪽 글 (CSS 문자열 안)
     return ("<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>%s</title><style>%s</style></head>"
             "<body>%s%s</body></html>" % (esc(title), CSS.replace("__FOOT__", foot), head, "\n".join(h)))
