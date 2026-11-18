@@ -58,8 +58,12 @@ def make_input():
     return d
 
 
+def inputs(bk):
+    return [x for x in bk.sheets if x.name == planbs.S_IN][0]
+
+
 def set_all(bk, style, value):
-    sh = bk.sheets[0]
+    sh = inputs(bk)
     for (r, c), (v, f, s) in list(sh.cells.items()):
         if s == style:
             sh.cells[(r, c)] = (value, None, s)
@@ -67,8 +71,8 @@ def set_all(bk, style, value):
 
 
 def put(bk, label, col, value):
-    sh = bk.sheets[0]
-    row = [r for (r, c), (v, f, s) in sh.cells.items() if c == 2 and str(v).startswith(label)][0]
+    sh = inputs(bk)
+    row = [r for (r, c), (v, f, s) in sh.cells.items() if c == 2 and str(v).lstrip("★ ").startswith(label)][0]
     v, f, s = sh.cells[(row, col)]
     sh.cells[(row, col)] = (value, None, s)
     bk._memo = {}
@@ -97,7 +101,7 @@ class TestPlanBS(unittest.TestCase):
         dept = dict((n, (s, o)) for n, s, o in self.C["dept"])
         self.assertEqual(dept["경영관리 부서"], (5_000_000, 3_000_000))
         path, bk = planbs.write(self.C, self.d)
-        texts = [v[0] for v in bk.sheets[0].cells.values() if isinstance(v[0], str)]
+        texts = [v[0] for x in bk.sheets for v in x.cells.values() if isinstance(v[0], str)]
         self.assertTrue(any("그중 경영관리 부서 (급여 5,000,000원" in t for t in texts))
         self.assertTrue(any("그중 플랜트8 부서" in t for t in texts))
         ck = [bk.value(a) for a in self.C["_cells"]["check"]]
@@ -140,7 +144,7 @@ class TestPlanBS(unittest.TestCase):
         put(bk, "법인세율 1구간", 4, 0.2)
         tc = bk.value(cells["tax"][0])
         self.assertEqual(tc, int(73_000_000 * 0.2) + int(int(73_000_000 * 0.2) * 0.1))
-        put(bk, "연말 직원 상여금", 3, 10_000_000)
+        put(bk, "연말 직원 상여금", 4, 10_000_000)
         tc2, te2 = (bk.value(a) for a in cells["tax"])
         self.assertEqual(tc2, int(63_000_000 * 0.2) + int(int(63_000_000 * 0.2) * 0.1))
         self.assertEqual(bk.value(cells["net"][0]), 73_000_000 - 10_000_000 - tc2)
@@ -161,24 +165,62 @@ class TestPlanBS(unittest.TestCase):
             soffice = shutil.which("soffice")
             if not soffice:
                 self.skipTest("LibreOffice 없음")
-            csv_dir = tempfile.mkdtemp()
-            subprocess.run([soffice, "--headless", "--convert-to", "csv:Text - txt - csv (StarCalc):44,34,76", "--outdir", csv_dir, path],
-                           check=True, capture_output=True, timeout=120)
-            with open(os.path.join(csv_dir, os.path.basename(path)[:-5] + ".csv"), encoding="utf-8") as fh:
-                rows = list(csv.reader(fh))
-            sh = bk.sheets[0]
-            bad = []
-            for (r, c), (v, f, s) in sh.cells.items():
-                if not f:
-                    continue
-                mine = bk.value(xlsxw.addr(r, c))
-                got = rows[r - 1][c - 1].replace(",", "")
-                if isinstance(mine, (int, float)) and abs(float(got or 0) - mine) > 0.5:
-                    bad.append((xlsxw.addr(r, c), f, mine, got))
+            # 저장값(<v>)을 지운 파일을 LibreOffice가 처음부터 계산 → 모든 탭의 수식 칸을 프로그램 계산과 대조
+            import re as _re
+            work = tempfile.mkdtemp()
+            bare = os.path.join(work, "bare.xlsx")
+            with zipfile.ZipFile(path) as zi, zipfile.ZipFile(bare, "w") as zo:
+                for n in zi.namelist():
+                    data = zi.read(n)
+                    if n.startswith("xl/worksheets/"):
+                        data = _re.sub(r"(</f>)<v>[^<]*</v>", r"\1", data.decode()).replace(' t="str"><f>', "><f>").encode()
+                    zo.writestr(n, data)
+            outd = os.path.join(work, "out")
+            subprocess.run([soffice, "--headless", "--convert-to", "xlsx", "--outdir", outd, bare], check=True, capture_output=True, timeout=180)
+            with zipfile.ZipFile(os.path.join(outd, "bare.xlsx")) as z:
+                sheets = [z.read("xl/worksheets/sheet%d.xml" % i).decode() for i in range(1, len(bk.sheets) + 1)]
+            bad, n = [], 0
+            for sh, xml in zip(bk.sheets, sheets):
+                got = dict(_re.findall(r'<c r="([A-Z]+\d+)"[^>]*>(?:<f[^>]*>[^<]*</f>)?<v>([^<]*)</v>', xml))
+                for (r, c), (v, f, s) in sh.cells.items():
+                    if not f:
+                        continue
+                    a = xlsxw.addr(r, c)
+                    mine = bk.value("'%s'!%s" % (sh.name, a))
+                    if isinstance(mine, (int, float)):
+                        n += 1
+                        if a not in got or abs(float(got[a]) - mine) > 0.5:
+                            bad.append((sh.name, a, f, mine, got.get(a)))
             self.assertEqual(bad, [])
-            shutil.rmtree(csv_dir, ignore_errors=True)
+            self.assertGreater(n, 80, n)
+            shutil.rmtree(work, ignore_errors=True)
         finally:
             shutil.rmtree(out, ignore_errors=True)
+
+    def test_easy_layout(self):
+        # 사용자 2026-11-18: 무엇을 어떻게 바꾸는지 알기 쉽게 → 요약이 첫 탭, 노란 칸은 '바꿀 값' 탭에만, 나머지는 잠금
+        bk = planbs.build(self.C)
+        self.assertEqual([x.name for x in bk.sheets], ["요약", "바꿀 값", "손익", "재무상태표", "참고"])
+        self.assertTrue(all(x.protect for x in bk.sheets))
+        unlocked = set(k for k, v in planbs.STYLES.items() if v.get("unlocked"))
+        self.assertEqual(unlocked, {"in", "inp", "inc"})
+        for x in bk.sheets:
+            used = set(s for (v, f, s) in x.cells.values())
+            if x.name != "바꿀 값":
+                self.assertFalse(used & unlocked, x.name)
+            for (v, f, s) in x.cells.values():
+                if s in unlocked:
+                    self.assertIsNone(f)   # 노란 칸에는 수식이 없음
+        sm = bk.sheets[0]
+        texts = [v for (v, f, s) in sm.cells.values() if isinstance(v, str)]
+        self.assertTrue(any("숫자를 바꿔 보려면" in t for t in texts))
+        ok = [xlsxw.addr(r, c) for (r, c), (v, f, s) in sm.cells.items() if f and "맞음" in f][0]
+        self.assertEqual(bk.value("'요약'!" + ok), "맞음")
+        first = min(r for (r, c), (v, f, s) in inputs(bk).cells.items() if s == "inc")
+        self.assertIn("연말 직원 상여금", inputs(bk).cells[(first, 2)][0])   # 상여금이 맨 위
+        xml = bk._sheet_xml(sm, dict((k, i) for i, k in enumerate(["_"] + sorted(planbs.STYLES))))
+        self.assertIn("<sheetProtection", xml)
+        self.assertIn('tabColor rgb="FF1F3864"', xml)
 
     def test_no_books(self):
         d = tempfile.mkdtemp()
