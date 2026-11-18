@@ -507,31 +507,10 @@ def ready_problems(R, input_dir, collect_dir=None, downloads=None):
         out.append("마지막 자료 변환이 실패함 (%s) — 다시 변환하세요" % failed[:60])
     elif when is None:
         out.append("자료 변환 시각을 모름 (변환결과.txt) — 자료 변환을 먼저 하세요")
-    if when is not None and collect_dir and os.path.isdir(collect_dir):
-        newer = []
-        for n in sorted(os.listdir(collect_dir)):
-            if ("분개장" in n or "자금계획" in n) and n.lower().endswith((".json", ".xls", ".xlsx")):
-                try:
-                    t = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(collect_dir, n)))
-                except (OSError, ValueError, OverflowError):
-                    continue
-                if t > when + dt.timedelta(seconds=60):
-                    newer.append(n)
-        if newer:
-            out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(newer[:3]) + (" 외 %d개" % (len(newer) - 3) if len(newer) > 3 else "")))
-    if when is not None and (downloads is not None or collect_dir):
-        from . import app as _app
-        try:
-            pend = _app.pending_downloads(downloads)
-        except Exception:   # 다운로드 폴더를 못 읽어도 이체 확인은 계속
-            pend = []
-        waiting = sorted(os.path.basename(p) for p, t in pend
-                         if ("분개장" in os.path.basename(p) or "자금계획" in os.path.basename(p))
-                         and t > when + dt.timedelta(seconds=60))
-        if waiting:
-            out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(waiting[:3]) + (" 외 %d개" % (len(waiting) - 3) if len(waiting) > 3 else "")))
+    if when is not None:   # ③④: 보고와 같은 판단 (gate.unconverted). 보고 쪽에서 이미 막은 줄은 다시 적지 않는다
+        for msg in gate.unconverted(input_dir, collect_dir, downloads, "이미 낸 지급이 다시 들어갈 수 있음"):
+            if not any(msg.split(" — ")[0] == o.split(" — ")[0] for o in out):
+                out.append(msg)
     return out
 
 

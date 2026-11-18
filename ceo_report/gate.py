@@ -37,6 +37,70 @@ def problems(R):
         out.append("세금예상.csv 가 없거나 읽지 못함 — 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠져 여유 자금이 크게 보임 "
                    "(자료 변환을 다시 하세요)")
     out.extend(company_problems(R))
+    # 2차 전수조사 P1 (사용자 2026-11-18 결정 카드, 권장안 '막음'): 새로 받고 아직 변환하지 않은 분개장·자금계획서가 있으면
+    # 예전 변환 자료로 만든 대표·팀장 보고를 내지 않는다 (이체 파일은 이미 같은 경우를 막고 있었음)
+    out.extend(unconverted(R.get("input_dir")))
+    return out
+
+
+def conv_time(input_dir):
+    """마지막 자료 변환 시각과 실패 여부 (변환결과.txt 첫 줄 '변환 시각 …'). -> (datetime 또는 None, 실패 글 또는 '')."""
+    import re
+    try:
+        with open(os.path.join(input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+            head = [f.readline() for _ in range(3)]
+    except (OSError, UnicodeDecodeError, TypeError):
+        return None, "자료 변환 기록(변환결과.txt)이 없거나 읽지 못함 — 자료 변환을 먼저 하세요"
+    m = re.match(r"변환 시각 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", head[0].strip())
+    when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S") if m else None
+    failed = next((ln.strip() for ln in head[1:] if ln.startswith("변환 실패")), "")
+    return when, failed
+
+
+NEW_SLACK = 60   # 변환 시각보다 이만큼(초) 넘게 뒤에 받은 파일만 '새 자료'
+
+
+def _is_book_or_plan(name):
+    return "분개장" in name or "자금계획" in name
+
+
+def unconverted(input_dir, collect_dir=None, downloads=None, why="예전 자료로 만든 숫자가 나감"):
+    """변환 뒤에 새로 받은 분개장·자금계획 파일 -> 막는 까닭 목록 (없으면 []).
+    collect_dir: 수집\\위하고 (None 이면 입력 폴더 옆 수집\\위하고). downloads: 크롬 다운로드 폴더 목록 (None 이면 이 PC 크롬에서 찾음).
+    변환 시각을 모르면(변환결과.txt 없음 — 예시 자료) 판단하지 않는다."""
+    if not input_dir:
+        return []
+    when, _ = conv_time(input_dir)
+    if when is None:
+        return []
+    if collect_dir is None:
+        collect_dir = os.path.join(os.path.dirname(os.path.abspath(input_dir)), "수집", "위하고")
+    out = []
+    limit = when + dt.timedelta(seconds=NEW_SLACK)
+
+    def text(names):
+        return ", ".join(names[:3]) + (" 외 %d개" % (len(names) - 3) if len(names) > 3 else "")
+    if os.path.isdir(collect_dir):
+        newer = []
+        for n in sorted(os.listdir(collect_dir)):
+            if _is_book_or_plan(n) and n.lower().endswith((".json", ".xls", ".xlsx")):
+                try:
+                    t = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(collect_dir, n)))
+                except (OSError, ValueError, OverflowError):
+                    continue
+                if t > limit:
+                    newer.append(n)
+        if newer:
+            out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (%s)" % (when.strftime("%m-%d %H:%M"), text(newer), why))
+    try:
+        from . import app as _app
+        pend = _app.pending_downloads(downloads)
+    except Exception:   # 다운로드 폴더를 못 읽어도 확인은 계속
+        pend = []
+    waiting = sorted(os.path.basename(p) for p, t in pend if _is_book_or_plan(os.path.basename(p)) and t > limit)
+    if waiting:
+        out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (%s)"
+                   % (when.strftime("%m-%d %H:%M"), text(waiting), why))
     return out
 
 

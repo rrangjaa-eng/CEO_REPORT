@@ -134,6 +134,7 @@ def _unusable(folder, fname, ok, lost):
 def load(folder):
     iss = Issues()
     d = Data()
+    d.input_dir = folder   # 2차 전수조사 P1: 보고가 '변환 뒤 새로 받은 자료'를 볼 수 있게 입력 폴더를 들고 다닌다
     d.issues = iss
     d.present = {}
     d.out_missing = []  # 지급 일정을 다 알 수 없게 만드는 파일: '자금일정.csv (파일 없음)' 꼴
