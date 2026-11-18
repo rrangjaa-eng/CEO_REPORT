@@ -2859,7 +2859,15 @@ def _first_screen(R, mode, per):
     # '큰 입금이 늦으면'은 대표 보고에서 뺌 (사용자 2026-11-12 "전부 삭제") — 경영관리 보고 자동 분석에만
     # '지난 보고 뒤 여유 자금을 바꾼 것'은 경영관리용에만 (2026-11-14 F12: 예상 줄로 채워지고 금액도 큰 숫자에 준 영향이 아님)
     risk = "" if I is None or not monthly else _mg_ins(mode, IR.ceo_reasons(I, n=2, head="지난 보고 뒤 여유 자금을 바꾼 것"))
-    funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + risk + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s</div>" % flow)]
+    # 2차 전수조사 A6 (2026-11-18): 창 '배당'에 넣은 큰 지출은 예상 줄로 들어가 있다 — 그림 아래 한 줄로 따로 보인다 (여유 자금 큰 숫자에는 안 뺌)
+    bo = R.get("big_outflow")
+    big = ""
+    if bo and not bo.get("skipped"):
+        big = "<div class='note'>%s</div>" % esc("예상 지급에 '장부에 없는 큰 지출' %s (%s, 사용자가 넣은 값) 포함 · 여유 자금에서는 빼지 않음"
+                                               % (won(bo["amount"]), d2s(bo["date"])))
+    elif bo:
+        big = _mg(mode, "<div class='note'>%s</div>" % esc("창 '배당'에 넣은 큰 지출 %s은 %s 자금 일정에 넣지 못함" % (won(bo["amount"]), bo["skipped"])))
+    funds = [("향후 자금 전망" if monthly else "자금 현황", _avail_table(R, mode) + risk + "<div class='card' style='margin-top:8px'><div class='lab'>%s</div>%s%s</div>" % (flow + (big,)))]
     past = [("지난 미수금 · 지급 (아직 처리 안 됨)", _excluded_box(R))]
     over = _mg(mode, _over_line(R))   # 예산 초과는 경영관리용에만 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
     if monthly:

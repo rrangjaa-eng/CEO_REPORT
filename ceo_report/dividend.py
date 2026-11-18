@@ -537,6 +537,22 @@ def read_settings(input_dir):
     return out
 
 
+def big_outflow(input_dir):
+    """창 '배당' 질문에 넣은 '장부·자금계획에 없는 큰 지출' -> (금액, 날짜 또는 None) 또는 None (없음·못 읽음).
+    2차 전수조사 A6 (2026-11-18): 배당 판단에서만 빼던 값을 자금 보고의 예상 줄에도 넣는다."""
+    try:
+        st = read_settings(input_dir)
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    if st.get("큰지출") != "있음":
+        return None
+    try:
+        amount = int(float(str(st.get("큰지출금액") or "").replace(",", "")))
+    except ValueError:
+        return None
+    return (amount, _d(st.get("큰지출시기"))) if amount > 0 else None
+
+
 TAX_GROUP = "법인세 감면"   # 사용자 2026-11-17: 감면·공제 고르기는 '배당 판단 질문' 창에서 빼 목록에 따로 둔다
 
 

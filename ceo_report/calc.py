@@ -655,6 +655,19 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 1차 점검 자금-20 (2026-11-15): 세금예상.csv 가 없거나 못 읽으면 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠진 큰 숫자 —
     # 자료 확인(gate)이 막는다
     R["tax_missing"] = getattr(d, "tax", None) is None
+    # 2차 전수조사 A6 (사용자 2026-11-18 결정 카드, 권장안 "'예상'으로 따로"): 창 '배당'에 넣은 '장부·자금계획에 없는 큰 지출'을
+    # 자금 일정에 예상 지급 한 줄로 넣는다. 확정이 아니라 큰 숫자(여유 자금)에서는 빼지 않고, 예상 줄·기간 전망에만 든다.
+    R["big_outflow"] = None
+    if R.get("input_dir"):
+        from .dividend import big_outflow
+        bo = big_outflow(R["input_dir"])
+        if bo and bo[1] is not None and bo[1] > asof:
+            events.append({"date": bo[1], "io": "out", "amount": bo[0], "firm": False, "cat": BIG_OUT_CAT, "desc": "사용자가 넣은 값",
+                           "basis": "창 '배당' 질문에 넣은 큰 지출 (장부·자금계획서에 없는 돈, 확정 전이라 예상으로 넣음)",
+                           "project": "", "source": "큰지출"})
+            R["big_outflow"] = {"amount": bo[0], "date": bo[1]}
+        elif bo:
+            R["big_outflow"] = {"amount": bo[0], "date": bo[1], "skipped": "시기를 모름" if bo[1] is None else "시기가 지남"}
     mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
@@ -1046,6 +1059,9 @@ MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "�
 MUST_CAT_EXTRA = ("세금", "회사부담금")
 MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
 LOAN_WORDS = ("차입금", "대출", "이자")
+
+
+BIG_OUT_CAT = "장부에 없는 큰 지출 (예상)"
 
 
 def must_pay(ev, card=True, loans=False, pay=True):
