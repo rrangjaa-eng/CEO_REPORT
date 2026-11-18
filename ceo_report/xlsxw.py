@@ -36,8 +36,9 @@ def parse_addr(a):
 
 
 # ───────────── 수식 계산 ─────────────
-_TOK = re.compile(r'\s*(?:(?P<num>\d+(?:\.\d+)?)|(?P<str>"[^"]*")|(?P<rng>\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+)'
-                  r'|(?P<ref>\$?[A-Z]+\$?\d+)|(?P<fn>[A-Z]+)\(|(?P<op><=|>=|<>|[-+*/(),=<>&]))')
+_SH = r"(?:'[^']+'!)?"
+_TOK = re.compile(r'\s*(?:(?P<num>\d+(?:\.\d+)?)|(?P<str>"[^"]*")|(?P<rng>' + _SH + r'\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+)'
+                  r'|(?P<ref>' + _SH + r'\$?[A-Z]+\$?\d+)|(?P<fn>[A-Z]+)\(|(?P<op><=|>=|<>|[-+*/(),=<>&]))')
 
 
 def _tokens(f):
@@ -136,9 +137,13 @@ class _Parser:
 
 class _Range:
     def __init__(self, text, get):
+        pre = ""
+        if "!" in text:
+            pre, text = text.rsplit("!", 1)
+            pre += "!"
         a, b = text.split(":")
         (r1, c1), (r2, c2) = parse_addr(a), parse_addr(b)
-        self.cells = [addr(r, c) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)]
+        self.cells = [pre + addr(r, c) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)]
         self.get = get
 
     def values(self):
@@ -215,6 +220,8 @@ class Sheet:
         self.merges = []
         self.lists = []        # (범위, [선택지])
         self.heights = {}
+        self.protect = False   # True 면 잠금 풀린 칸(노란 칸)만 바꿀 수 있음 (암호 없음)
+        self.tab = None        # 탭 색 (RRGGBB)
 
     def set(self, r, c, value=None, f=None, s=None):
         self.cells[(r, c)] = (value, f.lstrip("=") if f else None, s)
@@ -245,6 +252,10 @@ class Book:
         return self._eval(sh, ref.replace("$", ""), set())
 
     def _eval(self, sh, ref, seen):
+        if "!" in ref:   # 다른 표의 칸 ('바꿀 값'!C5)
+            name, ref = ref.rsplit("!", 1)
+            name = name.strip("'")
+            sh = [x for x in self.sheets if x.name == name][0]
         key = (sh.name, ref)
         if key in self._memo:
             return self._memo[key]
@@ -340,11 +351,12 @@ class Book:
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-                '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
-                '<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews>'
+                + ('<sheetPr>%s<pageSetUpPr fitToPage="1"/></sheetPr>' % ('<tabColor rgb="FF%s"/>' % sh.tab if sh.tab else ""))
+                + '<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews>'
                 '<sheetFormatPr defaultRowHeight="16.5"/>'
                 + ('<cols>%s</cols>' % cols if cols else "")
                 + '<sheetData>%s</sheetData>' % "".join(out)
+                + ('<sheetProtection sheet="1" objects="1" scenarios="1" formatColumns="0" formatRows="0"/>' if sh.protect else "")
                 + merges + dv
                 + '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>'
                 '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/>'
@@ -392,10 +404,11 @@ def _styles_xml(names, styles):
         if S.get("wrap") or S.get("align") or S.get("valign"):
             al = '<alignment%s%s%s/>' % (' horizontal="%s"' % S["align"] if S.get("align") else "",
                                          ' vertical="%s"' % S.get("valign", "center"), ' wrapText="1"' if S.get("wrap") else "")
-        xfs.append('<xf numFmtId="%d" fontId="%d" fillId="%d" borderId="%d" xfId="0"%s%s%s%s>%s</xf>' % (
+        prot = '<protection locked="0"/>' if S.get("unlocked") else ""
+        xfs.append('<xf numFmtId="%d" fontId="%d" fillId="%d" borderId="%d" xfId="0"%s%s%s%s%s>%s%s</xf>' % (
             nid, fonts.index(font), fills.index(fill), borders.index(border),
             ' applyNumberFormat="1"' if nid else "", ' applyFont="1"', ' applyFill="1"' if S.get("fill") else "",
-            ' applyAlignment="1"' if al else "", al))
+            ' applyAlignment="1"' if al else "", ' applyProtection="1"' if prot else "", al, prot))
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
             + ('<numFmts count="%d">%s</numFmts>' % (len(numfmts), "".join(numfmts)) if numfmts else "")

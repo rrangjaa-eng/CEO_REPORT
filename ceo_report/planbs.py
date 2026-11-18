@@ -6,8 +6,8 @@
 - "경영관리본부의 비용도 들어가야 해. 영업외 수익만 제외하는 거야." → 회사 전체 장부에서 영업외수익만 뺀다 (영업외비용·경영관리·플랜트8 비용은 그대로).
 - "기획본부는 알 수 없으나 비용이 과대계상될 수 있는 항목들도 표시하고 설명을 추가해."
 
-만드는 것: 엑셀(xlsx) 한 장. 노란 칸(영업외수익 계정별 금액·뺄지·세금 줄어드는 비율·법인세 예상)을 바꾸면
-손익 요약·재무상태표·차이가 수식으로 다시 계산된다.
+만드는 것: 엑셀(xlsx) 탭 다섯 장 (사용자 2026-11-18 '일반인도 알아보기 쉬운 양식'): 요약 · 바꿀 값(노란 칸만 바뀜, 나머지 잠금) · 손익 · 재무상태표 · 참고.
+노란 칸(결산 비용·연말 상여금·뺄 영업외수익·세율 등)을 바꾸면 모든 탭이 수식으로 다시 계산된다.
 
 계산
 - 재산·빚: 계정잔액.csv(분개장을 처음부터 더한 것, credit.load)로 기준 달 말 계정별 잔액. 자본 합계 = 자산 − 부채(+ 장부에 아직 없는 올해 법인세 예상).
@@ -317,161 +317,237 @@ def overstated(input_dir, L, kinds, names, ytd, Y, M, adj, T_all, nin_rows):
 
 
 # ───────────── 엑셀 ─────────────
-YEL, GREY, HEAD, BLUE = "FFF2CC", "F2F2F2", "1F3864", "DDEBF7"
+# 사용자 2026-11-18: "뭘 어떻게 수정해야 하는지 모르겠고 보기 불편하니까 일반인도 알아보기 쉬운 양식으로 다시 만들어"
+# → 탭 다섯 장: 요약(한눈에) · 바꿀 값(노란 칸만 바뀜, 결과 미리 보기) · 손익 · 재무상태표 · 참고. 노란 칸 말고는 잠금(암호 없음).
+YEL, GREY, HEAD, BLUE, LBLUE, GREEN = "FFF2CC", "F2F2F2", "1F3864", "DDEBF7", "EEF4FB", "2E7D32"
+DIF = '+#,##0;[Red]-#,##0;"-"'
 STYLES = {
-    "title": {"bold": True, "size": 15, "color": HEAD},
-    "sub": {"size": 9, "color": "595959"},
+    "title": {"bold": True, "size": 16, "color": HEAD},
+    "sub": {"size": 10, "color": "404040"},
     "sec": {"bold": True, "size": 11, "color": "FFFFFF", "fill": HEAD},
     "th": {"bold": True, "fill": BLUE, "border": True, "align": "center", "wrap": True},
     "td": {"border": True, "wrap": True},
-    "tdb": {"border": True, "bold": True},
+    "tdb": {"border": True, "bold": True, "wrap": True},
+    "tds": {"border": True, "wrap": True, "color": "595959"},
     "grp": {"bold": True, "fill": GREY, "border": True},
     "num": {"border": True, "num": "int"},
+    "nums": {"border": True, "num": "int", "color": "595959"},
     "numb": {"border": True, "num": "int", "bold": True},
     "numt": {"border": True, "num": "int", "bold": True, "fill": GREY},
-    "in": {"border": True, "num": "int", "fill": YEL},
-    "inp": {"border": True, "num": "0.0%", "fill": YEL},
-    "inc": {"border": True, "fill": YEL, "align": "center"},
-    "pct": {"border": True, "num": "0.0%"},
+    "kpi": {"border": True, "num": "int", "bold": True, "size": 12},
+    "kpil": {"border": True, "bold": True, "size": 11, "wrap": True},
+    "dif": {"border": True, "num": DIF},
+    "difb": {"border": True, "num": DIF, "bold": True},
+    "dift": {"border": True, "num": DIF, "bold": True, "fill": GREY},
+    "difk": {"border": True, "num": DIF, "bold": True, "size": 12},
+    "in": {"border": True, "num": "int", "fill": YEL, "unlocked": True, "bold": True},
+    "inp": {"border": True, "num": "0.0%", "fill": YEL, "unlocked": True, "bold": True},
+    "inc": {"border": True, "fill": YEL, "align": "center", "unlocked": True, "bold": True},
+    "orig": {"border": True, "num": "int", "color": "7F7F7F"},
+    "origp": {"border": True, "num": "0.0%", "color": "7F7F7F"},
+    "calc": {"border": True, "num": "int", "bold": True, "fill": GREY},
     "note": {"border": True, "wrap": True, "size": 9, "color": "404040"},
     "txt": {"wrap": True, "valign": "top"},
-    "ok": {"border": True, "num": "int", "bold": True, "color": "2E7D32"},
+    "box": {"wrap": True, "valign": "top", "fill": LBLUE},
+    "boxb": {"wrap": True, "valign": "top", "fill": LBLUE, "bold": True, "color": HEAD},
+    "yel": {"wrap": True, "valign": "top", "fill": YEL, "bold": True},
+    "ok": {"border": True, "num": "int", "bold": True, "color": GREEN},
+    "okt": {"border": True, "bold": True, "color": GREEN, "wrap": True},
 }
+for _v in STYLES.values():   # 여러 줄 설명 옆 숫자도 가운데 높이에
+    if _v.get("border"):
+        _v.setdefault("valign", "center")
+S_SUM, S_IN, S_PL, S_BS, S_REF = "요약", "바꿀 값", "손익", "재무상태표", "참고"
+
+
+def q(sheet, a):
+    """다른 탭 칸 주소."""
+    return "'%s'!%s" % (sheet, a)
+
+
+def _won(v):
+    return "{:,}".format(int(v))
+
+
+def _eok(v):
+    """2억 원·200억 원처럼 (억 단위로 딱 떨어질 때)."""
+    return ("{:,}억 원".format(v // 100_000_000)) if v and v % 100_000_000 == 0 else "%s원" % _won(v)
 
 
 def build(C, sources=""):
-    """-> xlsxw.Book. 수식은 같은 표 안 칸만 쓴다."""
+    """-> xlsxw.Book. 탭 다섯 장, 노란 칸('바꿀 값' 탭)만 바꿀 수 있고 나머지는 수식으로 다시 계산."""
     bk = xlsxw.Book()
-    sh = bk.sheet("기획본부 재무상태표")
-    for col, w in ((1, 2), (2, 38), (3, 17), (4, 17), (5, 17), (6, 70)):
-        sh.widths[col] = w
+    sm = bk.sheet(S_SUM)
+    ip = bk.sheet(S_IN)
+    pl_ = bk.sheet(S_PL)
+    bs_ = bk.sheet(S_BS)
+    rf = bk.sheet(S_REF)
+    for sh_, tab in ((sm, "1F3864"), (ip, "FFC000"), (pl_, "5B9BD5"), (bs_, "5B9BD5"), (rf, "A5A5A5")):
+        sh_.protect, sh_.tab = True, tab
     B, Cc, Dd, Ee, F = 2, 3, 4, 5, 6
+    for sh_ in (sm, pl_, bs_):
+        for col, w in ((1, 2), (2, 40), (3, 18), (4, 18), (5, 16), (6, 62)):
+            sh_.widths[col] = w
+    for col, w in ((1, 2), (2, 44), (3, 12), (4, 18), (5, 18), (6, 62)):
+        ip.widths[col] = w
+    for col, w in ((1, 2), (2, 44), (3, 18), (4, 22), (5, 2), (6, 70)):
+        rf.widths[col] = w
+    period = "%d년 1~%d월" % (C["Y"], C["M"])
+    asof_txt = "%d년 %d월 말" % (C["Y"], C["M"])
+    made = (sources + " · " if sources else "") + "법인세: " + C["tax_src"] + " · 만든 날 %s" % dt.date.today().isoformat()
+
+    def head(sh_, r, title, cols):
+        sh_.set(r, B, title, s="sec")
+        for c in range(Cc, F + 1):
+            sh_.set(r, c, "", s="sec")
+        r += 1
+        for c, t in zip(range(B, F + 1), cols):
+            sh_.set(r, c, t, s="th")
+        return r + 1
+
+    def para(sh_, r, text, s="txt", h=None):
+        sh_.set(r, B, text, s=s)
+        for c in range(Cc, F + 1):
+            sh_.set(r, c, "", s=s)
+        sh_.merge(r, B, r, F)
+        if h:
+            sh_.heights[r] = h
+        return r + 1
+
+    # ══════════ 바꿀 값 (노란 칸) ══════════
     r = 1
-    sh.set(r, B, "기획본부용 재무상태표 (영업외수익 뺀 기준)", s="title")
-    sh.heights[r] = 24
+    ip.set(r, B, "바꿀 값 — 노란 칸만 바꾸세요", s="title")
+    ip.heights[r] = 26
     r += 1
-    sh.set(r, B, "재무상태표 %d년 %d월 말 · 손익 %d년 1~%d월 · 회사 전체 장부에서 영업외수익(이자·지원금·잡이익 등)을 빼고 결산 때 들어갈 비용(예상)을 더함, 세금도 그만큼 다시 계산 · 경영관리·플랜트8 비용과 영업외비용은 그대로"
-           % (C["Y"], C["M"], C["Y"], C["M"]), s="sub")
+    r = para(ip, r, "노란 칸의 금액·비율·'예/아니오'를 바꾸면 요약·손익·재무상태표 탭이 모두 바로 다시 계산됩니다. 노란 칸이 아닌 칸은 잠겨 있어 바뀌지 않습니다. "
+                    "처음 값으로 되돌리려면 '처음 값' 칸의 숫자를 노란 칸에 그대로 적으세요.", s="box", h=34)
     r += 1
-    sh.set(r, B, (sources + " · " if sources else "") + "법인세: " + C["tax_src"] + " · 만든 날 %s" % dt.date.today().isoformat(), s="sub")
-    r += 1
-    sh.set(r, B, "노란 칸을 바꾸면 아래 손익·재무상태표가 모두 다시 계산됩니다. 흰 칸은 장부 값 또는 계산식입니다.", s="sub")
-    r += 2
+    prev_row = r   # 결과 미리 보기 (아래에서 칸을 채움)
+    r += 6
 
-    # ① 바꿀 수 있는 값
-    sh.set(r, B, "1. 바꿀 수 있는 값 (노란 칸)", s="sec")
-    for c in (Cc, Dd, Ee, F):
-        sh.set(r, c, "", s="sec")
-    r += 1
-    for c, t in ((B, "영업외수익 계정"), (Cc, "올해 (1~%d월)" % C["M"]), (Dd, "지난해까지"), (Ee, "뺄까요"), (F, "설명 (장부 값)")):
-        sh.set(r, c, t, s="th")
-    r += 1
-    n0 = r
-    for x in C["nin_rows"]:
-        sh.set(r, B, "%s [%s]" % (x["name"], x["code"]), s="td")
-        sh.set(r, Cc, x["cur"], s="in")
-        sh.set(r, Dd, x["prev"], s="in")
-        sh.set(r, Ee, "예", s="inc")
-        sh.set(r, F, "장부 값: 올해 %s원 · 지난해까지 %s원. '아니오'로 바꾸면 이 계정은 빼지 않습니다."
-               % ("{:,}".format(x["cur"]), "{:,}".format(x["prev"])), s="note")
-        r += 1
-    if not C["nin_rows"]:
-        sh.set(r, B, "(장부에 영업외수익 없음)", s="td")
-        sh.set(r, Cc, 0, s="in")
-        sh.set(r, Dd, 0, s="in")
-        sh.set(r, Ee, "예", s="inc")
-        sh.set(r, F, "", s="note")
-        r += 1
-    n1 = r - 1
-    sh.choice("%s:%s" % (xlsxw.addr(n0, Ee), xlsxw.addr(n1, Ee)), ["예", "아니오"])
-    rng = lambda c: "%s:%s" % (xlsxw.addr(n0, c), xlsxw.addr(n1, c))
-    sh.set(r, B, "뺄 영업외수익 합계", s="tdb")
-    X1 = sh.set(r, Cc, f='SUMIF(%s,"예",%s)' % (rng(Ee), rng(Cc)), s="numb")
-    X0 = sh.set(r, Dd, f='SUMIF(%s,"예",%s)' % (rng(Ee), rng(Dd)), s="numb")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "'예'로 둔 계정만 더합니다.", s="note")
-    r += 1
-    r += 1
-
-    # 결산 비용 (사용자 2026-11-17: 재무상태표는 결산 때 만드는 것 → 진짜 재무상태표 값에 감가상각·대손충당금·퇴직급여 등이 들어감. 상여금도 넣을 수 있게)
-    for c, t in ((B, "결산 때 들어갈 비용 (회사 전체·기획본부 모두)"), (Cc, "올해 (1~%d월)" % C["M"]), (Dd, ""), (Ee, "넣을까요"), (F, "설명 (프로그램 값)")):
-        sh.set(r, c, t, s="th")
-    r += 1
+    # 1. 결산 비용
+    r = head(ip, r, "1. 결산 때 들어갈 비용 — 회사 전체·기획본부 모두에 들어갑니다",
+             ("항목", "넣을까요", "금액 (원)", "처음 값", "설명 · 바꾸면 어떻게 되나요"))
+    costs = sorted(C["costs"], key=lambda x: x["key"] != "bonus")   # 연말 상여금을 맨 위로
     k0 = r
     K_rows = {}
-    for x in C["costs"]:
-        sh.set(r, B, x["name"], s="td")
-        a_ = sh.set(r, Cc, x["amount"], s="in")
-        sh.set(r, Dd, "", s="td")
-        e_ = sh.set(r, Ee, "예", s="inc")
-        sh.set(r, F, "%s 프로그램 값 %s원." % (x["why"], "{:,}".format(x["amount"])), s="note")
-        K_rows[x["key"]] = (a_, e_, x["side"])
+    for x in costs:
+        bonus = x["key"] == "bonus"
+        ip.set(r, B, ("★ " if bonus else "") + x["name"], s="tdb" if bonus else "td")
+        e_ = ip.set(r, Cc, "예", s="inc")
+        a_ = ip.set(r, Dd, x["amount"], s="in")
+        ip.set(r, Ee, x["amount"], s="orig")
+        ip.set(r, F, ("연말 직원 상여금이 정해지면 금액을 적으세요. 비용이 늘어 이익·세금·자본이 줄고, 줄 돈(부채)이 늘어납니다. " if bonus else "")
+               + x["why"] + " '아니오'로 바꾸면 이 비용을 빼고 봅니다.", s="note")
+        K_rows[x["key"]] = (q(S_IN, a_), q(S_IN, e_), x["side"])
         r += 1
     k1 = r - 1
-    sh.choice("%s:%s" % (xlsxw.addr(k0, Ee), xlsxw.addr(k1, Ee)), ["예", "아니오"])
-    krng = lambda c: "%s:%s" % (xlsxw.addr(k0, c), xlsxw.addr(k1, c))
-    sh.set(r, B, "넣을 비용 합계", s="tdb")
-    K = sh.set(r, Cc, f='SUMIF(%s,"예",%s)' % (krng(Ee), krng(Cc)), s="numb")
-    sh.set(r, Dd, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "'예'로 둔 비용만 더합니다. 회사 전체와 기획본부 기준 모두에 들어갑니다.", s="note")
+    ip.choice("%s:%s" % (xlsxw.addr(k0, Cc), xlsxw.addr(k1, Cc)), ["예", "아니오"])
+    ip.set(r, B, "넣을 결산 비용 합계", s="tdb")
+    ip.set(r, Cc, "", s="td")
+    K = q(S_IN, ip.set(r, Dd, f='SUMIF(%s:%s,"예",%s:%s)' % (xlsxw.addr(k0, Cc), xlsxw.addr(k1, Cc), xlsxw.addr(k0, Dd), xlsxw.addr(k1, Dd)), s="calc"))
+    ip.set(r, Ee, "", s="td")
+    ip.set(r, F, "'예'로 둔 비용만 더합니다 (계산 칸).", s="note")
     r += 2
 
     def side_sum(side):
         parts = ['IF(%s="예",%s,0)' % (e_, a_) for a_, e_, sd in K_rows.values() if sd == side]
         return "+".join(parts) if parts else "0"
 
-    # 법인세 계산 값 (사용자 2026-11-17: 법인세율도 조정할 수 있게)
-    TI = C["tax_in"]
-    for c, t in ((B, "법인세 계산 (올해)"), (Cc, "과세표준 구간 상한"), (Dd, "세율"), (Ee, ""), (F, "설명")):
-        sh.set(r, c, t, s="th")
-    r += 1
-    BR = []
-    for i, (top, rate) in enumerate(TI["brackets"]):
-        sh.set(r, B, "법인세율 %d구간" % (i + 1), s="td")
-        u = sh.set(r, Cc, top if top is not None else "", s="in" if top is not None else "td")
-        rt = sh.set(r, Dd, rate, s="inp")
-        sh.set(r, Ee, "", s="td")
-        sh.set(r, F, ("과세표준 %s원까지 %s%%" % ("{:,}".format(top), "{:g}".format(rate * 100))) if top is not None
-               else "그 위 전부 %s%%" % "{:g}".format(rate * 100), s="note")
-        BR.append((u if top is not None else None, rt))
+    # 2. 영업외수익
+    r = head(ip, r, "2. 뺄 영업외수익 — 기획본부 기준에서만 뺍니다",
+             ("영업외수익 계정", "뺄까요", "금액 (원)", "처음 값", "설명 · 바꾸면 어떻게 되나요"))
+
+    def nin_block(key, label, title):
+        nonlocal r
+        ip.set(r, B, title, s="grp")
+        for c in range(Cc, F + 1):
+            ip.set(r, c, "", s="grp")
         r += 1
-    sh.set(r, B, "지방소득세율 (법인세 산출세액의)", s="td")
-    LOC = sh.set(r, Dd, TI["local"], s="inp")
-    sh.set(r, Cc, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "법인지방소득세 = 산출세액 × 이 비율 (감면 없이)", s="note")
+        a0 = r
+        rows = [x for x in C["nin_rows"] if x[key]]
+        for x in rows:
+            ip.set(r, B, "%s [%s]" % (x["name"], x["code"]), s="td")
+            ip.set(r, Cc, "예", s="inc")
+            ip.set(r, Dd, x[key], s="in")
+            ip.set(r, Ee, x[key], s="orig")
+            ip.set(r, F, "%s 장부 금액. '아니오'면 이 계정은 빼지 않고 기획본부 이익에 남깁니다." % label, s="note")
+            r += 1
+        if not rows:
+            ip.set(r, B, "(장부에 없음)", s="tds")
+            ip.set(r, Cc, "예", s="inc")
+            ip.set(r, Dd, 0, s="in")
+            ip.set(r, Ee, 0, s="orig")
+            ip.set(r, F, "", s="note")
+            r += 1
+        a1 = r - 1
+        ip.choice("%s:%s" % (xlsxw.addr(a0, Cc), xlsxw.addr(a1, Cc)), ["예", "아니오"])
+        return a0, a1
+
+    a0, a1 = nin_block("cur", "올해(%s)" % period, "올해 (%s)" % period)
+    ip.set(r, B, "올해 뺄 영업외수익 합계", s="tdb")
+    ip.set(r, Cc, "", s="td")
+    X1 = q(S_IN, ip.set(r, Dd, f='SUMIF(%s:%s,"예",%s:%s)' % (xlsxw.addr(a0, Cc), xlsxw.addr(a1, Cc), xlsxw.addr(a0, Dd), xlsxw.addr(a1, Dd)), s="calc"))
+    ip.set(r, Ee, C["X1"], s="orig")
+    ip.set(r, F, "기획본부 올해 이익이 이만큼 작아지고, 그만큼 세금도 줄어듭니다.", s="note")
     r += 1
-    sh.set(r, B, "최저한세율", s="td")
-    MINR = sh.set(r, Dd, TI["min"], s="inp")
-    sh.set(r, Cc, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "감면·공제를 받아도 법인세는 과세표준 × 이 비율 밑으로는 안 줄어듭니다 (중소기업).", s="note")
-    r += 1
-    sh.set(r, B, "감면·공제 금액", s="td")
-    CRD = sh.set(r, Cc, TI["credit"], s="in")
-    sh.set(r, Dd, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "산출세액에서 빼는 감면·공제 (농어촌특별세 뺀 순액). 프로그램 법인세 예상과 같은 값 %s원." % "{:,}".format(TI["credit"]), s="note")
-    r += 1
-    sh.set(r, B, "세법 조정 (세무조정 등)", s="td")
-    ADJ = sh.set(r, Cc, TI["adj"], s="in")
-    sh.set(r, Dd, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "세전 이익에 더해 과세표준을 만드는 금액 (접대비 한도 초과 등 세무조정 + 장부 분류 차이). 프로그램 법인세 예상의 과세표준과 맞춘 값.", s="note")
-    r += 1
-    sh.set(r, B, "지난해까지 영업외수익 세금 비율", s="td")
-    R0 = sh.set(r, Dd, round(C["rate0"], 4), s="inp")
-    sh.set(r, Cc, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "지난해까지 영업외수익을 빼면 그때 낸 세금도 그만큼 덜 낸 것으로 봅니다: %s." % (" · ".join(C["how0"]) or "지난해 영업외수익 없음"), s="note")
-    r += 1
-    sh.set(r, B, "지난해까지 빼는 이익 (세금 뺀 뒤)", s="tdb")
-    G0 = sh.set(r, Cc, f="%s-ROUND(%s*%s,0)" % (X0, X0, R0), s="numb")
-    sh.set(r, Dd, "", s="td")
-    sh.set(r, Ee, "", s="td")
-    sh.set(r, F, "기획본부 기준 이익잉여금(지난해까지)이 이만큼 줄어듭니다.", s="note")
+    b0, b1 = nin_block("prev", "지난해까지", "지난해까지 (%d년~%d년, 이미 이익잉여금에 쌓인 몫)" % (C["first_year"], C["Y"] - 1) if C["first_year"] < C["Y"] else "지난해까지")
+    ip.set(r, B, "지난해까지 뺄 영업외수익 합계", s="tdb")
+    ip.set(r, Cc, "", s="td")
+    X0 = q(S_IN, ip.set(r, Dd, f='SUMIF(%s:%s,"예",%s:%s)' % (xlsxw.addr(b0, Cc), xlsxw.addr(b1, Cc), xlsxw.addr(b0, Dd), xlsxw.addr(b1, Dd)), s="calc"))
+    ip.set(r, Ee, C["X0"], s="orig")
+    ip.set(r, F, "기획본부 기준 이익잉여금(지난해까지 쌓인 이익)이 이만큼(세금 뺀 뒤) 작아집니다.", s="note")
     r += 2
+
+    # 3. 세금
+    TI = C["tax_in"]
+    r = head(ip, r, "3. 세금 계산 값 — 세법이 바뀌거나 세무사 답을 받았을 때만 바꾸세요",
+             ("항목", "", "값", "처음 값", "설명"))
+    BR = []
+    low_txt = 0
+    for i, (top, rate) in enumerate(TI["brackets"]):
+        rng_txt = ("%s 초과 ~ %s" % (_eok(low_txt), _eok(top))) if top is not None else ("%s 초과 전부" % _eok(low_txt))
+        if low_txt == 0 and top is not None:
+            rng_txt = "%s까지" % _eok(top)
+        ip.set(r, B, "법인세율 %d구간 세율 (%s)" % (i + 1, rng_txt), s="td")
+        ip.set(r, Cc, "", s="td")
+        rt = q(S_IN, ip.set(r, Dd, rate, s="inp"))
+        ip.set(r, Ee, rate, s="origp")
+        ip.set(r, F, "세금 매기는 이익(과세표준) 중 이 구간에 드는 몫에 곱하는 비율.", s="note")
+        r += 1
+        u = None
+        if top is not None:
+            ip.set(r, B, "법인세율 %d구간 끝 금액" % (i + 1), s="td")
+            ip.set(r, Cc, "", s="td")
+            u = q(S_IN, ip.set(r, Dd, top, s="in"))
+            ip.set(r, Ee, top, s="orig")
+            ip.set(r, F, "이 금액까지 %d구간 세율, 넘는 몫은 다음 구간 세율." % (i + 1), s="note")
+            r += 1
+            low_txt = top
+        BR.append((u, rt))
+
+    def tax_row(label, val, style, ostyle, note):
+        nonlocal r
+        ip.set(r, B, label, s="td")
+        ip.set(r, Cc, "", s="td")
+        a = q(S_IN, ip.set(r, Dd, val, s=style))
+        ip.set(r, Ee, val, s=ostyle)
+        ip.set(r, F, note, s="note")
+        r += 1
+        return a
+    LOC = tax_row("지방소득세율 (법인세의 몇 %)", TI["local"], "inp", "origp", "법인지방소득세 = 법인세 산출세액 × 이 비율.")
+    MINR = tax_row("최저한세율", TI["min"], "inp", "origp", "감면·공제를 받아도 법인세는 '세금 매기는 이익 × 이 비율' 밑으로는 안 줄어듭니다 (중소기업).")
+    CRD = tax_row("감면·공제 금액", TI["credit"], "in", "orig", "세금에서 바로 빼 주는 금액 (프로그램 법인세 예상에서 '받음' 표시한 감면·공제).")
+    ADJ = tax_row("세법 조정 금액 (세무조정)", TI["adj"], "in", "orig",
+                  "세법이 비용으로 안 쳐 주는 금액(접대비 한도 초과 등)을 이익에 더하는 값. 프로그램 법인세 예상과 맞춘 값입니다.")
+    R0 = tax_row("지난해까지 영업외수익에 낸 세금 비율", round(C["rate0"], 4), "inp", "origp",
+                 "지난해까지 영업외수익을 빼면 그때 낸 세금도 덜 낸 것으로 봅니다: %s." % (" · ".join(C["how0"]) or "지난해 영업외수익 없음"))
+    ip.set(r, B, "지난해까지 빼는 이익 (세금 뺀 뒤)", s="tdb")
+    ip.set(r, Cc, "", s="td")
+    G0 = q(S_IN, ip.set(r, Dd, f="%s-ROUND(%s*%s,0)" % (X0, X0, R0), s="calc"))
+    ip.set(r, Ee, "", s="td")
+    ip.set(r, F, "= 지난해까지 뺄 영업외수익 − 그 세금 (계산 칸).", s="note")
+    r += 1
 
     def corp_f(x):
         """과세표준 칸 x → 법인세 산출세액 수식 (구간별 누진)."""
@@ -484,87 +560,105 @@ def build(C, sources=""):
                 low = u
         return "INT(%s)" % "+".join(terms)
 
-    # ② 손익 요약
-    P = C["P"]
-    sh.set(r, B, "2. 손익 요약 (%d년 1~%d월, 결산 비용 반영)" % (C["Y"], C["M"]), s="sec")
-    for c in (Cc, Dd, Ee, F):
-        sh.set(r, c, "", s="sec")
-    r += 1
-    for c, t in ((B, "항목"), (Cc, "회사 전체"), (Dd, "차이"), (Ee, "기획본부 기준"), (F, "설명")):
-        sh.set(r, c, t, s="th")
-    r += 1
     over_where = collections.defaultdict(list)
     for i, (nm, v, where, why) in enumerate(C["over"]):
         for w in ("판관비", "원가", "영업외비용", "법인세"):
             if w in where:
                 over_where[w].append(_circ(i))
 
-    def pl(label, val=None, f=None, fe=None, note="", bold=False, nstyle=None):
-        """회사 전체 칸(val 또는 f), 기획본부 칸(fe, 없으면 같음), 차이 = 기획본부 − 회사 전체."""
+    # ══════════ 손익 ══════════
+    P = C["P"]
+    sh = pl_
+    r = 1
+    sh.set(r, B, "손익 — %s (결산 비용 넣은 모습)" % period, s="title")
+    sh.heights[r] = 26
+    r += 1
+    r = para(sh, r, "회사 전체 = 장부 값 + 결산 때 들어갈 비용. 기획본부 기준 = 회사 전체에서 영업외수익만 빼고 세금을 다시 계산한 값. "
+                    "차이 = 기획본부 기준 − 회사 전체 (빨간 숫자는 기획본부 기준이 더 작다는 뜻).", s="box", h=34)
+    r += 1
+    r = head(sh, r, "이익 계산", ("항목", "회사 전체", "기획본부 기준", "차이", "설명"))
+
+    def pl(label, val=None, f=None, fe=None, note="", bold=False, small=False):
+        """회사 전체(C), 기획본부(D, 없으면 같음), 차이(E) = D − C."""
         nonlocal r
-        ns = nstyle or ("numb" if bold else "num")
-        sh.set(r, B, label, s="tdb" if bold else "td")
+        ns = "numb" if bold else ("nums" if small else "num")
+        sh.set(r, B, label, s="tdb" if bold else ("tds" if small else "td"))
         c_ = sh.set(r, Cc, val, f=f, s=ns)
-        sh.set(r, Ee, None, f=fe or c_, s=ns)
-        sh.set(r, Dd, None, f="%s-%s" % (xlsxw.addr(r, Ee), c_), s=ns)
+        d_ = sh.set(r, Dd, None, f=fe or c_, s=ns)
+        sh.set(r, Ee, None, f="%s-%s" % (d_, c_), s="difb" if bold else "dif")
         sh.set(r, F, note, s="note")
         r += 1
         return r - 1
-    A_ = lambda row, col=Cc: xlsxw.addr(row, col)
-    E_ = lambda row: xlsxw.addr(row, Ee)
-    rv = pl("매출", P["rev"])
-    cg = pl("매출원가", P["cogs"], note=_mark(over_where["원가"]))
+    A_ = lambda row: xlsxw.addr(row, Cc)
+    E_ = lambda row: xlsxw.addr(row, Dd)
+    rv = pl("매출", P["rev"], note="장부 매출 (계산서 기준).")
+    cg = pl("매출원가 (프로젝트 원가)", P["cogs"], note=_mark(over_where["원가"]))
     sg = pl("판매비와관리비 (장부)", P["sga"], note=("경영관리·플랜트8 부서 비용과 급여가 모두 들어 있습니다 (아래 줄). " if C.get("dept") else "")
             + _mark(over_where["판관비"]))
     for nm_, sal_, oth_ in C.get("dept") or []:   # 판관비에 이미 든 몫을 보여 주기만 (합계에 다시 더하지 않음)
-        sh.set(r, B, "   └ 그중 %s (급여 %s원 + 그 밖 %s원)" % (nm_, "{:,}".format(sal_), "{:,}".format(oth_)), s="td")
-        sh.set(r, Cc, sal_ + oth_, s="num")
-        sh.set(r, Dd, 0, s="num")
-        sh.set(r, Ee, sal_ + oth_, s="num")
-        sh.set(r, F, "판관비(장부)에 포함 · 회사 전체 비용이라 기획본부 기준에도 그대로 넣음 (빼지 않음).", s="note")
+        sh.set(r, B, "   └ 그중 %s (급여 %s원 + 그 밖 %s원)" % (nm_, _won(sal_), _won(oth_)), s="tds")
+        sh.set(r, Cc, sal_ + oth_, s="nums")
+        sh.set(r, Dd, sal_ + oth_, s="nums")
+        sh.set(r, Ee, 0, s="dif")
+        sh.set(r, F, "위 판관비에 이미 들어 있음 (보여 주기만, 다시 더하지 않음). 회사 기본 비용이라 기획본부 기준에도 그대로.", s="note")
         r += 1
-    kc = pl("결산 때 들어갈 비용", f=K, note="1번 표 '결산 때 들어갈 비용'에서 '예'로 둔 것 (감가상각·대손충당금·퇴직급여·상여금 등).")
+    kc = pl("결산 때 들어갈 비용", f=K, note="'바꿀 값' 탭 1번에서 '예'로 둔 것 (감가상각·대손충당금·퇴직급여·상여금 등).")
     op = pl("영업이익", f="%s-%s-%s-%s" % (A_(rv), A_(cg), A_(sg), A_(kc)), fe="%s-%s-%s-%s" % (E_(rv), E_(cg), E_(sg), E_(kc)), bold=True,
-            note="매출 − 매출원가 − 판관비 − 결산 비용.")
-    ni = pl("영업외수익", f="SUM(%s)" % rng(Cc), fe="SUM(%s)-%s" % (rng(Cc), X1),
-            note="이자수익·정부지원금·잡이익 등. 기획본부 기준에서는 1번 표에서 '예'로 둔 만큼 뺍니다.")
-    no = pl("영업외비용", P["nout"], note="이자비용·잡손실 등. 빼지 않고 그대로 둡니다. " + _mark(over_where["영업외비용"]))
-    pre = pl("세전 이익", f="%s+%s-%s" % (A_(op), A_(ni), A_(no)), fe="%s+%s-%s" % (E_(op), E_(ni), E_(no)), bold=True)
-    bs = pl("과세표준", f="MAX(0,%s+%s)" % (A_(pre), ADJ), fe="MAX(0,%s+%s)" % (E_(pre), ADJ), note="세전 이익 + 세법 조정 (1번 표).")
-    cp = pl("법인세 산출세액", f=corp_f(A_(bs)), fe=corp_f(E_(bs)), note="과세표준 × 1번 표 법인세율 (구간별).")
-    nt = pl("법인세 (감면·최저한세 뒤)", f="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, A_(cp), CRD, A_(bs), MINR, A_(cp)),
-            fe="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, E_(cp), CRD, E_(bs), MINR, E_(cp)),
-            note="산출세액 − 감면·공제, 단 과세표준 × 최저한세율 밑으로는 안 줄어듦.")
-    lc = pl("법인지방소득세", f="INT(%s*%s)" % (A_(cp), LOC), fe="INT(%s*%s)" % (E_(cp), LOC), note="산출세액 × 지방소득세율.")
-    tx = pl("올해 법인세 예상 합계", f="%s+%s" % (A_(nt), A_(lc)), fe="%s+%s" % (E_(nt), E_(lc)), bold=True,
-            note="프로그램 법인세 예상과 같은 계산 (기본값일 때). " + _mark(over_where["법인세"]))
-    TAX, TAXE = A_(tx), E_(tx)
+            note="매출 − 매출원가 − 판관비 − 결산 비용. 본업으로 번 돈.")
+    ni = pl("영업외수익 (이자·정부지원금·잡이익 등)", P["nin"], fe="%s-%s" % (A_(r), X1),
+            note="본업이 아닌 데서 들어온 돈. 기획본부 기준에서는 '바꿀 값' 탭 2번에서 '예'로 둔 만큼 뺍니다.")
+    no = pl("영업외비용 (대출 이자 등)", P["nout"], note="빼지 않고 그대로 둡니다. " + _mark(over_where["영업외비용"]))
+    pre = pl("세금 내기 전 이익", f="%s+%s-%s" % (A_(op), A_(ni), A_(no)), fe="%s+%s-%s" % (E_(op), E_(ni), E_(no)), bold=True,
+             note="영업이익 + 영업외수익 − 영업외비용.")
+    r += 1
+    r = head(sh, r, "세금 계산 (올해 법인세 예상)", ("항목", "회사 전체", "기획본부 기준", "차이", "설명"))
+    bs = pl("세금 매기는 이익 (과세표준)", f="MAX(0,%s+%s)" % (A_(pre), ADJ), fe="MAX(0,%s+%s)" % (E_(pre), ADJ), small=True,
+            note="세금 내기 전 이익 + 세법 조정 금액 ('바꿀 값' 탭 3번).")
+    cp = pl("법인세 (감면 전)", f=corp_f(A_(bs)), fe=corp_f(E_(bs)), small=True, note="세금 매기는 이익 × 구간별 법인세율.")
+    nt = pl("법인세 (감면·공제 뒤)", f="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, A_(cp), CRD, A_(bs), MINR, A_(cp)),
+            fe="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, E_(cp), CRD, E_(bs), MINR, E_(cp)), small=True,
+            note="감면 전 법인세 − 감면·공제. 단 최저한세 밑으로는 안 줄어듭니다.")
+    lc = pl("법인지방소득세", f="INT(%s*%s)" % (A_(cp), LOC), fe="INT(%s*%s)" % (E_(cp), LOC), small=True, note="감면 전 법인세 × 지방소득세율.")
+    tx = pl("올해 세금 예상 합계", f="%s+%s" % (A_(nt), A_(lc)), fe="%s+%s" % (E_(nt), E_(lc)), bold=True,
+            note="처음 값 그대로면 프로그램 법인세 예상과 같습니다. " + _mark(over_where["법인세"]))
+    TAX, TAXE = q(S_PL, A_(tx)), q(S_PL, E_(tx))
     tb = None
     if P["tax_booked"]:
         tb = pl("장부에 이미 넣은 법인세등", P["tax_booked"], note="올해 장부의 법인세등 계정. 위 예상과 겹칠 수 있으니 확인하세요.")
-    net = pl("당기순이익 (예상)", f="%s-%s%s" % (A_(pre), A_(tx), ("-" + A_(tb)) if tb else ""),
+    r += 1
+    net = pl("올해 순이익 (세금 뺀 뒤)", f="%s-%s%s" % (A_(pre), A_(tx), ("-" + A_(tb)) if tb else ""),
              fe="%s-%s%s" % (E_(pre), E_(tx), ("-" + E_(tb)) if tb else ""), bold=True,
-             note="세전 이익 − 법인세. 아래 재무상태표 '올해 이익'과 '올해 법인세 예상'을 더한 값과 같습니다.")
-    r += 1
+             note="세금 내기 전 이익 − 세금. 회사에 남는 올해 이익.")
+    PL = dict((k, (q(S_PL, A_(v)), q(S_PL, E_(v)))) for k, v in
+              (("rev", rv), ("op", op), ("nin", ni), ("pre", pre), ("tax", tx), ("net", net)))
+    PRE_C, PRE_D = PL["pre"]
+    PRE_DIF = q(S_PL, xlsxw.addr(pre, Ee))
+    TB = (q(S_PL, A_(tb)), q(S_PL, xlsxw.addr(tb, Ee))) if tb else None
 
-    # ③ 재무상태표
-    sh.set(r, B, "3. 재무상태표 (%d년 %d월 말)" % (C["Y"], C["M"]), s="sec")
-    for c in (Cc, Dd, Ee, F):
-        sh.set(r, c, "", s="sec")
+    # ══════════ 재무상태표 ══════════
+    sh = bs_
+    r = 1
+    sh.set(r, B, "재무상태표 — %s (결산 비용 넣은 모습)" % asof_txt, s="title")
+    sh.heights[r] = 26
     r += 1
-    for c, t in ((B, "항목"), (Cc, "회사 전체"), (Dd, "조정"), (Ee, "기획본부 기준"), (F, "설명")):
+    r = para(sh, r, "자산(가진 것) = 부채(갚을 것) + 자본(회사 몫). 기획본부 기준은 영업외수익으로 들어온 돈을 통장에서 빼고, 그만큼 이익(자본)과 세금(부채)도 줄인 모습입니다. "
+                    "차이 = 기획본부 기준 − 회사 전체.", s="box", h=34)
+    r += 1
+    sh.set(r, B, "항목", s="th")
+    for c, t in ((Cc, "회사 전체"), (Dd, "기획본부 기준"), (Ee, "차이"), (F, "설명")):
         sh.set(r, c, t, s="th")
     r += 1
 
-    def line(label, val=None, f=None, adj=None, note="", style="td", nstyle="num"):
+    def line(label, val=None, f=None, adj=None, note="", style="td"):
+        """회사 전체(C) · 차이(E, adj 수식) · 기획본부(D) = C + E."""
         nonlocal r
         sh.set(r, B, label, s=style)
-        sh.set(r, Cc, val, f=f, s=nstyle)
+        sh.set(r, Cc, val, f=f, s="num")
         if adj:
-            sh.set(r, Dd, f=adj, s=nstyle)
+            sh.set(r, Ee, f=adj, s="dif")
         else:
-            sh.set(r, Dd, "", s=nstyle)
-        sh.set(r, Ee, f="%s+%s" % (xlsxw.addr(r, Cc), xlsxw.addr(r, Dd)), s=nstyle)
+            sh.set(r, Ee, 0, s="dif")
+        sh.set(r, Dd, f="%s+%s" % (xlsxw.addr(r, Cc), xlsxw.addr(r, Ee)), s="num")
         sh.set(r, F, note, s="note")
         r += 1
         return r - 1
@@ -586,102 +680,178 @@ def build(C, sources=""):
             last = r - 1
         tot = r
         sh.set(r, B, title + " 합계", s="tdb")
-        for c in (Cc, Dd, Ee):
+        for c in (Cc, Dd):
             sh.set(r, c, f="SUM(%s:%s)" % (xlsxw.addr(first, c), xlsxw.addr(last, c)), s="numt")
+        sh.set(r, Ee, f="SUM(%s:%s)" % (xlsxw.addr(first, Ee), xlsxw.addr(last, Ee)), s="dift")
         sh.set(r, F, "", s="note")
         r += 1
         return tot
 
+    def total(label, a, b):
+        nonlocal r
+        sh.set(r, B, label, s="tdb")
+        for c in (Cc, Dd):
+            sh.set(r, c, f="%s+%s" % (xlsxw.addr(a, c), xlsxw.addr(b, c)), s="numt")
+        sh.set(r, Ee, f="%s+%s" % (xlsxw.addr(a, Ee), xlsxw.addr(b, Ee)), s="dift")
+        sh.set(r, F, "", s="note")
+        r += 1
+        return r - 1
+
     G = C["groups"]
-    ca = group("유동자산", G["ca"], lambda: line("  영업외수익으로 들어온 돈 빼기", 0, adj="-(%s+%s)" % (X1, G0),
-                                                  note="영업외수익으로 들어온 돈을 통장 돈에서 뺍니다. 올해 몫은 전부, 지난해 몫은 그 세금을 이미 냈으므로 세금 뺀 만큼."))
+    ca = group("유동자산 (1년 안에 돈이 되는 것)", G["ca"], lambda: line("  영업외수익으로 들어온 돈 빼기", 0, adj="-(%s+%s)" % (X1, G0),
+                                                  note="영업외수익으로 들어온 돈을 통장 돈에서 뺍니다. 올해 몫은 전부, 지난해 몫은 그때 낸 세금을 뺀 만큼."))
 
     def na_extra():
         line("  감가상각·대손충당금 (결산 예상, 자산 줄임)", f="-(%s)" % side_sum("asset"),
-             note="1번 표의 감가상각비·대손충당금 중 '예'인 것. 장비 값과 받을 돈을 그만큼 줄여 봅니다.")
-    na = group("비유동자산", G["na"] + ([("?", "종류를 모르는 계정 (확인 필요)", C["unknown"])] if C["unknown"] else []), na_extra)
-    ta = r
-    sh.set(r, B, "자산 총계", s="tdb")
-    for c in (Cc, Dd, Ee):
-        sh.set(r, c, f="%s+%s" % (xlsxw.addr(ca, c), xlsxw.addr(na, c)), s="numt")
-    sh.set(r, F, "", s="note")
-    r += 1
+             note="'바꿀 값' 탭 1번의 감가상각비·대손충당금 중 '예'인 것. 장비 값과 받을 돈을 그만큼 줄여 봅니다.")
+    na = group("비유동자산 (장비·보증금 등)", G["na"] + ([("?", "종류를 모르는 계정 (확인 필요)", C["unknown"])] if C["unknown"] else []), na_extra)
+    ta = total("자산 총계 (가진 것)", ca, na)
+
     def cl_extra():
-        line("  올해 법인세 예상 (아직 장부에 없음)", f=TAX, adj="%s-%s" % (TAXE, TAX),
+        line("  올해 세금 예상 (아직 장부에 없음)", f=TAX, adj="%s-%s" % (TAXE, TAX),
              note="결산 때 장부에 들어갈 올해 세금을 미리 빚으로 잡습니다. 기획본부 기준은 줄어드는 세금만큼 작습니다.")
-        line("  결산 때 들어갈 비용 중 낼 돈 (퇴직급여·상여금·카드·4대보험, 예상)", f=side_sum("liab"),
-             note="1번 표의 퇴직급여·상여금·카드값·4대보험 회사분 중 '예'인 것. 아직 안 낸 돈이라 빚으로 잡습니다.")
-    cl = group("유동부채", G["cl"], cl_extra)
-    nl = group("비유동부채", G["nl"])
-    tl = r
-    sh.set(r, B, "부채 총계", s="tdb")
-    for c in (Cc, Dd, Ee):
-        sh.set(r, c, f="%s+%s" % (xlsxw.addr(cl, c), xlsxw.addr(nl, c)), s="numt")
-    sh.set(r, F, "", s="note")
-    r += 1
+        line("  결산 비용 중 낼 돈 (퇴직급여·상여금·카드·4대보험, 예상)", f=side_sum("liab"),
+             note="'바꿀 값' 탭 1번의 퇴직급여·상여금·카드값·4대보험 회사분 중 '예'인 것. 아직 안 낸 돈이라 빚으로 잡습니다.")
+    cl = group("유동부채 (1년 안에 갚을 것)", G["cl"], cl_extra)
+    nl = group("비유동부채 (1년 뒤 갚을 것)", G["nl"])
+    tl = total("부채 총계 (갚을 것)", cl, nl)
 
     def eq_extra():
         line("  이익잉여금 (지난해까지 쌓인 이익)", C["retained"], adj="-%s" % G0,
-             note="자산 − 부채 − 자본금 − 올해 이익으로 계산 (장부 결산 대체와 상관없이 맞음). 기획본부 기준은 지난해까지 영업외수익(세금 뺀 뒤)만큼 작습니다.%s"
-             % (" %d년 전 이월 이익에 든 영업외수익은 장부에 없어 빼지 못했습니다." % C["first_year"]))
-        line("  올해 이익 (세금 전)", f=xlsxw.addr(pre, Cc) + (("-" + xlsxw.addr(tb, Cc)) if tb else ""),
-             adj="%s%s" % (xlsxw.addr(pre, Dd), ("-" + xlsxw.addr(tb, Dd)) if tb else ""),
-             note="2번 표 세전 이익 (결산 비용 반영)%s. 기획본부 기준은 올해 영업외수익만큼 작습니다." % (" − 장부 법인세등" if tb else ""))
-        line("  올해 법인세 예상", f="-" + TAX, adj="%s-%s" % (TAX, TAXE), note="부채의 '올해 법인세 예상'과 같은 금액. 기획본부 기준은 세금이 줄어든 만큼 덜 뺍니다.")
-    eq = group("자본", C["capital"], eq_extra)
-    tle = r
-    sh.set(r, B, "부채와 자본 총계", s="tdb")
-    for c in (Cc, Dd, Ee):
-        sh.set(r, c, f="%s+%s" % (xlsxw.addr(tl, c), xlsxw.addr(eq, c)), s="numt")
-    sh.set(r, F, "", s="note")
-    r += 1
+             note="기획본부 기준은 지난해까지 영업외수익(세금 뺀 뒤)만큼 작습니다. %d년 전 이월 이익에 든 영업외수익은 장부에 없어 빼지 못했습니다." % C["first_year"])
+        line("  올해 이익 (세금 전)", f=PRE_C + (("-" + TB[0]) if TB else ""), adj=PRE_DIF + (("-" + TB[1]) if TB else ""),
+             note="'손익' 탭의 세금 내기 전 이익%s. 기획본부 기준은 올해 영업외수익만큼 작습니다." % (" − 장부 법인세등" if TB else ""))
+        line("  올해 세금 예상", f="-" + TAX, adj="%s-%s" % (TAX, TAXE), note="부채의 '올해 세금 예상'과 같은 금액을 이익에서 뺍니다.")
+    eq = group("자본 (회사 몫 = 자산 − 부채)", C["capital"], eq_extra)
+    tle = total("부채와 자본 총계", tl, eq)
     sh.set(r, B, "맞춤 확인 (자산 총계 − 부채와 자본 총계)", s="td")
     for c in (Cc, Dd, Ee):
         sh.set(r, c, f="%s-%s" % (xlsxw.addr(ta, c), xlsxw.addr(tle, c)), s="ok")
-    sh.set(r, F, "0이면 맞습니다. 0이 아니면 노란 칸 대신 계산식 칸을 고친 것이니 파일을 다시 만드세요.", s="note")
+    sh.set(r, F, "0이면 자산 = 부채 + 자본이 맞습니다.", s="note")
     chk = r
-    r += 2
+    BSX = dict((k, (q(S_BS, xlsxw.addr(v, Cc)), q(S_BS, xlsxw.addr(v, Dd)))) for k, v in
+               (("assets", ta), ("liab", tl), ("equity", eq), ("check", chk)))
 
-    # ④ 비용이 크게 잡혔을 수 있는 항목
-    sh.set(r, B, "4. 기획본부가 알기 어려운, 비용이 크게 잡혔을 수 있는 항목", s="sec")
+    # ══════════ 바꿀 값: 결과 미리 보기 ══════════
+    r = prev_row
+    for c, t in ((B, "결과 미리 보기 (노란 칸을 바꾸면 바로 바뀜)"), (Cc, ""), (Dd, "회사 전체"), (Ee, "기획본부 기준"), (F, "")):
+        ip.set(r, c, t, s="th")
+    ip.merge(r, B, r, Cc)
+    r += 1
+    for label, (a, b), note in (("올해 세금 예상", PL["tax"], "법인세 + 지방소득세"),
+                                ("올해 순이익 (세금 뺀 뒤)", PL["net"], "회사에 남는 올해 이익"),
+                                ("자본 총계 (회사 몫)", BSX["equity"], "자산 − 부채"),
+                                ("부채 총계 (갚을 것)", BSX["liab"], "결산 비용 중 낼 돈·세금 포함")):
+        ip.set(r, B, label, s="tdb")
+        ip.set(r, Cc, "", s="td")
+        ip.merge(r, B, r, Cc)
+        ip.set(r, Dd, f=a, s="numb")
+        ip.set(r, Ee, f=b, s="numb")
+        ip.set(r, F, note, s="note")
+        r += 1
+
+    # ══════════ 요약 ══════════
+    sh = sm
+    r = 1
+    sh.set(r, B, "기획본부용 재무상태표", s="title")
+    sh.heights[r] = 28
+    r += 1
+    sh.set(r, B, "%s 기준 · 회사 전체 숫자에서 영업외수익(이자·정부지원금·잡이익 등)만 뺀 모습 · 손익은 %s" % (asof_txt, period), s="sub")
+    r += 1
+    sh.set(r, B, made, s="sub")
+    r += 2
+    r = head(sh, r, "한눈에 보기", ("항목", "회사 전체", "기획본부 기준", "차이", "뜻"))
+    for label, (a, b), note in (
+            ("매출", PL["rev"], "같음 — 영업외수익만 빼므로 매출은 그대로입니다."),
+            ("영업이익 (본업으로 번 돈)", PL["op"], "같음 — 결산 비용(감가상각·퇴직급여·상여금 등)을 넣은 값입니다."),
+            ("영업외수익 (이자·지원금 등)", PL["nin"], "기획본부가 만든 이익이 아니라서 기획본부 기준에서 뺍니다."),
+            ("올해 세금 예상", PL["tax"], "이익이 줄어든 만큼 세금도 줄어듭니다."),
+            ("올해 순이익 (세금 뺀 뒤)", PL["net"], "회사에 남는 올해 이익."),
+            ("자산 총계 (가진 것)", BSX["assets"], "영업외수익으로 들어온 돈만큼 작습니다."),
+            ("부채 총계 (갚을 것)", BSX["liab"], "세금 예상이 줄어든 만큼 작습니다."),
+            ("자본 총계 (회사 몫)", BSX["equity"], "기획본부가 만든 이익으로만 쌓인 회사 몫.")):
+        big = label.startswith(("올해 순이익", "자본 총계"))
+        sh.set(r, B, label, s="kpil" if big else "td")
+        sh.set(r, Cc, f=a, s="kpi" if big else "num")
+        sh.set(r, Dd, f=b, s="kpi" if big else "num")
+        sh.set(r, Ee, f="%s-%s" % (xlsxw.addr(r, Dd), xlsxw.addr(r, Cc)), s="difk" if big else "dif")
+        sh.set(r, F, note, s="note")
+        if big:
+            sh.heights[r] = 22
+        r += 1
+    sh.set(r, B, "표 맞춤 (자산 = 부채 + 자본)", s="td")
+    sh.set(r, Cc, f='IF(ABS(%s)+ABS(%s)<1,"맞음","안 맞음")' % BSX["check"], s="okt")
+    sh.set(r, Dd, "", s="td")
+    sh.set(r, Ee, "", s="td")
+    sh.merge(r, Cc, r, Ee)
+    sh.set(r, F, "'안 맞음'이면 파일을 프로그램에서 다시 만드세요.", s="note")
+    r += 2
+    r = para(sh, r, "기획본부 기준은 이렇게 만들었습니다", s="boxb")
+    for t in ("① 회사 전체 장부 값 그대로에 결산 때 들어갈 비용(감가상각·대손충당금·퇴직급여·카드값·4대보험 회사분, 정해지면 연말 상여금)을 넣었습니다. "
+              "경영관리·플랜트8 비용과 영업외비용(대출 이자 등)도 그대로 둡니다.",
+              "② 영업외수익(이자·정부지원금·잡이익 등)만 뺐습니다. 기획본부가 만든 이익이 아니기 때문입니다.",
+              "③ 이익이 줄어든 만큼 세금도 다시 계산했습니다 (법인세 + 지방소득세)."):
+        r = para(sh, r, t, s="box", h=30)
+    r += 1
+    r = para(sh, r, "숫자를 바꿔 보려면", s="boxb")
+    for t in ("① 아래 '바꿀 값' 탭(노란색)을 엽니다.",
+              "② 노란 칸만 바꾸세요. 연말 상여금이 정해지면 금액을, 빼지 않을 영업외수익은 '아니오'를 고릅니다. 다른 칸은 잠겨 있어 바뀌지 않습니다.",
+              "③ 바꾸면 이 요약과 '손익'·'재무상태표' 탭이 바로 다시 계산됩니다. 되돌리려면 '처음 값' 칸 숫자를 다시 적으세요."):
+        r = para(sh, r, t, s="yel", h=30)
+    r += 1
+    r = para(sh, r, "탭 안내: 요약(이 장) · 바꿀 값(노란 칸) · 손익(이익과 세금 계산) · 재무상태표(계정별) · 참고(크게 잡혔을 수 있는 비용·낱말 풀이)", s="sub")
+
+    # ══════════ 참고 ══════════
+    sh = rf
+    r = 1
+    sh.set(r, B, "참고", s="title")
+    sh.heights[r] = 26
+    r += 1
+    sh.set(r, B, "1. 기획본부가 알기 어려운, 비용이 크게 잡혔을 수 있는 항목", s="sec")
     for c in (Cc, Dd, Ee, F):
         sh.set(r, c, "", s="sec")
     r += 1
-    for c, t in ((B, "항목"), (Cc, "올해 금액"), (Dd, "어디에 들었나"), (F, "왜 크게 보일 수 있나")):
+    for c, t in ((B, "항목"), (Cc, "올해 금액"), (Dd, "어디에 들었나"), (Ee, ""), (F, "왜 크게 보일 수 있나")):
         sh.set(r, c, t, s="th")
-    sh.set(r, Ee, "", s="th")
-    sh.merge(r, Dd, r, Ee)
     r += 1
     for i, (nm, v, where, why) in enumerate(C["over"]):
         sh.set(r, B, "%s %s" % (_circ(i), nm), s="td")
         sh.set(r, Cc, v, s="num")
         sh.set(r, Dd, where, s="td")
         sh.set(r, Ee, "", s="td")
-        sh.merge(r, Dd, r, Ee)
         sh.set(r, F, why, s="note")
         r += 1
     if not C["over"]:
         sh.set(r, B, "올해 장부에 해당 항목 없음", s="td")
         r += 1
-    sh.set(r, B, "이 항목들은 표에서 빼지 않았습니다 (회사 전체 비용 그대로). 숫자를 읽을 때 '이만큼은 기획본부가 직접 만든 비용이 아닐 수 있다'고 보세요.", s="txt")
-    sh.merge(r, B, r, F)
-    sh.heights[r] = 30
-    r += 2
-
-    # ⑤ 쓰는 법
-    sh.set(r, B, "5. 쓰는 법", s="sec")
+    r = para(sh, r, "이 항목들은 표에서 빼지 않았습니다 (회사 전체 비용 그대로). '이만큼은 기획본부가 직접 만든 비용이 아닐 수 있다'고 보고 읽으세요.", h=30)
+    r += 1
+    sh.set(r, B, "2. 낱말 풀이", s="sec")
     for c in (Cc, Dd, Ee, F):
         sh.set(r, c, "", s="sec")
     r += 1
-    for t in ("1. 어떤 영업외수익을 뺄지 1번 표 '뺄까요'에서 예/아니오를 고르면 손익·재무상태표가 바로 바뀝니다.",
-              "2. 금액이나 세금 줄어드는 비율, 법인세 예상을 바꿔 '이렇게 되면 어떻게 되나'를 볼 수 있습니다. 원래 값은 1번 표 설명 칸에 있습니다.",
-              "3. '조정' 칸 = 기획본부 기준 − 회사 전체. 맨 아래 '맞춤 확인'이 0이면 자산 = 부채 + 자본이 맞습니다.",
-              "4. 회사 전체 칸은 위하고 분개장(계정 합계) 그대로입니다. 결산 때 들어갈 비용(감가상각 등)은 1번 표에서 기획본부 기준에만 넣습니다."):
-        sh.set(r, B, t, s="txt")
-        sh.merge(r, B, r, F)
+    for w, t in (("영업외수익", "본업(행사·프로젝트)이 아닌 데서 들어온 돈. 예금 이자, 정부지원금, 잡이익 등."),
+                 ("결산 비용", "연말 결산 때 장부에 한꺼번에 넣는 비용. 감가상각비(장비 값 줄어듦), 대손충당금(못 받을 수 있는 돈), 퇴직급여, 상여금 등."),
+                 ("세금 매기는 이익 (과세표준)", "세금 내기 전 이익에 세법 조정을 더한 금액. 여기에 법인세율을 곱합니다."),
+                 ("최저한세", "감면·공제를 받아도 최소한 내야 하는 법인세."),
+                 ("이익잉여금", "지난해까지 회사에 쌓인 이익 (배당 등으로 나가지 않은 몫)."),
+                 ("자본", "자산 − 부채. 회사가 빚을 다 갚고 남는 회사 몫.")):
+        sh.set(r, B, w, s="tdb")
+        sh.set(r, Cc, t, s="td")
+        for c in (Dd, Ee, F):
+            sh.set(r, c, "", s="td")
+        sh.merge(r, Cc, r, F)
         r += 1
-    C["_cells"] = {"check": [xlsxw.addr(chk, c) for c in (Cc, Ee)], "net": (xlsxw.addr(net, Cc), xlsxw.addr(net, Ee)), "K": K, "tax": (TAX, TAXE),
-                   "equity": (xlsxw.addr(eq, Cc), xlsxw.addr(eq, Ee)), "assets": (xlsxw.addr(ta, Cc), xlsxw.addr(ta, Ee))}
+    r += 1
+    sh.set(r, B, "3. 사용한 자료", s="sec")
+    for c in (Cc, Dd, Ee, F):
+        sh.set(r, c, "", s="sec")
+    r += 1
+    r = para(sh, r, made, h=30)
+    r = para(sh, r, "회사 전체 칸은 위하고 분개장(계정 합계)과 프로그램 예상(결산 비용·법인세)입니다. 진행 중 프로젝트의 남은 원가는 넣지 않았습니다.", h=30)
+
+    C["_cells"] = {"check": [q(S_BS, xlsxw.addr(chk, c)) for c in (Cc, Dd)], "net": PL["net"], "K": K, "tax": (TAX, TAXE),
+                   "equity": BSX["equity"], "assets": BSX["assets"]}
     return bk
 
 
@@ -690,7 +860,7 @@ def _circ(i):
 
 
 def _mark(items):
-    return ("※ 아래 4번 표 %s 들어 있음" % "·".join(items)) if items else ""
+    return ("※ '참고' 탭 1번 %s 들어 있음" % "·".join(items)) if items else ""
 
 
 def write(C, out_dir, sources=""):
