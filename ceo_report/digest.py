@@ -348,17 +348,26 @@ def _track_table(K, last_only):
 
 def _track_line(K):
     """1쪽 오차 상자 아래 한 줄 (숫자로만)."""
+    # 11/18: 맨 앞이 최근 달 (예전엔 맨 뒤=가장 오래된 달을 씀). 다 끝난 달이 아직 없으면 보고마다 그 뒤 기간(주 단위) 표에서
+    # 7일 넘게 지난 가장 최근 보고로 — 예전엔 기록이 있어도 '지난 보고 기록 없음'으로 나왔음
     ms = K.get("months") or []
-    if not ms:
-        return ""
-    r = ms[-1]
     out = []
+    if ms:
+        r = ms[0]
+        out.append("%s 한 달" % r["ym"])
+    else:
+        ws = [w for w in (K.get("weeks") or []) if w.get("made") and w.get("to")]
+        if not ws:
+            return ""
+        long_ = [w for w in ws if (w["to"] - w["made"]).days >= 7]
+        r = long_[0] if long_ else max(ws, key=lambda w: (w["to"] - w["made"]).days)
+        out.append("%s 보고 → %s%s" % (r["made"].strftime("%m/%d"), r["to"].strftime("%m/%d"), " (진행 중)" if r.get("part") else ""))
     for io, name in (("in", "입금"), ("out", "출금")):
         c = r[io]
         if c["all"]:
             out.append("예상 포함 %s 예측이 실제보다 %s" % (name, "%.0f%% %s" % (abs(c["all"] - c["actual"]) * 100.0 / c["all"],
                                                                   "많음" if c["all"] > c["actual"] else "적음")))
-    return " · ".join(out)
+    return " · ".join(out) if len(out) > 1 else ""
 
 
 def render(R, I, L, todo, filing, prev):

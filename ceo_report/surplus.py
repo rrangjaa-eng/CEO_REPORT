@@ -403,7 +403,7 @@ def _tag(state):
     return ""
 
 
-def render(S, brief=False):
+def render(S, brief=False, tb_at=None):
     """경영관리 보고 한 영역 (HTML 조각). brief=True 면 감면 후보·세법 기준표를 뺀다 (따로 내는 설명 양식용)."""
     if not S:
         return ("<div class='note'>이익잉여금 자료 없음 — 위하고 분개장을 받아 '자료 변환'을 다시 하면 잉여금.csv 가 생깁니다.</div>")
@@ -451,7 +451,9 @@ def render(S, brief=False):
     from . import taxbreak
     h.append(dividend.advice_html(S.get("advice"), esc))
     if not brief:
-        h.append(taxbreak.render(S.get("tb"), esc))
+        # 11/18: 같은 보고서에 감면·공제 검토 장이 따로 있으면 표를 두 번 싣지 않고 그 장을 가리킨다
+        h.append("<div class='note'>%s</div>" % esc("법인세 감면·공제 전체 검토는 " + tb_at + "에 있습니다.") if tb_at
+                 else taxbreak.render(S.get("tb"), esc))
         from . import taxlaw
         h.append(taxlaw.render(S.get("law"), esc))
     h.append(dividend.render(S.get("div"), esc, S))

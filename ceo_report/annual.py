@@ -348,6 +348,7 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
         mm = re.search(r"1~(\d+)월", ni[2]) if ni else None
         if not ni or ni[0] is None or (mm and int(mm.group(1)) > asof.month):
             y_re = year - 1
+    A["re_year"] = y_re   # 보고서.py 가 월간 계산을 붙여 다시 부를 때 같은 해를 쓴다 (11/18: 거기서 작년으로 덮어써 배당이 2025년 기준이던 것)
     A["re"] = surplus.for_report(input_dir, y_re, strict=True, asof=asof)
     A["cf"] = [(n, v) for n, _, v in get(Y, "현금흐름")]
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
@@ -394,6 +395,26 @@ def _fold_dep(P):
         V["dep_book"], V["dep"] = P["dep"], P["dep"] + p
         V["common"], V["op"] = P["common"] + p, P["op"] - p
         V["dep_pending"], V["dep_folded"] = None, True
+    return V
+
+
+def _with_dep(P, cut):
+    """달별·분기·판관비 항목 표용 사본 (11/18): 결산 전 감가상각비 예상을 끝난 달에 고르게 나눠(월할) 판관비·영업이익에 넣는다.
+    1절 요약(_fold_dep)은 예상을 넣고 달별 표·분기 합계는 빼서 영업이익이 129백만·150백만 두 개로 보이던 것."""
+    p = (P or {}).get("dep_pending") or 0
+    if not P or not p or not cut:
+        return P
+    per = [p * (i + 1) // cut - p * i // cut for i in range(cut)] + [0] * (12 - cut)
+    V = dict(P)
+    V["common_m"] = [P["common_m"][i] + per[i] for i in range(12)]
+    V["op_m"] = [P["op_m"][i] - per[i] for i in range(12)]
+    V["common"], V["op"] = P["common"] + p, P["op"] - p
+    if P.get("acct"):
+        acc = dict(P["acct"])
+        k = next((k for k in acc if "감가상각" in k), "감가상각비")
+        acc[k] = acc.get(k, 0) + p
+        V["acct"] = acc
+    V["dep_spread"] = p
     return V
 
 
@@ -668,8 +689,8 @@ EXTRA_CSS = (".pl td{text-align:right}.pl td:first-child{text-align:left}.pl tr.
 
 def _season_chart(A):
     from .render import _nice_step, _axis
-    Yp, Lp = A["Y"], A.get("Lfull") or A["L"]   # 작년 막대는 한 해 전체 (달별 비교라 기간을 줄이지 않음)
     cut = A.get("cut", 12)
+    Yp, Lp = _with_dep(A["Y"], cut), A.get("Lfull") or A["L"]   # 작년 막대는 한 해 전체 (달별 비교라 기간을 줄이지 않음). 올해 영업이익은 요약과 같게 (11/18)
     rev = [v if i < cut else None for i, v in enumerate(Yp["rev_m"])]   # 연중이면 아직 안 끝난 달은 '-'
     op = [v if i < cut else None for i, v in enumerate(Yp["op_m"])]
     lrev = [None] * 12
@@ -823,7 +844,8 @@ def render(A, mode):
     goal_all = sum((A["goals"].get((str(year), t["name"])) or (0, 0))[0] or 0 for t in A["teams"])
     lm = ("1~%d월" % cut if mid else "") + (" (%d개월)" % len(Lp["months"]) if Lp and len(Lp["months"]) < cut else "")
     ym = " 1~%d월" % cut if mid else ""   # 올해 숫자 이름 뒤에 붙이는 기간
-    bal_lab = "통장 잔액 (%s)" % asof.strftime("%m-%d").lstrip("0") if mid else "연말 통장 잔액"
+    # 11/18: 주간 대표 보고와 같은 이름 (같은 숫자를 다른 이름으로 부르던 것)
+    bal_lab = "오늘 쓸 수 있는 돈 (%s)" % asof.strftime("%m-%d").lstrip("0") if mid else "연말 통장 잔액"
 
     # ── 1쪽: 한 해 요약 ──
     h.append("<div class='four top'>")
@@ -1022,7 +1044,7 @@ def render(A, mode):
                       ["합계", "%d건" % len(NX), W(sum(p["est"] or 0 for p in NX)), W(b), W(pd_), W(b - pd_)]))
     else:
         h.append("<div class='note'>%d년 행사 프로젝트 없음</div>" % (year + 1))
-    h.append("<div class='wsub'>%d년 목표 (정해 주실 것)</div>" % (year + 1))
+    h.append("<div class='wsub'>%d년 목표</div>" % (year + 1))   # 11/18: 대표용엔 안내 문구를 넣지 않는다 (사용자 2026-11-17)
     rows_ = []
     for T in A["teams"]:
         g = A["goals_next"].get(T["name"])
@@ -1032,8 +1054,6 @@ def render(A, mode):
                       _tpct(g[1]) if g and g[1] is not None else "<span class='blank'>입력 전</span>",
                       W(got) + (" (%s)" % pct(got, g[0]) if g and g[0] else "")])
     h.append(_tab(["팀", "%d년%s 매출" % (year, ym), "%d년%s 수익률" % (year, ym), "%d년 매출 목표" % (year + 1), "%d년 목표 수익률" % (year + 1), "목표 중 이미 받은 일"], rows_, "pt tgy"))
-    if not A["goals_next"]:
-        h.append("<div class='note'>%d년 팀 목표는 대표보고 창 '가끔 넣는 값'의 팀 목표에 넣습니다.</div>" % (year + 1))
     h.append("</div></div>")
     # ── 5쪽: 기업신용평가 미리보기 (사용자 2026-11-17: 연간 보고에 있어야 함). 대표용은 등급·점수·지표 값만, 전체는 경영관리 9장
     from . import credit
@@ -1096,7 +1116,8 @@ def _risks(A):
 
 
 def _detail(A):
-    year, Yp, Lp = A["year"], A["Y"], A["L"]
+    year = A["year"]
+    Yp, Lp = _with_dep(A["Y"], A.get("cut", 12)), _with_dep(A["L"], A.get("cut", 12))   # 1절 요약과 같은 영업이익 (11/18)
     # 영역별 보기 (사용자 2026-11-11): [(영역 키, 이름, 묶음, HTML)] — render 가 영역으로 감싸고 목록을 붙인다
     names = ["달별 손익과 결산", "분기별 실적", "통장 흐름", "거래처", "팀·프로젝트·판관비", "%d년 준비 근거" % (year + 1)]
     out, d = [], []
@@ -1118,10 +1139,13 @@ def _detail(A):
                                       [[n] + [W(v) if i < cm else "—" for i, v in enumerate(vs)] + [W(sum(vs))] for n, vs in rows], "pt tx m12") + "</div>")
     if cm < 12:
         d.append("<div class='note'>연중 보고: %d월부터는 아직 끝나지 않은 달이라 비움 (기준일 %s)</div>" % (cm + 1, A["asof"].isoformat()))
+    if Yp.get("dep_spread"):
+        d.append("<div class='note'>판관비·영업이익에 결산 전 감가상각비 예상 %s원을 1~%d월에 고르게 나눠 넣음 (요약의 영업이익과 같은 금액)</div>"
+                 % (W(Yp["dep_spread"]), cm))
     d.append("<div class='note'>영업외 수익 %s · 영업외 비용 %s 는 연 합계로 손익표에 반영 (부서비용 기준)</div>" % (W(Yp["nin"]), W(Yp["nout"])))
     d.append("<div class='evh'>근거 1-2 · 결산 확정치와 연중 예상</div>")
     d.append(_tab(["항목", "연중 예상", "결산", "차이", "예상 근거"], [
-        ["감가상각비", W(A["dep_est"]), W(Yp["dep"]) if A["closed"] else "결산 전", sgn(Yp["dep"] - A["dep_est"]) if A["closed"] and A["dep_est"] else "—", esc(A["dep_src"] or "")],
+        ["감가상각비 (한 해 전체)", W(A["dep_est"]), W(Yp["dep"]) if A["closed"] else "결산 전", sgn(Yp["dep"] - A["dep_est"]) if A["closed"] and A["dep_est"] else "—", esc(A["dep_src"] or "")],
         ["법인세 등", W(A["tax_est"]), W(A["tax"]) if A["tax_fixed"] else "결산 전", sgn(A["tax"] - A["tax_est"]) if A["tax_fixed"] else "—", "월간 보고와 같은 계산 (10장)" if A.get("tax_same") else "세전 이익 × 세율, 세무조정 없음"]], "pt evt"))
     cut("d1", "1. " + names[0])
     d.append("<h2 id='d2'>2. 분기별 실적</h2><div class='evh'>근거 2-1 · 분기 합계%s</div>" % ("와 작년 같은 분기" if Lp else ""))
@@ -1226,7 +1250,7 @@ def _detail(A):
                                                  if A.get("blocked") else cashflow.render(A.get("cfs"))))
     cut("d7", "7. 현금흐름표")
     from . import surplus
-    d.append("<h2 id='d8'>8. 이익잉여금처분계산서</h2>" + surplus.render(A.get("re")))
+    d.append("<h2 id='d8'>8. 이익잉여금처분계산서</h2>" + surplus.render(A.get("re"), tb_at="11장" if ((A.get("M") or {}).get("re") or {}).get("tb") else None))
     cut("d8", "8. 이익잉여금처분계산서")
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 연간 경영관리 보고에 늘
     d.append("<h2 id='d9'>9. 기업신용평가 미리보기</h2>" + credit.render(A.get("credit")))

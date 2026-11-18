@@ -231,9 +231,9 @@ def render(R, now_snap, diff, meta, auto_html=""):
         for p in per:
             f, a = p["firm"], p["spend"]
             h.append("<tr><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n%s'><b>%s</b></td>"
-                     "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f["in"]), _won(f["out"]),
+                     "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f.get("pin", f["in"])), _won(f.get("pout", f["out"])),
                                                        " neg" if f["avail"] is not None and f["avail"] < 0 else "", _won(f["avail"]), _won(a["avail"])))
-        h.append("</table></section>")
+        h.append("</table><p class='muted'>들어올 돈·나갈 돈 = 그 기간에 생기는 것만 (대표 주간 보고와 같음). 여유 자금 = 오늘부터 그 기간 끝까지 가장 적을 때 잔액 − 최소 보유현금</p></section>")
     # 세금 등
     taxes = sorted([t for t in (R.get("tax") or []) if t.get("due") and asof < t["due"] <= asof + dt.timedelta(days=TAX_DAYS)],
                    key=lambda t: t["due"])
@@ -261,9 +261,9 @@ def render(R, now_snap, diff, meta, auto_html=""):
             h.append("<tr><td>[%s] %s</td><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td>"
                      "<td class='n%s'>%s</td><td class='n'>%s</td></tr>"
                      % (_e(p.get("id")), _e(p.get("name")), _e(p.get("team")), _e(p.get("event_date") or ""), _won(sales),
-                        _won(p.get("paid_total")), _won(p.get("expected")), " neg" if (profit or 0) < 0 else "",
+                        _won(p.get("paid_total")), _won(p.get("cost_end")), " neg" if (profit or 0) < 0 else "",
                         _won(profit), rate))
-        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 쓴 돈 + 요청·카드 미결제·집행 계획·남은 예산. 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액). 계약이 비면 사전견적·장부 매출로 계산</p>")
+        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 등록 지출(쓴 돈 + 요청·카드 미결제·집행 계획)과 추정 예산 중 큰 쪽 (끝난 프로젝트는 등록 지출). 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액, 경영관리 보고와 같은 식). 계약이 비면 사전견적·장부 매출로 계산</p>")
     else:
         h.append("<p class='muted'>프로젝트 자료가 없습니다 (인트라넷 자료를 가져온 뒤 변환하면 보입니다).</p>")
     h.append("</section>")

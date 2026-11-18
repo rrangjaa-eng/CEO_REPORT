@@ -180,14 +180,17 @@ class Advise(unittest.TestCase):
     def test_taxbreak_total_used_when_no_manual(self):
         tax = [{"kind": "법인세", "due": dt.date(2027, 3, 31), "amount": 50_000_000},
                {"kind": "법인지방소득세", "due": dt.date(2027, 4, 30), "amount": 5_000_000}]
-        s = dict(S, tb={"total": 20_000_000})
+        # 11/18 (사용자 2026-11-17 '받음'만 세금 계산에): '받음'(넣음) 표시한 후보만 뺀다
+        s = dict(S, tb={"total": 20_000_000, "rows": [("중소기업 특별세액감면", "해당", 20_000_000, "", "", "", "넣음 · 받음")]})
         A = dv.advise(R(100_000_000, tax=tax), s, {"best": 90_000_000}, ready())
         self.assertEqual(A["amount"], 65_000_000)   # 1억 − (5천만−2천만) − 5백만 (지방소득세는 감면 없음, 코덱스 검토 11/14)
+        s2 = dict(S, tb={"total": 20_000_000, "rows": [("중소기업 특별세액감면", "해당", 20_000_000, "", "", "", "안 넣음 · 기본")]})
+        self.assertEqual(dv.advise(R(100_000_000, tax=tax), s2, {"best": 90_000_000}, ready())["amount"], 45_000_000)
 
     def test_taxbreak_not_cut_twice(self):
         tax = [{"kind": "법인세", "due": dt.date(2027, 3, 31), "amount": 30_000_000,
                 "basis": "과세표준 … → 감면·공제 뒤 30,000,000 + 농어촌특별세 0 − 중간예납 등 0"}]
-        s = dict(S, tb={"total": 20_000_000})
+        s = dict(S, tb={"total": 20_000_000, "rows": [("중소기업 특별세액감면", "해당", 20_000_000, "", "", "", "넣음 · 받음")]})
         A = dv.advise(R(100_000_000, tax=tax), s, {"best": 90_000_000}, ready())
         self.assertEqual(A["amount"], 70_000_000)   # 법인세 예상이 이미 감면 뒤라 또 빼지 않음
 

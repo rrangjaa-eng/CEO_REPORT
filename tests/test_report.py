@@ -981,7 +981,8 @@ class TestUserRulesLocked(Base):
     def test_receivable_amounts_and_overdue_days(self):
         s5 = self.R["s5"]
         self.assertEqual((s5["contract"], s5["issued"], s5["unissued"], s5["ar"]),
-                         (828_000_000, 358_000_000, 470_000_000, 220_000_000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
+                         (828_000_000, 358_000_000, 490_000_000, 220_000_000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
+        # 11/18: 계약금액이 빈 P26208은 사전견적 2천만으로 미발행을 셈 (예전엔 '판단 불가'로 합계에서 빠짐)
         self.assertEqual([(v["project"], v["overdue_days"], v["outstanding"]) for v in s5["overdue"]],
                          [("P26202", 33, 110_000_000)])
 
@@ -1028,7 +1029,7 @@ class TestUserRulesLocked(Base):
         s5 = R["s5"]
         self.assertEqual((s5["ar"], s5["ar_unknown_n"]), (132_000_000, 2))
         self.assertEqual((s5["issued"], s5["issued_unknown_n"]), (350_000_000, 1))
-        self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (428_000_000, 2))
+        self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (448_000_000, 1))   # 11/18: P26208 사전견적 기준 2천만
         html = render(R, "mgmt")
         sec5 = section(html, 5)
         row_a = re.findall(r"<tr[^>]*><td>P26203</td>.*?</tr>", sec5, re.S)[0]
@@ -1302,8 +1303,9 @@ class TestAllUnknownTotals(unittest.TestCase):
         s5, s4 = R["s5"], R["s4"]
         self.assertIsNone(s5["contract"])
         self.assertEqual(s5["contract_missing"], 8)
-        self.assertIsNone(s5["unissued"])
-        self.assertEqual(s5["unissued_unknown_n"], 8)
+        # 11/18: 계약금액이 모두 비어도 미발행은 사전견적 기준으로 셈 (견적보다 더 발행한 건 0, 사전견적 없는 P26204만 판단 불가)
+        self.assertEqual(s5["unissued"], 345_000_000)
+        self.assertEqual(s5["unissued_unknown_n"], 1)
         self.assertIsNone(s4["unrecognized"])
         self.assertEqual(s4["unrecognized_missing"], 8)
         # 첫 화면은 2026-11-03부터 계약금액 대신 '행사 후 세금계산서 미발행'(사전견적 기준)을 보인다. 계약금액 칸은 상세 4·5번에.

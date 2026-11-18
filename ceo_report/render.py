@@ -562,7 +562,7 @@ def _periodic(R, P):
     if "h" in P:
         from . import surplus
         out.append(("c4", "C-4 이익잉여금처분계산서 (반기)",
-                    "<h2 id='c4'>C-4 이익잉여금처분계산서 · 배당 판단 (반기 미리보기, 확정은 연간 보고)</h2>" + surplus.render(R.get("re"))))
+                    "<h2 id='c4'>C-4 이익잉여금처분계산서 · 배당 판단 (반기 미리보기, 확정은 연간 보고)</h2>" + surplus.render(R.get("re"), tb_at="C-6" if R.get("kind") == "monthly" and (R.get("re") or {}).get("tb") else None)))
     if R.get("kind") == "monthly":   # 법인세 감면·공제 전체 검토: 매달 (사용자 2026-11-17 '최신 법령으로 모두 찾아 적용할 게 있는지 검토')
         from . import taxbreak
         tb_ = (R.get("re") or {}).get("tb")
@@ -1208,7 +1208,7 @@ def _project_bars(R, per, flagged_only=False, active_only=False):
                 rem_txt, _na(_remain_excluded_text(tot))))
     h.append("<div class='note'>잔여 예산 = 원가 예산 − (집행액 + 집행 예정액). 예산이 지정된 프로젝트만 합계. 미확인 원가가 있는 프로젝트는 ‘확인 필요’로 두고 합계에서 뺌. "
              "진행 중 프로젝트의 잔여 예산은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음 "
-             "(그 날이 지났으면 기준일 다음 금요일, 행사일 없으면 날짜 없는 지급 예정). 완료 프로젝트는 넣지 않음.</div></div>")
+             "(그 날이 지났으면 한 주에 몰지 않게 그달 마지막 금요일, 그달에 남은 금요일이 그날뿐이면 다음 달 마지막 금요일, 행사일 없으면 날짜 없는 지급 예정). 끝난 프로젝트(완료 또는 인트라넷 대표이사 승인)는 넣지 않음.</div></div>")
     return "".join(h)
 
 
@@ -2908,7 +2908,8 @@ def _top_strip(R, mode="ceo", tax=""):
              ("이번 주 여유 자금", av(ps[0]), ""),
              ("%s까지 여유 자금" % ps[-1]["label"], av(ps[-1]), "", _avail_foot(mode, "", tax))]
     od = _overdue_cell(s5)
-    cells.append((od[0], od[1], "%d건" % len(s5["overdue"]) if not s5["in_missing"] and s5["overdue"] else ""))
+    # 11/18: 이번 주 '예상 + … 별도'(입금 일정 기준)와 숫자가 조금 다를 수 있어 기준을 붙인다
+    cells.append((od[0], od[1], "%d건 · 계산서 기준" % len(s5["overdue"]) if not s5["in_missing"] and s5["overdue"] else ""))
     return _strip(cells)
 
 
@@ -3284,6 +3285,13 @@ def _s2(R):
                  % (esc(d2s(R["payday"])), s2["late_in_n"], esc(won(s2["late_in_sum"]))))
         h.append(table(head, ev_rows([dict(e, date=e["orig_date"]) for e in sorted(s2["late_in"], key=lambda e: e["orig_date"])]),
                        num_cols=(2,)))
+        s5_ = R.get("s5") or {}
+        if not s5_.get("in_missing") and s5_.get("overdue") and s5_.get("overdue_total") != s2["late_in_sum"]:
+            # 11/18: 대표 보고 첫 줄 '입금일 지난 미수금'(계산서 기준)과 이 표(입금 일정 기준)가 몇 원·몇 건 다르게 보이던 것
+            h.append("<div class='note'>%s</div>" % esc(
+                "첫 줄 '입금일 지난 미수금'은 계산서 기준 %s원 %d건 — 이 표(입금 일정 기준)와 차이 %s원 · %d건 (입금예정일이 일정에 없거나 끝전이 다른 계산서)"
+                % (won(s5_["overdue_total"]), len(s5_["overdue"]), won(s5_["overdue_total"] - s2["late_in_sum"]),
+                   len(s5_["overdue"]) - s2["late_in_n"])))
     h.append("<h3>예정일이 이미 지난 미처리 예정금액 (일정 미포함, %d건)</h3>" % len(s2["past"]))
     h.append(table(head, ev_rows(sorted(s2["past"], key=lambda e: e["date"])), num_cols=(2,)))
     if s2["amount_unknown"]:
@@ -3409,11 +3417,11 @@ def _s3(R, per):
                           W(tot["paid_total"]), _amt_unk(tot["paid_cash"], tot["paid_cash_unknown"], tot["paid_cash_reason"]), W(tot["requested"]), W(tot["card_unpaid"]),
                           W(tot["planned"]), W(tot["expected"]), esc(pct(tot["paid_budgeted"], tot["budget"])),
                           W(tot["remain"], "판단 불가") + _na(_remain_excluded_text(tot)), "%d건" % tot["unknown_cost"]]))
-    h.append("<div class='note'>원가 예산 = 사전견적(예상 매출) × 원가율 (설정.csv 예산_원가율, 기본 0.70). "
+    h.append("<div class='note'>원가 예산(추정 예산) = 사전견적(예상 매출) × (1 − 팀 목표 수익률), 목표가 없는 팀은 기본 원가율 (설정.csv 예산_원가율). "
              "사전견적이 없거나 0원 이하·해석 불가이거나 원가율 설정 오류면 ‘예산 미지정’, 지급률·잔여예산은 ‘판단 불가’, 이유는 ‘예산 사유’ 열. "
              "지급·요청·계획은 공급가액. 카드 사용액은 총액. ‘지급 실출금’은 지급완료분 공급가액+부가세. "
              "누적 지급 = 지급완료 + 카드결제완료. "
-             "남은 예산(진행 중 프로젝트)은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음(그 날이 지났으면 기준일 다음 금요일, 행사일 없으면 날짜 없는 지급 예정). 완료 프로젝트는 넣지 않음. 합계의 지급률·잔여예산은 예산 지정 프로젝트만.</div>")
+             "남은 예산(진행 중 프로젝트)은 부가세 10%를 더해 행사일 다음 달 말 금요일 지급 예정으로 자금 일정에 넣음(그 날이 지났으면 한 주에 몰지 않게 그달 마지막 금요일, 그달에 남은 금요일이 그날뿐이면 다음 달 마지막 금요일, 행사일 없으면 날짜 없는 지급 예정). 끝난 프로젝트(완료 또는 인트라넷 대표이사 승인)는 넣지 않음. 합계의 지급률·잔여예산은 예산 지정 프로젝트만.</div>")
     h.append("<h3>팀별 예산·집행</h3>")
     trows = [[esc(t["team"]), esc("%d건" % t["n"]), W(t["budget"], "판단 불가"),
               esc("%d건" % t["no_budget"]) if t["no_budget"] else "", W(t["expected"]),
@@ -3501,7 +3509,8 @@ def _s5(R):
         P = x["P"]
         rows.append([esc(P["id"]), esc(P["name"]), esc(d2s(P["done_date"], "-")), W(P["contract"], "계약금액 미등록"),
                      _inv_na(s5) if na else _amt_unk(x["issued"], x["issued_unknown"]),
-                     _inv_na(s5) if na else W(x["unissued"], "판단 불가"),
+                     _inv_na(s5) if na else (W(x["unissued"], "판단 불가") + ("<small> %s 기준</small>" % esc(x["unissued_src"])
+                                                    if x["unissued"] is not None and x.get("unissued_src") not in (None, "", "계약금액") else "")),
                      _inv_na(s5) if na else _amt_unk(x["ar"], x["ar_unknown"]),
                      esc("%d일" % x["unissued_days"]) if x["unissued_days"] is not None else
                      ("<span class='note'>완료일 미확인</span>" if x["unissued"] and not P["done_date"] else "")])
@@ -3511,7 +3520,7 @@ def _s5(R):
                           _inv_na(s5) if na else _amt_unk(s5["issued"], s5["issued_unknown_n"]),
                           _inv_na(s5) if na else _amt_unk(s5["unissued"], s5["unissued_unknown_n"], "판단 불가"),
                           _inv_na(s5) if na else _amt_unk(s5["ar"], s5["ar_unknown_n"]), ""]))
-    h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가). 미수 = 발행 합계(VAT포함) − 입금액 − 같은 프로젝트 취소·수정(음수) 상계. "
+    h.append("<div class='note'>미발행금액 = 계약금액 − 발행금액(공급가) — 계약금액이 비면 대표 승인 끝난 건 견적금액, 나머지는 사전견적으로 셈(금액 옆에 기준 표시). 미수 = 발행 합계(VAT포함) − 입금액 − 같은 프로젝트 취소·수정(음수) 상계. "
              "완료일이 없으면 미발행 경과일을 계산하지 않음.</div>")
     h.append(_event_unissued_table(s5))
     h.append("<h3>발행 후 미수 (%d건)</h3>" % len(s5["ar_rows"]))

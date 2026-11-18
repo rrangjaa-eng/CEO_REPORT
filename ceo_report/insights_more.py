@@ -42,12 +42,9 @@ def _add_months(ym, k):
 
 
 def _day(v):
-    if isinstance(v, dt.date):
-        return v
-    try:
-        return dt.date.fromisoformat(str(v or "").strip()[:10])
-    except ValueError:
-        return None
+    """행사일 '2026.11.25'·'2026/11/25'·기간 '…~…'(끝난 날)도 읽는다 (11/18: ISO 꼴만 읽어 6달 일감·거래처별 이익이 비던 것)."""
+    from .calc import _event_date
+    return _event_date(v)
 
 
 def company_months(R):

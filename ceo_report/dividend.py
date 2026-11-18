@@ -760,8 +760,11 @@ def advise(R, S, D, input_dir=None):
     if first is None:
         return {"verdict": "보류", "amount": 0, "timing": timing, "facts": facts, "checklist": CL,
                 "reasons": ["미처분이익잉여금(작년까지 쌓인 금액)을 아직 몰라 배당 한도를 확인할 수 없음 — 작년 분개장이나 재무상태표가 들어오면 판단합니다."]}
-    cap = int(use["자본금"]) if use.get("자본금") else cur.get("자본금", (None,))[0]
-    res = int(use["이익준비금"]) if use.get("이익준비금") else cur.get("이익준비금잔액", (None,))[0]
+    # 11/18: 처분계산서 쪽(surplus.for_report)과 같은 한도가 나오게 올해 줄에 없으면 앞 해 잔액을 이어 쓴다 (한도 두 개 239백만·253백만이던 것)
+    from . import surplus as _sp
+    _S = {k: v for k, v in ((S or {}).get("years") or [])} or ({year: cur} if cur else {})
+    cap = int(use["자본금"]) if use.get("자본금") else (_sp._carry(_S, year, "자본금", "위하고_자본금")[0] if _S else None)
+    res = int(use["이익준비금"]) if use.get("이익준비금") else (_sp._carry(_S, year, "이익준비금잔액")[0] if _S else None)
     limit = div_limit(first, cap, res)
     keep = int(use.get("퇴직금유보") or 0) if use.get("퇴직금계획") == "있음" else 0
     if keep:
@@ -788,10 +791,10 @@ def advise(R, S, D, input_dir=None):
         tb = (S or {}).get("tb")
         if use.get("법인세감면"):
             cut = int(use["법인세감면"])
-        else:   # 감면·공제 후보 중 '해당'만 (사용자 2026-11-12)
-            cut = (tb or {}).get("total") or 0
-            if cut:
-                facts.append(("법인세 감면·공제 '해당' 후보 반영 (아래 표)", cut))
+        else:   # 사용자 2026-11-17: 후보 중 '받음' 표시(넣음)한 것만 세금 계산에 넣는다 — '해당'만으로는 빼지 않음 (11/18)
+            cut = sum(r[2] for r in ((tb or {}).get("rows") or [])
+                      if r[1] == "해당" and r[2] and len(r) > 6 and str(r[6]).startswith("넣음"))
+            cut = min(cut, (tb or {}).get("total") or 0) if cut else 0
         for t in R.get("tax") or []:
             due = t.get("due")
             if due and end < due <= pay_day and t.get("amount") and t.get("kind") in ("법인세", "법인지방소득세"):
@@ -805,7 +808,10 @@ def advise(R, S, D, input_dir=None):
                     v = max(v - c, 0)
                 if t.get("inst") and t.get("inst_date") and t["inst_date"] > pay_day:   # A4: 분납 몫은 2달 뒤라 이 기간엔 안 나감
                     v = max(v - t["inst"], 0)
-                big.append(("%s (%s)%s" % (t["kind"], due.isoformat(), " — 감면·공제 %s원 뺌" % W(c) if c else ""), v))
+                # 11/18: 같은 이름 두 줄(올해 이익 기준 + 남은 달 예상)이 구별되게 기간을 붙인다
+                rest_ = str(t.get("period") or "").endswith(REST_MARK)
+                big.append(("%s%s (%s)%s" % (t["kind"], " — " + str(t["period"]).strip() if rest_ else "", due.isoformat(),
+                                             " — '받음' 감면·공제 %s원 뺌" % W(c) if c else ""), v))
         extend = use.get("대출연장") != "아니오"
         for ln in ((R.get("debts") or {}).get("loans") or []):
             due = _d(ln.get("due"))

@@ -1809,7 +1809,8 @@ class TestUnknownAmountsStayUnknown(unittest.TestCase):
 
     def test_closed_project_with_unknown_cost_counts_as_unknown_profit(self):
         src = _read(os.path.join(ROOT, "ceo_report", "teamreport.py"))
-        self.assertIn('rem_cost = None if P_.get("unknown_cost") else 0', src)
+        # 11/18: 표 기간 뒤 달에 잡힌 원가가 모르는 금액이어도 '미확인'
+        self.assertIn('rem_cost = None if (P_.get("unknown_cost") or after.get(P_["id"], 0) is None) else max(after.get(P_["id"], 0), 0)', src)
 
 
 class TestIntegrityFailsOnMismatch(unittest.TestCase):
