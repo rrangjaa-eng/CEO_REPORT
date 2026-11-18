@@ -884,6 +884,13 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)
+    if getattr(books, "cut_after", None):
+        # 2차 전수조사 D1: 지난 기준일로 자른 장부는 오늘 받은 위하고 화면과 다른 것이 정상 → '다름'·대표 경고로 올리지 않는다
+        for r in rows:
+            if r["판정"] == "다름":
+                r["판정"], r["대표경고"] = "참고", ""
+                r["할일"] = "지난 기준일(%s)까지 자른 장부라 받은 날 위하고 화면과 견주지 않음" % books.cut_after["asof"].isoformat()
+        notes.append("지난 기준일 변환 — 위하고 화면(받은 날 값)과 다른 줄은 '참고'로만 둠")
     n_diff = sum(1 for r in rows if r["판정"] == "다름")
     notes.append("자료 대조 %d줄 (다름 %d, 대표 경고 %d)" % (len(rows), n_diff, sum(1 for r in rows if r["대표경고"])))
     out = [Table(FILE, KEYS, rows, notes=notes) if rows else Table(FILE, KEYS, [], written=False, reason="비교할 위하고 자료 없음")]

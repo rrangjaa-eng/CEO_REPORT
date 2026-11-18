@@ -67,5 +67,64 @@ class Unconverted(unittest.TestCase):
         self.assertEqual(gate.unconverted(self.inp, downloads=[]), [])
 
 
+class AsofMismatch(unittest.TestCase):
+    """제안 11 (D1): 보고 기준일과 자료 변환 기준일이 어긋나면 막는다."""
+
+    def setUp(self):
+        self.inp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.inp, ignore_errors=True)
+
+    def conv(self, day, cut=False):
+        from ceo_report.wehago import CUT_MARK
+        with open(os.path.join(self.inp, "변환결과.txt"), "w", encoding="utf-8-sig") as f:
+            f.write("변환 시각 2026-11-18 10:00:00 · 기준일 %s\nWEHAGO 장부: ok\n" % day)
+            if cut:
+                f.write("  알림 %s %s — 그 뒤 전표 3줄을 빼고 계산\n" % (CUT_MARK, day))
+
+    def test_same_day_and_later_report_pass(self):
+        self.conv("2026-11-18")
+        self.assertEqual(gate.asof_mismatch(self.inp, dt.date(2026, 11, 18)), [])
+        self.assertEqual(gate.asof_mismatch(self.inp, dt.date(2026, 11, 20)), [])
+
+    def test_report_before_conversion_day_blocks(self):
+        self.conv("2026-11-18")
+        got = gate.asof_mismatch(self.inp, dt.date(2026, 10, 31))
+        self.assertEqual(len(got), 1)
+        self.assertIn("기준일을 2026-10-31 로 두고 '자료 변환'을 다시", got[0])
+
+    def test_cut_conversion_only_serves_its_own_day(self):
+        self.conv("2026-10-31", cut=True)
+        self.assertEqual(gate.asof_mismatch(self.inp, dt.date(2026, 10, 31)), [])
+        self.assertEqual(len(gate.asof_mismatch(self.inp, dt.date(2026, 11, 18))), 1)
+
+    def test_no_record_is_left_to_other_checks(self):
+        self.assertEqual(gate.asof_mismatch(self.inp, dt.date(2026, 11, 18)), [])
+
+
+class CutBooks(unittest.TestCase):
+    """지난 기준일이면 그 뒤 전표를 빼고, 보통 날에는 앞날짜 전표도 그대로."""
+
+    def test_cut_only_when_asof_is_before_the_book_day(self):
+        from ceo_report import wehago
+        from test_wehago import write_fake_books
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        folder = os.path.join(root, "위하고")
+        write_fake_books(folder)   # 파일 날짜 2026-10-31, 전표 ~10/30
+        full = wehago.load_books(folder, dt.date(2026, 11, 2), None)
+        self.assertEqual(full.state, "ok")
+        self.assertIsNone(full.cut_after)
+        days = sorted(r["date"] for r in full.journal if r.get("date"))
+        mid = days[len(days) // 2]
+        self.assertLess(mid, days[-1])
+        part = wehago.load_books(folder, mid, None)
+        self.assertTrue(all(r["date"] <= mid for r in part.journal if r.get("date")))
+        self.assertEqual(len(part.journal), sum(1 for d in days if d <= mid) + sum(1 for r in full.journal if not r.get("date")))
+        self.assertGreater(part.cut_after["n"], 0)
+        self.assertTrue(any(wehago.CUT_MARK in n for n in part.notes))
+
+
 if __name__ == "__main__":
     unittest.main()

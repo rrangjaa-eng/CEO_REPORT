@@ -40,7 +40,40 @@ def problems(R):
     # 2차 전수조사 P1 (사용자 2026-11-18 결정 카드, 권장안 '막음'): 새로 받고 아직 변환하지 않은 분개장·자금계획서가 있으면
     # 예전 변환 자료로 만든 대표·팀장 보고를 내지 않는다 (이체 파일은 이미 같은 경우를 막고 있었음)
     out.extend(unconverted(R.get("input_dir")))
+    out.extend(asof_mismatch(R.get("input_dir"), R.get("asof")))
     return out
+
+
+def conv_asof(input_dir):
+    """자료 변환의 기준일과 '지난 기준일로 자른 변환'인지 (변환결과.txt). -> (날짜 또는 None, 자름 여부)."""
+    import re
+    from .wehago import CUT_MARK
+    try:
+        with open(os.path.join(input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError, TypeError):
+        return None, False
+    m = re.match(r"변환 시각 [^·]*· 기준일 (\d{4})-(\d{2})-(\d{2})", text)
+    day = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    return day, CUT_MARK in text
+
+
+def asof_mismatch(input_dir, asof):
+    """2차 전수조사 D1 (2026-11-18): 보고 기준일과 자료 변환 기준일이 어긋나 장부 값이 다른 날 것이 되는 경우 -> 막는 까닭 목록.
+    ① 보고 기준일이 변환 기준일보다 앞: 통장만 그 날로 잘리고 미수금·미지급금·차입금·세금은 변환한 날 장부 값이 들어감
+    ② 변환이 지난 기준일로 잘려 있는데 보고 기준일이 그 뒤: 그 사이 전표가 빠진 숫자가 나감"""
+    if not input_dir or asof is None:
+        return []
+    day, cut = conv_asof(input_dir)
+    if day is None:
+        return []
+    if asof < day:
+        return ["보고 기준일 %s 이 자료 변환 기준일 %s 보다 앞 — 미수금·미지급금·세금 예상이 변환한 날 장부 값으로 들어감 "
+                "(창의 기준일을 %s 로 두고 '자료 변환'을 다시 한 뒤 만드세요)" % (asof.isoformat(), day.isoformat(), asof.isoformat())]
+    if cut and asof > day:
+        return ["자료 변환이 지난 기준일 %s 까지만 자른 장부로 되어 있음 — 그 뒤 전표가 빠진 숫자가 나감 "
+                "(기준일 %s 로 '자료 변환'을 다시 한 뒤 만드세요)" % (day.isoformat(), asof.isoformat())]
+    return []
 
 
 def conv_time(input_dir):

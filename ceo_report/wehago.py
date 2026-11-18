@@ -890,6 +890,9 @@ def journal_gaps(spans):
     return _gaps([s for s in spans if s is not None])
 
 
+CUT_MARK = "[지난 기준일 변환]"   # 변환결과.txt 에 이 말이 있으면 장부를 기준일까지 자른 변환 (gate 가 읽음)
+
+
 def load_books(folder, asof, stale_days):
     """폴더의 세 종류 파일을 골라 읽는다. 없음·오래됨·머리글 다름·읽기 실패는 state 로 알리고 예외를 내지 않는다 (W-1~W-4).
 
@@ -987,6 +990,27 @@ def load_books(folder, asof, stale_days):
             elif kind == "분개장":
                 journal_slips = dict(prior_slips)
                 journal_slips.update(info["slip_projects"])
+    # 2차 전수조사 D1 (2026-11-18): 지난 날짜를 기준일로 넣으면(장부를 받은 날보다 앞) 그 뒤 전표는 빼고 계산한다.
+    # 예전엔 통장만 그 날로 잘리고 미수금·미지급금·차입금·세금은 받은 날 장부 값이 들어갔음 (10/31 기준 미수금 +1.7억).
+    # 기준일이 장부 받은 날과 같거나 뒤면(보통 날) 아무것도 빼지 않는다 — 앞날짜로 미리 넣은 전표는 그대로.
+    books.cut_after = None
+    cut_n, cut_last = 0, None
+    for kind in list(staged):
+        ref = books.files[kind].get("ref_date")
+        if ref is None or asof is None or asof >= ref:
+            continue
+        keep = [r for r in staged[kind] if r.get("date") is None or r["date"] <= asof]
+        gone = [r["date"] for r in staged[kind] if r.get("date") is not None and r["date"] > asof]
+        if gone:
+            cut_n += len(gone)
+            cut_last = max(gone + ([cut_last] if cut_last else []))
+            staged[kind] = keep
+            if kind == "매입매출장":
+                ledger_sales = [r for r in ledger_sales if r.get("date") is None or r["date"] <= asof]
+    if cut_n:
+        books.cut_after = {"asof": asof, "n": cut_n, "last": cut_last}
+        books.notes.insert(0, "%s %s — 그 뒤 전표 %d줄(~%s)을 빼고 계산. 통장 잔액·장부 값은 그 날 기준이고, 인트라넷·자금계획서·급여 자료는 "
+                              "되돌릴 수 없어 받은 날 기준 그대로" % (CUT_MARK, asof.isoformat(), cut_n, cut_last.isoformat()))
     # D-57: 인쇄 분개장에 매입전표·매출전표가 있으면 분개장 하나로 충분하다. 매입매출장·전자세금계산서(매입)는 있으면 대조만 한다
     derived = invoices_from_journal(staged["분개장"]) if "분개장" in staged else ([], [])
     from_journal = bool(derived[0] or derived[1])
