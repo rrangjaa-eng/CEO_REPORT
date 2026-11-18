@@ -213,6 +213,7 @@ def load(folder):
 
     # 자금일정 (프로젝트 밖 지급, 기타 입금)
     d.schedule = []
+    d.sched_dropped = []
     for r in raw["자금일정.csv"]:
         io = r.get("입출금", "")
         s = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": "지급" if io == "출금" else io,  # '출금'도 지급으로 읽는다
@@ -222,6 +223,7 @@ def load(folder):
              "vendor_code": (r.get("거래처코드") or "").strip(),
              "basis": r.get("근거", ""), "memo": r.get("비고", ""), "source": "자금일정", "row": r}
         if not _check(iss, r, "입출금", s["io"], ["입금", "지급"]):
+            d.sched_dropped.append((r["_line"], r.get("입출금", ""), s["amount"]))   # 2차 전수조사 P13: 빠진 줄을 맨 위 경고로
             continue
         if s["io"] == "지급":
             s["amount"] = _outflow(iss, r, "금액", s["amount"])
@@ -338,6 +340,10 @@ def load(folder):
         setattr(d, attr, got or [])
     from .targets import read as read_targets   # 팀별 연간 목표 (사용자 2026-11-03)
     d.team_targets = read_targets(folder)
+    from .targets import problem as _target_problem   # 2차 전수조사 P6: 못 읽었으면 말없이 넘어가지 않는다
+    d.targets_problem = _target_problem(folder)
+    if d.targets_problem:
+        iss.add("팀목표.csv", "-", d.targets_problem)
     from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)
     d.dep_manual = read_dep(folder)
     from .budget import read_confirmed   # 확정한 예산 (사용자 2026-11-10: 월간 보고 '예산 대비'). 없으면 {}

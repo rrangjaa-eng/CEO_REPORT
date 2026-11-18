@@ -76,6 +76,9 @@ def main(argv=None):
         except OSError as e:
             _say("예산확정.csv 를 쓰지 못했습니다: %s" % (e.strerror or type(e).__name__))
             return 7
+        except ValueError as e:   # 2차 전수조사 P5: 못 읽으면 다른 해 확정 예산을 지우지 않고 멈춘다
+            _say(str(e))
+            return 7
         confirmed = asof.isoformat()
         _say("%d년 예산 확정: 입력/%s 에 %d줄 저장 — 다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다 (대표 보고에는 싣지 않음)." % (year, budget.CONFIRM_FILE, n))
     else:

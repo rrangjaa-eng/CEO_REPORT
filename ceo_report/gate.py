@@ -37,6 +37,14 @@ def problems(R):
         out.append("세금예상.csv 가 없거나 읽지 못함 — 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠져 여유 자금이 크게 보임 "
                    "(자료 변환을 다시 하세요)")
     out.extend(company_problems(R))
+    if R.get("targets_problem"):   # 2차 전수조사 P6: 팀 목표를 못 읽은 채 만든 추정 예산·목표 대비를 내보내지 않는다
+        out.append(R["targets_problem"])
+    if R.get("sched_dropped"):     # 2차 전수조사 P13: 자금일정의 입출금 칸이 틀려 빠진 줄 — 지급이 빠지면 여유 자금이 크게 보인다
+        dr = R["sched_dropped"]
+        known = [a for _, _, a in dr if a is not None]
+        out.append("자금일정.csv %d줄이 '입출금' 칸 값이 틀려 일정에서 빠짐 (줄 %s%s) — '입금' 또는 '지급'으로 고치세요"
+                   % (len(dr), ", ".join(str(l) for l, _, _ in dr[:8]),
+                      " · 금액 합 %s원" % "{:,}".format(int(sum(abs(a) for a in known))) if known else ""))
     # 2차 전수조사 P1 (사용자 2026-11-18 결정 카드, 권장안 '막음'): 새로 받고 아직 변환하지 않은 분개장·자금계획서가 있으면
     # 예전 변환 자료로 만든 대표·팀장 보고를 내지 않는다 (이체 파일은 이미 같은 경우를 막고 있었음)
     out.extend(unconverted(R.get("input_dir")))

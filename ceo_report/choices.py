@@ -50,6 +50,14 @@ def rate(input_dir):
 def save(input_dir, values, today=None):
     """values = {항목: 값}. 고를 수 있는 값만 받는다 -> 저장한 개수."""
     cur = read(input_dir)
+    path0 = os.path.join(input_dir, FILE) if input_dir else None
+    if path0 and os.path.exists(path0) and os.path.getsize(path0) > 0 and not cur:
+        # 2차 전수조사 P5 (2026-11-18): 못 읽은 파일을 빈 것으로 보고 새로 쓰면 예전 선택이 지워짐 → 한 번 더 엄격히 읽어 보고 멈춤
+        try:
+            with _open_text(path0) as f:
+                list(csv.DictReader(f))
+        except (OSError, csv.Error, UnicodeDecodeError) as e:
+            raise ValueError("%s 를 읽지 못해 저장하지 않았습니다 (%s) — 파일이 열려 있으면 닫고 다시 하세요" % (FILE, type(e).__name__))
     for k, v in values.items():
         if k not in KEYS:
             raise ValueError("모르는 항목: %s" % k)

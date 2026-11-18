@@ -781,8 +781,10 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
             lines[0] = lines[0] + ",거래처코드"
             text_now = nl.join(lines) + nl
             cols = cols + ["거래처코드"]
-            with open(path, "wb") as f:
+            # 2차 전수조사 P5 (2026-11-18): 바로 덮어쓰다 끊기면 일정이 반만 남음 → 임시 파일에 다 쓴 뒤 바꾼다
+            with open(path + ".tmp", "wb") as f:
                 f.write(text_now.encode("utf-8-sig" if enc == "utf-8-sig" else enc))
+            os.replace(path + ".tmp", path)
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])
         add = ("" if not text_now or text_now.endswith(("\n", "\r")) else nl) + buf.getvalue()

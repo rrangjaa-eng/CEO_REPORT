@@ -42,6 +42,20 @@ def read(input_dir):
     return out
 
 
+def problem(input_dir):
+    """팀목표.csv 가 있는데 읽지 못하면 까닭 글, 아니면 ''. (2차 전수조사 P6: 못 읽으면 말없이 빈 값 → 추정 예산이 기본 원가율로)"""
+    path = os.path.join(input_dir or "", TARGET_FILE)
+    if not input_dir or not os.path.exists(path):
+        return ""
+    try:
+        with _open_text(path) as f:
+            list(csv.DictReader(f))
+    except (OSError, UnicodeDecodeError, csv.Error) as e:
+        return ("%s 를 읽지 못함 (%s) — 팀 목표 수익률이 빠져 추정 예산·목표 대비가 기본 원가율로 계산됨. "
+                "파일이 엑셀에 열려 있으면 닫고 다시 만드세요" % (TARGET_FILE, type(e).__name__))
+    return ""
+
+
 def save(input_dir, year, team, revenue, rate):
     """한 팀의 목표를 넣거나 고친다. -> 그 해 목표 줄 수."""
     y, team = str(year or "").strip(), (team or "").strip()

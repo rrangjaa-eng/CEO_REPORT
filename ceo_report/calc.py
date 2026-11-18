@@ -156,6 +156,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     in_missing = list(getattr(d, "in_missing", []))
     invs = [] if in_missing else [dict(v) for v in d.invoices]
     R = {"kind": kind, "asof": asof, "input_dir": getattr(d, "input_dir", None)}
+    R["targets_problem"] = getattr(d, "targets_problem", "")
+    R["sched_dropped"] = list(getattr(d, "sched_dropped", []) or [])
     # 주간 출금 목록의 출금일 (사용자 2026-11-04: 날짜를 따로 넣으면 그 날 기준). 비우면 기준일 뒤 첫 금요일
     R["payday"] = payday if payday is not None and payday > asof else pay_friday(asof)
     if payday is not None and payday <= asof:   # 조용히 바꾸지 않고 알린다 (코덱스 검토 2026-11-14)

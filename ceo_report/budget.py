@@ -488,9 +488,16 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     tg = {t: v for (yy, t), v in (getattr(d, "team_targets", None) or {}).items() if yy == y}
     cost_rate = DEFAULT_COST
     try:
-        cost_rate = float(str(S.get("예산_원가율", DEFAULT_COST)).strip() or DEFAULT_COST)
+        raw_cr = str(S.get("예산_원가율", DEFAULT_COST)).strip() or str(DEFAULT_COST)
+        v_cr = float(raw_cr.replace("%", "").replace(",", ""))
+        if "%" in raw_cr:
+            v_cr /= 100.0
+        if 0 < v_cr <= 1:
+            cost_rate = v_cr
+        else:   # 2차 전수조사 P12: '70'을 원가율 70(=7000%)으로 읽어 수익률이 음수가 됐음 → 범위 밖이면 쓰지 않고 알림
+            notes.append("설정 예산_원가율 '%s' 값 오류 (0 초과 1 이하, 예: 0.70 또는 70%%) → 기본값 %.2f 사용" % (raw_cr, DEFAULT_COST))
     except ValueError:
-        pass
+        notes.append("설정 예산_원가율 '%s' 숫자 아님 → 기본값 %.2f 사용" % (S.get("예산_원가율"), DEFAULT_COST))
     # 올해 팀 실적 (손익.csv 팀 줄, WEHAGO 우선)
     srcs = sorted(set(p["source"] for p in d.pl), key=lambda x: (x != "WEHAGO", x))
     src = srcs[0] if srcs else None
@@ -1007,8 +1014,10 @@ def confirm(input_dir, B, today=None):
         try:
             with _open_text(path) as f:
                 keep = [r for r in csv.DictReader(f) if (r.get("연도") or "").strip() != y]
-        except (OSError, UnicodeDecodeError, csv.Error):
-            keep = []
+        except (OSError, UnicodeDecodeError, csv.Error) as e:
+            # 2차 전수조사 P5 (2026-11-18): 예전엔 못 읽으면 빈 것으로 보고 새로 써서 다른 해 확정 예산이 지워졌음 → 멈추고 알림
+            raise ValueError("%s 를 읽지 못해 저장하지 않았습니다 (%s) — 파일이 엑셀에 열려 있으면 닫고 다시 하세요. "
+                             "다른 해 확정 예산을 지우지 않으려고 멈춥니다" % (CONFIRM_FILE, type(e).__name__))
     rows = []
     for i in range(12):
         for t in B["teams"]:
