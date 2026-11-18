@@ -24,6 +24,7 @@ from collections import OrderedDict
 
 from .calc import year_revenue_left
 from .corptax import corp_tax, depreciation
+from . import codes as _codes
 from . import corptax as _corptax
 from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
@@ -37,7 +38,7 @@ CO_KINDS = ("급여인상률", "물가인상률")
 KINDS = TEAM_KINDS + CO_KINDS
 HEAD_ACCOUNTS = ("복리후생비", "여비교통비", "통신비", "교육훈련비", "도서인쇄비")   # 인원에 비례
 FLAT_ACCOUNTS = ("임차료", "보험료", "리스료")                                     # 계약 금액 그대로
-SALARY_WORDS = ("급여", "상여", "퇴직", "임금", "제수당")
+SALARY_WORDS = _codes.PAY_WORDS + _codes.RETIRE_WORDS   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 AP_SPLIT = (0.4, 0.6)       # 매입 지급: 행사 달, 다음 달
 DEFAULT_COST = 0.70
 COLLECT_DAYS = 60       # 매출 입금: 계산서 작성일 뒤 약 60일 (사용자 2026-11-12)

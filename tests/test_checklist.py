@@ -49,8 +49,11 @@ class TestDuplicates(unittest.TestCase):
         self.assertEqual(review_checks.duplicate_items(J), [])
 
     def test_different_memo_or_settled_each_is_normal(self):
+        # 2차 전수조사 D8 (2026-11-18): 적요만 다른 것은 '다른 거래'로 보지 않는다 (적요 낱말로 판단하지 않음) — 참고로만 붙인다
         J = buy(D(2026, 10, 1), "50001", 1100000, memo="가") + buy(D(2026, 10, 1), "50002", 1100000, memo="나")
-        self.assertTrue(review_checks.classify_duplicates(J)[0][4])
+        cls = review_checks.classify_duplicates(J)
+        self.assertFalse(cls[0][4])
+        self.assertIn("적요는 전표마다 다름 (참고)", cls[0][3])
         J = buy(D(2026, 10, 1), "50001", 1100000) + buy(D(2026, 10, 1), "50002", 1100000)
         J += [ln(D(2026, 10, 20), "00010", "25300", debit=1100000), ln(D(2026, 11, 20), "00011", "25300", debit=1100000)]
         self.assertTrue(review_checks.classify_duplicates(J)[0][4])

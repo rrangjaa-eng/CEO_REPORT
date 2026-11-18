@@ -82,7 +82,8 @@ def team_names(d):
     return sorted(n for n in names if n.endswith("팀") and n not in ("팀 미지정", "팀 미확인"))
 
 
-PAY_ACCOUNT_WORDS = ("퇴직급여", "퇴직연금", "상여", "제수당", "임원급여", "급료", "임금")
+# 2차 전수조사 P4: '잡급'이 빠져 있어 그 계정 금액이 팀장 보고 판관비에 보일 수 있었음. 낱말은 codes.py 와 같이 둔다
+PAY_ACCOUNT_WORDS = ("퇴직급여", "퇴직연금", "상여", "제수당", "임원급여", "급료", "임금", "잡급")
 
 
 def _is_pay_account(name):

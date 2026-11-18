@@ -61,7 +61,7 @@ def classify_duplicates(journal):
     """중복 의심 묶음을 장부로 더 따져 본다 (사용자 2026-11-05: 확인할 것이 최소한으로).
 
     정상으로 보는 것 (확인할 것에 올리지 않음):
-      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표가 있으면 적요로)
+      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표는 적요로 가리지 않음 — 2차 전수조사 D8)
       · 같은 거래처 같은 금액의 취소(−) 전표가 앞뒤 31일 안에 있음 → 취소 후 다시 발행
       · 전표 수만큼 같은 금액이 정산됨(미지급금 지급·외상매출금 입금) → 각각 실제로 오간 돈
     -> [(날짜, [전표번호], 금액, 판단 글, 정상 여부)] 금액 큰 순."""
@@ -82,8 +82,6 @@ def classify_duplicates(journal):
         has_proj = bool(projs) and all(any(p) for p in projs)
         if len(projs) > 1 and has_proj:
             why, ok = "관리항목 프로젝트가 전표마다 다름 → 다른 거래로 봄", True
-        elif not has_proj and len(memos) > 1:
-            why, ok = "프로젝트 없음 · 적요가 전표마다 다름 → 다른 거래로 봄 (적요로 판단)", True
         elif sort:
             code, side = CONTROL[sort]
             other = "credit" if side == "debit" else "debit"
@@ -103,6 +101,10 @@ def classify_duplicates(journal):
                     "프로젝트" if has_proj else "적요", "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
         else:
             why = ("프로젝트 같음" if has_proj else "적요 같음") + " → 이중 입력 가능성"
+        # 2차 전수조사 D8 (2026-11-18): 예전엔 프로젝트가 없고 적요만 다르면 '다른 거래'로 보고 확인할 것에서 뺐음 (적요 낱말로 판단).
+        # 이제 적요는 판단에 쓰지 않고 참고로만 붙인다 — 취소 전표·정산(계정·거래처·금액)으로 가려지지 않으면 확인할 것에 남는다.
+        if not ok and not has_proj and len(memos) > 1:
+            why = why.replace("적요 같음", "프로젝트 없음") + " · 적요는 전표마다 다름 (참고)"
         out.append((day, nos, total, why, ok))
     return out
 

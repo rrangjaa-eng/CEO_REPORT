@@ -1100,7 +1100,9 @@ def _sales_row(item):
     return {"date": item["date"], "no": item.get("no", ""), "vendor": item["vendor"], "vendor_norm": item["vendor_norm"],
             "item": item["item"], "supply": item["supply"], "vat": item["vat"], "total": item["total"],
             "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", ""),
-            "deducted": item.get("deducted") or 0, "advance": item.get("advance")}
+            "deducted": item.get("deducted") or 0, "advance": item.get("advance"),
+            # 2차 전수조사 D6 (2026-11-18): 이 칸을 넘기지 않아 계산서.csv 거래처코드가 모두 비었고, 그래서 코드 대신 이름으로 묶였음
+            "vendor_code": str(item.get("vendor_code") or "").strip().lstrip("0")}
 
 
 def load_sales(folder, asof, books):

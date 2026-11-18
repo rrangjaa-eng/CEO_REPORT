@@ -1316,6 +1316,11 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         return res
     cfg, cfg_notes = read_config(input_dir)
     books = wehago.load_books(wehago_dir, asof, None)  # None: 장부가 오래됐다고 멈추지 않는다
+    try:   # 2차 전수조사 P4: 이름으로 알아본 거래처·계정을 코드와 함께 적어 새로 생기거나 이름이 바뀌면 보이게
+        from . import codes
+        books.notes.extend(codes.judged_lines(books.journal))
+    except Exception:
+        pass
     snap, snap_line = read_latest_snapshot(collect_dir)
     states, cross = {}, []
     if books.state != "ok":

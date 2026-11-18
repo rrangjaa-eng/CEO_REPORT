@@ -3,6 +3,7 @@ import calendar
 import datetime as dt
 from collections import OrderedDict, defaultdict
 
+from . import codes as _codes
 from . import fundplan
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER, is_prior
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
@@ -1068,7 +1069,7 @@ def period_ends(kind, asof, payday=None):
 
 MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금", "고정 지출")   # 고정 지출: 결정 g (2026-11-15, tax.fixed_costs)
 MUST_CAT_EXTRA = ("세금", "회사부담금")
-MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
+MUST_VENDOR = _codes.TAX_OFFICE + _codes.LOCAL_OFFICE + ("공단",)   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 LOAN_WORDS = ("차입금", "대출", "이자")
 
 

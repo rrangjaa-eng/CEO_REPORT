@@ -25,6 +25,7 @@ import os
 import re
 import statistics
 
+from . import codes as _codes
 from .calc import _event_date, counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
@@ -41,7 +42,7 @@ def _sq(t):
 # ───────────── 장부로 계산 (자료 변환 때) ─────────────
 CARD_RE = re.compile(r"^(신한|롯데|비씨|BC|삼성|현대|국민|KB|하나|우리|농협|NH)[_\s-]?\d{4}$")
 INSURERS = ("국민연금", "건강보험", "근로복지", "고용보험")
-TAXOFF = ("세무서", "구청", "시청", "군청")
+TAXOFF = _codes.TAX_OFFICE + _codes.LOCAL_OFFICE   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 
 
 def _months_back(asof, n):
