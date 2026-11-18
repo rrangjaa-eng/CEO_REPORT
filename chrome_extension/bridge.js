@@ -18,11 +18,12 @@ const ID_KEY = /(social|no_res|jumin)/i;
 // 예전에는 주민번호 전용 칸의 글자만 가렸고 적요·숫자로 온 값은 그대로 저장됐다.
 const RRN_RE = /(?<!\d)(\d{6})\s*[-‐‑‒–—―−﹣－.．/／]?\s*([1-8])\d{6}(?!\d)/g;
 const maskText = (s) => s.replace(RRN_RE, "$1-$2******");
+let dropCount = 0;   // 2차 전수조사 P30: 지운 칸 수 (파일에 적어 둠 — 위하고가 칸 이름을 바꿔 필요한 값까지 지워지는지 볼 수 있게)
 function scrub(v, key = "") {
   if (Array.isArray(v)) return v.map((x) => scrub(x));
   if (v && typeof v === "object") {
     const o = {};
-    for (const [k, x] of Object.entries(v)) if (!DROP_KEY.test(k)) o[k] = scrub(x, k);
+    for (const [k, x] of Object.entries(v)) { if (!DROP_KEY.test(k)) o[k] = scrub(x, k); else dropCount++; }
     return o;
   }
   if ((typeof v === "string" || typeof v === "number") && ID_KEY.test(key)) {
@@ -250,6 +251,13 @@ async function walkEmployeeRows(subPath) {
     if (autoCap.got.some((x) => x !== first && x.path.includes(subPath) && x.row === 0)) autoCap.got.splice(autoCap.got.indexOf(first), 1);
     else first.cd_emp = list.data[0].cd_emp;
   }
+  // 2차 전수조사 P28 (2026-11-18): 사원 수 = 받은 응답 수 = 서로 다른 사번 수가 아니면 저장하지 않는다
+  // (화면이 늦게 바뀌면 앞 사원의 사번이 붙을 수 있었고, 맞춰 보는 확인이 없었음)
+  const resp = autoCap.got.filter((x) => x.path.includes(subPath));
+  const codes = new Set(resp.map((x) => String(x.cd_emp || "")));
+  if (resp.length !== n || codes.size !== n || codes.has("")) {
+    throw new Error(`사원 ${n}명인데 받은 응답 ${resp.length}개·사번 ${codes.size}가지 — 사번이 잘못 붙었을 수 있어 저장하지 않음. 다시 받으세요`);
+  }
 }
 
 // 화면 하나 받기: 같은 탭 안에서 화면 주소(#/smarta/모듈/코드)만 바꾸고, [조회]를 눌러 그 화면 코드의 응답을 모은다.
@@ -261,6 +269,7 @@ function closePopup() {
 }
 
 async function runScreen(msg) {
+  const drop0 = dropCount;
   autoCap = {code: msg.code, match: msg.match || "", got: []};
   window.postMessage({__ceoArm: 1, ms: msg.ms * 2 + 15000}, location.origin);
   const want = `#/smarta/${msg.mod}/${msg.code}`;
@@ -303,7 +312,7 @@ async function runScreen(msg) {
   }
   const got = autoCap.got; autoCap = null;
   if (msg.close) closePopup();   // 조회용으로 연 목록 창(원천세 '신고서조회')을 닫는다: 취소만 누름
-  return {ok: got.length > 0, clicked, dialog, screen: (document.title || "").split(" - ")[0], code: screenCode(), got, v: BRIDGE_VERSION};
+  return {ok: got.length > 0, clicked, dialog, screen: (document.title || "").split(" - ")[0], code: screenCode(), got, dropped: dropCount - drop0, v: BRIDGE_VERSION};
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {

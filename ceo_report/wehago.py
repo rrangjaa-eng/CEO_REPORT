@@ -444,6 +444,10 @@ def read_journal_json(path):
         out.period = (start, end) if end >= start else None
     except (TypeError, ValueError):
         out.period = None
+    try:   # 2차 전수조사 P24: 받은 날 (조회 기간 끝이 받은 날보다 앞인지 보려고)
+        out.taken = dt.date.fromisoformat(str(doc.get("수집시각") or "")[:10])
+    except ValueError:
+        out.taken = None
     # 안전-08 (N3, 2026-11-15): 위하고가 알려 준 전표 수(조회 응답 tot)·줄 수와 받은 것이 다르면 일부만 받은 것 — 쓰지 않고 막는다 (P1-2)
     tot, n_lines = doc.get("전표수"), doc.get("줄수")
     if isinstance(n_lines, int) and not isinstance(n_lines, bool) and n_lines != len(doc["줄"]):
@@ -497,7 +501,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
             "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
             "sales_rows": [], "slip_projects": {}, "period": getattr(rows, "period", None),
-            "company": getattr(rows, "company", "") or ""}
+            "company": getattr(rows, "company", "") or "", "taken": getattr(rows, "taken", None)}
     slips = {}   # (전표일자 ISO, 번호) -> 코드, 한 전표에 서로 다른 코드가 있으면 None (쓰지 않음)
     for row in rows[1:]:
         if not any(c.strip() for c in row):
@@ -902,6 +906,15 @@ def _prior_years(folder, kind, names, rows, asof, company="", foreign=None, peri
     return added, sorted(used), skipped, slips, spans, failed
 
 
+def short_period(period, taken):
+    """자동수집 분개장의 조회 기간 끝이 받은 날보다 앞이면 (기간 끝, 받은 날), 아니면 None (2차 전수조사 P24).
+    지난해 장부(기간 끝이 받은 해보다 앞 해)는 원래 그 해 말까지라 해당 없음."""
+    if not period or not taken:
+        return None
+    end = period[1]
+    return (end, taken) if end.year == taken.year and end < taken else None
+
+
 def journal_gaps(spans):
     """분개장 파일들이 맡은 기간 [(시작, 끝)] 사이에 어느 파일에도 없는 기간 [(시작, 끝)] (2026-11-14 K3)."""
     return _gaps([s for s in spans if s is not None])
@@ -976,6 +989,12 @@ def load_books(folder, asof, stale_days):
             company = info.get("company") or ""
             if kind == "분개장":
                 entry["company"] = books.company = company
+                short = short_period(info.get("period"), info.get("taken"))
+                if short:   # 2차 전수조사 P24: 조회 기간 끝이 받은 날보다 앞 — 그 뒤 전표는 파일에 없다. 자료일도 기간 끝으로 본다
+                    entry["ref_date"] = min(entry["ref_date"], short[0]) if entry["ref_date"] else short[0]
+                    books.notes.insert(0, "[확인] 분개장 %s 은 %s까지만 조회해 받았음 (받은 날 %s) — 그 뒤 전표는 빠져 있습니다. "
+                                          "위하고 분개장 화면의 기간 끝을 오늘로 두고 다시 받으세요"
+                                       % (name, short[0].isoformat(), short[1].isoformat()))
             if kind == "분개장" and info.get("period") and names_left:
                 layer_rows, entry["layers"], names_left, layer_slips, spans = _same_year_layers(
                     folder, names_left, rows, info["period"], asof, company, foreign)

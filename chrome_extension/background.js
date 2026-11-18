@@ -119,8 +119,24 @@ async function saveFile(kind, file, hashSource, summary, tag = "") {
 async function saveJournal(msg) {
   const file = {"종류": msg.kind, "형식": 1, "수집시각": "", "회사": msg.company, "기간": msg.params,
                 "전표수": msg.tot, "줄수": msg.rows.length, "열": msg.columns, "줄": msg.rows};
-  return saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot},
-                  periodTag(msg.kind, msg.params));
+  const r = await saveFile(msg.kind, file, JSON.stringify(msg.params) + JSON.stringify(msg.rows), {rows: msg.rows.length, slips: msg.tot},
+                           periodTag(msg.kind, msg.params));
+  const warn = periodWarn(msg.params, pending && pending.year);
+  return warn ? Object.assign(r, {error: warn}) : r;
+}
+
+// 2차 전수조사 P24·P25 (2026-11-18): 받은 분개장의 조회 기간이 받으려던 해가 아니거나, 올해 것인데 끝 날짜가 오늘보다 앞이면 알린다
+// (파일은 그대로 저장 — 기간이 이름·내용에 적혀 프로그램이 그 기간만 쓴다). 예전엔 아무 표시 없이 '받음'이었다.
+function periodWarn(params, wantYear, d = new Date()) {
+  const s = String((params || {}).start_date || ""), e = String((params || {}).end_date || "");
+  if (!/^\d{8}$/.test(s) || !/^\d{8}$/.test(e)) return "";
+  const y = d.getFullYear(), want = wantYear || y, ey = +e.slice(0, 4);
+  const today = `${y}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const day = (t) => `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`;
+  if (ey !== want) return `분개장을 ${want}년 것으로 받으려 했는데 ${ey}년 화면 것을 받음 (${day(s)}~${day(e)}) — 위하고 회계 화면을 ${want}년으로 열고 다시 받으세요 (받은 파일은 그 해 것으로 저장함)`;
+  if (want === y && e < today) return `분개장 조회 기간이 ${day(e)}까지 — 그 뒤 전표는 빠져 있습니다. 위하고 분개장 화면의 기간 끝을 오늘로 두고 다시 받으세요`;
+  if (want < y && (s !== `${want}0101` || e !== `${want}1231`)) return `${want}년 분개장을 ${day(s)}~${day(e)}만 받음 — 1년 전체가 아닙니다`;
+  return "";
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
@@ -267,15 +283,16 @@ async function sourceTab() {
   return src;
 }
 
-async function collectJournal() {
+async function collectJournal(lastYear = false) {   // lastYear: 지난해 분개장 (1차 D5: 1~3월에 넣는 지난해 결산 전표)
   if (pending || planRun) return {error: "이미 받는 중입니다"};
   const src = await sourceTab();
-  const url = screenUrl(src.url, SCREEN["분개장"]);
+  const year = new Date().getFullYear() - (lastYear ? 1 : 0);
+  const url = lastYear ? screenUrl(src.url, SCREEN["분개장"], year) : screenUrl(src.url, SCREEN["분개장"]);
   if (!url) return {error: "SmartA 회계 화면(분개장·자금계획서 등)을 한 번 열어 두세요."};
   const tab = await chrome.tabs.create({url, active: false});
   await waitLoaded(tab.id, 30000);
   const result = await new Promise(async (resolve) => {
-    pending = {kind: "분개장", tabId: tab.id, resolve, timer: setTimeout(() => { pending = null; resolve({error: "응답이 오지 않음 (로그인이 풀렸을 수 있음)"}); }, 120000)};
+    pending = {kind: "분개장", year, tabId: tab.id, resolve, timer: setTimeout(() => { pending = null; resolve({error: "응답이 오지 않음 (로그인이 풀렸을 수 있음)"}); }, 120000)};
     try {
       const r = await chrome.tabs.sendMessage(tab.id, {type: "clickQuery"});
       if (!r || !r.ok) { clearTimeout(pending.timer); pending = null; resolve({error: "[조회] 버튼을 찾지 못함 (로그인이 풀렸을 수 있음)"}); }
@@ -286,9 +303,11 @@ async function collectJournal() {
   return result;
 }
 
-// 지난달 + 이번 달부터 months 개월 (연도별로 나눔: 기수가 연도마다 다름) -> {2026: ["202610", "202611", "202612"], 2027: ["202701"]}
+// 지난 3달 + 이번 달부터 months 개월 (연도별로 나눔: 기수가 연도마다 다름) -> {2026: ["202608", …, "202612"], 2027: ["202701"]}
 // 지난달: 예정일이 지났는데 아직 나가거나 들어오지 않은 돈(지난 미지급·미수)도 받는다 (사용자 2026-11-12)
-const PAST_MONTHS = 1;
+// 2차 전수조사 P26 (2026-11-18): 지난달만 받으면 두 달 넘게 밀린 미지급·미입금 계획은 파일에 아예 없었다 → 지난 3달
+const PAST_MONTHS = 3;
+const LAST_YEAR_UNTIL_MONTH = 3;   // 1~3월 (지난해 분개장도 받는 달)
 function planMonths(months, today = new Date()) {
   const byYear = {};
   for (let i = -PAST_MONTHS; i < months; i++) {
@@ -387,7 +406,10 @@ async function collectAll(months, marks = true) {   // marks=false: 부르는 �
   await setStatus({error: ""});
   if (marks) await writeMark("받는 중");
   const out = {};
-  for (const [kind, fn] of [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]]) {
+  const steps = [["분개장", () => collectJournal()], ["대조 화면", () => collectRecon()], ["자금계획", () => collectPlan(months)]];
+  // 1차 D5 (2026-11-18): 1~3월에는 지난해 결산 전표가 계속 들어가므로 지난해 분개장도 함께 받는다 ('YYMMDD 분개장_2026 자동수집.json')
+  if (new Date().getMonth() < LAST_YEAR_UNTIL_MONTH) steps.push(["지난해 분개장", () => collectJournal(true)]);
+  for (const [kind, fn] of steps) {
     try { out[kind] = await fn(); } catch (e) { out[kind] = {error: String(e.message || e)}; }
   }
   const errs = Object.entries(out).filter(([k, r]) => r && r.error).map(([k, r]) => `${k}: ${r.error}`);
@@ -493,7 +515,8 @@ let reconRun = false;
 async function collectRecon() {
   if (pending || planRun || closingRun || booksRun || reconRun) return {error: "이미 받는 중입니다"};
   const src = await sourceTab();
-  const year = +((new URL(src.url).hash.match(/[?&]yminsa=(\d{4})/) || [])[1]) || new Date().getFullYear();
+  // 2차 전수조사 P25 (2026-11-18): 열려 있는 탭의 해가 아니라 PC 날짜의 해로 받는다 (작년 화면을 열어 둔 채 받으면 올해 파일이 안 생겼음)
+  const year = new Date().getFullYear();
   const url = screenUrl(src.url, RECON_SCREENS[0].code, year, "account");
   if (!url) return {error: "SmartA 화면 주소에서 기수를 찾지 못함"};
   reconRun = true;
@@ -512,7 +535,7 @@ async function collectRecon() {
       if (!hasData(sc, r.got)) { fails.push(`${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
       const kind = `${sc.prefix}_${sc.name}`;
       const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
-                    "자동": true, "응답수": r.got.length, "응답": r.got};
+                    "자동": true, "응답수": r.got.length, "지운칸수": r.dropped || 0, "응답": r.got};
       const saved = await saveFile(kind, file, JSON.stringify(r.got), {rows: r.got.length, screen: sc.name});
       done.push({kind, file: saved.file || "(바뀐 것 없음)", same: !!saved.same});
     }
@@ -530,7 +553,7 @@ async function collectRecon() {
 async function collectBooks() {
   if (pending || planRun || closingRun || booksRun || reconRun) return {error: "이미 받는 중입니다"};
   const src = await sourceTab();
-  const base = +((new URL(src.url).hash.match(/[?&]yminsa=(\d{4})/) || [])[1]) || new Date().getFullYear();
+  const base = new Date().getFullYear();   // P25: PC 날짜의 해 (탭의 해 아님)
   booksRun = true;
   const t0 = Date.now();
   const done = [], fails = [];
@@ -558,7 +581,7 @@ async function collectBooks() {
         if (!hasData(sc, r.got)) { fails.push(`${year} ${sc.name}: 자료 응답이 오지 않음 (조건·오류 응답만 옴 — 저장하지 않음)`); continue; }
         const kind = `${sc.prefix}_${sc.name}` + (dy ? `_${year}` : "");
         const file = {"종류": sc.prefix + "원본", "형식": 1, "수집시각": "", "연도": year, "화면": sc.name, "화면코드": sc.code,
-                      "자동": true, "응답수": r.got.length, "응답": r.got};
+                      "자동": true, "응답수": r.got.length, "지운칸수": r.dropped || 0, "응답": r.got};
         const saved = await saveFile(kind, file, JSON.stringify(r.got), {rows: r.got.length, screen: sc.name});
         done.push({kind, file: saved.file || "(바뀐 것 없음)", same: !!saved.same});
       }
