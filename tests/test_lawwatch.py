@@ -76,6 +76,17 @@ class Check(unittest.TestCase):
         self.assertTrue(lw.due(d, dt.date(2027, 2, 3)))
         S = lw.load(d)
         S["last"] = "2027-02-01"
+        S["items"] = dict((lw._tag(name, n, sub), {"hash": "h", "text": "t"}) for _, name, n, sub in lw.WATCH)
+        lw._write(d, S)
+        self.assertFalse(lw.due(d, dt.date(2027, 2, 7)))
+        # 2차 전수조사 P2: 지켜보는 목록에 아직 못 받은 조문이 있으면 7일을 기다리지 않고 바로 받는다 (하루 한 번)
+        S["items"].pop(lw._tag("법인세법", 34, 0))
+        lw._write(d, S)
+        self.assertTrue(lw.due(d, dt.date(2027, 2, 7)))
+        st = lw.state(d, dt.date(2027, 2, 7))
+        self.assertFalse(st["ok"])
+        self.assertIn("%d개 중 %d개 받음" % (len(lw.WATCH), len(lw.WATCH) - 1), st["msg"])
+        S["last_try"] = {"날": "2027-02-07"}
         lw._write(d, S)
         self.assertFalse(lw.due(d, dt.date(2027, 2, 7)))
         self.assertTrue(lw.due(d, dt.date(2027, 2, 8)))
@@ -93,9 +104,12 @@ class Check(unittest.TestCase):
         S = lw.load(d)
         S["last"] = "2027-02-01"
         S["last_try"] = {"날": "2027-02-01", "받음": 31, "전체": 31, "실패": []}
+        S["items"] = dict((lw._tag(name, n, sub), {"hash": "h", "text": "t"}) for _, name, n, sub in lw.WATCH)
         lw._write(d, S)
         st = lw.state(d, dt.date(2027, 2, 3))
         self.assertTrue(st["ok"])
+        self.assertIn("지켜보는 조문 %d개를 모두 받음" % len(lw.WATCH), st["msg"])
+        self.assertIn("표·글이라 맞춰 보지 못한 항목", st["msg"])   # 세율표 등은 대조하지 않았다고 사실대로
         self.assertIn("2027-02-01 (2일 전)", st["msg"])
 
 

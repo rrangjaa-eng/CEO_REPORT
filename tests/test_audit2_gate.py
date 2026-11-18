@@ -56,7 +56,9 @@ class Unconverted(unittest.TestCase):
     def test_problems_uses_it(self):
         self.put("261118 분개장_2026.json", 30)
         R = {"asof": dt.date.today(), "fundplan": {"used": True}, "input_dir": self.inp, "book_date": dt.date.today()}
-        probs = gate.problems(R)
+        from unittest import mock
+        with mock.patch.dict(os.environ, {gate.TEST_OFF: "0"}):   # 다른 시험이 켜 둔 끄개와 상관없이
+            probs = gate.problems(R)
         self.assertTrue(any("새로 받은 파일이 있음" in p for p in probs))
 
     def test_no_convert_record_is_not_judged(self):
