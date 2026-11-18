@@ -323,7 +323,12 @@ def yearend_rows(F):
 
 def asset_rows(F):
     rows = []
-    for year, d in _pick(F, "결산_고정자산관리대장")[:1]:
+    seen = set()
+    # 2차 전수조사 V21: 예전엔 가장 최근 해 대장 하나만 써서 새해 대장을 받으면 지난해 값이 사라졌음 → 해마다 하나씩 모두
+    for year, d in _pick(F, "결산_고정자산관리대장"):
+        if year in seen:
+            continue
+        seen.add(year)
         for a in _resp(d, "/allfixlist") or []:
             if not a.get("cd_fixast"):
                 continue   # 소계 줄

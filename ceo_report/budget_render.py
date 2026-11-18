@@ -171,8 +171,9 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     h.append("<div class='yl'>매출 예산 중 <b>%s (%s)</b>는 이미 받은 일입니다. 나머지 <b>%s</b>를 새로 받아야 합니다. %s</div>"
              % (won(gt), _pct(gt, Y["rev"]), won(Y["rev"] - gt), cash_line))
     if B["missing"]:
-        h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 성장률 0%%, 목표 수익률은 기본 원가율 설정으로 계산했습니다.</div>"
-                 % ", ".join(B["missing"]))
+        h.append("<div class='note' style='color:#9a5a00'>입력 전: %s — 넣기 전에는 성장률 0%%, 목표 수익률은 %s 계산했습니다.</div>"
+                 % (", ".join(B["missing"]), esc(" · ".join("%s %s %g%%로" % (t, (T[t].get("rate_src") or "기본 원가율").split(" (")[0], round(T[t]["rate"] * 100, 1))
+                                                     for t in teams if not T[t]["rate_set"]) or "넣은 값으로")))
     fixed_m = None if Y.get("sal") is None or Y.get("sga") is None else (Y["sal"] + Y["sga"]) / 12.0
     if mg and c.get("min_cash") and fixed_m:   # 가정 표시 (사용자 11/15 카드: 최소 보유현금은 매년 예산 만들 때 다시 정함, 그 전엔 1억)
         h.append("<div class='note' style='color:#9a5a00'>%s</div>" % esc(
@@ -186,17 +187,18 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
     blank = "<td></td>" * len(teams)
     h.append("<tr><td>매출 성장률</td>%s<td>%s</td>%s</tr>" % ("".join(_inp("%+g%%" % T[t]["growth"], T[t]["growth_set"]) for t in teams),
              _chg(Y["rev"], L["rev"]), "<td class='how'>%d년 팀 매출 %s 기준</td>" % (base, act) if mg else ""))
-    h.append("<tr><td>목표 수익률</td>%s<td>%s</td>%s</tr>" % ("".join(_inp("%g%%" % round(T[t]["rate"] * 100, 1), T[t]["rate_set"]) for t in teams),
+    h.append("<tr><td>목표 수익률</td>%s<td>%s</td>%s</tr>" % ("".join(_inp("%g%%" % round(T[t]["rate"] * 100, 1), T[t]["rate_set"]) if T[t]["rate_set"]
+                                                                          else "<td class='inp none'>입력 전 (%g%%로 계산)</td>" % round(T[t]["rate"] * 100, 1) for t in teams),
              _pct(Y["gp"], Y["rev"]), "<td class='how'>%d년 실제 %s (창 '팀 목표'의 %d년 값)</td>" % (base, " / ".join(_pct(T[t]["base_gp"], T[t]["base_rev"]) for t in teams), y) if mg else ""))
     hire_cells = []
     for t in teams:
         n0 = B["heads0"].get(t, 0)
         n, m = B["hires"].get(t, (0, None))
         hire_cells.append(_inp("%d → %d명%s" % (n0, n0 + n, " (%d월 입사)" % m if n else ""), True))
-    h.append("<tr><td>인원 (%d년 말 → %d년 말)</td>%s<td>%d → %d명</td>%s</tr>" % (base, y, "".join(hire_cells), sum(B["heads0"].values()) - sum(n for n, _ in B["hires"].values()),
+    h.append("<tr><td>인원 (%d년 말 → %d년 말)</td>%s<td>%d → %d명</td>%s</tr>" % (base, y, "".join(hire_cells), sum(B["heads0"].values()),   # V15: 올해 말 인원은 그대로 (예전엔 늘릴 인원만큼 줄어 보였음)
              B["heads"][-1], "<td class='how'>팀 아닌 부서 포함 (%s 급여 기준)</td>" % (B["last_ym"] or "자료 없음") if mg else ""))
     h.append("<tr><td>급여 인상률</td>%s%s%s</tr>" % (blank, _inp("%+g%% (1월부터)" % (B["raise"] or 0), B["raise"] is not None),
-             "<td class='how'>새 사람 급여 = 지금 1인 평균 × 인상률</td>" if mg else ""))
+             "<td class='how'>새 사람 급여 = 임원 뺀 1인 평균 × 인상률</td>" if mg else ""))
     h.append("<tr><td>판관비 물가 인상률</td>%s%s%s</tr>" % (blank, _inp("%+g%%" % (B["infl"] or 0), B["infl"] is not None),
              "<td class='how'>임차료·보험료는 그대로, 나머지 판관비에 적용</td>" if mg else ""))
     h.append("</tbody></table></div></div>")
@@ -268,13 +270,13 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         h.append("<tr class='tot'><td>합계</td><td>%d명</td><td>%+d명</td><td></td><td>%d명</td><td>%.2f명</td></tr></tbody></table>" % (h0, B["heads"][-1] - h0, B["heads"][-1], B["havg"]))
         rz = (B["raise"] or 0) / 100.0
         if B["sal_last"] is not None:
-            now_sal = int(round(B["sal_last"] * (1 + rz))) * 12
+            now_sal = int(round((B.get("sal_month") or B["sal_last"]) * (1 + rz) * 12))
             h.append("<div class='wsub'>급여</div><table class='pt r'><thead><tr><th>구분</th><th>%d년</th><th>%d년 예산</th><th class='l'>계산</th></tr></thead><tbody>"
                      "<tr><td>지금 인원 급여</td><td>%s</td><td>%s</td><td class='l'>월 %s (%s) × (1 + %g%%) × 12</td></tr>"
-                     "<tr><td>새 인원 급여</td><td>—</td><td>%s</td><td class='l'>1인 평균 월 %s × (1 + %g%%) × 입사 월부터</td></tr>"
+                     "<tr><td>새 인원 급여</td><td>—</td><td>%s</td><td class='l'>임원 뺀 1인 평균 월 %s × (1 + %g%%) × 입사 월부터</td></tr>"
                      "<tr class='tot'><td>급여 합계</td><td>%s</td><td>%s</td><td class='l'>%s</td></tr></tbody></table>"
-                     % (base, y, won(L["sal"]), won(now_sal), won(B["sal_last"]), B["last_ym"], B["raise"] or 0,
-                        won(Y["sal"] - now_sal), won(int(B["per"] or 0)), B["raise"] or 0, won(L["sal"]), won(Y["sal"]), _chg(Y["sal"], L["sal"])))
+                     % (base, y, won(L["sal"]), won(now_sal), won(int(B.get("sal_month") or B["sal_last"])), esc(B.get("sal_how") or B["last_ym"]), B["raise"] or 0,
+                        won(Y["sal"] - now_sal if B["hires"] else 0), won(int(B["per"] or 0)), B["raise"] or 0, won(L["sal"]), won(Y["sal"]), _chg(Y["sal"], L["sal"])))
         h.append("<div class='wsub'>그 밖의 판관비 (계정별, 급여·감가상각비 뺌)</div><table class='pt r'><thead><tr><th>계정</th><th>%d년 (1년으로)</th><th class='l'>잡는 기준</th><th>%d년 예산</th><th>증감</th></tr></thead><tbody>" % (base, y))
         for x in B["SGA"]:
             h.append("<tr><td>%s</td><td>%s</td><td class='l'>%s</td><td>%s</td><td>%s</td></tr>" % (esc(x["name"]), won(x["base"]), esc(x["how"]), won(x["budget"]), _chg(x["budget"], x["base"])))

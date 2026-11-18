@@ -82,6 +82,34 @@ def read_ledger(input_dir, wehago_dir=None):
     return out
 
 
+def next_year_ledger(input_dir, year):
+    """고정자산대장(year 년)으로 본 다음 해 감가상각비 -> (금액, 끝나는 자산 수) 또는 (None, 0).
+    2차 전수조사 V21 (2026-11-18): 내년 감가상각비를 올해 금액 그대로 써서 상각이 끝나는 자산도 계속 들어갔음.
+    자산마다 min(올해 상각, 남은 금액 = 취득가 − 올해 말 상각누계). 내년에 새로 사는 자산은 모르므로 넣지 않는다."""
+    if not input_dir or not os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
+        return None, 0
+    try:
+        with _open_text(os.path.join(input_dir, LEDGER_FILE)) as f:
+            rows = [r for r in csv.DictReader(f) if (r.get("기준연도") or "").strip() == str(year)]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None, 0
+    if not rows:
+        return None, 0
+    total, ended = 0, 0
+    for r in rows:
+        cur, cost, acc = _int(r.get("당기상각")), _int(r.get("취득가")), _int(r.get("당기말상각누계"))
+        if cur is None:
+            continue
+        if cost is None or acc is None:
+            total += cur
+            continue
+        left = max(cost - acc, 0)
+        if cur > 0 and left < cur:
+            ended += 1
+        total += min(cur, left)
+    return total, ended
+
+
 def read(input_dir):
     """-> {연도: 연간 감가상각비 직접 입력, ("대장", 연도): 위하고 고정자산대장 당기 상각}. 없거나 읽지 못하면 {}."""
     path = os.path.join(input_dir, DEP_FILE)
