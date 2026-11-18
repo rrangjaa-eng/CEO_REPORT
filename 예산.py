@@ -61,6 +61,7 @@ def main(argv=None):
     if not B["teams"]:
         _say("%d년 팀 매출 자료(손익.csv 팀 줄)가 없어 예산을 만들 수 없습니다. 먼저 '자료 변환'을 하세요." % B["base"])
         return 2
+    xdiff = 보고서._xcheck(a, asof, "budget", lambda X: X.from_budget(B))   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8)
     confirmed = None
     from ceo_report import gate
     stop = gate.check_dir(a.입력, asof)   # 예산 대표용도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
@@ -96,6 +97,9 @@ def main(argv=None):
                 return 7
             continue
         page = render_budget(budget.blank_cash(B) if stop else B, mode, company, confirmed)
+        if mode == "mgmt" and xdiff:
+            from ceo_report import xcheck
+            page = page.replace("<body>", "<body>" + xcheck.banner(xdiff, "budget"), 1)
         if stop:   # 항목은 남기고 자금 전망 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=True), 1)
         try:

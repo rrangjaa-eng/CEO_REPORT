@@ -462,6 +462,9 @@ def render(R, mode):
         h.append("<div class='meta dsrc'>%s%s</div>" % (esc(dsrc_a), _ins("<br>" + esc(dsrc_b))))
     h.append("</div>")
     h.append(_ins(gate.banner(gate.problems(R))))
+    if R.get("xcheck"):   # 2차 전수조사 제안 8: 다른 보고와 숫자가 다르면 경영관리 보고 맨 위에 (대표용에는 없음)
+        from . import xcheck
+        h.append(_mg(mode, xcheck.banner(R["xcheck"], R["kind"])))
     lag = gate.bank_lag_note(R)   # 계산-06 (N1): 장부의 통장 거래 입력이 늦으면 두 판 모두 한 줄
     if lag:
         h.append("<div class='gate-lag' style='border:2px solid #e0a000;background:#fff8e1;color:#7a4f00;border-radius:8px;"

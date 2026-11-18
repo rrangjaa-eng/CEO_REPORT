@@ -375,6 +375,7 @@ def _annual(a):
         return 2
     M, pack = _annual_monthly(a, D, year, A)
     annual.apply_monthly(A, M, pack)
+    xdiff = _xcheck(a, today, "annual", lambda X: X.from_annual(A))   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8)
     if M is not None:   # 8장 결산 처리 제안 (배당 판단)은 월간 계산이 있어야 붙는다
         try:
             from ceo_report import surplus
@@ -393,6 +394,9 @@ def _annual(a):
                 return 7
             continue
         page = annual.render(annual.blank_cash(A) if stop else A, mode)
+        if mode == "mgmt" and xdiff:
+            from ceo_report import xcheck
+            page = page.replace("<body>", "<body>" + xcheck.banner(xdiff, "annual"), 1)
         if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
@@ -454,6 +458,21 @@ def _annual(a):
     if a.pdf == "만듦" and not browser:
         _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
     return 0
+
+
+def _xcheck(a, asof, kind, values):
+    """이 보고의 핵심 숫자를 같은 기준일·같은 변환으로 만든 다른 보고와 맞춰 보고 기록한다 -> 다른 것 목록 (실패해도 보고는 계속)."""
+    try:
+        from ceo_report import xcheck
+        diffs = xcheck.compare(a.출력, asof, kind, values(xcheck), xcheck.conv_stamp(a.입력))
+    except Exception as e:
+        _say("보고끼리 숫자 맞춰 보기를 하지 못했습니다 (%s) — 보고는 그대로 만듭니다." % type(e).__name__)
+        return []
+    if diffs:
+        _say("보고끼리 숫자가 다릅니다 %d건 — 경영관리 보고 맨 위에 적었습니다:" % len(diffs))
+        for x in xcheck.lines(diffs, kind):
+            _say("  " + x)
+    return diffs
 
 
 def _planbs(a):
@@ -593,6 +612,11 @@ def main(argv=None):
     R["auto_facts"] = insights.read_facts(a.입력)
     from ceo_report import gate as _gate   # 자료가 막히면 경영관리·현황에서도 자금 숫자를 비운다 (사용자 2026-11-14)
     _gate.blank_funds(R)
+
+    def _vals(X):
+        from ceo_report import render as _RD
+        return X.from_calc(R, _RD.annual_pack(R) if kind == "monthly" else None)
+    R["xcheck"] = _xcheck(a, asof, kind, _vals)   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8) — 경영관리 보고 맨 위에만
     R["_invoices"] = data.invoices
     R["auto_prev"] = insights.load_previous(a.출력, asof)
     R["auto_records"] = insights.load_records(a.출력)
