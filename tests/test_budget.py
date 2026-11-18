@@ -201,7 +201,10 @@ class AppTask(Base):
         self.assertTrue(os.path.exists(os.path.join(out, "예산", "2027_예산_대표용.html")))
         self.assertTrue(os.path.exists(os.path.join(out, "예산", "2027_예산_경영관리용.html")))
         self.assertFalse(os.path.exists(os.path.join(self.inp, budget.CONFIRM_FILE)))
-        rc = 예산.main(["--기준일", "2026-11-06", "--입력", self.inp, "--출력", out, "--pdf", "안함", "--확정", "함"])
+        from unittest import mock
+        from ceo_report import gate
+        with mock.patch.dict(os.environ, {gate.TEST_OFF: "1"}):   # 예시 자료에는 자금계획서가 없다 — 자료 확인은 아래 시험에서 따로
+            rc = 예산.main(["--기준일", "2026-11-06", "--입력", self.inp, "--출력", out, "--pdf", "안함", "--확정", "함"])
         self.assertEqual(rc, 0)
         self.assertIn("2027", budget.read_confirmed(self.inp))
 
