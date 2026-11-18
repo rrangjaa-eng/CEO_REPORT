@@ -714,8 +714,24 @@ def _requests_part(groups, requests, match):
     # 실제 자료(11/15): 대표 승인 끝난 요청 중 거래처 이름이 장부와 다르거나 같은 금액 지급이 여러 번이라 정하지 못한 것이
     # 이미 지급된 원가 줄과 함께 두 번 세어져 팀장 '예산 넘음' 경보가 거짓으로 나왔다 (R1)
     paired, ambiguous = _pair_with_books(to_add, groups, taken, linked)
+    # 2차 전수조사 A1 (2026-11-18): 요청 하나 ↔ 원가 줄 하나로 못 맞춘 것 중 '나눠 올린 요청 여러 건 = 장부 한 줄',
+    # '요청 한 건 = 장부 여러 줄', '같은 날 나간 금액이 조금 다른 지급(환율)'을 마저 짝짓는다. 실제 자료: 이미 낸 돈이 요청 줄로
+    # 한 번 더 들어가 [26220] 등록 지출이 예산의 211%로 나왔다 (요청 481·482·609 합계 = 장부 한 줄).
+    bundles, bundle_notes = _pair_bundles(to_add, groups, taken, linked, paired)
+    notes.extend(bundle_notes)
     for rq, has_invoice, invoice in to_add:
         no = rq["번호"]
+        b = bundles.get(no)
+        if b is not None:
+            state["covered"][no] = rq["amount"]
+            if b["paid"]:
+                state["skipped"] += 1
+                state["skipped_nos"].append(no)
+                state["naming"][no] = "skipped"
+            else:
+                state["annotated"] += 1
+                state["naming"][no] = "annotated"
+            continue
         g = paired.get(no)
         if g is not None:
             total = _group_total(g)
@@ -827,6 +843,199 @@ def _pair_with_books(to_add, groups, taken, linked):
             if len(cands) > 1:
                 ambiguous.append(rq["번호"])
     return out, ambiguous
+
+
+CARD_REQUEST = re.compile(r"^법인카드\(?\d{4}\)?$")   # 인트라넷 지급요청 '파트너' 칸: 법인카드(1842)
+BUNDLE_MAX = 16          # 한 묶음에서 조합을 따질 요청·원가 줄 수 (넘으면 조합 짝짓기를 하지 않는다: 2^16 까지만 따짐)
+NEAR_RATE = 0.02         # 같은 날 나간 지급으로 볼 금액 차이 (해외 송금은 요청 때 환율과 보낸 날 환율이 달라 1% 안팎 다름)
+NEAR_DAYS = 3            # 요청의 지급 예정일과 장부 지급일 사이 (일)
+
+
+def _subset(values, target, slack=0):
+    """values(양수 목록)에서 둘 이상 골라 합이 target(±slack)인 조합 -> (첫 조합의 자리 목록 | None, 조합이 둘 이상인가).
+    적은 개수부터, 같은 개수 안에서는 앞자리부터 찾는다 (결과가 입력 순서만으로 정해짐)."""
+    import itertools
+    n = len(values)
+    if n < 2 or n > BUNDLE_MAX or target is None or target <= 0:
+        return None, False
+    first, many = None, False
+    for size in range(2, n + 1):
+        for combo in itertools.combinations(range(n), size):
+            if abs(sum(values[i] for i in combo) - target) <= slack:
+                if first is None:
+                    first = list(combo)
+                else:
+                    return first, True
+    return first, many
+
+
+def _pair_bundles(to_add, groups, taken, linked, paired):
+    """하나씩 짝짓지 못한 요청을 묶어서 장부 원가 줄과 짝짓는다 (2차 전수조사 A1) -> ({번호: {"paid": 지급 끝난 줄인가}}, 알림).
+
+    ① 나눠 올린 요청: 같은 프로젝트·같은 거래처 요청 둘 이상의 합 = 원가 줄 하나의 합계(공급가액+부가세).
+    ② 원천세 뗀 요청: 같은 프로젝트 요청 둘 이상의 '떼기 전 금액' 합 = 부가세 없는 원가 줄 하나 (거래처 이름이 달라도 —
+       장부는 여러 사람 몫을 '사업소득' 한 줄로 적는다). 조합이 하나뿐일 때만.
+    ③ 요청 한 건 = 같은 프로젝트·같은 거래처 원가 줄 둘 이상의 합계.
+    ⑤ 법인카드로 낸 요청(파트너 '법인카드(1842)') = 같은 프로젝트 카드 원가 줄 (합계 1원 안, 등록일 조건 없음).
+    ⑥ 같은 거래처, 금액 차이 NEAR_RATE 안, 양쪽 모두 후보가 하나뿐 ([확인]).
+    ④ 금액이 조금 다른 같은 날 지급: 같은 프로젝트, 부가세 없는 지급 끝난 줄, 지급일이 요청 예정일 ±NEAR_DAYS, 금액 차이
+       NEAR_RATE 안, 양쪽 모두 후보가 하나뿐일 때만 ([확인]으로 알림).
+    _pair_with_books 와 같은 조건을 지킨다: 대표 승인 전 요청은 아직 안 나간 줄하고만, 이미 나간 줄은 요청 등록일 이후에 나간 줄만.
+    계산서 대조로 금액이 정해진 요청·자동 연결된 요청은 건드리지 않는다 (D-50 대조가 따로 본다)."""
+    out, notes = {}, []
+    busy = set(id(g) for g in paired.values())
+    free = collections.defaultdict(list)
+    for g in groups:
+        if id(g) in taken or id(g) in busy or not g["project"] or g.get("request") or "지급요청" in (g.get("basis") or ""):
+            continue
+        if _group_total(g) is None or _group_total(g) <= 0 or g.get("prior"):
+            continue
+        if g["state"] in PAID_STATES or g["state"] in ("요청미지급", "카드사용미결제"):
+            free[g["project"]].append(g)
+    left = collections.defaultdict(list)
+    for rq, has_invoice, _ in to_add:
+        if rq["번호"] in paired or has_invoice or linked.get(rq["번호"]) or not rq["code"] or not rq["amount"] or rq["amount"] <= 0:
+            continue
+        left[rq["code"]].append(rq)
+
+    def fits(rq, g):
+        if g["state"] in PAID_STATES:
+            reg = rq["registered"].date() if rq.get("registered") else None
+            day = g.get("paid_day") or g.get("day")
+            return rq["status"] == "approved" and reg is not None and day is not None and day >= reg
+        return True
+
+    def done(g, rqs, how):
+        paid = g["state"] in PAID_STATES
+        g["basis"] += " · " + " · ".join("지급요청 %s%s" % (rq["번호"], _tag(rq)) for rq in rqs) + " (%s)" % how
+        if not paid and g["state"] == "요청미지급":
+            days = [rq["date"] for rq in rqs if rq["date"]]
+            g["paid_day"] = max(days) if days else g["paid_day"]
+            g["firm"] = all(rq["status"] == "approved" for rq in rqs)
+        for rq in rqs:
+            out[rq["번호"]] = {"paid": paid}
+        return paid
+
+    counts = collections.Counter()
+    unsure = []
+    for project in sorted(left):
+        gs = sorted(free.get(project, []), key=_row_order)
+        used_g = set()
+
+        def rest():
+            return sorted((rq for rq in left[project] if rq["번호"] not in out), key=lambda r: _no_key(r["번호"]))
+        # ① 같은 거래처, 요청 여러 건 = 줄 하나
+        for g in gs:
+            cands = [rq for rq in rest() if rq_vendor(rq) == g["vendor_norm"] and fits(rq, g)]
+            pick, many = _subset([rq["amount"] for rq in cands], _group_total(g))
+            if pick:
+                used_g.add(id(g))
+                counts["나눠 올린 요청"] += len(pick)
+                done(g, [cands[i] for i in pick], "나눠 올린 요청 합계로 짝지음")
+                if many:
+                    unsure.append("·".join(cands[i]["번호"] for i in pick))
+        # ② 원천세 뗀 요청 여러 건 = 부가세 없는 줄 하나 (조합이 하나뿐일 때만)
+        for g in gs:
+            if id(g) in used_g or g["vat"] != 0:
+                continue
+            twin = [x for x in gs if x is not g and id(x) not in used_g and x["vat"] == 0 and x["supply"] == g["supply"]]
+            if twin:
+                continue
+            for rate in WITHHOLDING:
+                # 떼기 전 금액: 천 원 단위로 딱 떨어지면 그 값, 아니면 금액 ÷ (1 − 세율) (원 단위 버림 때문에 건마다 20원까지 다름)
+                cands = []
+                for rq in rest():
+                    if fits(rq, g):
+                        wh = withholding_gross(rq["amount"])
+                        cands.append((rq, wh[0] if wh and wh[1] == rate else int(round(rq["amount"] / (1 - rate)))))
+                pick, many = None, False
+                if len(cands) <= BUNDLE_MAX:
+                    import itertools
+                    for size in range(2, len(cands) + 1):
+                        for combo in itertools.combinations(range(len(cands)), size):
+                            if abs(sum(cands[i][1] for i in combo) - g["supply"]) <= 20 * size:
+                                pick, many = (list(combo), False) if pick is None else (pick, True)
+                if pick and not many:
+                    used_g.add(id(g))
+                    counts["원천세 뗀 요청"] += len(pick)
+                    done(g, [cands[i][0] for i in pick], "원천세 %g%% 떼기 전 금액 합계로 짝지음" % (rate * 100))
+                    break
+        # ③ 요청 한 건 = 같은 거래처 줄 여러 개
+        for rq in rest():
+            cands = [g for g in gs if id(g) not in used_g and g["vendor_norm"] == rq_vendor(rq) and fits(rq, g)]
+            pick, many = _subset([_group_total(g) for g in cands], rq["amount"])
+            if pick:
+                paid_all = True
+                for i in pick:
+                    used_g.add(id(cands[i]))
+                    paid_all = done(cands[i], [rq], "원가 줄 %d개 합계로 짝지음" % len(pick)) and paid_all
+                out[rq["번호"]] = {"paid": paid_all}
+                counts["원가 줄 여러 개"] += 1
+                if many:
+                    unsure.append(rq["번호"])
+        # ⑤ 법인카드로 낸 요청 (파트너 칸이 '법인카드(끝 4자리)'): 카드는 쓰고 나서 요청을 올리므로 등록일 조건 없이,
+        #    같은 프로젝트의 카드 원가 줄과 합계가 1원 안으로 같으면 같은 돈 (부가세를 나누는 끝수 때문에 1원 다를 수 있음)
+        for rq in rest():
+            if not CARD_REQUEST.match(_squash(rq.get("vendor"))):
+                continue
+            cands = [g for g in gs if id(g) not in used_g and g.get("card") and abs(_group_total(g) - rq["amount"]) <= 1]
+            if cands:
+                g = cands[0]
+                used_g.add(id(g))
+                counts["법인카드로 낸 요청"] += 1
+                done(g, [rq], "법인카드 사용 줄과 금액으로 짝지음")
+                if len(cands) > 1:
+                    unsure.append(rq["번호"])
+        # ⑥ 같은 거래처, 금액이 조금 다른 지급 (요청 뒤 깎거나 끝수를 맞춘 계산서)
+        close = {}
+        for rq in rest():
+            for g in gs:
+                if id(g) in used_g or g["vendor_norm"] != rq_vendor(rq) or not fits(rq, g):
+                    continue
+                diff = abs(_group_total(g) - rq["amount"])
+                if 0 < diff <= rq["amount"] * NEAR_RATE:
+                    close.setdefault(rq["번호"], []).append((rq, g))
+        hits = collections.Counter(id(g) for pairs in close.values() for _, g in pairs)
+        for no in sorted(close, key=_no_key):
+            if len(close[no]) == 1 and hits[id(close[no][0][1])] == 1:
+                rq, g = close[no][0]
+                used_g.add(id(g))
+                counts["금액이 조금 다른 지급"] += 1
+                diff = abs(_group_total(g) - rq["amount"])
+                done(g, [rq], "같은 거래처 · 금액 차이 %s원 — 같은 지급으로 봄" % won(diff))
+                notes.append("[확인] 지급요청 %s (%s, %s원)을 같은 프로젝트·같은 거래처 원가 줄(%s원, 부가세 포함)과 같은 돈으로 봄 "
+                             "(금액 차이 %s원) — 다른 지급이면 경영관리에 알려 주세요"
+                             % (no, rq["vendor"], won(rq["amount"]), won(_group_total(g)), won(diff)))
+        # ④ 같은 날 나간, 금액이 조금 다른 지급
+        near = {}
+        for rq in rest():
+            day0 = rq.get("request_date") or rq.get("date")
+            if rq["status"] != "approved" or day0 is None:
+                continue
+            for g in gs:
+                if id(g) in used_g or g["vat"] != 0 or g["state"] not in PAID_STATES or not g.get("paid_day"):
+                    continue
+                diff = abs(g["supply"] - rq["amount"])
+                if 0 < diff <= rq["amount"] * NEAR_RATE and abs((g["paid_day"] - day0).days) <= NEAR_DAYS:
+                    near.setdefault(rq["번호"], []).append((rq, g))
+        hits = collections.Counter(id(g) for pairs in near.values() for _, g in pairs)
+        for no in sorted(near, key=_no_key):
+            if len(near[no]) == 1 and hits[id(near[no][0][1])] == 1:
+                rq, g = near[no][0]
+                used_g.add(id(g))
+                counts["금액이 조금 다른 지급"] += 1
+                done(g, [rq], "지급일이 같고 금액 차이 %s원 — 같은 지급으로 봄" % won(abs(g["supply"] - rq["amount"])))
+                notes.append("[확인] 지급요청 %s (%s, %s원)을 같은 프로젝트의 지급 끝난 원가 줄(%s, %s원, 지급 %s)과 같은 돈으로 봄 "
+                             "(금액 차이 %s원, 환율 차이 등) — 다른 지급이면 경영관리에 알려 주세요"
+                             % (no, rq["vendor"], won(rq["amount"]), g["vendor_text"] if g.get("vendor_text") else _first_line(g)["vendor"],
+                                won(g["supply"]), g["paid_day"].isoformat(), won(abs(g["supply"] - rq["amount"]))))
+    if out:
+        notes.append("묶어서 짝지은 지급요청 %d건 → 요청 줄 넣지 않음 (%s, 원가 줄 근거에 번호 표시)"
+                     % (len(out), " · ".join("%s %d건" % kv for kv in sorted(counts.items()))))
+    if unsure:
+        notes.append("[확인] 지급요청 묶음 짝짓기: 합계가 같은 조합이 둘 이상이라 번호 순서로 고른 것 %d묶음 (합계는 같음): %s"
+                     % (len(unsure), ", ".join(unsure)))
+    return out, notes
 
 
 _REQUEST_ROW = re.compile(r"^지급요청 (\d+)(?!\d| 차액)")
@@ -1001,6 +1210,22 @@ def _carry_plan_rows(prev_rows, key_pool):
     return carried, hand, dropped, odd
 
 
+def _late_requests(part, book_day):
+    """대표 승인이 끝나고 지급 예정일이 장부 날짜보다 앞인데 장부에서 지급을 찾지 못한 요청 (2차 전수조사 V5) -> 알림 목록.
+    이런 요청은 '아직 안 낸 요청'으로 등록 지출에 들어간다: 실제로 냈다면 장부 전표(거래처·금액)를, 안 냈다면 지급을 확인해야 한다."""
+    if book_day is None:
+        return []
+    late = [rq for rq in part["active"] if part["naming"].get(rq["번호"]) == "added" and rq["status"] == "approved"
+            and rq["amount"] is not None and rq["date"] is not None and rq["date"] < book_day]
+    if not late:
+        return []
+    late.sort(key=lambda r: (-r["amount"], _no_key(r["번호"])))
+    shown = ", ".join("%s %s %s원 (%s)" % (rq["번호"], rq["vendor"], won(rq["amount"]), rq["date"].isoformat()) for rq in late[:15])
+    return ["[확인] 지급 예정일이 지난 승인 요청 중 장부에서 지급을 찾지 못한 것 %d건 · %s원 (등록 지출에는 '아직 안 낸 요청'으로 들어감): %s%s"
+            " — 이미 냈으면 장부 전표의 프로젝트·거래처·금액을, 안 냈으면 지급 여부를 확인"
+            % (len(late), won(sum(rq["amount"] for rq in late)), shown, " 외 %d건" % (len(late) - 15) if len(late) > 15 else "")]
+
+
 def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     """프로젝트집행.csv: WEHAGO 원가 줄(묶음마다 한 줄, 날짜순) + 아직 장부에 없는 지급요청 + 옮겨 온 집행계획 줄.
 
@@ -1011,6 +1236,7 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     """
     groups, checks, notes = _wehago_rows(books, costs, cfg)
     part = _requests_part(groups, requests, match)
+    notes_late = _late_requests(part, getattr(books, "book_date", None))
     wehago_rows = [_row_of(g) for g in groups]
     request_rows = [e[2] for e in part["entries"]]
     key_pool = list(projects) if projects is not None else sorted(
@@ -1023,7 +1249,7 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
     overlaps = _overlaps(hand, wehago_rows + request_rows)
     checks.append(hand_check(prev_rows, rows))
     checks.append(Check(OVERLAP_LABEL, 0, len(overlaps)))
-    notes = notes + part["notes"]
+    notes = notes + part["notes"] + notes_late
     if hand:
         totals = [_row_total(r) for r in hand]
         unknown = sum(1 for t in totals if t is None)

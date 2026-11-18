@@ -521,8 +521,8 @@ def _upcoming_section(T, title):
         a("<p class='none'>올해 행사 중 끝나지 않은 프로젝트 없음</p>")
     else:
         a("<table class='g'><thead><tr><th>프로젝트</th><th>거래처</th><th>행사일</th><th>사전견적</th><th>추정 예산</th>"
-          "<th>집행액</th><th>잔여<br><small>(추정 예산 − 집행액)</small></th>"
-          "<th>쓸 수 있는 남은 예산<br><small>(요청·계획까지 뺀 것)</small></th></tr></thead><tbody>")
+          "<th>집행액<br><small>(지급이 끝난 돈)</small></th><th>잔여<br><small>(추정 예산 − 집행액)</small></th>"
+          "<th>쓸 수 있는 남은 예산<br><small>(지급 전 장부 비용·요청·계획까지 뺀 것)</small></th></tr></thead><tbody>")
         for r in T["up"]:
             a(_tr([_td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(r["event"]), "c"),
                    _num(r["estimate"]), _num(r["budget"]), _num(r["paid"]), _num(r["left"], True),
