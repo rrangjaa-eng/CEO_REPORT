@@ -19,7 +19,8 @@ from .util import won, esc, num, date as parse_date
 FILE = "연간자료.csv"
 KEYS = ["연도", "구분", "항목", "코드", "금액"]
 OPENING = ("전기이월", "기초잔액")
-CF_ORDER = ("자본금 납입", "영업 입금", "영업 지급", "세금", "투자", "대출 받음", "대출 갚음")
+CF_ORDER = ("자본금 납입", "영업 입금", "영업 지급", "세금", "세금·4대보험", "투자", "대출 받음", "대출 갚음", "대표이사 돈", "3개월 이내 정기예금")
+CF_TAX = ("세금", "세금·4대보험")
 
 
 # ───────────── 변환 쪽 ─────────────
@@ -354,6 +355,13 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     A["cf"].sort(key=lambda x: CF_ORDER.index(x[0]) if x[0] in CF_ORDER else 99)
     if A["cf"] and A["bal0"] is not None and A["bal_end"] is not None:
         A["cf_gap"] = A["bal_end"] - A["bal0"] - sum(v for _, v in A["cf"])
+        # 2차 전수조사 J10 (2026-11-18): 같은 보고의 현금흐름표와 분류를 하나로 — 현금흐름표 자료로 다시 묶는다.
+        # 통장 잔액 증감과 더 잘 맞을 때만 바꾼다 (자료 날짜가 달라 안 맞으면 예전 분류 그대로)
+        uni = cashflow.flow_summary(cashflow.load(input_dir), dt.date(year, 1, 1), asof if cut < 12 else dt.date(year, 12, 31))
+        if uni:
+            gap = A["bal_end"] - A["bal0"] - sum(v for _, v in uni)
+            if abs(gap) <= abs(A["cf_gap"]):
+                A["cf"], A["cf_gap"], A["cf_same"] = uni, gap, True
 
     # 거래처
     def vend(y, kind):
@@ -955,8 +963,8 @@ def render(A, mode):
         lo = [(i, v) for i, v in enumerate(A["bal_m"]) if v is not None]
         low = min(lo, key=lambda x: x[1]) if lo else None
         op_net = sum(v for n, v in A["cf"] if n in ("영업 입금", "영업 지급"))
-        taxv = sum(v for n, v in A["cf"] if n == "세금")
-        note = "영업으로 남긴 돈 %s · 세금 %s" % (sgn(op_net), W(-taxv))
+        taxv = sum(v for n, v in A["cf"] if n in CF_TAX)
+        note = "영업으로 남긴 돈 %s · %s %s" % (sgn(op_net), next((n for n, _ in A["cf"] if n in CF_TAX), "세금"), W(-taxv))
         if low:
             note += " · 월말 잔액이 가장 적었던 달 %d월 %s" % (low[0] + 1, W(low[1]))
         if A.get("cf_gap"):
@@ -1215,8 +1223,12 @@ def _detail(A):
     d.append(_tab(["분기", "매출", "매입", "매출총이익", "영업이익", "작년 같은 분기 매출", "매출 증감률"], qr, "pt pl",
                   ["합계", W(Yp["rev"]), W(Yp["buy"]), W(Yp["gp"]), W(Yp["op"]), W(Lp["rev"] if Lp else None), chg(Yp["rev"], Lp["rev"] if Lp else None)]))
     cut("d2", "2. " + names[1])
-    d.append("<h2 id='d3'>3. 통장 흐름</h2><div class='evh'>근거 3-1 · 한 해 현금 흐름 분류 (보통예금 상대 계정)</div>")
-    why = {"영업 입금": "외상매출금·선수금 등 (아래 분류가 아닌 계정)", "영업 지급": "외상매입금·미지급금·급여·판관비 등", "세금": "부가세·예수금·선납세금·법인세 계정",
+    d.append("<h2 id='d3'>3. 통장 흐름</h2><div class='evh'>근거 3-1 · 한 해 현금 흐름 분류 (%s)</div>"
+             % ("현금흐름표와 같은 분류" if A.get("cf_same") else "보통예금 상대 계정"))
+    why = {"영업 입금": "고객 대금·지원금·예금 이자 등 본업으로 들어온 돈", "영업 지급": "업체·법인카드·급여·프리랜서·대출 이자 등 본업으로 나간 돈",
+           "세금·4대보험": "부가세·법인세·원천세·4대보험 납부", "투자": "3개월 넘는 예금·보증금·장비 등", "대출 받음": "은행 대출 받음",
+           "대출 갚음": "대출 원금 갚음 (이자는 영업 지급)", "자본금 납입": "주주가 넣은 돈", "대표이사 돈": "대표이사에게 받거나 돌려드린 돈 (가수금)",
+           "3개월 이내 정기예금": "통장에서 현금성 정기예금으로 옮긴 돈 (찾으면 +)"} if A.get("cf_same") else {"영업 입금": "외상매출금·선수금 등 (아래 분류가 아닌 계정)", "영업 지급": "외상매입금·미지급금·급여·판관비 등", "세금": "부가세·예수금·선납세금·법인세 계정",
            "투자": "유형·무형자산 계정", "대출 받음": "차입금 대변", "대출 갚음": "차입금 차변", "자본금 납입": "자본금 계정"}
     d.append(_tab(["구분", "금액", "나눈 기준"], [["연초 잔액", W(A["bal0"]), ""]] + [[esc(n), sgn(v), why.get(n, "")] for n, v in A["cf"]]
                   + [["%s 잔액" % (A["asof"].isoformat() if A.get("mid") else "연말"), W(A["bal_end"]), "분류 못 한 차이 %s" % sgn(A["cf_gap"]) if A.get("cf_gap") else ""]], "pt evt"))

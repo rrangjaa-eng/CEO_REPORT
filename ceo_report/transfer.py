@@ -511,6 +511,9 @@ def ready_problems(R, input_dir, collect_dir=None, downloads=None):
         for msg in gate.unconverted(input_dir, collect_dir, downloads, "이미 낸 지급이 다시 들어갈 수 있음"):
             if not any(msg.split(" — ")[0] == o.split(" — ")[0] for o in out):
                 out.append(msg)
+        # 2차 전수조사 P19: 인트라넷 새 자료도 같은 확인에 (예전엔 분개장·자금계획 이름만 봤다)
+        root = os.path.dirname(os.path.abspath(collect_dir)) if collect_dir else None
+        out.extend(gate.unconverted_intranet(input_dir, root))
     return out
 
 
@@ -631,6 +634,17 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
     for vendor, amount, why in blocked:
         say("  못 넣음: %s %s — %s" % (vendor, "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    # 2차 전수조사 P20 (2026-11-18): 이체 기간은 기준일 다음 날부터라, 기준일 당일 날짜의 지급 예정(장부에 아직 지급 전표 없음)은
+    # 파일·출금 목록 어디에도 없었다 → 넣지는 않고(이미 보냈을 수 있음) 따로 알린다
+    day0 = R["asof"]
+    if day0 < start:
+        r0, b0, _ = build(R["events"], accounts, day0, day0, splits, None, {})
+        n0 = len(r0) + len(b0)
+        if n0:
+            amt0 = sum(int(r[3]) for r in r0) + sum(a or 0 for _, a, _ in b0)
+            result["same_day"] = (n0, amt0)
+            say("[확인] 기준일 당일(%s) 날짜의 지급 예정 %d건 %s원은 이 파일에 없습니다 (장부에 지급 전표가 아직 없음) — "
+                "아직 보내지 않았으면 기간 시작을 %s 로 바꿔 다시 만드세요" % (day0.isoformat(), n0, "{:,}".format(amt0), day0.isoformat()))
     for vendor, amount, why in info.get("regular") or []:   # 2차 C2·P5-8: 무엇을 뺐는지 이름으로
         say("  정기 지급이라 뺌: %s %s — %s" % (vendor or "(거래처 없음)", "금액 미확인" if amount is None else "{:,}원".format(amount), why))
     for vendor, word in sorted(set(info.get("hints") or [])):

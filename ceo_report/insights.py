@@ -911,7 +911,9 @@ def load_profit_forecasts(out_dir):
 
 
 def load_previous(out_dir, asof, lookback=14):
-    """기준일 전 lookback 일 안의 가장 최근 기록 -> 일정 목록 또는 None."""
+    """기준일 전 lookback 일 안의 기록 중 '7일 전'에 가장 가까운 것 -> 일정 목록 또는 None.
+    2차 전수조사 P14 (2026-11-18): 예전엔 가장 최근 기록이라, 보고를 매일 만들면 '지난주 대비'가 어제 기록과의 비교가 됐다.
+    한 주에 한 번만 만들면 예전과 같은 기록이 골라진다."""
     folder = os.path.join(out_dir, RECORD_DIR)
     try:
         names = os.listdir(folder)
@@ -927,7 +929,9 @@ def load_previous(out_dir, asof, lookback=14):
     if not found:
         return None
     try:
-        with open(os.path.join(folder, max(found)[1]), encoding="utf-8") as f:
+        week = asof - dt.timedelta(days=7)
+        pick = min(found, key=lambda x: (abs((x[0] - week).days), x[0]))
+        with open(os.path.join(folder, pick[1]), encoding="utf-8") as f:
             x = json.load(f)
         return x if isinstance(x, list) else None
     except (OSError, ValueError):

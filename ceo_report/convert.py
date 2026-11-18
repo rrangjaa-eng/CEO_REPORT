@@ -885,7 +885,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_a
     p = _read_prev_rows(input_dir, annual.FILE, annual.KEYS)
     tables.append(_keep_if_unreadable(annual.build_table(books, cfg, sales, p or []), p))
     from . import cashflow   # 현금흐름표 (사용자 2026-11-12): 경영관리 보고에만
-    tables.append(cashflow.build_table(books, cfg))
+    tables.append(cashflow.build_table(books, cfg, wehago_dir))
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 계정별 연월 합 → 재무상태표·손익
     tables.append(credit.build_table(books))
     from . import wehago_raw   # 위하고 인사·연말정산·고정자산 화면 원본 (사용자 2026-11-13, 확장 자동 수집)
@@ -1147,6 +1147,13 @@ def build_fundplan(books, cfg, wehago_dir, asof):
         ", ".join(d.isoformat() for d in stamps), books.book_date.isoformat(),
         " — 그 사이 %d일의 지급·입금은 분개장으로 확인 못함" % gap if gap > 0 else ""))
     notes.append("분개장 대조: " + " · ".join("%s %d" % (k, counts[k]) for k in fundplan.STATES))
+    # 2차 전수조사 V19 (2026-11-18): 장부 여러 건의 합으로 맞춘 '이미 지급·입금'은 우연히 합이 맞았을 수도 있다 → 목록으로 알린다
+    combo = [r for r in res["rows"] if r.get("상태") in ("이미 지급", "이미 입금") and "건 합계로 나눠" in str(r.get("근거") or "")]
+    if combo:
+        notes.append("[확인] 자금계획서 %d줄을 장부 여러 건의 합으로 맞춰 '이미 지급·입금'으로 봄 (금액 합이 우연히 같았을 수도 있음): %s — "
+                     "실제로 나눠 낸(받은) 돈이 아니면 위하고 자금계획에서 그 줄을 확인하세요" % (
+                         len(combo), " / ".join("%s %s %s원 ← %s" % (r["예정일"], r["거래처"], "{:,}".format(int(r["금액"])),
+                                                              str(r["근거"]).split(": ", 1)[-1]) for r in combo[:6])))
     notes.extend(fundplan_opening_checks(res.get("openings") or [], books, cfg))
     for r in res["rows"]:
         if r["상태"] != "예정":

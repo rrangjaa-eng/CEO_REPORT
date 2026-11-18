@@ -300,7 +300,7 @@ def _evidence(a, kind, asof):
         else:
             made.append(pdf)
             for gone in pdfname.prune(base):
-                _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("근거 %s · %s %s 경영관리 보고에서 뽑음" % (", ".join(nums), asof, label))
     _say("만든 파일:")
     for m in made:
@@ -414,7 +414,7 @@ def _annual(a):
             else:
                 made.append(pdf)
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     # 팀장용 연간 실적 (사용자 2026-11-17: 연간 보고도 대표용·경영관리용·팀장용). 월간 팀장 보고와 같은 숫자·같은 규칙(급여 금액 없음)
     if a.팀장용 == "만듦":
         from ceo_report import teamreport
@@ -446,7 +446,7 @@ def _annual(a):
                 else:
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
-                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("%d년 연간 보고 · 손익 %d개월 · 결산 전표 %s" % (year, len(A["Y"]["months"]), "반영" if A["closed"] else "없음 (감가상각비·법인세 예상)"))
     if not A.get("has_annual"):
         _say("연간자료.csv 없음 — '자료 변환'을 다시 하면 거래처·통장 흐름·결산 법인세가 들어갑니다.")
@@ -700,7 +700,7 @@ def main(argv=None):
                          % (got, limit, os.path.basename(pdf),
                             " — 출금 목록이 길면 '합칠 거래처'로 줄여 보세요" if kind == "weekly" else ""))
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and a.팀장용 == "만듦" and stop:
         from ceo_report.teamreport import team_names
         folder = os.path.join(a.출력, "팀장용")
@@ -733,7 +733,7 @@ def main(argv=None):
                 else:
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
-                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and R.get("re"):
         # 이익잉여금 쉬운 설명·처분계산서·결산 처리 제안 양식 (사용자 2026-11-13): 출력/결산/ 에 따로 한 부
         from ceo_report import surplus

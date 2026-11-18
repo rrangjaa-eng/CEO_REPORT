@@ -119,7 +119,7 @@ def main(argv=None):
             else:
                 made.append(pdf)
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     Y = B["Y"]
     _say("%d년 예산 %s · 매출 %s · 영업이익 %s" % (year, "확정" if confirmed else "초안", "{:,}".format(Y["rev"]),
                                           "미확인" if Y["op"] is None else "{:,}".format(Y["op"])))

@@ -145,6 +145,34 @@ def unconverted(input_dir, collect_dir=None, downloads=None, why="예전 자료�
     return out
 
 
+def unconverted_intranet(input_dir, collect_root=None):
+    """변환 뒤에 새로 받은 인트라넷 자료(수집\\인트라넷_YYYYMMDD_HHMMSS) -> 막는 까닭 목록 (2차 전수조사 P19, 2026-11-18).
+    지급요청 승인 상태가 바뀐 자료를 받고 변환하지 않은 채 이체 파일을 만들면 예전 승인 상태로 담긴다. 변환 시각을 모르면 판단하지 않는다."""
+    import re
+    if not input_dir:
+        return []
+    when, _ = conv_time(input_dir)
+    if when is None:
+        return []
+    root = collect_root or os.path.join(os.path.dirname(os.path.abspath(input_dir)), "수집")
+    try:
+        from . import snapshot
+        path = snapshot.latest_snapshot(root)
+    except Exception:
+        path = None
+    m = re.search(r"(\d{8})_(\d{6})$", os.path.basename(path or ""))
+    if not m:
+        return []
+    try:
+        got = dt.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return []
+    if got <= when + dt.timedelta(seconds=NEW_SLACK):
+        return []
+    return ["자료 변환(%s) 뒤에 새로 받은 인트라넷 자료가 있음: %s — 자료 변환을 먼저 하세요 (지급요청 승인 상태가 예전 것으로 담길 수 있음)"
+            % (when.strftime("%m-%d %H:%M"), os.path.basename(path))]
+
+
 def company_problems(R):
     """P1-1·P2-4 (2026-11-15): 위하고 SmartA 탭이 여러 회사로 열려 있으면 확장이 다른 회사 자료를 받을 수 있었다.
     받은 분개장·자금계획서에 적힌 회사가 설정 회사명이나 서로와 다르면 막는다. 회사 이름을 모르면(예전 파일·빈 설정) 막지 않는다."""

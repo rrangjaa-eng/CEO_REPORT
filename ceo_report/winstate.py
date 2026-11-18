@@ -722,6 +722,8 @@ def rc_message(task, rc, locked=False):
         why = "위하고 장부를 읽지 못했습니다. 수집\\위하고 폴더에 분개장 파일이 있는지 확인하세요"
     elif rc == 3 and task == "정합성":
         return True, "정합성 점검 끝. 맞지 않는 곳이 있어 확인할 것 화면을 엽니다"
+    elif rc == 4 and task == "정합성":   # 2차 전수조사 P17: 입력 파일 ↔ 새 변환 결과가 다름 — 정상으로 보이지 않게
+        return False, "정합성 점검 끝 — 입력 폴더의 파일이 지금 자료로 새로 변환한 결과와 다릅니다. '자료 변환'을 다시 하거나 손으로 고친 파일을 확인하세요"
     elif rc == 6:
         why = "예상하지 못한 오류입니다. 설정.csv 값과 입력 파일을 확인하세요"
     elif rc == 7:
@@ -762,7 +764,14 @@ def live_stale(paths, asof=None):
     conv = convert_time(paths.input)
     if conv is not None and made < conv:
         return True
-    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))
+    if any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS)):
+        return True
+    # 2차 전수조사 P21 (2026-11-18): 예전엔 위 3개 파일만 봐서 설정.csv 등 다른 입력을 바꿔도 예전 화면이 열렸다 → 입력 폴더의 표 파일 전부
+    try:
+        names = [n for n in os.listdir(paths.input) if n.lower().endswith(".csv")]
+    except OSError:
+        names = []
+    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in names))
 
 
 def caret_after_money(old, new, at):

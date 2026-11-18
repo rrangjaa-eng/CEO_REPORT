@@ -254,6 +254,7 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             and (b[0].isoformat(), b[3], b[1]) not in before and (b[0].isoformat(), b[3], None) not in before]
     used = set()
     hits = {}
+    loose = set()   # 2차 전수조사 V18: 거래처를 확인하지 못하고 금액·날짜(±3일)만으로 맞춘 줄
     pairs = []   # 2차 P2-11 (2026-11-15): 맞을 수 있는 (일정 줄, 통장 줄)을 모두 모은 뒤 가장 가까운 짝부터 정한다
     order = sorted(range(len(rows)), key=lambda i: (util.date(rows[i].get("예정일"), util.Issues(), rows[i], "예정일") or dt.date.max, i))
     for i in order:
@@ -292,6 +293,8 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             continue
         used.add(k)
         hits[i] = k
+        if rank[0]:
+            loose.add(i)
     keep, moved = [], []
     for i, r in enumerate(rows):
         if i not in hits:
@@ -301,8 +304,9 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         day = util.date(r.get("예정일"), util.Issues(), r, "예정일")
         when = "예정일 %d일 전" % (day - bday).days if bday < day - dt.timedelta(days=MATCH_DAYS) else (
             "예정일 %d일 뒤" % (bday - day).days if bday > day + dt.timedelta(days=MATCH_DAYS) else "")
-        moved.append((r, "분개장 %s 전표 %s 보통예금 %s과 맞음%s" % (
-            bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "")))
+        moved.append((r, "분개장 %s 전표 %s 보통예금 %s과 맞음%s%s" % (
+            bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "",
+            " · 거래처 확인 못 함(금액·날짜만 같음)" if i in loose else "")))
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
     base = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
@@ -356,6 +360,12 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         len(moved), util.won(sum(abs(util.num(r.get("금액")) or 0) for r, _ in moved)), ARCHIVE)]
     for r, why in moved:
         out.append("  옮김 %s %s원 — %s" % (r.get("예정일", ""), util.won(abs(util.num(r.get("금액")) or 0)), why))
+    # 2차 전수조사 V18 (2026-11-18): 금액만 같은 다른 돈 때문에 나갈 일정이 조용히 빠질 수 있었다 → 그런 줄은 따로 알린다
+    amount_only = [(r, why) for r, why in moved if "거래처 확인 못 함" in why]
+    if amount_only:
+        out.append("[확인] 자금일정에서 금액·날짜만 같아 '이미 나감·들어옴'으로 옮긴 줄 %d건 (거래처를 확인하지 못함): %s — 다른 돈이었다면 그 일정을 다시 넣으세요 (%s 에 남아 있음)" % (
+            len(amount_only), ", ".join("%s %s %s원" % (r.get("예정일", ""), (r.get("거래처") or "거래처 없음").strip() or "거래처 없음",
+                                                     util.won(abs(util.num(r.get("금액")) or 0))) for r, _ in amount_only[:8]), ARCHIVE))
     return out
 
 

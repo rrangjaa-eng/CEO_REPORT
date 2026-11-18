@@ -621,6 +621,18 @@ def deposit_rows(journal, raw, asof):
     items = _resp(d, "/safm0107/balance/statement")
     if not isinstance(items, list):
         return []
+    # 2차 전수조사 J15 (2026-11-18): 예전엔 '기준일부터 만기까지 92일 안'으로 세어 규칙(가입 때 만기 3개월 이내)·현금흐름표와 달랐다
+    # → 현금흐름표와 같은 판단(cashflow.deposit_terms: 가입일~만기일, 예적금현황 날짜가 있으면 그것 먼저)을 쓴다
+    from . import cashflow
+    reg = {}
+    for it in items:
+        m = cashflow.REGISTRY_DATES.search(str(it.get("js_date") or "")) if isinstance(it, dict) else None
+        if m:
+            try:
+                reg[str(it.get("js_name") or "").strip()] = (dt.date(*[int(x) for x in m.groups()[:3]]), dt.date(*[int(x) for x in m.groups()[3:]]))
+            except ValueError:
+                pass
+    terms = cashflow.deposit_terms(journal, reg)
     tot, soon, n = 0, 0, 0
     for it in items:
         amt = _num(it.get("js_janack"))
@@ -628,14 +640,13 @@ def deposit_rows(journal, raw, asof):
             continue
         n += 1
         tot += amt
-        end = _day(it.get("js_end"))
-        if end and asof and (end - asof).days <= 92:
+        if (terms.get(str(it.get("js_name") or "").strip()) or (None, False))[1]:
             soon += amt
     bal = book_balances(journal, when.date() if when != dt.datetime.min else None)
     book = sum(v for g, v in bal.items() if g in ("103", "105", "106"))
     return [_row("예적금", "예적금 %d개 잔액 합" % n, "예적금현황", tot, book, "보통·정기예금 등 (장부 103·105·106)",
                  "같음" if tot == book else "참고",
-                 "만기 3개월 안 정기예금 %s원 (이것만 현금성으로 봄)." % _won(soon) + ("" if tot == book else " 위하고 예적금 등록이 장부와 다릅니다(등록 안 한 통장일 수 있음)."))]
+                 "가입 때 만기 3개월 이내인 정기예금 %s원 (이것만 현금성으로 봄 — 현금흐름표와 같은 기준)." % _won(soon) + ("" if tot == book else " 위하고 예적금 등록이 장부와 다릅니다(등록 안 한 통장일 수 있음)."))]
 
 
 def etax_rows(journal, raw):

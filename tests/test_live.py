@@ -59,6 +59,8 @@ class TestPdfName(unittest.TestCase):
         self.assertEqual(sorted(pdfname.same_report(self.base)), sorted(made[2:]))
         self.assertTrue(os.path.exists(edited) and os.path.exists(other))
         self.assertEqual(pdfname.newest(self.base), made[-1])
+        # 2차 전수조사 P15: 정리한 PDF 는 지우지 않고 '지난PDF' 폴더로 (보낸 판이 섞여 있을 수 있음, 안전-06)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.dir, pdfname.OLD_DIR))), sorted(os.path.basename(g) for g in gone))
 
 
 class TestAutoSignature(unittest.TestCase):

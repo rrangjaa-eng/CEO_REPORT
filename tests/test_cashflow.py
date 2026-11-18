@@ -80,7 +80,9 @@ class TestCashflow(unittest.TestCase):
 
     def test_diagnosis_and_insights_follow_numbers(self):
         dg = C.diagnose(self.CF)
-        self.assertIn(dg["name"], [v[0] for v in C.STATES.values()])
+        self.assertIn(dg["name"], [v[0] for v in C.STATES.values()] + ["판단 어려움"])
+        if dg["signs"][0] == "0":   # 2차 전수조사 J13: 본업 현금이 0 근처면 유형을 정하지 않는다
+            self.assertEqual(dg["name"], "판단 어려움")
         self.assertEqual(len(dg["signs"]), 3)
         html = C.render(self.CF)
         for t in ("지금 회사 상태", "이 표로 알 수 있는 것", "현금흐름을 좋게 하려면", "영업활동 현금흐름", "투자활동 현금흐름", "재무활동 현금흐름", "낱말 풀이"):

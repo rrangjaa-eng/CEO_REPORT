@@ -1159,7 +1159,7 @@ class Window(object):
         except ValueError:
             self.wi_out.set("날짜는 YYYY-MM-DD 로 넣어 주세요")
             return
-        kind, asof = self.wi_kind.get(), self.today
+        kind, asof = self.wi_kind.get(), self._asof_date()   # 2차 전수조사 J24: 창의 기준일로 (예전엔 늘 오늘이라 보고 숫자와 기준이 달랐다)
         self.wi_out.set("계산 중…")
 
         def work():

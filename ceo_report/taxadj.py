@@ -112,9 +112,11 @@ def adjust(journal, cfg, ym, input_dir=None, revenue=None, answers=None, wehago_
             n += 1
         avg = tot / float(n or 1)
         interest = int(avg * irate * months / 12.0) if irate else None
-        items.append(("가지급금 인정이자", interest, bool(interest) and ok4 and opening is not None,
+        # 2차 전수조사 V20 (2026-11-18): 예전 조건 'opening is not None'은 늘 참이라 효과가 없었다 (opening 은 참/거짓).
+        # 작년 말 잔액 줄(전기이월)이 없어도 올해 빌려준 돈의 이자는 더해야 하므로 넣고, 작게 잡힐 수 있음은 근거에 적는다
+        items.append(("가지급금 인정이자", interest, bool(interest) and ok4,
                       "가지급금 월평균 %s원 × %g%% × %d/12%s" % ("{:,}".format(int(avg)), (irate or 0) * 100, months,
-                                                          "" if opening else " (작년 말 잔액 없으면 작게 잡힘)")))
+                                                          "" if opening else " · 장부에 작년 말 잔액(전기이월) 줄이 없음 — 작년에서 넘어온 가지급금이 있으면 작게 잡힘")))
     if gift:
         items.append(("기부금 한도", None, False, "1~%d월 기부금 %s원 — 종류별 한도는 세무사 계산" % (months, "{:,}".format(int(gift)))))
     total = sum(int(v) for _, v, on, _ in items if on and v)
