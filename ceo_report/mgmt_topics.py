@@ -256,7 +256,8 @@ def todo_items(R, I, L):
         if is_budget_over(r.get("fact")):
             continue
         items.append({"id": todo_id(r["area"], r["fact"], r["action"]), "topic": RISK_TOPIC.get(r["area"], "data"),
-                      "level": r["level"], "text": r["action"], "fact": r["fact"], "owner": _owner(R, r["fact"])})
+                      "level": r["level"], "text": r["action"], "fact": r["fact"], "owner": _owner(R, r["fact"]),
+                      "due_day": r.get("due")})
     facts = " ".join(r["fact"] for r in R.get("risks") or [])
     for lv, t in (I or {}).get("alerts") or []:
         if lv != "높음" or is_budget_over(t):
@@ -283,9 +284,10 @@ def todo_status(R, items):
     """새로 / 이월 n번째 / 결정(확인할 것 화면) · 메모. 지난번 할 일 중 이번엔 걸리지 않은 것은 '처리'로 돌려준다."""
     prev = (R.get("todo_prev") or {}).get("items") or {}
     dec = R.get("todo_decisions") or {}
+    step = _new_period(R)
     for it in items:
         p = prev.get(it["id"])
-        it["n"] = (p.get("n", 1) + 1) if p else 1
+        it["n"] = (p.get("n", 1) + step) if p else 1
         it["first"] = p.get("first") if p else R["asof"].isoformat()
         d = dec.get(it["id"]) or {}
         it["decision"] = d.get("결정") or ""
@@ -306,9 +308,42 @@ def todo_status(R, items):
                 done.append({"id": k, "topic": "cash", "text": p.get("text", ""), "owner": p.get("owner", ""),
                              "state": "판단 못 함", "st": "na", "memo": "자료 확인에서 막혀 이번엔 자금을 판단하지 않음 (처리 아님)", "fact": ""})
                 continue
+            # 2차 전수조사 J4 (2026-11-18): '처리'는 확인할 것 화면에서 사람이 '처리함'으로 정한 것만. 나머지는 이번 계산에서
+            # 조건에 안 걸렸을 뿐이라 '이번엔 안 걸림' (자료가 빠져서 안 걸린 것일 수도 있음). 예전엔 전부 '처리'로 셈
+            ch = (d.get("결정") or "").strip()
+            if ch.startswith("처리함"):
+                state, st, memo = "처리", "done", d.get("메모") or "확인할 것 화면에서 '처리함'"
+            elif ch.startswith("안 해도 됨"):
+                state, st, memo = "안 해도 됨", "done", d.get("메모") or "확인할 것 화면에서 '안 해도 됨'"
+            else:
+                state, st = "이번엔 안 걸림", "gone"
+                memo = d.get("메모") or "이번 계산에서 조건에 걸리지 않음 (사람이 처리했다는 뜻이 아님)"
             done.append({"id": k, "topic": p.get("topic", "data"), "text": p.get("text", ""), "owner": p.get("owner", ""),
-                         "state": "처리", "st": "done", "memo": d.get("메모") or "이번 보고엔 걸리지 않음", "fact": ""})
+                         "state": state, "st": st, "memo": memo, "fact": ""})
     return items, done
+
+
+def _new_period(R):
+    """이월 횟수를 올릴지 (2차 전수조사 P16): 지난 기록과 같은 주(주간)·같은 달(월간)이면 0, 아니면 1.
+
+    예전엔 기준일이 다른 보고를 만들 때마다 +1 이라, 매일 만들면 하루마다 '이월 n번째'가 늘었음."""
+    try:
+        pd_ = dt.date.fromisoformat((R.get("todo_prev") or {}).get("asof") or "")
+    except ValueError:
+        return 1
+    a = R["asof"]
+    if R.get("kind") == "weekly":
+        return 0 if pd_.isocalendar()[:2] == a.isocalendar()[:2] else 1
+    return 0 if (pd_.year, pd_.month) == (a.year, a.month) else 1
+
+
+def due_text(R, it):
+    """기한 글 (2차 전수조사 J6): 실제 기한이 있는 일(잔액이 가장 적은 날·대출 만기)은 그 날짜, 없으면 다음 보고 날."""
+    d = it.get("due_day")
+    if d is None:
+        return _next_report(R).strftime("%m/%d")
+    t = d.strftime("%m/%d") if d.year == R["asof"].year else d.strftime("%Y-%m-%d")
+    return t + (" (지남)" if d < R["asof"] else "")
 
 
 # ─────────── 기록 (다음 보고의 '이월'·'지난번 대비') ───────────
@@ -464,7 +499,7 @@ table.pt.td td.n{white-space:nowrap!important}
 table.pt.td thead th{background:#f4f5f7;color:#3a4452;font-weight:500}
 table.pt.td small{color:#556070}
 .tq-stt{font-size:11px;border-radius:3px;padding:0 6px;white-space:nowrap;font-weight:600}
-.tq-stt.v-new{background:#e8eefb;color:#1e4b91}.tq-stt.v-carry{background:#fdf0d9;color:#8a4b00}.tq-stt.v-dec{background:#eceef1;color:#3a4452}
+.tq-stt.v-new{background:#e8eefb;color:#1e4b91}.tq-stt.v-carry{background:#fdf0d9;color:#8a4b00}.tq-stt.v-dec{background:#eceef1;color:#3a4452}.tq-stt.v-gone{background:#f4f5f7;color:#556070}
 .tq-stt.v-done{background:#e3f3ea;color:#1b6b45}.tq-stt.v-na{background:#fbe3e1;color:#9c1f18}
 tr.tdone td{color:#8a93a0}
 .tp-note{font-size:11.5px;color:#556070;margin:4px 0}
@@ -628,12 +663,12 @@ def _todo_table(items, done, with_topic, num_of):
                   "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % (it["st"], esc(it["state"])), "<td>%s</td>" % esc(it.get("memo") or "")]
         rows.append("<tr>%s</tr>" % "".join(cells))
     for it in done:
-        cells = ["<td class='n'>%s</td>" % ("?" if it.get("st") == "na" else "✓"), "<td>%s</td>" % esc(it["text"])]
+        cells = ["<td class='n'>%s</td>" % {"na": "?", "gone": "–"}.get(it.get("st"), "✓"), "<td>%s</td>" % esc(it["text"])]
         if with_topic:
             cells.append("<td class='n'>%s</td>" % ("%d. %s" % (num_of[it["topic"]], esc(TOPIC_NAME[it["topic"]])) if it["topic"] in num_of else ""))
         na = it.get("st") == "na"
         cells += ["<td class='n'>%s</td>" % esc(it["owner"]),
-                  "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % ("na" if na else "done", "판단 못 함" if na else "처리"),
+                  "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % (it.get("st") or "done", esc(it.get("state") or "처리")),
                   "<td>%s</td>" % esc(it["memo"])]
         rows.append("<tr class='%s'>%s</tr>" % ("" if na else "tdone", "".join(cells)))
     return ("<div class='tw'><table class='pt td nofold'><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>"
@@ -683,9 +718,8 @@ def build(R, mode_css_mon, parts):
     # 할 일
     items = todo_items(R, I, L)
     items, done = todo_status(R, items)
-    due = _next_report(R)
     for it in items:
-        it["due"] = due.strftime("%m/%d")
+        it["due"] = due_text(R, it)
     by_topic = dict((k, [it for it in items if it["topic"] == k]) for k in keys)
     done_by = dict((k, [it for it in done if it["topic"] == k]) for k in keys)
 
@@ -715,6 +749,10 @@ def build(R, mode_css_mon, parts):
     h.append("<span id='a-one'></span><h2 id='home' class='tp-h' style='font-size:18px'>첫 화면 · 요약과 할 일</h2>")
     h.append(parts["guide"]("one"))
     h.append(_band(R))
+    if not cards and "class='big'" in (parts.get("summ") or ""):
+        # 2차 전수조사 P16: 대표 보고 첫 줄 모양이 바뀌어 못 읽으면 칸이 말없이 사라지지 않게 알린다
+        h.append("<div class='tp-note'><b class='v-dn'>대표에게 나간 숫자 칸을 만들지 못했습니다</b> — 대표 보고 첫 줄을 읽지 못함 (프로그램 점검 필요). "
+                 "대표 보고 파일의 첫 줄 숫자를 직접 확인하세요.</div>")
     if cards:
         h.append("<div class='tp-h'>대표에게 나간 숫자 <small>대표 보고 첫 줄에 나간 값 그대로 · 아래 줄을 누르면 근거가 있는 주제로</small></div><div class='tp-cards'>")
         for c in cards:
@@ -758,13 +796,15 @@ def build(R, mode_css_mon, parts):
     np_ = (R.get("todo_prev") or {}).get("items") or {}
     carried = sum(1 for it in items if it["id"] in np_)
     h.append("<div class='tp-h'>할 일 %d건 <small>한 표에 전부 (주제 쪽에는 그 주제 것만 다시) · %s</small></div>" % (len(items), esc(
-        ("지난번 할 일 %d건 중 %d건 처리 · %d건 이월%s" % (len(np_), sum(1 for d in done if d.get("st") != "na"), carried,
-                                                 " · %d건 판단 못 함" % sum(1 for d in done if d.get("st") == "na")
-                                                 if any(d.get("st") == "na" for d in done) else "")) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)")))
+        ("지난번 할 일 %d건 중 처리 %d건 · 이번엔 안 걸림 %d건 · 이월 %d건%s" % (
+            len(np_), sum(1 for d in done if d.get("st") == "done"), sum(1 for d in done if d.get("st") == "gone"), carried,
+            " · 판단 못 함 %d건" % sum(1 for d in done if d.get("st") == "na")
+            if any(d.get("st") == "na" for d in done) else "")) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)")))
     h.append(_todo_table(items, done, True, num_of))
     h.append("<div class='tp-note'>할 일 = 위험 분석의 해결방안(높음 먼저) + 위험 분석에 없는 자동 분석 경보 ‘높음’ + 자료 없는 주제의 채울 일. "
-             "담당 = 프로젝트 팀(프로젝트 일이면), 아니면 경영관리. 기한 = 다음 보고 날. 상태·메모는 창의 ‘확인할 것’ 화면(보고 할 일)에서 "
-             "건마다 넣은 결정이 그대로 붙고, 처리하지 않은 것은 다음 보고에 ‘이월 n번째’로 남습니다.</div>")
+             "담당 = 프로젝트 팀(프로젝트 일이면), 아니면 경영관리. 기한 = 날짜가 정해진 일(잔액이 가장 적은 날·대출 만기)은 그 날짜, 나머지는 다음 보고 날. "
+             "상태·메모는 창의 ‘확인할 것’ 화면(보고 할 일)에서 건마다 넣은 결정이 그대로 붙습니다. ‘처리’는 그 화면에서 ‘처리함’으로 정한 것만이고, "
+             "‘이번엔 안 걸림’은 이번 계산에서 조건에 걸리지 않았다는 뜻입니다. 계속 걸리는 것은 ‘이월 n번째’(주간은 주, 월간은 달마다 한 번)로 남습니다.</div>")
     fl = parts.get("filing") or []
     h.append("<div class='tp-note'>이번 달 기한 신고: %s</div>" % (esc(" · ".join(fl)) + esc(" (%s)" % digest.filing_where(R)) if fl else "해당 없음"))
     K = (I or {}).get("track") or {}

@@ -1429,8 +1429,9 @@ def risks(R):
     sn = R["settings_num"]
     out = []
 
-    def add(level, area, fact, action):
-        out.append({"level": level, "area": area, "fact": fact, "action": action})
+    def add(level, area, fact, action, due=None):
+        # due = 그 일의 실제 기한 (2차 전수조사 J6: 잔액이 가장 적은 날·대출 만기). 없으면 경영관리 할 일 표가 '다음 보고 날'을 씀
+        out.append({"level": level, "area": area, "fact": fact, "action": action, "due": due})
 
     min_cash = sn["위험_최소보유현금"]
     ar_days = sn["위험_미수경과일"]
@@ -1447,14 +1448,14 @@ def risks(R):
             add("높음" if low < 0 else "중간", "자금",
                 "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
                 "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
-                "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+                "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d), low_d)
     from .debts import extend_checks   # 결정 A8 (2026-11-15, 보고-08): 매년 연장 대출은 만기 60일 전부터 연장 확인 할 일
     for L in extend_checks(R.get("debts"), R["asof"]):
         left = "%d일 남음" % L["days"] if L["days"] >= 0 else "%d일 지남" % -L["days"]
         add("중간" if L["days"] >= 0 else "높음", "자금",
             "대출 %s 만기 %s (%s) — 매년 연장 예정이라 원금 %s원을 갚을 돈으로 잡지 않음." % (L["vendor"], d2s(L["due"]), left, won(L["balance"])),
             "은행·보증기관에 연장되는지 확인하세요. 연장되면 입력 폴더 대출만기.csv 에 새 만기일과 근거(메모)를 넣고, "
-            "안 되면 원금 상환 일정을 자금계획서에 넣으세요.")
+            "안 되면 원금 상환 일정을 자금계획서에 넣으세요.", L["due"])
     late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
     if late:   # M2 (결정 카드 2026-11-17): 행사 끝나고 처음 예상 지급일이 지난 남은 예산 — 할 일만, 예상 지급엔 그대로
         late.sort(key=lambda P: -P["remain_cash"])

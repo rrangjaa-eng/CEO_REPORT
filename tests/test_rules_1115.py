@@ -1598,10 +1598,11 @@ class TestBlindCashTodosNotDone(unittest.TestCase):
         R = {"asof": D(2026, 11, 8), "todo_prev": prev, "todo_decisions": {}, "_gate_hidden": {}}
         _, done = M.todo_status(R, [])
         st = dict((d["id"], d["st"]) for d in done)
-        self.assertEqual(st, {"할일|자금|x": "na", "할일|자료|y": "done"})
+        # 2차 전수조사 J4 (2026-11-18): 사람이 정하지 않은 것은 '처리'(done)가 아니라 '이번엔 안 걸림'(gone)
+        self.assertEqual(st, {"할일|자금|x": "na", "할일|자료|y": "gone"})
         R.pop("_gate_hidden")
         _, done = M.todo_status(R, [])
-        self.assertEqual(set(d["st"] for d in done), {"done"})
+        self.assertEqual(set(d["st"] for d in done), {"gone"})
 
 
 class TestPlanMatchNeedsSameVendor(unittest.TestCase):

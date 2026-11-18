@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -264,8 +265,45 @@ class TestTodoCarry(unittest.TestCase):
             self.assertEqual(st[same[1]["id"]]["state"], "이월 1번째")
         home = area(page, "home")
         self.assertIn("없어진 일", home)
-        self.assertIn("<span class='tq-stt v-done'>처리</span>", home)
+        # 2차 전수조사 J4: 조건에 안 걸렸을 뿐인 것은 '처리'가 아니라 '이번엔 안 걸림'
+        self.assertIn("<span class='tq-stt v-gone'>이번엔 안 걸림</span>", home)
+        self.assertNotIn("<span class='tq-stt v-done'>처리</span>", home)
+        self.assertIn("이번엔 안 걸림 1건", home)
         self.assertIn("11/01 통화", home)
+
+    def test_gone_task_is_done_only_when_a_person_decided(self):
+        R = compute(load(SAMPLE), "weekly", dt.date(2026, 11, 2))
+        R["todo_prev"] = {"asof": "2026-10-26", "items": {
+            "할일|자금|가": {"n": 1, "text": "가", "topic": "cash"}, "할일|자금|나": {"n": 1, "text": "나", "topic": "cash"},
+            "할일|자금|다": {"n": 1, "text": "다", "topic": "cash"}}}
+        R["todo_decisions"] = {"할일|자금|가": {"결정": "처리함", "메모": ""}, "할일|자금|나": {"결정": "안 해도 됨 (이유를 메모에)", "메모": "끝남"}}
+        _, done = mgmt_topics.todo_status(R, [])
+        st = dict((d["id"][-1], (d["state"], d["st"])) for d in done)
+        self.assertEqual(st, {"가": ("처리", "done"), "나": ("안 해도 됨", "done"), "다": ("이번엔 안 걸림", "gone")})
+
+    def test_carry_counts_once_a_week_or_month(self):
+        """2차 전수조사 P16: 같은 주(주간)·같은 달(월간)에 다시 만든 보고는 이월 횟수를 올리지 않는다."""
+        it = {"id": "할일|자금|가"}
+        for kind, prev, asof, n in (("weekly", "2026-11-16", dt.date(2026, 11, 18), 2), ("weekly", "2026-11-13", dt.date(2026, 11, 18), 3),
+                                    ("monthly", "2026-11-02", dt.date(2026, 11, 18), 2), ("monthly", "2026-10-31", dt.date(2026, 11, 18), 3)):
+            R = {"asof": asof, "kind": kind, "todo_prev": {"asof": prev, "items": {it["id"]: {"n": 2}}}}
+            items, _ = mgmt_topics.todo_status(R, [dict(it)])
+            self.assertEqual(items[0]["n"], n, (kind, prev))
+
+    def test_due_is_the_real_day_when_there_is_one(self):
+        """2차 전수조사 J6: 대출 만기·잔액이 가장 적은 날은 그 날짜, 나머지는 다음 보고 날."""
+        R = {"asof": dt.date(2026, 11, 18), "kind": "weekly"}
+        self.assertEqual(mgmt_topics.due_text(R, {"due_day": None}), "11/25")
+        self.assertEqual(mgmt_topics.due_text(R, {"due_day": dt.date(2026, 12, 18)}), "12/18")
+        self.assertEqual(mgmt_topics.due_text(R, {"due_day": dt.date(2027, 4, 17)}), "2027-04-17")
+        self.assertEqual(mgmt_topics.due_text(R, {"due_day": dt.date(2026, 11, 10)}), "11/10 (지남)")
+
+    def test_missing_ceo_cards_is_said_out_loud(self):
+        R = compute(load(SAMPLE), "weekly", dt.date(2026, 11, 2))
+        with mock.patch.object(mgmt_topics, "ceo_cards", return_value=[]):
+            page = render(R, "mgmt")
+        self.assertIn("대표에게 나간 숫자 칸을 만들지 못했습니다", page)
+        self.assertNotIn("대표에게 나간 숫자 칸을 만들지 못했습니다", render(compute(load(SAMPLE), "weekly", dt.date(2026, 11, 2)), "mgmt"))
 
     def test_same_task_keeps_its_id_when_numbers_change(self):
         a = mgmt_topics.todo_id("수금", "P26202 B사: 입금예정일 2026-09-30에서 31일 경과, 미수 110,000,000원.", "거래처 담당자에게 지급 일정 확인")
