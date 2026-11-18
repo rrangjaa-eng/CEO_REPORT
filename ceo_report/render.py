@@ -1258,7 +1258,11 @@ def _results(R, cum=True, mode=None):
     if c:
         tag = " <span class='chip c-q'>마감 전</span>" if c["provisional"] else ""
         if cum:
-            cards.append(("%s 매출" % ym, W(c["revenue"]), "올해 누적 %s" % (W(y["revenue"]) if y else _na("자료 없음"))))
+            # 1차 C8 (2026-11-18): 머리의 집계 기간(이번 주)과 달리 이 칸은 그 달 1일부터 → 기간을 밑에 적음
+            span = ""
+            if s4["ym"] == R["asof"].strftime("%Y-%m") and R["asof"].day > 1:
+                span = "%d/1~%d/%d · " % (R["asof"].month, R["asof"].month, R["asof"].day)
+            cards.append(("%s 매출" % ym, W(c["revenue"]), span + "올해 누적 %s" % (W(y["revenue"]) if y else _na("자료 없음"))))
             prev = _prev_month_pl(R, src) if R["asof"].day <= EARLY_MONTH_DAYS else None
             if prev is not None:
                 # 달 초에는 이번 달 비용만 먼저 잡혀 이익이 크게 마이너스로 보인다 → 지난달 영업이익 (2026-11-04 이해도 점검 U4)
@@ -1299,7 +1303,8 @@ def _results(R, cum=True, mode=None):
         ar = _na("미확인 %d건" % s5["ar_unknown_n"]) if s5["ar"] is None else W(s5["ar"]) + (
             _na(" 외 미확인 %d건" % s5["ar_unknown_n"]) if s5["ar_unknown_n"] else "")
         # '그중 입금예정일 지남'은 맨 위 칸·④와 겹쳐 뺌 (사용자 2026-11-05)
-        cards.append(("미수금 (세금계산서 발행 후)", ar, ""))
+        # 2차 전수조사 J21: '이번 달 실적' 칸 안에 있어 이번 달 미수금으로 읽힘 → 전체 금액임을 밑에 적음
+        cards.append(("미수금 (세금계산서 발행 후)", ar, "이번 달 것만이 아니라 전체"))
     E = s5["event_unissued"]
     if E["missing"]:
         cards.append(("행사 후 세금계산서 미발행", _inv_na(s5), ""))
@@ -2059,8 +2064,12 @@ def _team_table(R, part="month", mode="mgmt"):
         out.append("<table class='pt tm'><thead><tr><th>구분</th><th>매출</th><th>매출총이익</th><th>매출총이익률</th>"
                    "<th>급여</th><th>판관비</th><th>영업이익</th><th>평균 인원</th><th>1인당 영업이익</th><th>급여 대비</th><th>공통비 나눈 뒤 1인당</th>"
                    "</tr></thead><tbody>")   # 이번 달 표와 같은 칸 (사용자 2026-11-03)
-        for r in [x for x in Y["rows"] if x["kind"] in ("team", "hq_total")] + [Y["company"]]:
-            cls = {"company": " class='tot'", "hq_total": " class='hq'"}.get(r["kind"], "")
+        # 2차 전수조사 J20·1차 C10 (2026-11-18): 팀 합과 본부 합계·회사 전체가 왜 다른지 보이게 '기획본부 자체 비용' 줄과
+        # (0이 아니면) '팀 미지정' 줄을 누적 표에도 넣는다 — 이번 달 표에는 있던 줄
+        yrows = [x for x in Y["rows"] if x["kind"] in ("team", "hq_self", "hq_total")
+                 or (x["kind"] == "unlinked" and (x["revenue"] or x["gp"]))]
+        for r in yrows + [Y["company"]]:
+            cls = {"company": " class='tot'", "hq_total": " class='hq'", "hq_self": " class='mut'", "unlinked": " class='mut'"}.get(r["kind"], "")
             h = r["heads"]
             per = "미확인" if h is None or r["net"] is None or not h else W(round(r["net"] / h))
             alloc = ""
@@ -2071,6 +2080,12 @@ def _team_table(R, part="month", mode="mgmt"):
             cells = [esc(r["label"]) + ("<small>인원 = 기획본부만</small>" if r["kind"] == "company" else ""),
                      W(r["revenue"]), W(r["gp"]), esc(pct(r["gp"], r["revenue"])),
                      W(r["salary"]), W(r["sga"]), W(r["net"]), "미확인" if h is None else "%.1f명" % h, per, esc(ratio), alloc]
+            if r["kind"] == "hq_self":      # 매출 없는 줄: 급여·판관비·영업이익·인원만
+                cells[1:4] = ["", "", ""]
+                cells[8:10] = ["", ""]
+            elif r["kind"] == "unlinked":   # 팀 없는 장부 줄: 매출·매출총이익·영업이익만
+                cells[3:6] = ["", "", ""]
+                cells[7:10] = ["", "", ""]
             out.append("<tr%s>%s</tr>" % (cls, "".join("<td>%s</td>" % c for c in cells)))
         out.append(_nonop_rows(Y["nonop"], 5, 4))
         out.append("</tbody></table>")

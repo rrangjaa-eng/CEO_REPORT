@@ -6,6 +6,7 @@
 import re
 from . import render as RD
 from .util import esc, won
+from .render import _axis
 
 MON = ["%d월" % (i + 1) for i in range(12)]
 
@@ -19,6 +20,7 @@ EXTRA = (".pl td{text-align:right}.pl td:first-child{text-align:left}.pl tr.ind 
          ".src.ok{color:#1f6b3a;border-color:#9cc8ab}.src.new{color:#9a5a00;border-color:#e0b878}.src.in{color:#9a7a10;border-color:#d8b13a;background:#fff4c2}"
          ".yl{font-size:12.5px;padding:6px 12px;margin:6px 0 0;border-left:4px solid var(--accent);background:var(--soft);border-radius:4px}"
          "td.neg{color:#c00000}td.lowc{background:#fde8e4!important}.small td,.small th{font-size:11px!important;padding:3px 3px!important}"
+         ".tiny td,.tiny th{font-size:9px!important;padding:3px 2px!important;letter-spacing:-.02em}"   # 12달 금액을 원 단위로 (1차 C2)
          ".legend{font-size:11px;color:#5b6475;margin-top:2px}.legend i{display:inline-block;width:10px;height:10px;margin:0 4px 0 10px;vertical-align:middle}"
          ".note{font-size:11px;color:#5b6475;margin-top:4px}.how{text-align:left!important;font-size:11px;color:#5b6475}"
          "@media print{.fs.mon table.pt{font-size:11.5px}}")
@@ -31,8 +33,10 @@ def _pct(a, b):
 def _chg(a, b):
     if a is None or not b:
         return "—"
-    v = (a - b) * 100.0 / abs(b)
-    return ("+" if v >= 0 else "−") + "%.1f%%" % abs(v)
+    v = round((a - b) * 100.0 / abs(b), 1)
+    if v == 0:
+        return "0.0%"   # 1차 C6: 만 원 단위로 맞춘 예산이 '−0.0%'로 보였음
+    return ("+" if v > 0 else "−") + "%.1f%%" % abs(v)
 
 
 def _sgn(v):
@@ -63,8 +67,8 @@ def _bars(B):
     k = 0
     while k * step <= mx:
         y = base - k * step / mx * (base - 20)
-        s.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#eef0f4"/><text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#8a93a3">%s백만</text>'
-                 % (pl, Wd - 10, y, y, pl - 4, y + 4, "{:,}".format(int(k * step / 1e6))))
+        s.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#eef0f4"/><text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#8a93a3">%s</text>'
+                 % (pl, Wd - 10, y, y, pl - 4, y + 4, _axis(k * step)))
         k += 1
     for i in range(12):
         x = pl + i * bw + bw * .18
@@ -77,8 +81,8 @@ def _bars(B):
         ly = base - last[i] / mx * (base - 20)
         s.append('<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="#b5523b" stroke-width="2"/>' % (x - 3, x + w + 3, ly, ly))
         s.append('<text x="%.1f" y="%d" font-size="12" text-anchor="middle" fill="#5b6475">%s</text>' % (x + w / 2, base + 16, MON[i]))
-        s.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" fill="#1d2433">%s</text>' % (x + w / 2, base + 32, "{:,.0f}".format(rev[i] / 1e6)))
-    s.append('<text x="0" y="%d" font-size="11" fill="#5b6475">예산(백만)</text></svg>' % (base + 32))
+        s.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" fill="#1d2433">%s</text>' % (x + w / 2, base + 32, _axis(rev[i])))
+    s.append('<text x="0" y="%d" font-size="11" fill="#5b6475">예산</text></svg>' % (base + 32))
     return "".join(s)
 
 
@@ -104,8 +108,8 @@ def _cash_svg(B):
     k = int(mn // step)
     while k * step <= mx:
         y = Y(k * step)
-        s.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#eef0f4"/><text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#8a93a3">%s백만</text>'
-                 % (pl, Wd - 10, y, y, pl - 4, y + 4, "{:,}".format(int(k * step / 1e6))))
+        s.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#eef0f4"/><text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#8a93a3">%s</text>'
+                 % (pl, Wd - 10, y, y, pl - 4, y + 4, _axis(k * step)))
         k += 1
     ym = Y(mc)
     s.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" stroke="#c00000" stroke-dasharray="5 4"/><text x="%d" y="%.1f" font-size="11" text-anchor="end" fill="#c00000">최소 보유현금 %s</text>'
@@ -117,11 +121,11 @@ def _cash_svg(B):
         pts.append((cx, Y(bal[i])))
         red = i == lo or bal[i] < mc
         s.append('<text x="%.1f" y="%d" font-size="12" text-anchor="middle" fill="#5b6475">%s</text>' % (cx, base + 16, MON[i]))
-        s.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" fill="%s">%s</text>' % (cx, base + 32, "#c00000" if red else "#1d2433", "{:,.0f}".format(bal[i] / 1e6)))
+        s.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" fill="%s">%s</text>' % (cx, base + 32, "#c00000" if red else "#1d2433", _axis(bal[i])))
     s.append('<polyline points="%s" fill="none" stroke="#1f4e8c" stroke-width="2"/>' % " ".join("%.1f,%.1f" % p for p in pts))
     for i, (a, b) in enumerate(pts):
         s.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="#fff" stroke-width="2"/>' % (a, b, "#c00000" if (i == lo or bal[i] < mc) else "#1f4e8c"))
-    s.append('<text x="0" y="%d" font-size="11" fill="#5b6475">월말(백만)</text></svg>' % (base + 32))
+    s.append('<text x="0" y="%d" font-size="11" fill="#5b6475">월말</text></svg>' % (base + 32))
     return "".join(s)
 
 
@@ -233,16 +237,16 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
              "<i style='background:#b5523b;height:2px'></i>%d년 같은 달 매출</div>" % (_bars(B), base))
     h.append("<div class='note'>달별 나눔 = %s. 이미 받은 일이 그보다 큰 달은 받은 일 금액으로 올리고 다른 달을 줄였습니다.</div></div>" % esc(B["seas_src"]))
     if mg:
-        mt = ["<div class='card' style='margin-top:8px'><div class='wsub' style='margin-top:0'>팀별·달별 매출 예산 (백만 원)</div><table class='pt r small'><thead><tr><th>팀</th>%s<th>합계</th></tr></thead><tbody>"
+        mt = ["<div class='card' style='margin-top:8px'><div class='wsub' style='margin-top:0'>팀별·달별 매출 예산</div><table class='pt r small tiny'><thead><tr><th>팀</th>%s<th>합계</th></tr></thead><tbody>"
               % "".join("<th>%s</th>" % m for m in MON)]
         for t in teams:
             R = T[t]
-            mt.append("<tr><td>%s</td>%s<td>%s</td></tr>" % (esc(t), "".join("<td>%s</td>" % (("<b>%.0f</b>" if R["got"][i] else "%.0f") % (v / 1e6)) for i, v in enumerate(R["rev"])),
-                                                         "{:,.0f}".format(R["budget"] / 1e6)))
+            mt.append("<tr><td>%s</td>%s<td>%s</td></tr>" % (esc(t), "".join("<td>%s</td>" % (("<b>%s</b>" if R["got"][i] else "%s") % won(v)) for i, v in enumerate(R["rev"])),
+                                                         won(R["budget"])))
             mt.append("<tr><td style='padding-left:14px;color:#5b6475'>└ 이미 받은 일</td>%s<td>%s</td></tr>"
-                      % ("".join("<td style='color:#5b6475'>%s</td>" % ("%.0f" % (v / 1e6) if v else "") for v in R["got"]), "{:,.0f}".format(R["got_sum"] / 1e6)))
+                      % ("".join("<td style='color:#5b6475'>%s</td>" % (won(v) if v else "") for v in R["got"]), won(R["got_sum"])))
         mt.append("<tr class='tot'><td>합계</td>%s<td>%s</td></tr><tr><td style='color:#5b6475'>계절 비중</td>%s<td>100%%</td></tr></tbody></table>"
-                  % ("".join("<td>%.0f</td>" % (v / 1e6) for v in B["rev"]), "{:,.0f}".format(Y["rev"] / 1e6), "".join("<td style='color:#5b6475'>%.1f%%</td>" % (v * 100) for v in B["seas"])))
+                  % ("".join("<td>%s</td>" % won(v) for v in B["rev"]), won(Y["rev"]), "".join("<td style='color:#5b6475'>%.1f%%</td>" % (v * 100) for v in B["seas"])))
         mt.append("<div class='wsub'>이미 받은 %d년 행사 (인트라넷 사전견적)</div><table class='pt r'><thead><tr><th>팀</th><th class='l'>프로젝트</th><th>행사 월</th><th>사전견적</th><th>추정 예산</th></tr></thead><tbody>" % y)
         for g in B["got"]:
             mt.append("<tr><td>%s</td><td class='l'>[%s] %s</td><td>%d월</td><td>%s</td><td>%s</td></tr>"

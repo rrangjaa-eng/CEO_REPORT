@@ -664,7 +664,13 @@ def chg(a, b):
     if a is None or not b:
         return "—"
     v = (a - b) * 100.0 / abs(b)
+    if v > TINY_BASE_PCT and abs(b) < TINY_BASE_WON:
+        return "작년 거의 없음"   # 2차 전수조사 J7: 작년이 아주 작아 '+41898.4%' 같은 값이 그대로 나왔음
     return ("+" if v >= 0 else "−") + "%.1f%%" % abs(v)
+
+
+TINY_BASE_PCT = 1000.0   # 증감률이 이보다 크고(작년의 11배 넘음)
+TINY_BASE_WON = 1000000   # 작년 금액이 이보다 작으면 비율 대신 '작년 거의 없음'
 
 
 def sgn(v):
@@ -882,6 +888,11 @@ def render(A, mode):
         h.append("<div class='yl'><b>작년 대비</b> 매출 %s, 영업이익 %s, 세전 이익 %s, 영업이익률 %s → %s%s</div>"
                  % (chg(Yp["rev"], Lp["rev"]), chg(V["op"], VL["op"]), chg(Yp["pre"], Lp["pre"]), pct(VL["op"], VL["rev"]),
                     pct(V["op"], V["rev"]), " (작년 같은 1~%d월)" % cut if mid else (" (작년은 %d개월)" % len(Lp["months"]) if not Lp["full"] else "")))
+        nm, nl = (cut if mid else 12), len(Lp["months"])
+        if 0 < nl < nm and Lp["rev"]:
+            # 2차 전수조사 J8: 작년은 달 수가 적어(회사 시작 첫해) 합계 비교가 성장률로 읽힘 → 월평균도 같이
+            h.append("<div class='yl'><b>월평균으로 보면</b> 올해 %d개월 · 작년 %d개월이라, 월평균 매출 %s → %s (%s)</div>"
+                     % (nm, nl, W(round(Lp["rev"] / float(nl))), W(round(Yp["rev"] / float(nm))), chg(Yp["rev"] / float(nm), Lp["rev"] / float(nl))))
     h.append("<div class='sec'>" + _q("1. %d년%s 손익 (%s)" % (year, ym, "결산 확정" if A["closed"] and A["tax_fixed"] else "결산 전"), "근거 1-1~1-2"))
     rows = [("매출", "rev", ""), ("− 매출원가", "cogs", ""), ("매출총이익", "gp", "hq"), ("− 판매비와관리비", "common", ""),
             ("급여", "sal", "ind"),
@@ -917,6 +928,11 @@ def render(A, mode):
                        else "· 12월 결산 전표가 아직 없고 감가상각비 예상도 없습니다")
         if Yp.get("bad_pending"):
             fix.append("· 대손충당금 예상 %s도 먼저 뺐습니다%s" % (W(Yp["bad_pending"]), " (%s)" % esc(Yp["bad_note"]) if Yp.get("bad_note") else ""))
+            if Lp and not Lp.get("bad_pending"):
+                # 2차 전수조사 J9: 올해만 대손충당금 예상을 빼고 작년 같은 기간은 안 빼 같은 기준 비교가 아니었음 → 같은 기준 값도 적음
+                same = Yp["pre"] + Yp["bad_pending"]
+                fix.append("· 작년%s 세전 이익에는 대손충당금이 없습니다 (작년 장부에 쌓지 않음). 같은 기준(대손충당금 예상 빼기 전)으로 보면 "
+                           "올해 세전 이익 %s, 작년 대비 %s" % (" 같은 기간" if mid else "", W(same), chg(same, Lp["pre"])))
         if mid and Lp and Lp.get("dep_pending"):
             fix.append("· 작년 1~%d월도 같은 방식으로 작년 감가상각비 %s를 먼저 뺐습니다 (작년 결산 감가상각비는 12월에 들어가 같은 기간엔 0원)"
                        % (cut, W(Lp["dep_pending"])))
@@ -1031,11 +1047,14 @@ def render(A, mode):
         lines.append("<li><b>프로젝트</b>%s %d건%s · 원가 확인 %d건·미확인 %d건%s · 목표 수익률 미달 %d건 · 적자 %d건</li>"
                      % (" (1~%d월에 행사 끝남)" % cut if mid else "", st_["n"], " (작년 같은 기간 %d건)" % PR["lall"] if PR["lall"] and mid else (" (작년 %d건)" % PR["lall"] if PR["lall"] else ""), st_["known"], st_["unknown"], avg, st_["under"], st_["loss"]))
     if Lp and Lp["acct"]:
-        ups = sorted([(k, v, Lp["acct"].get(k)) for k, v in Yp["acct"].items() if Lp["acct"].get(k) and v > Lp["acct"][k]],
-                     key=lambda x: -(x[1] / float(x[2])))[:3]
+        # 1차 C7 (2026-11-18): 설명 줄은 +67.9%, 표는 +71.1% 였음 — 표와 같은 값(결산 전 감가상각비 예상 포함)을 쓴다.
+        # '많이 늘어난 항목'은 비율 순이라 1만 원짜리 항목(+50279.8%)이 맨 앞에 왔음 → 늘어난 금액 순
+        Yf, Lf = _with_dep(Yp, cut), _with_dep(Lp, cut)
+        ups = sorted([(k, v, Lf["acct"].get(k, 0)) for k, v in Yf["acct"].items() if v > Lf["acct"].get(k, 0)],
+                     key=lambda x: -(x[1] - x[2]))[:3]
         lines.append("<li><b>판관비</b> %s (매출 대비 %s → %s) · 많이 늘어난 항목: %s</li>" % (
-            chg(Yp["common"], Lp["common"]), pct(Lp["common"], Lp["rev"]), pct(Yp["common"], Yp["rev"]),
-            ", ".join("%s %s" % (esc(k), chg(a, b)) for k, a, b in ups) or "없음"))
+            chg(Yf["common"], Lf["common"]), pct(Lf["common"], Lf["rev"]), pct(Yf["common"], Yf["rev"]),
+            ", ".join("%s %s%s" % (esc(k), sgn(a - b), " (%s)" % chg(a, b) if b else "") for k, a, b in ups) or "없음"))
     if lines:
         tt.append("<ul class='nl' style='font-size:12px;color:var(--ink)'>%s</ul>" % "".join(lines))
     tt.append("</div></div>")
@@ -1138,7 +1157,9 @@ def _risks(A):
         for k, v in Yp["acct"].items():
             b = Lp["acct"].get(k)
             if b and v / float(b) > g * 1.2 and v - b > 1000000:
-                out.append(("낮음", "비용", "%s %s (매출 %s보다 빠르게 늘어남)." % (esc(k), chg(v, b), chg(Yp["rev"], Lp["rev"])), "늘어난 이유 확인, 다음 해 예산에 반영."))
+                c_ = chg(v, b)
+                out.append(("낮음", "비용", "%s %s (매출 %s보다 빠르게 늘어남)." % (
+                    esc(k), "%s원 (작년 %s원)" % (W(v), W(b)) if c_ == "작년 거의 없음" else c_, chg(Yp["rev"], Lp["rev"])), "늘어난 이유 확인, 다음 해 예산에 반영."))
     if not A["closed"] and A.get("mid"):
         out.append(("낮음", "자료", "연중(%s 기준) 보고 — 감가상각비·법인세는 예상, 손익은 1~%d월." % (A["asof"].isoformat(), A["cut"]),
                     "결산 뒤 위하고에서 분개장을 다시 받아 '자료 변환' 후 다시 만듦."))
@@ -1210,10 +1231,11 @@ def _detail(A):
                                                                  for i, (n, c, v) in enumerate(lst[:10])], "pt") + "</div>")
     d.append("</div>")
     if "new" in A:
-        d.append("<div class='evh'>근거 4-2 · 새로 생긴 거래처 %d곳 · 끊긴 거래처 %d곳</div><div class='cf'><div>%s</div><div>%s</div></div>" % (
-            len(A["new"]), len(A["lost"]),
+        lost_lab = "올해 아직 거래 없는 곳" if A.get("mid") else "끊긴 거래처"   # 2차 전수조사 J12: 연중엔 요약과 같은 이름
+        d.append("<div class='evh'>근거 4-2 · 새로 생긴 거래처 %d곳 · %s %d곳</div><div class='cf'><div>%s</div><div>%s</div></div>" % (
+            len(A["new"]), lost_lab, len(A["lost"]),
             _tab(["새 거래처", "올해 매출"], [[_vname(n, c), W(v)] for n, c, v in A["new"]], "pt", ["합계", W(sum(v for _, _, v in A["new"]))]),
-            _tab(["끊긴 거래처", "작년 매출"], [[_vname(n, c), W(v)] for n, c, v in A["lost"]], "pt", ["합계", W(sum(v for _, _, v in A["lost"]))])))
+            _tab([lost_lab, "작년 매출"], [[_vname(n, c), W(v)] for n, c, v in A["lost"]], "pt", ["합계", W(sum(v for _, _, v in A["lost"]))])))
     S = A["speed"]
     if S["n"]:
         d.append("<div class='evh'>근거 4-3 · 돈 받는 속도 (올해 입금 %d건, 행사 전 입금 %d건 제외)</div>" % (S["n"], S["pre"]))

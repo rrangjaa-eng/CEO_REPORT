@@ -667,6 +667,9 @@ def main(argv=None):
                 return 7
             continue
         page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
+        if mode == "mgmt":
+            from ceo_report import plainwords
+            page = plainwords.plain(page)   # 개발 용어를 쉬운 말로 (2차 전수조사 J12)
         try:
             _write_page(base + ".html", page)
         except OSError as e:

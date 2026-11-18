@@ -735,11 +735,11 @@ def build(C, sources=""):
         r += 1
         return r - 1
 
-    def group(title, items, extra=None):
+    def group(title, items, extra=None, note=""):
         nonlocal r
         sh.set(r, B, title, s="grp")
         for c in (Cc, Dd, Ee, F):
-            sh.set(r, c, "", s="grp")
+            sh.set(r, c, note if c == F else "", s="grp")
         r += 1
         first = r
         for code, name, v in items:
@@ -785,7 +785,9 @@ def build(C, sources=""):
         line("  결산 비용 중 낼 돈 (퇴직급여·상여금·카드·4대보험, 예상)", f=side_sum("liab"),
              note="'바꿀 값' 탭 1번의 퇴직급여·상여금·카드값·4대보험 회사분 중 '예'인 것. 아직 안 낸 돈이라 빚으로 잡습니다.")
     cl = group("유동부채 (1년 안에 갚을 것)", G["cl"], cl_extra)
-    nl = group("비유동부채 (1년 뒤 갚을 것)", G["nl"])
+    # 2차 전수조사 J23: 만기가 1년 안에 오는 대출이 '1년 뒤 갚을 것'에 있어 헷갈림 → 장부 분류 그대로인 까닭을 적음
+    nl = group("비유동부채 (1년 뒤 갚을 것)", G["nl"],
+               note="위하고 장부 분류 그대로입니다. 대출은 만기가 1년 안에 와도 매년 연장할 예정이라 여기에 둡니다 (만기일은 경영관리 보고 ‘자금’)." if G["nl"] else "")
     tl = total("부채 총계 (갚을 것)", cl, nl)
 
     def eq_extra():

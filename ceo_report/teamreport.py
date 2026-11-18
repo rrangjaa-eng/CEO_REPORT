@@ -37,7 +37,16 @@ def W(v):
 def P(a, b):
     if a is None or b is None:
         return "미확인"
-    return "-" if not b else "%.1f%%" % (a * 100.0 / b)
+    if not b:
+        return "-"
+    v = a * 100.0 / b
+    # 1차 C5 (2026-11-18): 금액은 △인데 비율만 '-7.6%' 였음 → 음수는 금액과 같게 △
+    return ("△%.1f%%" % abs(v)) if round(v, 1) < 0 else "%.1f%%" % abs(v)
+
+
+def _dots(text):
+    """날짜 글자를 이 문서 머리와 같은 2026.01.10 모양으로 (1차 C5: 2026-01-10 과 2026.04.06 이 섞임)."""
+    return re.sub(r"(\d{4})-(\d{1,2})-(\d{1,2})", lambda m: "%s.%02d.%02d" % (m.group(1), int(m.group(2)), int(m.group(3))), str(text or ""))
 
 
 def _sub(a, b):
@@ -481,7 +490,7 @@ def _project_table(T, rows, g, label_total, with_months):
     for k, r in enumerate(rows, 1):
         rate = None if not r["revenue"] or r["gp"] is None else r["gp"] * 100.0 / r["revenue"]
         out.append(_tr(([_td(str(k), "c")] if with_months else []) + [
-            _td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(r["event"] or "-"), "c")]
+            _td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(_dots(r["event"]) or "-"), "c")]
             + ([_td(esc(r["months"] or "-"), "c")] if with_months else [])
             + [_num(r["revenue"]), _num(r["cost"]), _num(r["gp"]),
                _td(esc(P(r["gp"], r["revenue"])), "low" if with_months and low is not None and rate is not None and rate < low else "")]))
@@ -542,7 +551,7 @@ def _upcoming_section(T, title):
           "<th>집행액<br><small>(지급이 끝난 돈)</small></th><th>잔여<br><small>(추정 예산 − 집행액)</small></th>"
           "<th>쓸 수 있는 남은 예산<br><small>(지급 전 장부 비용·요청·계획까지 뺀 것)</small></th></tr></thead><tbody>")
         for r in T["up"]:
-            a(_tr([_td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(r["event"]), "c"),
+            a(_tr([_td(esc("[%s] %s" % (r["id"], r["name"])), "l"), _td(_client(r["client"]), "l"), _td(esc(_dots(r["event"])), "c"),
                    _num(r["estimate"]), _num(r["budget"]), _num(r["paid"]), _num(r["left"], True),
                    _num(r["avail"], True, "hl" if r["avail"] is not None and r["avail"] < 0 else "")], "pj"))
         u = T["up_tot"]
@@ -840,7 +849,7 @@ def render_annual(T, X, today=None):
         a("<table class='g'><thead><tr><th>프로젝트</th><th>행사일</th><th>사전견적</th><th>추정 예산</th><th>집행액</th>"
           "<th>잔여<br><small>(추정 예산 − 집행액)</small></th></tr></thead><tbody>")
         for p in NX:
-            a(_tr([_td(esc("[%s] %s" % (p["id"], p["name"])), "l"), _td(esc(p["day"].isoformat()), "c"), _num(p["est"]), _num(p["budget"]),
+            a(_tr([_td(esc("[%s] %s" % (p["id"], p["name"])), "l"), _td(esc(_dots(p["day"].isoformat())), "c"), _num(p["est"]), _num(p["budget"]),
                    _num(p["paid"]), _num(None if p["budget"] is None else p["budget"] - p["paid"], True)], "pj"))
         b = _sum([p["budget"] for p in NX])
         pd_ = _sum([p["paid"] for p in NX])
