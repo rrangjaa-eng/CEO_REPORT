@@ -883,6 +883,20 @@ def _how(f, E):
     return f[3]
 
 
+def basis_text(C):
+    """등급 칸 아래 기준 글 (2차 전수조사 J5·1차 B14, 2026-11-18): 예전엔 연중에도 '2026년 결산 기준'이라 적어 결산 값으로 읽혔고,
+    프로그램이 만든 점수표인데 실제 신용등급처럼 보였다. 연중이면 감가상각·결산 비용 전 이익이라 좋게 나올 수 있음도 적는다."""
+    if C["annual"]:
+        return "%d년 결산 장부 기준 어림 · 실제 등급과 다를 수 있음" % C["year"]
+    return "%d년 1~%d월 장부 기준 어림 (결산 비용 반영 전이라 좋게 나올 수 있음) · 실제 등급과 다를 수 있음" % (C["year"], C["mon"])
+
+
+def score_range(C):
+    """'모르는 칸에 따라 a~b점' — 폭이 없으면('56~56점') 빈 글 (1차 B14)."""
+    lo, hi = "%.0f" % C["score"][0], "%.0f" % C["score"][2]
+    return "" if lo == hi else "모르는 칸에 따라 %s~%s점" % (lo, hi)
+
+
 def render_brief(C):
     """연간 대표 보고 7절 (사용자 2026-11-17 '연간 보고에 기업신용평가 미리 보기가 없잖아'): 추정 등급·점수와 재무 지표 값만.
     쉬운 설명·판정·할 일은 넣지 않는다 (대표·팀장 보고는 안내 문구 없이 — 사용자 2026-11-17). 전체는 경영관리 9장."""
@@ -890,9 +904,9 @@ def render_brief(C):
         return CSS + "<div class='crx'><div class='note'>분개장 계정 자료가 없어 계산하지 못했습니다.</div></div>"
     V = C["V"]
     LY = C.get("last") or {}
-    when = "%d년 결산 기준 (%d월까지 장부 반영)" % (C["year"], C["mon"]) if not C["annual"] else "%d년 결산 기준" % C["year"]
+    when = basis_text(C)
     cards = [("추정 등급 범위", grade_text(C["grade"]), when),
-             ("점수 (0~100점)", "%.0f점" % C["score"][1], "모르는 칸에 따라 %.0f~%.0f점" % (C["score"][0], C["score"][2])),
+             ("점수 (0~100점)", "%.0f점" % C["score"][1], score_range(C)),
              ("작년 실제 등급", esc(LY["grade"]) if LY.get("grade") else "—", esc(LY.get("agency") or "") if LY.get("grade") else "입력 전")]
     h = [CSS, "<div class='crx'><div class='top'>%s</div>" % "".join(
         "<div class='c'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>" % (esc(l), b, esc(f)) for l, b, f in cards)]
@@ -914,7 +928,7 @@ def render(C):
     V, E = C["V"], C["E"]
     spec = dict((f[0], f) for f in FIN)
     h = [CSS, "<div class='crx'>"]
-    when = "%d년 결산 기준 (%d월까지 장부 반영)" % (C["year"], C["mon"]) if not C["annual"] else "%d년 결산 기준" % C["year"]
+    when = basis_text(C)
     h.append("<div class='note'>%s. 평가 회사(NICE·한국기업데이터·이크레더블 등)의 실제 모형은 공개되지 않아 <b>등급은 추정 범위</b>로만 보입니다. "
              "판정 기준은 재무분석에서 널리 쓰이는 값이고, 모든 문구는 정해진 규칙으로 만듭니다.</div>" % when)
     easy = explain(C)
@@ -922,7 +936,7 @@ def render(C):
         h.append("<div class='say'><b>쉬운 설명</b><br>%s</div>" % "<br>".join(esc(x) for x in easy))
     best, worst = C["best"], C["worst"]
     adj = (C.get("last") or {}).get("adj")
-    foot = "점수 %.0f점 (모르는 칸에 따라 %.0f~%.0f점)." % (C["score"][1], C["score"][0], C["score"][2])
+    foot = "점수 %.0f점%s." % (C["score"][1], " (%s)" % score_range(C) if score_range(C) else "")
     if C["age"] is not None and C["age"] < 3:
         foot += " 업력 3년 미만이라 아래쪽을 한 칸 더 봅니다."
     if adj:
