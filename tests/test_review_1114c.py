@@ -415,7 +415,8 @@ class MidYearAnnual(unittest.TestCase):
             self.assertIn("2026-10-31", h)            # 손익 집계 기간 끝
             self.assertIn("2026년 1~10월 매출", h)
             self.assertNotIn("연말 통장 잔액", h)
-            self.assertIn("기간 비례", h)
+            self.assertNotIn("기간 비례", h)   # 2차 전수조사 J2: 판정은 올해 매출 예상 기준
+            self.assertIn("올해 매출 예상", h)
             self.assertNotIn("<td>2026-12-31</td>", h)
         mg = annual.render(A, "mgmt")
         self.assertIn("1~10월 이익 기준 예상", mg)

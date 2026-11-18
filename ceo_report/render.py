@@ -2317,15 +2317,23 @@ def _person_table(R, src, dept, ym, basis):
 def _target_table(R, Y, ym):
     """팀별 연간 목표 대비 누적 실적 (사용자 2026-11-03). 목표는 창 ‘가끔 넣는 값 › 팀 목표’로 넣은 팀목표.csv.
 
-    달성률 = 누적 매출 ÷ 연간 매출 목표, 진도 기준 = 지난 달 수 ÷ 12. 달성률이 진도 기준 이상이면 '목표 이상'."""
+    달성률 = 누적 매출 ÷ 연간 매출 목표, 막대 세로선 = 지난 달 수 ÷ 12.
+    판정 (2차 전수조사 J2, 2026-11-18): 누적 매출 + 팀의 앞으로 잡힐 매출(= 올해 매출 예상, ⑥과 같은 계산)이 연 목표 이상인지.
+    예전엔 달성률 ≥ 지난 달 ÷ 12 — 행사 매출은 달마다 크게 달라 앞으로 잡힐 매출이 넉넉한 팀도 '미달'로 보였음. 12월 보고와
+    이미 목표를 넘은 팀은 '목표 이상/미달' 그대로. 앞으로 잡힐 매출을 모르면 판정하지 않음."""
     T = R.get("targets") or {}
     teams = [r for r in Y["rows"] if r["kind"] == "team"]
     pace = int(ym[5:7]) / 12.0
-    h = ["<div class='wsub'>목표 대비 (진도 기준 %d월/12 = %.0f%%)</div>" % (int(ym[5:7]), pace * 100),
+    mid = int(ym[5:7]) < 12
+    E = (R.get("s5") or {}).get("expected")
+    left_by = None if (not E or E.get("missing")) else E.get("by_team") or {}
+    h = ["<div class='wsub'>목표 대비 (막대 세로선 = %d월/12 = %.0f%%)</div>" % (int(ym[5:7]), pace * 100),
          "<table class='pt tg'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>누적 매출</th><th>달성률</th>"
+         + ("<th>올해 매출 예상<br><small>누적 + 앞으로 잡힐 매출</small></th>" if mid else "") +
          "<th>누적 수익금<br><small>매출총이익</small></th><th>수익률<br><small>실제 / 목표</small></th>"
          "<th>판정</th></tr></thead><tbody>"]
     sum_t, sum_r, all_t = 0, 0, True
+    sum_e, e_known = 0, True
     sum_g, g_known = 0, True   # 팀별 달성 수익금 = 누적 매출총이익 (사용자 2026-11-05)
     for r in teams:
         t = T.get(r["label"]) or {}
@@ -2345,17 +2353,32 @@ def _target_table(R, Y, ym):
         else:
             ach, ach_txt, all_t = None, _na("목표 없음" if not tr else "미확인"), False
         verdict = []
+        exp = None
+        if mid and left_by is not None and rev is not None:
+            lt = left_by.get(r["label"]) or {}
+            exp = rev + lt.get("past", 0) + lt.get("this_year", 0)
         if ach is not None:
-            verdict.append(("목표 이상", "c-ok") if ach >= pace else ("목표 미달", "c-over"))
+            if not mid or ach >= 1:
+                verdict.append(("목표 이상", "c-ok") if ach >= 1 else ("목표 미달", "c-over"))
+            elif exp is not None:
+                verdict.append(("올해 예상 달성", "c-ok") if exp >= tr else ("올해 예상 미달", "c-over"))
         if rate is not None and act_rate is not None:
             verdict.append(("수익률 달성", "c-ok") if act_rate >= rate else ("수익률 미달", "c-over"))
         chips = "".join("<span class='chip %s'>%s</span>" % (c, esc(v)) for v, c in verdict) or "—"
-        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s / %s</td><td>%s</td></tr>"
-                 % (esc(r["label"]), W(tr, "목표 없음"), W(rev), ach_txt, W(gp),
+        exp_td = ""
+        if mid:
+            exp_td = "<td>%s</td>" % (_na("미확인") if exp is None else W(exp) + ("<br><small>목표의 %.1f%%</small>" % (exp * 100.0 / tr) if tr else ""))
+            if exp is not None and tr:
+                sum_e += exp
+            else:
+                e_known = False
+        h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>%s<td>%s</td><td>%s / %s</td><td>%s</td></tr>"
+                 % (esc(r["label"]), W(tr, "목표 없음"), W(rev), ach_txt, exp_td, W(gp),
                     "—" if act_rate is None else "%.1f%%" % act_rate, "—" if rate is None else "%g%%" % rate, chips))
     if teams and all_t and sum_t:
-        h.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%.1f%%</td><td>%s</td><td>%s</td><td></td></tr>"
-                 % (W(sum_t), W(sum_r), sum_r * 100.0 / sum_t, W(sum_g if g_known else None),
+        h.append("<tr class='tot'><td>팀 합계</td><td>%s</td><td>%s</td><td>%.1f%%</td>%s<td>%s</td><td>%s</td><td></td></tr>"
+                 % (W(sum_t), W(sum_r), sum_r * 100.0 / sum_t,
+                    ("<td>%s</td>" % (W(sum_e) if e_known else "")) if mid else "", W(sum_g if g_known else None),
                     "%.1f%%" % (sum_g * 100.0 / sum_r) if g_known and sum_r else ""))
     h.append("</tbody></table>")
     if not T:
@@ -2747,7 +2770,7 @@ def _ev_change_table(R):
 
 def _ev_targets(R):
     T = R.get("targets") or {}
-    h = ["<div class='note'>입력/팀목표.csv (창 ‘가끔 넣는 값 › 팀 목표’). 달성률 = 누적 매출 ÷ 연간 매출 목표, 진도 = 보고 달 ÷ 12. 수익률 = 누적 매출총이익 ÷ 누적 매출.</div>",
+    h = ["<div class='note'>입력/팀목표.csv (창 ‘가끔 넣는 값 › 팀 목표’). 달성률 = 누적 매출 ÷ 연간 매출 목표, 막대 세로선 = 보고 달 ÷ 12. 판정 = 누적 매출 + 앞으로 잡힐 매출(올해 매출 예상)이 연 목표 이상인지 (12월은 누적 매출). 수익률 = 누적 매출총이익 ÷ 누적 매출.</div>",
          "<table class='pt evt'><thead><tr><th>팀</th><th>연간 매출 목표</th><th>목표 수익률</th></tr></thead><tbody>"]
     for team, t in sorted(T.items()):
         h.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (esc(team), W(t.get("revenue")),
