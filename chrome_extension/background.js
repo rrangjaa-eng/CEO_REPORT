@@ -478,7 +478,7 @@ const AUTO_SCREENS = [
 ];
 // P1-4 (2026-11-15): 화면마다 프로그램이 읽는 자료 응답 (프로그램 wehago_raw.NEED 와 같은 글 — 시험이 둘을 맞춰 봄).
 // 이 응답이 오지 않고 조건 응답(미승인 전표 확인·init 등)이나 오류 응답만 오면 '받음'으로 치지 않고 저장하지 않는다.
-const NEED = {"SACL0105": "/sacl0105/main$", "SACL0108": "/sacl0108/plusforw$", "SAAS0107": "/allfixlist$", "SWPM0108": "/swpm0108/condition$", "SWSA0105": "/swsa0105/total$", "SWBU0103": "/swbu0103/tab1$", "SWET0107": "/swet0107/other/tab01$", "SWYM0107": "/emp/income$", "SWYM0102": "/swym0102$", "SACL0104": "/sacl0104/account$", "SAFM0109": "/safm0109$", "SAFM0107": "/safm0107/balance/statement$", "SACL0106": "/sacl0106/0", "SAAC0103": "/saac0103/jungsang$", "SAFM0108": "/safm0108/\\d+$", "SABM0109": "/sabm0109/bsflist", "SAAC0110": "/collectingdata/", "SAVF0119": "/savf0119/top$", "SWTA0101": "/swta0101/sglist$"};
+const NEED = {"SACL0105": "/sacl0105/main$", "SACL0108": "/sacl0108/plusforw$", "SAAS0107": "/allfixlist$", "SWPM0108": "/swpm0108/condition$", "SWSA0105": "/swsa0105/total$", "SWBU0103": "/swbu0103/tab1$", "SWET0107": "/swet0107/other/tab01$", "SWYM0107": "/emp/income$", "SWYM0102": "/swym0102$", "SACL0104": "/sacl0104/account$", "SAFM0109": "/safm0109$", "SAFM0107": "/safm0107/balance/statement$", "SACL0106": "/sacl0106/0", "SAAC0103": "/saac0103/jungsang$", "SAFM0108": "/safm0108/\\d+$", "SABM0109": "/sabm0109/bsflist", "SAVF0119": "/savf0119/top$", "SWTA0101": "/swta0101/sglist$"};
 // 오류 응답: status 400 이상, 또는 오류 글(error)과 status 를 함께 둔 것 (재무상태표 '/main' 의 error_str 칸은 정상에도 있음)
 function isErrResp(d) {
   return !!d && typeof d === "object" && !Array.isArray(d) &&

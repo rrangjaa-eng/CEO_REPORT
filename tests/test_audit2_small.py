@@ -181,5 +181,34 @@ class TestNoGuidanceInCeoReports(unittest.TestCase):
         self.assertIn('최소 보유현금 위에 있습니다 (달 중간 잔액은 주간·월간 보고의 자금 일정으로 확인)." if mg else ""', src)
 
 
+class TestRemovedThings(unittest.TestCase):
+    """제안 29·30·31 (사용자 2026-11-18 결정): 지급 승인 검토 화면, 대표 보고의 추정 등급, 안 쓰는 읽기 코드를 뺌."""
+
+    def test_no_approval_screen_and_no_hometax_reader(self):
+        import importlib
+        for name in ("ceo_report.approval_render", "ceo_report.hometax"):
+            with self.assertRaises(ImportError):
+                importlib.import_module(name)
+        from ceo_report import reconcile, wehago_raw
+        self.assertFalse(hasattr(reconcile, "collect_rows"))
+        self.assertNotIn("SAAC0110", wehago_raw.NEED)
+
+    def test_credit_basis_says_months_when_the_year_is_not_over(self):
+        from ceo_report import credit
+        mid = credit.basis_text({"annual": True, "year": 2026, "mon": 10})
+        self.assertIn("2026년 1~10월 장부 기준 어림", mid)
+        self.assertNotIn("결산 장부", mid)
+        self.assertIn("2026년 결산 장부 기준 어림", credit.basis_text({"annual": True, "year": 2026, "mon": 12}))
+        self.assertFalse(hasattr(credit, "render_brief"))
+
+    def test_program_messages_name_the_new_places(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for rel in ("보고서.py", os.path.join("ceo_report", "integrity.py")):
+            with open(os.path.join(root, rel), encoding="utf-8") as f:
+                src = f.read()
+            self.assertNotIn("부록 B-7", src)
+            self.assertNotIn("부록 B-8", src)
+
+
 if __name__ == "__main__":
     unittest.main()

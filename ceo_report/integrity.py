@@ -178,7 +178,7 @@ def issue_summary(temp_input, day):
         k = (f, re.sub(r"'[^']*'", "'…'", re.sub(r"\([^)]*\)", "", str(msg))).strip())
         groups[k] = groups.get(k, 0) + 1
     out = ["- 입력 자료 확인 필요 %d건 (파일 · 내용 · 건수). 줄 번호까지 보려면 보고서를 만든 뒤 경영관리보고 "
-           "'부록 B-7 변동·자료 범위' → '입력 자료 확인 필요' 표" % len(items)]
+           "'6. 자료·지급 관리' → '입력 자료 확인 필요' 표" % len(items)]
     for (f, msg), n in sorted(groups.items(), key=lambda kv: -kv[1]):
         out.append("  · 확인 필요: %s — %s (%d건)" % (f or "-", msg[:120], n))
     return out

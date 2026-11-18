@@ -363,33 +363,6 @@ REQ_MEASURE = """
 """
 
 
-class TestApprovalTableWithBooks(unittest.TestCase):
-    """WEHAGO 장부가 있을 때(대조 글·금액 차이 글이 길 때)도 요청 표가 읽히는가."""
-
-    @classmethod
-    def setUpClass(cls):
-        import shutil
-        import tempfile
-        from test_approval import NOW, load_approval_cli, write_fake_snapshot
-        from test_wehago import write_fake_books
-        tmp = tempfile.mkdtemp()
-        cls.addClassCleanup(shutil.rmtree, tmp, True)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        write_fake_books(os.path.join(tmp, "위하고"))
-        path, _ = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False,
-                                                  wehago_dir=os.path.join(tmp, "위하고"))
-        with open(path, encoding="utf-8") as f:
-            cls.page = f.read()
-
-    def test_desk_width_shows_every_column_without_tall_rows(self):
-        dom = browser_dom(self, self.page, REQ_MEASURE, size=(1280, 900))
-        self.assertLessEqual(float(body_attr(dom, "data-twsw")), float(body_attr(dom, "data-twcw")))
-        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
-
-    def test_phone_rows_stay_short_and_table_scrolls_sideways(self):
-        dom = browser_dom(self, self.page, REQ_MEASURE, size=(390, 844))
-        self.assertLessEqual(float(body_attr(dom, "data-sw")), 390)
-        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
 
 
 UNCHECK_BIGGEST = """
@@ -402,25 +375,6 @@ UNCHECK_BIGGEST = """
 """
 
 
-class TestApprovalHeadlineFeedback(unittest.TestCase):
-    """머리 줄: '부족·최소보유현금 미만 주 없음'도 상태로 보이고(글자 그대로), 다시 계산하면 바뀐 값이 잠깐 강조된다."""
-
-    @classmethod
-    def setUpClass(cls):
-        TestApprovalTableWithBooks.setUpClass.__func__(cls)
-
-    def test_no_short_week_is_marked_ok_in_the_file(self):
-        open_tag = re.search(r'<div[^>]*id="headline"[^>]*>', self.page).group(0)
-        self.assertIn("lv-ok", open_tag)
-
-    def test_recompute_marks_the_changed_value(self):
-        dom = browser_dom(self, self.page, UNCHECK_BIGGEST)
-        self.assertIn("lv-ok", body_attr(dom, "data-hl"))
-        self.assertIn("chg", body_attr(dom, "data-low-cls"))
-
-    def test_focus_ring_and_reduced_motion_rules_exist(self):
-        self.assertIn(":focus-visible{outline:2px solid", self.page)
-        self.assertIn("prefers-reduced-motion", self.page)
 
 
 PHONE_ROWS = """

@@ -1404,11 +1404,12 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
                                     if _drop_stale(input_dir, insights.FILE) else "예전 것이 남아 보고가 지난 장부 날짜·회사 이름을 볼 수 있음"))
             dups = review_checks.duplicate_lines(books.journal)
             overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
-            from . import checklist, hometax
-            ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
-            listings = tidy + overlap + dups + ht["notes"] + checks
-            summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
-            items = (review_checks.duplicate_items(books.journal) + ht["items"]
+            from . import checklist
+            # 홈택스 엑셀 대조(수집\\홈택스)는 뺌 (2차 전수조사 제안 31, 사용자 2026-11-18): 그 폴더에 넣는 자료가 없고,
+            # 홈택스 매출 계산서 ↔ 장부는 위하고에서 받은 자료로 '7. 위하고 대조'가 맞춘다 (reconcile.invoice_rows)
+            listings = tidy + overlap + dups + checks
+            summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [checks[0]]
+            items = (review_checks.duplicate_items(books.journal)
                      + [i for t in tables if t.written for i in (t.extra or {}).get("check_items", [])]
                      + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]
                                                      + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]

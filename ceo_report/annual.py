@@ -1107,9 +1107,7 @@ def render(A, mode):
                       W(got) + (" (%s)" % pct(got, g[0]) if g and g[0] else "")])
     h.append(_tab(["팀", "%d년%s 매출" % (year, ym), "%d년%s 수익률" % (year, ym), "%d년 매출 목표" % (year + 1), "%d년 목표 수익률" % (year + 1), "목표 중 이미 받은 일"], rows_, "pt tgy"))
     h.append("</div></div>")
-    # ── 5쪽: 기업신용평가 미리보기 (사용자 2026-11-17: 연간 보고에 있어야 함). 대표용은 등급·점수·지표 값만, 전체는 경영관리 9장
-    from . import credit
-    h.append("<div class='sec pgb'>" + _q("7. 기업신용평가 미리보기", "근거 9") + credit.render_brief(A.get("credit")) + "</div>")
+    # 기업신용평가 미리보기는 대표 보고에서 뺌 (사용자 2026-11-18 결정 '대표 보고에서 뺌': 결산 전 장부로 어림한 등급이라 오해 소지). 전체는 경영관리 9장
     if mode == "ceo":
         h.append("<div class='evid'>숫자 옆 ‘근거’ 번호로 요청하시면 경영관리가 해당 근거자료를 제출합니다.<span class='doc-end'>끝.</span></div></div></div></body></html>")
     else:

@@ -79,12 +79,11 @@ class TestFreshAndSteps(Base):
         self.assertEqual(winstate.steps(P)["now"], 1)
         self.touch(os.path.join(P.wehago, "분개장_2026.xls"), dt.datetime(2026, 11, 5, 10, 0))
         self.touch(os.path.join(P.wehago, "자금계획서_지출입금현황_2026-11.xls"), dt.datetime(2026, 10, 1, 10, 0))
-        self.touch(os.path.join(P.collect, "홈택스", "매출.xls"), dt.datetime(2026, 9, 1, 10, 0))
         checklist.save_bank(P.input, "2026-11-04", "1,000")
         F = {f["name"]: f for f in winstate.freshness(P, asof)}
         self.assertEqual(F["분개장"]["level"], "g")
         self.assertEqual(F["자금계획서"]["level"], "r")
-        self.assertEqual(F["홈택스 세금계산서"]["level"], "r")
+        self.assertNotIn("홈택스 세금계산서", F)   # 2차 전수조사 제안 31: 안 쓰는 홈택스 엑셀 줄을 뺌
         self.assertEqual(F["통장 잔액"]["text"], "11/4 · 2일 전")
         self.assertEqual(F["인트라넷 (지급요청·견적)"]["level"], "none")
         S = winstate.steps(P)

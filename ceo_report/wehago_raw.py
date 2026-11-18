@@ -66,7 +66,7 @@ NEED = {"SACL0105": r"/sacl0105/main$", "SACL0108": r"/sacl0108/plusforw$", "SAA
         "SWET0107": r"/swet0107/other/tab01$", "SWYM0107": r"/emp/income$", "SWYM0102": r"/swym0102$",
         "SACL0104": r"/sacl0104/account$", "SAFM0109": r"/safm0109$", "SAFM0107": r"/safm0107/balance/statement$",
         "SACL0106": r"/sacl0106/0", "SAAC0103": r"/saac0103/jungsang$", "SAFM0108": r"/safm0108/\d+$",
-        "SABM0109": r"/sabm0109/bsflist", "SAAC0110": r"/collectingdata/", "SAVF0119": r"/savf0119/top$",
+        "SABM0109": r"/sabm0109/bsflist", "SAVF0119": r"/savf0119/top$",
         "SWTA0101": r"/swta0101/sglist$"}
 
 

@@ -162,20 +162,6 @@ class TestOutflowFileUnusable(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("지급 자료 없음: 자금일정.csv (파일 없음)", out)
 
-    def test_approval_screen_does_not_compute_low(self):
-        folder = sample_copy(self)
-        os.remove(os.path.join(folder, "자금일정.csv"))
-        tmp = new_tmp(self)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        path, A = load_approval_cli().make_screen(folder, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
-        with open(path, encoding="utf-8") as f:
-            page = f.read()
-        self.assertIsNone(A["data"]["start"])
-        self.assertIsNotNone(A["start"])  # 시작 잔액 줄은 그대로
-        self.assertEqual(T(page, "h-low"), "미확인")
-        self.assertIn("자금일정.csv", T(page, "h-short"))
-        self.assertIn("자금일정.csv", A["data"]["no_calc"])
-        self.assertIn("542.4", T(page, "start-line"))
 
 
 def fs_of(html):
@@ -327,34 +313,7 @@ class TestInvoiceFileUnusable(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("계산서 자료 없음: 계산서.csv (파일 없음)", out)
 
-    def test_approval_screen_says_inflows_missing(self):
-        import contextlib
-        import io
-        folder = sample_copy(self)
-        os.remove(os.path.join(folder, "계산서.csv"))
-        tmp = new_tmp(self)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        cli = load_approval_cli()
-        path, A = cli.make_screen(folder, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
-        with open(path, encoding="utf-8") as f:
-            page = f.read()
-        self.assertEqual(A["in_missing"], ["계산서.csv (파일 없음)"])
-        self.assertNotEqual(T(page, "h-low"), "미확인")  # 최저 잔액은 계산한다 (계산서 입금 없이)
-        self.assertIn("계산서.csv", T(page, "in-missing"))
-        self.assertIn("계산서.csv", T(page, "attention"))
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            cli.report(path, A, "(마지막 스냅숏)")
-        self.assertIn("계산서 자료 없음: 계산서.csv (파일 없음)", buf.getvalue())
 
-    def test_approval_sample_has_no_note(self):
-        tmp = new_tmp(self)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        path, A = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False)
-        with open(path, encoding="utf-8") as f:
-            page = f.read()
-        self.assertEqual(A["in_missing"], [])
-        self.assertNotIn('id="in-missing"', page)
 
 
 if __name__ == "__main__":
@@ -415,26 +374,6 @@ class _FixedNow(dt.datetime):
         return cls(2026, 11, 2, 9, 30, 5)
 
 
-class TestApprovalSameMinute(unittest.TestCase):
-    """같은 분에 두 번 만들면 앞 화면을 덮어쓰지 않는다 (기준일을 바꿔 비교하는 경우 앞 화면이 사라졌다)."""
-
-    def test_second_run_gets_its_own_file(self):
-        from unittest import mock
-        cli = load_approval_cli()
-        tmp = new_tmp(self)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        out = os.path.join(tmp, "출력")
-        fake = type("dtmod", (), {"datetime": _FixedNow, "date": dt.date, "time": dt.time, "timedelta": dt.timedelta})
-        with mock.patch.object(cli, "dt", fake):
-            p1, _ = cli.make_screen(SAMPLE, out, snap, ASOF, NOW, False)
-            p2, _ = cli.make_screen(SAMPLE, out, snap, dt.date(2026, 12, 31), dt.datetime(2026, 12, 31), False)
-        self.assertNotEqual(p1, p2)
-        self.assertEqual(os.path.basename(p1), "승인검토_20261102_0930.html")
-        self.assertEqual(os.path.basename(p2), "승인검토_20261102_0930_2.html")
-        with open(p1, encoding="utf-8") as f:
-            self.assertIn("기준일 2026-11-02", f.read())
-        with open(p2, encoding="utf-8") as f:
-            self.assertIn("기준일 2026-12-31", f.read())
 
 
 class TestOutputFolderUnwritable(unittest.TestCase):
@@ -454,18 +393,6 @@ class TestOutputFolderUnwritable(unittest.TestCase):
         self.assertIn("출력 폴더에 파일을 쓰지 못했습니다", text)
         self.assertIn(out, text)
 
-    def test_approval(self):
-        import contextlib
-        import io
-        out = self.blocked()
-        root = os.path.join(new_tmp(self), "수집")
-        write_fake_snapshot(root)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = load_approval_cli().main(["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", root,
-                                           "--출력", out, "--열기", "안함"])
-        self.assertEqual(rc, 7)
-        self.assertIn("출력 폴더에 파일을 쓰지 못했습니다", buf.getvalue())
 
 
 class TestCsvOpenElsewhere(unittest.TestCase):

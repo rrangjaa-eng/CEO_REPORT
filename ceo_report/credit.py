@@ -886,7 +886,7 @@ def _how(f, E):
 def basis_text(C):
     """등급 칸 아래 기준 글 (2차 전수조사 J5·1차 B14, 2026-11-18): 예전엔 연중에도 '2026년 결산 기준'이라 적어 결산 값으로 읽혔고,
     프로그램이 만든 점수표인데 실제 신용등급처럼 보였다. 연중이면 감가상각·결산 비용 전 이익이라 좋게 나올 수 있음도 적는다."""
-    if C["annual"]:
+    if C["annual"] and C["mon"] >= 12:   # 연간 보고라도 연중(1~N월)에 만들면 결산 값이 아니다
         return "%d년 결산 장부 기준 어림 · 실제 등급과 다를 수 있음" % C["year"]
     return "%d년 1~%d월 장부 기준 어림 (결산 비용 반영 전이라 좋게 나올 수 있음) · 실제 등급과 다를 수 있음" % (C["year"], C["mon"])
 
@@ -895,31 +895,6 @@ def score_range(C):
     """'모르는 칸에 따라 a~b점' — 폭이 없으면('56~56점') 빈 글 (1차 B14)."""
     lo, hi = "%.0f" % C["score"][0], "%.0f" % C["score"][2]
     return "" if lo == hi else "모르는 칸에 따라 %s~%s점" % (lo, hi)
-
-
-def render_brief(C):
-    """연간 대표 보고 7절 (사용자 2026-11-17 '연간 보고에 기업신용평가 미리 보기가 없잖아'): 추정 등급·점수와 재무 지표 값만.
-    쉬운 설명·판정·할 일은 넣지 않는다 (대표·팀장 보고는 안내 문구 없이 — 사용자 2026-11-17). 전체는 경영관리 9장."""
-    if C is None:
-        return CSS + "<div class='crx'><div class='note'>분개장 계정 자료가 없어 계산하지 못했습니다.</div></div>"
-    V = C["V"]
-    LY = C.get("last") or {}
-    when = basis_text(C)
-    cards = [("추정 등급 범위", grade_text(C["grade"]), when),
-             ("점수 (0~100점)", "%.0f점" % C["score"][1], score_range(C)),
-             ("작년 실제 등급", esc(LY["grade"]) if LY.get("grade") else "—", esc(LY.get("agency") or "") if LY.get("grade") else "입력 전")]
-    h = [CSS, "<div class='crx'><div class='top'>%s</div>" % "".join(
-        "<div class='c'><div class='lab'>%s</div><div class='big'>%s</div><div class='foot'>%s</div></div>" % (esc(l), b, esc(f)) for l, b, f in cards)]
-    h.append("<table class='cr'><thead><tr><th>영역</th><th>항목 · 계산</th><th style='text-align:right'>우리 회사</th><th>기준</th></tr></thead><tbody>")
-    for area in AREA_W:
-        ks = [f for f in FIN if f[1] == area]
-        for i, f in enumerate(ks):
-            v = V[f[0]]
-            h.append("<tr>%s<td>%s<span class='sub'>%s</span></td><td class='n'>%s</td><td style='font-size:10.8px'>%s</td></tr>" % (
-                "<td class='a' rowspan='%d'>%s</td>" % (len(ks), area) if i == 0 else "", esc(f[2]), esc(_how(f, C.get("E"))),
-                esc(fmt(f[0], v)) if v is not None else "<span style='font-weight:400;color:#888'>자료 없음</span>", esc(threshold_text(f[0]))))
-    h.append("</tbody></table><div class='note'>평가 회사의 실제 모형은 공개되지 않아 등급은 추정 범위입니다.</div></div>")
-    return "".join(h)
 
 
 def render(C):
