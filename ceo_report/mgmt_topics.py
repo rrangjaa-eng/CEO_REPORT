@@ -752,7 +752,8 @@ def build(R, mode_css_mon, parts):
                        + (" → 받을 자료는 <a href='#a-data'>%d. %s</a> 할 일에" % (num_of["data"], esc(TOPIC_NAME["data"])) if "data" in num_of else ""),
                        esc(nas[0][3]) if len(set(c for _, _, _, c in nas)) == 1 else "<br>".join(esc(c) for _, _, _, c in nas),
                        sum(len(by_topic.get(x["key"]) or []) for _, x, _, _ in nas) or "없음"))
-    h.append("<div class='tw'><table class='pt td nofold tp-st'><thead><tr><th>주제</th><th>상태</th><th>가장 큰 것 하나</th><th>지난번 대비</th>"
+    # 11/18: 주제마다 첫 줄은 금액 큰 순이 아니라 급한 순(계산서·수금은 가장 오래 밀린 것)이라 '가장 큰 것'이 아니라 '먼저 볼 것'
+    h.append("<div class='tw'><table class='pt td nofold tp-st'><thead><tr><th>주제</th><th>상태</th><th>먼저 볼 것 하나</th><th>지난번 대비</th>"
              "<th class='r'>할 일</th></tr></thead><tbody>%s</tbody></table></div>" % "".join(rows))
     np_ = (R.get("todo_prev") or {}).get("items") or {}
     carried = sum(1 for it in items if it["id"] in np_)
@@ -769,7 +770,7 @@ def build(R, mode_css_mon, parts):
     K = (I or {}).get("track") or {}
     tl = digest._track_line(K)
     h.append("<div class='tp-note'>지난 예상 대비 실제 오차(매번): %s → <a href='#auto15'>1. 자금 ③</a></div>"
-             % esc(tl or ("지난 보고 기록이 아직 없어 견줄 수 없음" if not K.get("months") else "기준 안")))
+             % esc(tl or ("지난 보고 기록이 아직 없어 견줄 수 없음" if not (K.get("months") or K.get("weeks")) else "예측 금액이 0이라 비율을 낼 수 없음")))
     h.append("</div>")
     home = "".join(h)
 
@@ -811,7 +812,7 @@ def build(R, mode_css_mon, parts):
         body, extra3 = "<div class='tq-box'><div class='tq-kv'><span>신호</span><b>%s</b></div>" % esc(ch), ""
         if k == "cash":
             body += "<div class='tq-kv'><span>지난 예상 대비 실제 오차</span><b>%s</b></div>" % esc(
-                tl or ("지난 보고 기록 없음" if not K.get("months") else "기준 안"))
+                tl or ("지난 보고 기록 없음" if not (K.get("months") or K.get("weeks")) else "예측 금액이 0이라 비율을 낼 수 없음"))
         body += "</div>"
         for n_ in sorted(i for i, (tk, ly) in AUTO_PLACE.items() if tk == k and ly == 3):
             if n_ in auto:

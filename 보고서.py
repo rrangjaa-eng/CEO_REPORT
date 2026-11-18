@@ -378,7 +378,7 @@ def _annual(a):
     if M is not None:   # 8장 결산 처리 제안 (배당 판단)은 월간 계산이 있어야 붙는다
         try:
             from ceo_report import surplus
-            A["re"] = surplus.for_report(a.입력, year - 1 if A["cut"] < 12 else year, M, strict=True) or A["re"]
+            A["re"] = surplus.for_report(a.입력, A.get("re_year", year), M, strict=True) or A["re"]
         except Exception:
             pass
     browser = find_browser() if a.pdf == "만듦" else None

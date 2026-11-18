@@ -150,7 +150,9 @@ def build(pl_table, dept_rows, ym, ytd=False):
         if d in used or d in names:
             continue
         s, g, h = cost(d)
-        r = _row(d if d != NO_DEPT else "부서 없음 (분개장 부서명 빈칸)", "other", salary=s, sga=g, heads=h, has_rev=False)
+        # 장부 부서명 '플랜트8'(회사 이름)은 부서가 아니라 회사 공통 비용 (사용자 2026-11-18)
+        lab = "부서 없음 (분개장 부서명 빈칸)" if d == NO_DEPT else ("회사 공통 비용 (장부 부서명 '%s')" % d if "플랜트" in d else d)
+        r = _row(lab, "other", salary=s, sga=g, heads=h, has_rev=False)
         r["nonop_in"] = costs[d].get("nonop_in")   # 영업외 수익을 가져온 부서 (사용자 2026-11-03: 경영관리 실적으로 보이게)
         rows.append(r)
     for name, v in special:

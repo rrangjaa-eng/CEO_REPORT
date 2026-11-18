@@ -520,13 +520,22 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         if rows_a and out_unknown == len(rows_a):
             out = None
         # 발행금액 일부가 미확인이면 미발행금액을 부풀리지 않고 판단 불가로 둔다
-        unissued = None if (P["contract"] is None or issued_unknown > 0) else P["contract"] - issued
+        # 11/18: 계약금액 칸은 인트라넷에 없어 대부분 비어 144건 모두 '판단 불가'였음 → 계약금액이 없으면 행사 후 미발행과 같은
+        # 기준(대표 승인 끝난 건 견적금액, 나머지 사전견적)으로 셈하고 출처를 적는다
+        ubase, usrc = (P["contract"], "계약금액") if P["contract"] is not None else (revenue_basis(P), "")
+        if P["contract"] is None and ubase is not None:
+            usrc = "견적금액" if ubase != P.get("estimate") else "사전견적"
+        if usrc != "계약금액" and ubase is not None and ubase <= 0:
+            ubase = None   # 사전견적 0원·음수는 기준 금액이 없는 것 (판단 불가)
+        unissued = None if (ubase is None or issued_unknown > 0) else ubase - issued
+        if unissued is not None and usrc != "계약금액":
+            unissued = max(unissued, 0)   # 견적보다 더 발행했으면 남은 발행 없음 (행사 후 미발행 표와 같게)
         if in_missing:
             issued = out = unissued = None  # 계산서 자료 없음: 미확인 건수가 아니라 자료 자체가 없다
         days = None
         if unissued and unissued > 0 and P["done_date"]:
             days = (asof - P["done_date"]).days
-        inv_proj.append({"P": P, "issued": issued, "issued_unknown": issued_unknown, "unissued": unissued,
+        inv_proj.append({"P": P, "issued": issued, "issued_unknown": issued_unknown, "unissued": unissued, "unissued_src": usrc,
                          "ar": out, "ar_unknown": out_unknown, "unissued_days": days,
                          "unknown": issued_unknown + out_unknown})
     no_proj_inv = [v for v in invs if v["project"] not in proj]

@@ -205,6 +205,14 @@ def build(d, R, team):
     #   (쓴 돈 + 요청 + 카드 미결제 + 계획) (T5, 사용자 승인)
     from .calc import revenue_left, left_basis
     booked = {pid: _sum(c[1] for c in per[pid].values()) for pid in per}
+    # 11/18: 연간 팀장 보고처럼 손익을 끝난 달까지만 볼 때, 그 뒤 달에 이미 장부에 잡힌 원가(끝난 프로젝트)를 남은 원가로 —
+    # 예전엔 끝난 프로젝트 남은 원가를 0으로 봐 11월에 잡힌 원가가 빠져 연간(5.07억)이 월간(5.02억)보다 크게 나왔음
+    after = {}
+    for r in pl:
+        if r["unit"] == "프로젝트" and r["ym"] > ym:
+            pid = _pid(r["target"])
+            if pid is not None:
+                after[pid] = None if (after.get(pid, 0) is None or r["direct"] is None) else after.get(pid, 0) + r["direct"]
     up, add_rev, add_gp, miss_rev, miss_gp, closed_left = [], 0, 0, 0, 0, 0
     prior_rev, prior_n = 0, 0
     for P_ in R["s3"]["projects"]:
@@ -236,7 +244,7 @@ def build(d, R, team):
         cost_done = booked.get(P_["id"], 0)
         if closed:
             # 1차 B13 (2026-11-15): 끝난 프로젝트라도 금액 미확인 원가가 있으면 이익을 모른다 — 예전엔 0으로 보고 '이익 미확인 0건'
-            rem_cost = None if P_.get("unknown_cost") else 0
+            rem_cost = None if (P_.get("unknown_cost") or after.get(P_["id"], 0) is None) else max(after.get(P_["id"], 0), 0)
         elif P_.get("budget") is None or cost_done is None:
             rem_cost = None
         else:
@@ -532,15 +540,17 @@ def _upcoming_section(T, title):
             a("<p class='note'>※ 집행·요청 금액 미확인 %d건: 그 건의 집행액·잔여·남은 예산과 합계는 미확인 (아래 매출·이익 예상에는 넣음)</p>"
               % max(T.get("up_paid_unknown") or 0, T.get("up_avail_unknown") or 0))
     tr_, tg_ = T["t_rev"], T["t_gp"]
+    upto = "1월~%d월 장부" % int(T["ym"][5:7])
 
     def card(label, v, how, tgt):
         return ("<div class='card'><div class='ct'><span>%s</span>%s</div><div class='big'>%s</div><div class='cf'>%s</div></div>"
                 % (label, "<b>목표 대비 %s</b>" % esc(P(v, tgt)) if tgt else "", esc(W(v)), esc(how)))
     a("<div class='two'>%s%s</div>" % (
-        card("올해 매출 예상", T["exp_rev"], "= 누계 매출 %s + 아직 매출로 안 잡힌 금액 %s" % (W(tot["revenue"]), W(T["add_rev"])), tr_),
-        card("올해 매출총이익 예상", T["exp_gp"], "= 누계 %s + 남은 매출에서 남은 원가를 뺀 %s" % (W(tot["gp"]), W(T["up_gp"])), tg_)))
+        # 11/18: 월간(이번 달까지)과 연간(끝난 달까지) 숫자가 다른 까닭이 보이게 누계 기간을 붙인다 (어느 장부까지로 셈했는지)
+        card("올해 매출 예상", T["exp_rev"], "= 누계 매출(%s) %s + 아직 매출로 안 잡힌 금액 %s" % (upto, W(tot["revenue"]), W(T["add_rev"])), tr_),
+        card("올해 매출총이익 예상", T["exp_gp"], "= 누계(%s) %s + 남은 매출에서 남은 원가를 뺀 %s" % (upto, W(tot["gp"]), W(T["up_gp"])), tg_)))
     a("<p class='note'>※ 아직 매출로 안 잡힌 금액 = 올해 행사 프로젝트마다 사전견적 − 이미 잡힌 매출. "
-      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0)%s%s%s</p>"
+      "남은 원가 = 추정 예산(요청·계획이 예산을 넘었으면 그 금액) − 이미 잡힌 원가 (끝난 프로젝트는 0, 다만 표 기간 뒤 달에 이미 장부에 잡힌 원가는 뺌)%s%s%s</p>"
       % (" · 끝난 프로젝트 중 아직 안 잡힌 매출 %s 포함" % W(T["closed_left"]) if T.get("closed_left") else "",
          " · 작년 이전 행사 %d건의 아직 안 잡힌 매출 %s 포함" % (T["prior_n"], W(T["prior_rev"])) if T.get("prior_n") else "",
          " · 금액을 몰라 뺀 프로젝트 %d건" % max(T["miss_rev"], T["miss_gp"]) if (T.get("miss_rev") or T.get("miss_gp")) else ""))

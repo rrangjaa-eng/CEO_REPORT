@@ -42,12 +42,9 @@ def _add_months(ym, k):
 
 
 def _day(v):
-    if isinstance(v, dt.date):
-        return v
-    try:
-        return dt.date.fromisoformat(str(v or "").strip()[:10])
-    except ValueError:
-        return None
+    """행사일 '2026.11.25'·'2026/11/25'·기간 '…~…'(끝난 날)도 읽는다 (11/18: ISO 꼴만 읽어 6달 일감·거래처별 이익이 비던 것)."""
+    from .calc import _event_date
+    return _event_date(v)
 
 
 def company_months(R):
@@ -174,8 +171,12 @@ def breakeven(R):
     need = None if not target or left <= 0 else max(int(round((target - ytd) / float(left))), 0)
     last3 = [cm[m]["revenue"] for m in sorted(cm) if m <= _last_full(asof) and cm[m].get("revenue") is not None][-3:]
     avg3 = int(round(sum(last3) / float(len(last3)))) if last3 else None
+    # N5 (2026-11-17 밤): 이미 받은 일로 앞으로 잡힐 매출(대표 월간 6절 '앞으로 잡힐 매출'과 같은 값) — 목표까지 더 받아야 할 일감
+    E = (R.get("s5") or {}).get("expected")
+    secured = None if not E or E.get("missing") or not E.get("est_n") else (E.get("past") or 0) + (E.get("this_year") or 0)
+    more = None if secured is None or not target else target - ytd - secured
     return {"fixed": fixed, "fixed_months": fms, "rate": rate, "rate_how": how, "be": be, "target": target, "ytd": ytd,
-            "left": left, "need": need, "avg3": avg3}
+            "left": left, "need": need, "avg3": avg3, "secured": secured, "more": more}
 
 
 # ───────────── 19 A3 고객사별 이익 ─────────────
@@ -237,8 +238,12 @@ def installment(R):
 
 # ───────────── 21 A5 당분간 안 쓸 돈 ─────────────
 def idle_cash(R, rate=None):
-    """앞으로 3·6달 날마다 잔액 중 가장 낮은 값 − 최소 보유현금 = 그 기간 안 쓸 돈 (자금계획서가 닿는 데까지만).
-    잔액은 확정분 선과 예상 포함 선 중 낮은 쪽 (보수적). rate(연 금리)가 있으면 그 기간 이자 어림."""
+    """앞으로 3·6달 날마다 잔액 중 가장 낮은 값 − 최소 보유현금 = 그 기간 안 쓸 돈.
+    잔액은 확정분 선과 예상 포함 선 중 낮은 쪽 (보수적). rate(연 금리)가 있으면 그 기간 이자 어림.
+
+    N1 (2026-11-17 밤): 예전엔 자금계획서 끝에서 잘라, 그 뒤 이미 아는 급여·세금(3/31 법인세 등)이 빠져 같은 보고 1장의
+    '최저 계산 잔액'보다 훨씬 많은 돈을 '안 쓸 돈'으로 보였다. 이제 일정에 있는 마지막 날까지 본다 (자금계획서 뒤는 급여·세금 같은
+    정기 지출만 들어 있어 프로젝트 지급이 빠짐 → 'after_plan' 으로 표시). 일정이 기간 끝에 못 미치면 그날까지만(short)."""
     from .insights import calendar, _plan_end
     asof = R["asof"]
     s2 = R["s2"]
@@ -248,14 +253,16 @@ def idle_cash(R, rate=None):
     if pend is None:   # 자금계획서를 안 썼으면 보고의 가장 긴 기간 끝까지만 (그 뒤 일정은 없어 잔액이 부풀려짐)
         ends = [p["end"] for p in s2.get("periods") or [] if p.get("label") != "지정일"]
         pend = max(ends) if ends else asof
+    last = max([e["date"] for e in s2.get("dated") or [] if e.get("amount") is not None] or [pend])
+    known = max(pend, last)
     out = []
     for mo in IDLE_WINDOWS:
         ym = _add_months(asof.strftime("%Y-%m"), mo)
         end = _month_end(dt.date(int(ym[:4]), int(ym[5:]), 1))
         if asof != _month_end(asof):   # 달 중간이면 오늘부터 mo달 뒤 같은 날까지
             end = min(end, asof + dt.timedelta(days=31 * mo))
-        short = pend < end
-        upto = pend if short else end
+        short = known < end
+        upto = known if short else end
         days = (upto - asof).days
         if days <= 0:
             out.append({"months": mo, "upto": upto, "short": True, "idle": None})
@@ -265,7 +272,8 @@ def idle_cash(R, rate=None):
         low_day = min(cal, key=lambda c: min(c["firm"], c["all"]))["date"] if cal else None
         idle = None if low is None else max(low - s2["min_cash"], 0)
         interest = None if idle is None or not rate else int(idle * rate * days / 365.0)
-        out.append({"months": mo, "upto": upto, "short": short, "low": low, "low_day": low_day, "idle": idle, "interest": interest})
+        out.append({"months": mo, "upto": upto, "short": short, "low": low, "low_day": low_day, "idle": idle, "interest": interest,
+                    "after_plan": pend < upto})
     return {"rows": out, "rate": rate, "min_cash": s2["min_cash"], "plan_end": pend}
 
 
@@ -425,6 +433,11 @@ def render(X, R, sub):
                 ["<b>손익분기 월 매출</b> = 고정비 ÷ 이익률", "<b>%s</b>" % W(b["be"])],
                 ["최근 3달 평균 월 매출", W(b["avg3"])], ["올해 매출 목표 (팀 목표 합)", W(b["target"])], ["올해 지금까지 매출", W(b["ytd"])],
                 ["<b>목표까지 남은 %d달 매달 필요한 매출</b>" % b["left"], "<b>%s</b>" % W(b["need"])]]
+        if b.get("secured") is not None:   # N5 (2026-11-17 밤)
+            rows.append(["이미 받은 일로 앞으로 잡힐 매출 (대표 월간 6절과 같은 값)", W(b["secured"])])
+        if b.get("more") is not None:
+            rows.append(["<b>목표까지 새로 더 받아야 할 일감 (매출)</b>",
+                         "<b>%s</b>" % W(b["more"]) if b["more"] > 0 else "<b>0</b> (받은 일만으로 목표보다 %s 많음)" % W(-b["more"])])
         body = _tbl(["구분", "금액"], rows, nums=(1,)) + _none(
             "손익분기 = 그 매출을 넘어야 영업이익이 남는 선입니다(이익률이 그대로라는 가정). 목표가 없으면 '-'.")
     sub(18, "손익분기 매출 · 목표까지 매달 필요한 매출", body)
@@ -471,7 +484,10 @@ def render(X, R, sub):
             rows.append(["앞으로 %d달%s" % (r["months"], " (%s까지만)" % r["upto"].isoformat() if r["short"] else ""),
                          "%s (%s)" % (W(r["low"]), r["low_day"].strftime("%m/%d") if r["low_day"] else "-"), W(r["idle"]),
                          W(r["interest"]) if r["interest"] is not None else "금리 넣으면 나옴",
-                         "자금 일정이 %s까지라 그 뒤는 모름" % ic["plan_end"].isoformat() if r["short"] else ""])
+                         " · ".join(x for x in (
+                             "자금계획서는 %s까지 — 그 뒤는 급여·세금 같은 정기 지출만 넣음 (프로젝트 지급·입금 없음)" % ic["plan_end"].isoformat()
+                             if r.get("after_plan") else "",
+                             "일정이 %s까지라 그 뒤는 모름" % r["upto"].isoformat() if r["short"] else "") if x)])
         body = _tbl(["기간", "가장 낮은 잔액 (날)", "안 쓸 돈 (최소 보유 %s 뺌)" % W(ic["min_cash"]), "예금 이자 어림", "메모"], rows, nums=(1, 2, 3))
         body += _none("잔액은 날마다 '확정분'과 '예상 포함' 중 낮은 쪽(보수적). 이 기간 안 꺼내도 되는 돈이라 예금에 넣어 볼 수 있음 — 프로젝트 지급이 늦게 잡히면 줄어듦. "
                       "금리는 창 '자금 선택'에서 넣음 (%s)." % ("연 %.2f%%" % (ic["rate"] * 100) if ic["rate"] else "아직 없음"))

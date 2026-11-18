@@ -348,17 +348,26 @@ def _track_table(K, last_only):
 
 def _track_line(K):
     """1쪽 오차 상자 아래 한 줄 (숫자로만)."""
+    # 11/18: 맨 앞이 최근 달 (예전엔 맨 뒤=가장 오래된 달을 씀). 다 끝난 달이 아직 없으면 보고마다 그 뒤 기간(주 단위) 표에서
+    # 7일 넘게 지난 가장 최근 보고로 — 예전엔 기록이 있어도 '지난 보고 기록 없음'으로 나왔음
     ms = K.get("months") or []
-    if not ms:
-        return ""
-    r = ms[-1]
     out = []
+    if ms:
+        r = ms[0]
+        out.append("%s 한 달" % r["ym"])
+    else:
+        ws = [w for w in (K.get("weeks") or []) if w.get("made") and w.get("to")]
+        if not ws:
+            return ""
+        long_ = [w for w in ws if (w["to"] - w["made"]).days >= 7]
+        r = long_[0] if long_ else max(ws, key=lambda w: (w["to"] - w["made"]).days)
+        out.append("%s 보고 → %s%s" % (r["made"].strftime("%m/%d"), r["to"].strftime("%m/%d"), " (진행 중)" if r.get("part") else ""))
     for io, name in (("in", "입금"), ("out", "출금")):
         c = r[io]
         if c["all"]:
             out.append("예상 포함 %s 예측이 실제보다 %s" % (name, "%.0f%% %s" % (abs(c["all"] - c["actual"]) * 100.0 / c["all"],
                                                                   "많음" if c["all"] > c["actual"] else "적음")))
-    return " · ".join(out)
+    return " · ".join(out) if len(out) > 1 else ""
 
 
 def render(R, I, L, todo, filing, prev):
@@ -694,7 +703,7 @@ def docs_section(R, I, L):
         esc("월간 보고 때 함께"), [], "팀마다 이번 달 매출·이익·진행 프로젝트 예산을 보여 주는 팀장 전달용 문서입니다 (급여 금액 없음).")
     add("기획본부용 재무상태표 (영업외수익 뺀 엑셀)", file("planbs", "마지막 기획본부 재무상태표") or esc("창 3단계 ‘기획본부 재무상태표’로 만듦"),
         esc("따로 만듦"), ["노란 칸(뺄 영업외수익·세금 비율·법인세 예상)을 바꾸면 손익·재무상태표가 다시 계산됩니다."],
-        "회사 전체 장부에서 영업외수익(이자·지원금·잡이익)과 그 세금만 뺀 재무상태표입니다. 비용이 크게 잡혔을 수 있는 항목(경영관리·플랜트8 비용 등)도 표시합니다.")
+        "회사 전체 장부에서 영업외수익(이자·지원금·잡이익)과 그 세금만 뺀 재무상태표입니다. 비용이 크게 잡혔을 수 있는 항목(감가상각·영업외비용·세무조정 등)도 표시합니다.")
     add("세법 기준 확인 (해마다)", esc("창 ‘세법 기준 확인’"), esc("1·7월 자동 확인"), [],
         "세율·공제 금액이 바뀌었는지 법령 조문을 받아 확인하고, 확인 안 된 값은 계산에서 ‘확인 필요’로 둡니다.")
     # M4 (2026-11-17): 문서로만 있던 두 자료를 프로그램이 만든다 (규칙 11/13)

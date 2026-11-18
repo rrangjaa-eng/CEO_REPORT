@@ -229,10 +229,11 @@ WH_GAP_MARK = "[장부 잔액 차이] "   # 원천세 줄 근거 속 표시: 경
 WH_GAP_MIN = 10000
 
 
-def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청", "시청", "군청"), mode="자동", screen=None):
+def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청", "시청", "군청"), mode="자동", screen=None, wage_gap=None):
     """원천세(소득세·지방소득세) 납부 예상 -> 행 목록. mode: 자동 | 반기 | 매월.
     screen: 위하고 화면(근로 원천징수부+사업·기타소득)의 달별 합 {(연, 월): 원}. 급여 전표 전 달은 이 값이 있으면 쓰고,
-    없으면 최근 달 장부 금액으로 본다 (제안 3, 2026-11-14)."""
+    없으면 최근 달 장부 금액으로 본다 (제안 3, 2026-11-14).
+    wage_gap: 기준일 달부터 화면에 근로(급여) 원천세가 아직 없는 달 {(연, 월): 최근 근로 원천세} (screen_tax.wage_gap, 11/18)."""
     codes = set(map(_sq, codes))
     mine = [ln for ln in journal if ln["date"] is not None and _sq(ln["account_code"]) in codes
             and any(v in _sq(ln.get("vendor")) for v in vendors)]
@@ -269,7 +270,12 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
             k = (ln["date"].year, ln["date"].month)
             by_month[k] = by_month.get(k, 0) + ln["credit"]
     filled = sorted(k for k, v in by_month.items() if v)
-    recent = by_month[filled[-1]] if filled else None
+    # 11/18: 기준일 달은 아직 급여 전표 전이라 덜 들어간 달 — 예전엔 이 달(11월 65만)을 '최근 달'로 써 다음 반기 6달을 작게 봄.
+    # 끝난 달 중 가장 최근 달 금액을 쓴다
+    cur = (asof.year, asof.month)
+    done_m = [k for k in filled if k < cur]
+    recent_k = done_m[-1] if done_m else (filled[-1] if filled else None)
+    recent = by_month[recent_k] if recent_k else None
     def side(ln):   # 국세(세무서)·지방세(구청·시청·군청)는 따로 낸다
         return "세무서" if "세무서" in _sq(ln.get("vendor")) else "지자체"
     rows = []
@@ -298,17 +304,29 @@ def withholding(journal, asof, codes=("25400",), vendors=("세무서", "구청",
         ahead = [(yy, mm) for (yy, mm) in _months(start, end) if filled and (yy, mm) > filled[-1]] if not part else []
         if not got and not unknown and not ahead:
             continue   # 이 기간에 뗀 금액도, 앞으로 뗄 달도 없음 (앞 기간분 납부 줄만 있음)
+        gap = wage_gap or {}
         from_screen = [k for k in ahead if (screen or {}).get(k)]
         guess = [k for k in ahead if k not in from_screen]
+        topup = 0
+        # 11/18: 기준일 달은 급여 전표 전이면 장부에 사업·기타소득 몫만 있다 → 화면의 사업·기타 + 최근 근로 원천세까지 채운다
+        if not part and cur in gap and cur in _months(start, end) and cur not in ahead:
+            want = (screen or {}).get(cur, 0) + gap[cur]
+            if want > by_month.get(cur, 0):
+                topup = want - by_month.get(cur, 0)
+                got += topup
+                basis += "%s %d월은 급여 전표 전이라 위하고 화면 사업·기타 %s원 + 근로 %s원(최근 급여 달)까지 채움(+%s원)" % (
+                    ", " if vals else " — ", cur[1], "{:,}".format((screen or {}).get(cur, 0)), "{:,}".format(gap[cur]), "{:,}".format(topup))
         if from_screen:
-            got += sum(screen[k] for k in from_screen)
-            basis += ("%s 급여 전표 전 %s은 위하고 급여·사업·기타소득 화면 값 %s원" % (
-                ", " if vals else " — ", "·".join("%d월" % k[1] for k in from_screen),
-                "{:,}".format(sum(screen[k] for k in from_screen))))
+            got += sum(screen[k] + gap.get(k, 0) for k in from_screen)
+            basis += ("%s 급여 전표 전 %s은 위하고 급여·사업·기타소득 화면 값 %s원%s" % (
+                ", " if vals or topup else " — ", "·".join("%d월" % k[1] for k in from_screen),
+                "{:,}".format(sum(screen[k] for k in from_screen)),
+                " + 화면에 급여가 아직 없는 달은 근로 %s원(최근 급여 달)" % "{:,}".format(sum(gap.get(k, 0) for k in from_screen))
+                if any(k in gap for k in from_screen) else ""))
         if guess and recent:
             got += recent * len(guess)
             basis += ("%s 급여 전표 전 %d달은 %d-%02d 금액 %s원으로 봄"
-                      % (", " if vals or from_screen else " — ", len(guess), filled[-1][0], filled[-1][1], "{:,}".format(recent)))
+                      % (", " if vals or from_screen or topup else " — ", len(guess), recent_k[0], recent_k[1], "{:,}".format(recent)))
         elif last < end:
             basis += ", %s까지 쌓인 금액" % last.isoformat()
         rows.append(_row("원천세", label, due, None if unknown else got, "예상", basis, vcodes))
