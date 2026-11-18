@@ -115,11 +115,11 @@ class TestAvailableFundsTable(unittest.TestCase):
         R = self.R["weekly"]
         html = first_screen(render(R, "ceo"))
         for p in R["s2"]["periods"]:
-            f, a = p["firm"]["avail"], p["spend"]["avail"]
+            f, a = p["firm"]["avail"], p["all"]["avail"]   # 사용자 2026-11-18 결정: 작은 줄은 예상 입금·지급을 모두 넣은 값
             self.assertIn("<b class='%s'>%s</b>" % ("neg" if f < 0 else "", "{:,}".format(f)), html)
             if a != f:
-                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
-                              else "프로젝트 지급 예상 등까지 빼면 {:,}".format(a), html)
+                self.assertIn("예상 입금·지급까지 넣으면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
+                              else "예상 입금·지급까지 넣으면 {:,}".format(a), html)
 
     def test_unknown_balance_says_so(self):
         import shutil
@@ -339,7 +339,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("지정일", rows[-1][0])
         self.assertIn(pick.isoformat(), rows[-1][0])
-        self.assertIn("{:,}".format(last["spend"]["avail"]), rows[-1][3])   # 예상 입금은 넣지 않은 작은 줄 (2026-11-14 F7)
+        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][3])   # 예상 입금·지급을 모두 넣은 작은 줄 (사용자 2026-11-18 결정)
         self.assertEqual(len(same), 3)
 
     def test_no_pick_date_no_row(self):

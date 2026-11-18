@@ -737,7 +737,7 @@ body.rd .wrap{font-family:"Noto Sans KR","Malgun Gothic","맑은 고딕","Apple 
 .rd #avail th:nth-child(n+2)::before{right:112px;content:"확정"}
 .rd #avail th:nth-child(3)::before{content:"확정·정기"}
 .rd #avail th.av::before{content:"확정 기준"}
-.rd #avail th.av::after{content:"지급 예상까지 빼면"}
+.rd #avail th.av::after{content:"예상까지 넣으면"}
 .rd #avail td{white-space:nowrap;text-align:right}
 .rd #avail td:first-child{text-align:left}
 .rd #avail td:first-child small{display:inline!important;margin-left:6px;color:#556070!important;font-size:11px!important;font-weight:400}
@@ -896,9 +896,10 @@ def _est_note(p, mgmt=False):
     ak = "pavail" if p.get("per") else "avail"   # 월간 표는 줄마다 그 달 안의 값 (2차 전수조사 J1)
     f = p["firm"][ak]
     out = []
-    # 작은 줄 기준(예상 지급만 빼고 예상 입금은 안 넣음)은 2026-11-14 F7 결정 그대로. 2차 전수조사 B1·B2 의 '한 가지 기준으로'는
-    # 이 결정을 바꾸는 일이라 사용자 결정 카드로 묻는다 (답 전에는 그대로)
-    for key, lab in (("spend", EST_SPEND),) + ((("all", EST_ALL),) if mgmt else ()):
+    # 작은 줄 기준 (사용자 2026-11-18 결정 '예상 입금도 넣음', 2차 전수조사 B1·B2): 대표·팀장 보고는 예상 입금·지급을 모두 넣은
+    # 값 하나만 — 아래 문장('예상 입금·지급까지 넣으면 …에 모자랍니다')과 같은 기준. 예전(2026-11-14 F7)의 '지급 예상만 뺀 값'은
+    # 경영관리용에만 남긴다 (경영관리는 전부 남김)
+    for key, lab in (((("spend", EST_SPEND), ("all", EST_BOTH))) if mgmt else (("all", EST_BOTH),)):
         v = (p.get(key) or {}).get(ak)
         if v is None or v == f:
             continue
@@ -1083,7 +1084,7 @@ def _avail_table(R, mode="mgmt"):
                                                     if R["kind"] == "weekly" else " (달별: 아래 월별 자금 흐름과 같은 기간)"),
              "여유 자금 = 오늘부터 그 기간 끝까지 잔액이 가장 적을 때 − 최소 보유현금. 기간 끝 잔액이 넉넉해도 그 사이 가장 적을 때를 넘겨 쓰면 자금이 모자람.",
              "여유 자금은 확정된 돈과 꼭 나갈 정기 지출(급여·4대보험·원천세·부가세·법인세·카드) 예상으로 계산. "
-             "프로젝트 남은 예산 등 확정 안 된 지급과 예상 입금은 '별도'·'%s'·'%s'로 따로 적음" % (EST_SPEND, EST_ALL)]
+             "프로젝트 남은 예산 등 확정 안 된 지급과 예상 입금은 '별도'·'%s'·'%s'로 따로 적음" % (EST_SPEND, EST_BOTH)]
     if R["kind"] == "monthly":   # 월간은 정의 한 줄만 (두 판 같은 숫자) (사용자 2026-11-04: 글자 키우고 3쪽)
         notes = ["여유 자금 = 그 달 안에서 잔액이 가장 적을 때 − 최소 보유현금 · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
                  "(프로젝트 지급 예상·예상 입금은 따로 적음)"]
