@@ -588,7 +588,21 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     if short:
         out["deadline"] = short[0] - dt.timedelta(days=days)
         out["late"] = out["deadline"] < asof
+        # 2차 전수조사 B3 (2026-11-18): 기한이 이미 지났을 때, 그 기한에 행사가 끝나 있어 발행할 수 있었던 것만 '늦었다'고 말한다
+        # (11/17 행사를 10/11까지 발행했어야 한다고 적혔음)
+        could = [r for r in rows if _as_date(r.get("event")) is not None and _as_date(r["event"]) <= out["deadline"]]
+        out["could"] = (len(could), sum(r["amount"] for r in could))
     return out
+
+
+def _as_date(v):
+    if isinstance(v, dt.date):
+        return v
+    from .calc import _event_date
+    try:
+        return _event_date(v)
+    except Exception:
+        return None
 
 
 def _merge_cards(presence):

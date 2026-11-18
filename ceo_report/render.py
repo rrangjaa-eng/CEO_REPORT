@@ -593,8 +593,12 @@ GLOSSARY = (
 
 
 def _glossary(R):
+    G = GLOSSARY
+    if (R or {}).get("kind") == "monthly":      # J1: 월간 표는 달마다 그 달 안에서 가장 적을 때
+        G = [(t, x.replace("오늘부터 그 기간 끝까지", "그 달 안에서(이번 달은 오늘부터)").replace("그 기간에 더", "그 달에 더"))
+             for t, x in GLOSSARY]
     return ("<div class='gloss'><b>용어 풀이</b> " + " · ".join(
-        "<span><b>%s</b>: %s</span>" % (esc(t), esc(x)) for t, x in GLOSSARY) + "</div>")
+        "<span><b>%s</b>: %s</span>" % (esc(t), esc(x)) for t, x in G) + "</div>")
 
 
 # ─────────── 대표 첫 화면 (2026-11-03 사용자: 한눈에, 원 단위, 업무 용어, 기간별 가용자금) ───────────
@@ -874,7 +878,7 @@ def _flow_card(s1, per, end="월말"):
 
 def _avail_cell(p):
     """여유 자금 칸 (경영관리용 근거 표): 큰 숫자 아래 예상분을 작게 (사용자 2026-11-05: 예상 자금을 먼저 빼지 않고 따로 보게)."""
-    f = p["firm"]["avail"]
+    f = p["firm"]["pavail" if p.get("per") else "avail"]
     big = _na("확인 필요") if f is None else "<b class='%s'>%s</b>" % ("neg" if f < 0 else "", esc(won(f)))
     return "<td class='av'>%s%s</td>" % (big, _est_note(p, mgmt=True))
 
@@ -883,15 +887,19 @@ def _avail_cell(p):
 # 대표용에도 나오므로 '예산'이라는 말은 쓰지 않는다 (사용자 2026-11-03: 대표용엔 예산 언급 없음)
 EST_SPEND = "프로젝트 지급 예상 등까지 빼면"
 EST_ALL = "예상 입금까지 넣으면"
+EST_BOTH = "예상 입금·지급까지 넣으면"
 
 
 def _est_note(p, mgmt=False):
     """큰 숫자 아래 작은 줄 (2026-11-14 F7): 프로젝트 지급 예상 등 확정 안 된 지급까지 빼면 (예상 입금은 넣지 않음).
     입출금 예상을 모두 넣은 전망은 경영관리용에만 한 줄 더. 큰 숫자와 같으면 적지 않는다."""
-    f = p["firm"]["avail"]
+    ak = "pavail" if p.get("per") else "avail"   # 월간 표는 줄마다 그 달 안의 값 (2차 전수조사 J1)
+    f = p["firm"][ak]
     out = []
+    # 작은 줄 기준(예상 지급만 빼고 예상 입금은 안 넣음)은 2026-11-14 F7 결정 그대로. 2차 전수조사 B1·B2 의 '한 가지 기준으로'는
+    # 이 결정을 바꾸는 일이라 사용자 결정 카드로 묻는다 (답 전에는 그대로)
     for key, lab in (("spend", EST_SPEND),) + ((("all", EST_ALL),) if mgmt else ()):
-        v = (p.get(key) or {}).get("avail")
+        v = (p.get(key) or {}).get(ak)
         if v is None or v == f:
             continue
         out.append("<small class='firm%s' data-v='%s'>%s %s</small>" % (" neg" if v < 0 else "", esc(won(v)), lab, esc(won(v))))
@@ -910,7 +918,7 @@ def _avail_rows_ceo(periods, s2=None):
     rows = []
     for p in periods:
         r = p["firm"]
-        a = r["avail"]
+        a = r["pavail" if p.get("per") else "avail"]
         big = _na("확인 필요") if a is None else "<b class='%s'>%s</b>" % ("neg" if a < 0 else "", esc(won(a)))
         # 가장 적을 때 잔액·날짜는 경영관리용 근거 표(avail-mg)에만 (사용자 2026-11-05: 여유 자금 칸의 필요 없는 안내 제외)
         low = _est_note(p)
@@ -1004,8 +1012,9 @@ def _avail_rows(periods, s2=None):
     for p in periods:
         r = p["firm"]
         xin, xout = _est_extra(p, "pin"), _est_extra(p, "pout")
-        low = _na("확인 필요") if r["low"] is None else "%s<small>(%s)</small>" % (
-            esc(won(r["low"])), esc("오늘" if r["low_date"] == p.get("asof") else d2s(r["low_date"])[5:].replace("-", "/")))
+        lk, dk = ("plow", "plow_date") if p.get("per") else ("low", "low_date")
+        low = _na("확인 필요") if r[lk] is None else "%s<small>(%s)</small>" % (
+            esc(won(r[lk])), esc("오늘" if r[dk] == p.get("asof") else d2s(r[dk])[5:].replace("-", "/")))
         rng = ("오늘~" + d2s(p["end"]) if p.get("pick") or not p.get("from")
                else "%s~%s" % (_md(p["from"]), _md(p["end"])))
         rows.append("<tr%s><td><b>%s</b><small>%s</small></td><td class='vin'>%s</td><td class='vout'>%s</td>"
@@ -1034,7 +1043,8 @@ def _avail_table(R, mode="mgmt"):
     보고서는 문서(PDF)로 전달하므로 단추·날짜 입력 칸 없이 모든 값이 그대로 보인다 (사용자 2026-11-03).
     가용자금 = 기간 중 최저 잔액 − 최소 보유현금. 줄은 확정분만 기준이고 (사용자 2026-11-05), 예상분(남은 예산 등)은 칸 아래에 따로 적는다."""
     s1, s2 = R["s1"], R["s2"]
-    periods = [dict(p, asof=R["asof"]) for p in s2["periods"]]
+    per = R["kind"] == "monthly"   # 월간: 줄마다 그 달 안의 가장 적은 잔액 (J1). 주간은 오늘부터 그 주 끝까지 (출금 판단용)
+    periods = [dict(p, asof=R["asof"], per=per and not p.get("pick")) for p in s2["periods"]]
     mc = s2["min_cash"]
     # 대표용은 '쓸 수 없는 돈 (담보·전용)', 사용제한금액 빈칸 경고는 경영관리용에만 (사용자 2026-11-04)
     rname = RESTRICT_CEO if mode == "ceo" else "사용제한"
@@ -1056,17 +1066,26 @@ def _avail_table(R, mode="mgmt"):
     head = ("<thead><tr><th>기간</th><th>들어올 돈</th><th>나갈 돈</th>"
             "<th class='av'>여유 자금</th></tr></thead>")
     h.append("<div class='tw'><table class='pt' id='avail'>%s<tbody>%s</tbody></table></div>" % (head, _avail_rows_ceo(periods, s2)))
-    head_mg = ("<thead><tr><th>기간</th><th>그 기간 들어올 돈</th><th>그 기간 나갈 돈</th><th>기간 끝 예상 잔액</th><th>오늘부터 가장 적을 때 잔액</th>"
-               "<th class='av'>여유 자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % mc_txt)
+    head_mg = ("<thead><tr><th>기간</th><th>그 기간 들어올 돈</th><th>그 기간 나갈 돈</th><th>기간 끝 예상 잔액</th><th>%s 가장 적을 때 잔액</th>"
+               "<th class='av'>여유 자금<br><small>최소 보유현금 %s 남김</small></th></tr></thead>" % ("그 달" if per else "오늘부터", mc_txt))
     h.append(_mg(mode, "<div class='tw'><div class='lab'>근거: 기간 끝 잔액 · 확정분과 정기 지출 예상 (나머지 예상분은 작게)</div><table class='pt' id='avail-mg'>%s<tbody>%s</tbody></table></div>"
                  % (head_mg, _avail_rows(periods, s2))))
+    if per:
+        # J1: '오늘부터 마지막 달 끝까지 가장 적을 때'는 표 아래 한 줄로 따로 (맨 위 'N월까지 여유 자금' 칸과 같은 값)
+        last = [p for p in periods if not p.get("pick")]
+        lf = last[-1]["firm"] if last else None
+        if lf and lf.get("avail") is not None and lf.get("low_date") is not None:
+            more = ""   # 예상까지 넣은 값은 표의 작은 줄 하나만 (같은 보고에 기준이 다른 숫자를 더 늘리지 않는다 — B1)
+            h.append("<div class='note lowline'>%s</div>" % esc(
+                "오늘부터 %s까지 잔액이 가장 적은 날: %s · 그날 여유 자금 %s%s"
+                % (_md(last[-1]["end"]), "오늘" if lf["low_date"] == R["asof"] else _md(lf["low_date"]), won(lf["avail"]), more)))
     notes = ["들어올 돈·나갈 돈은 그 기간에 들어오고 나가는 금액" + (" (한 주 = 출금일 다음 날부터 다음 출금일까지: 출금 목록·다음 주 지급 예정과 같은 기간)"
                                                     if R["kind"] == "weekly" else " (달별: 아래 월별 자금 흐름과 같은 기간)"),
              "여유 자금 = 오늘부터 그 기간 끝까지 잔액이 가장 적을 때 − 최소 보유현금. 기간 끝 잔액이 넉넉해도 그 사이 가장 적을 때를 넘겨 쓰면 자금이 모자람.",
              "여유 자금은 확정된 돈과 꼭 나갈 정기 지출(급여·4대보험·원천세·부가세·법인세·카드) 예상으로 계산. "
              "프로젝트 남은 예산 등 확정 안 된 지급과 예상 입금은 '별도'·'%s'·'%s'로 따로 적음" % (EST_SPEND, EST_ALL)]
     if R["kind"] == "monthly":   # 월간은 정의 한 줄만 (두 판 같은 숫자) (사용자 2026-11-04: 글자 키우고 3쪽)
-        notes = ["여유 자금 = 그 기간 잔액이 가장 적을 때 − 최소 보유현금 · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
+        notes = ["여유 자금 = 그 달 안에서 잔액이 가장 적을 때 − 최소 보유현금 · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
                  "(프로젝트 지급 예상·예상 입금은 따로 적음)"]
     notes.append(_plan_basis(R))
     if s2.get("pick_beyond"):
@@ -1082,8 +1101,8 @@ def _avail_table(R, mode="mgmt"):
         notes.append(thin)
     # 두 판 모두 안내 한 줄만 (사용자 2026-11-05: 최소만 남기고 전부 삭제). 나머지 설명은 경영관리용에만
     h.append("<ul class='nl one'><li>%s</li></ul>" % esc(
-        "여유 자금 = 기간 중 잔액이 가장 적을 때 − 최소 보유현금 %s · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
-        "(프로젝트 지급 예상·예상 입금은 '별도'로 따로 적음)" % mc_txt_plain))
+        "여유 자금 = %s 잔액이 가장 적을 때 − 최소 보유현금 %s · 확정된 돈과 급여·세금·카드 같은 정기 지출 예상으로 계산 "
+        "(프로젝트 지급 예상·예상 입금은 '별도'로 따로 적음)" % ("그 달 안에서" if per else "오늘부터 그 기간 끝까지", mc_txt_plain)))
     warn = [t for t in notes if t.startswith(WARN_NOTES)]   # 자료 없음·미반영 경고는 두 판 모두 (0으로 보이지 않게)
     if warn:
         h.append("<ul class='nl'>%s</ul>" % "".join("<li>%s</li>" % esc(t) for t in warn))

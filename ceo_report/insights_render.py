@@ -142,7 +142,14 @@ def ceo_issue(D, top=3, compact=False):
             % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
     if D["late"]:
         pay = D.get("pay_if_today") or rows[0]["pay_if_today"]
-        head += "<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
+        n_c, amt_c = D.get("could") or (None, 0)
+        if n_c == 0:   # 그 기한에는 행사가 끝난 것이 없었다 → 늦게 발행한 탓이 아님
+            head += "그 전에 받으려면 %s까지 발행해야 했지만 그때는 행사가 끝나지 않았습니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
+        elif n_c and n_c < len(rows):
+            head += ("<b class='ins-neg'>%s까지 발행했어야</b> 합니다 (그때 행사가 끝나 있던 것은 %d건 %s원) · 오늘 발행해도 %s 입금."
+                     % (_md(D["deadline"]), n_c, W(amt_c), _md(pay)))
+        else:
+            head += "<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
     else:
         head += "<b class='ins-neg'>%s까지 발행</b>해야 그 전에 들어옵니다." % _md(D["deadline"])
     if compact:

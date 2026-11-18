@@ -159,7 +159,7 @@ def blank_funds(R):
     for p in s2.get("periods") or []:
         for mode in ("firm", "spend", "all"):   # spend = '프로젝트 지급 예상 등까지 빼면' (2026-11-14 F7)
             r = p.get(mode) or {}
-            for k in ("bal", "low", "low_date", "avail"):
+            for k in ("bal", "low", "low_date", "avail", "plow", "plow_date", "pavail"):
                 if k in r:
                     r[k] = None
     # 1차 점검 자금-1·E6 (2026-11-15): 구간별 계산 잔액 표·위험표의 '최저 계산 잔액 …원' 줄에도 숫자가 남았다 (예시 5.43억·5,175만)
@@ -214,7 +214,7 @@ def blank_plan_gaps(R):
             p["plan_gap"] = True
             for mode in ("firm", "spend", "all"):
                 r = p.get(mode) or {}
-                for k in ("bal", "low", "low_date", "avail"):
+                for k in ("bal", "low", "low_date", "avail", "plow", "plow_date", "pavail"):
                     if k in r:
                         r[k] = None
     months = sorted(set(m for _, ms in gaps for m in ms))

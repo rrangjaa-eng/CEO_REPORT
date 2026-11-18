@@ -1146,13 +1146,22 @@ def available_periods(start, dated, ends, min_cash, asof):
             pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and counts_in(e, mode))
             pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and counts_in(e, mode))
             r = {"in": tin, "out": tout, "pin": pin, "pout": pout, "bal": None, "low": None, "low_date": None, "avail": None}
+            r.update(plow=None, plow_date=None, pavail=None)
             if start is not None:
                 bal, low, low_d = start, start, asof
+                plow, plow_d = None, None   # 그 기간 안에서만 본 가장 적은 잔액 (2차 전수조사 J1: 월간 표는 줄마다 그 달 값)
                 for day in sorted(daily):
+                    if day > frm and plow is None:
+                        plow, plow_d = bal, frm   # 기간 첫날 아침 잔액 (앞 기간 끝 잔액)
                     bal += daily[day]
                     if bal < low:
                         low, low_d = bal, day
-                r.update(bal=bal, low=low, low_date=low_d, avail=None if min_cash is None else low - min_cash)
+                    if day > frm and bal < plow:
+                        plow, plow_d = bal, day
+                if plow is None:   # 그 기간에 일정이 없음 → 기간 내내 같은 잔액
+                    plow, plow_d = bal, frm
+                r.update(bal=bal, low=low, low_date=low_d, avail=None if min_cash is None else low - min_cash,
+                         plow=plow, plow_date=plow_d, pavail=None if min_cash is None else plow - min_cash)
             row[mode] = r
         out.append(row)
     return out
