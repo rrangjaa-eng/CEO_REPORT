@@ -55,6 +55,12 @@ class TestProfitCauses(unittest.TestCase):
         r = rows_of([xp("B", 0, 5_000_000, lines=0)], [xr("B", 0, 0)], [P("B", 8_000_000, event="2026-12-01")])["B"]
         self.assertEqual(dict(r["parts"]), {"before": -3_000_000})
 
+    def test_no_book_lines_without_event_date_is_its_own_cause(self):
+        # 2차 전수조사 J22: 행사일이 빈 프로젝트를 '행사 전(기다리면 됨)'에 넣지 않는다
+        r = rows_of([xp("B", 0, 5_000_000, lines=0)], [xr("B", 0, 0)], [P("B", 8_000_000, event="")])["B"]
+        self.assertEqual(dict(r["parts"]), {"no_event": -3_000_000})
+        self.assertIn("no_event", [k for k, _, _, _ in render.PROFIT_CAUSES])
+
     def test_no_book_lines_after_the_event_is_missing(self):
         r = rows_of([xp("B", 0, 5_000_000, lines=0)], [xr("B", 0, 0)], [P("B", 8_000_000, event="2026-09-01")])["B"]
         self.assertEqual(dict(r["parts"]), {"missing_book": -3_000_000})

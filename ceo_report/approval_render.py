@@ -537,6 +537,8 @@ def _unknown_lines(A):
         "금액 미확인 일정 %d건 (일정 제외)" % P["amount_unknown_events"]["n"],
         "지급요청일 없음 %d건 (목요일 14시 승인 → 금요일 지급 규칙으로 계산)" % P["rule_no_date"]["n"],
         "지급요청일 지남·대기 중 %d건 (목요일 14시 승인 → 금요일 지급 규칙으로 다시 계산)" % P["rule_past"]["n"],
+    ] + (["지급요청일 날짜 의심 %d건 (등록일과 3년 넘게 차이 → 그 날짜를 쓰지 않고 목요일 14시 승인 → 금요일 지급 규칙으로 계산 · 인트라넷에서 날짜 고치기)"
+          % P["date_suspect"]["n"]] if (P.get("date_suspect") or {}).get("n") else []) + [
         "날짜 없는 예정 금액: %s · %s" % (_amount_piece("입금", P["undated"]["in"]), _amount_piece("지급", P["undated"]["out"])),
         "예정일이 잔액 기준일(%s) 이전 또는 당일인 미처리: %s · %s" % (
             cutoff, _amount_piece("입금", P["past"]["in"]), _amount_piece("지급", P["past"]["out"])),

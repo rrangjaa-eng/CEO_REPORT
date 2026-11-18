@@ -4216,7 +4216,9 @@ PROFIT_CAUSES = (
      "아래 '작년 전표 중 번호로 못 이은 것' 참고"),
     ("before", "행사 전 · 아직 전표 없음", "시간이 지나면 없어짐", "행사가 끝나고 계산서·원가 전표가 들어오면 맞춰짐"),
     ("missing_book", "행사 지났는데 장부에 전표 없음", "고치면 없어짐", "계산서 발행·원가 전표 입력이 빠졌는지 확인"),
-    ("intranet_blank", "인트라넷 값이 덜 들어감 (견적·실행가 빈칸이거나 너무 작음)", "고치면 없어짐",
+    # 2차 전수조사 J22 (2026-11-18): 행사일이 빈 프로젝트를 '행사 전(기다리면 됨)'에 넣지 않고 따로
+    ("no_event", "행사일이 없고 장부에 전표 없음", "확인 필요", "행사 전인지 지났는지 알 수 없음 — 인트라넷에 행사일을 넣으면 나뉨"),
+    ("intranet_blank", "인트라넷 값이 덜 들어감 (견적·실행가 빈칸이거나 실행가가 견적의 1%도 안 됨)", "고치면 없어짐",
      "인트라넷 견적금액·실행가를 채우거나 고침"),
     ("revenue_not_yet", "매출 계산서 아직 안 끊음 (장부 매출 0)", "시간이 지나면 없어짐", "계산서를 발행하면 맞춰짐"),
     ("revenue_diff", "견적과 실제 계산서 금액이 다름", "마감 뒤에도 남음",
@@ -4288,7 +4290,9 @@ def _profit_rows(X, R):
         elif not lines:
             if P.get("state") == PRIOR_STATE:
                 cause = "prior"
-            elif ev is None or asof is None or ev >= asof:
+            elif ev is None:
+                cause = "no_event"
+            elif asof is None or ev >= asof:
                 cause = "before"
             else:
                 cause = "missing_book"

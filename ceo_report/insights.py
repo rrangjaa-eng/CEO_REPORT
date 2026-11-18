@@ -25,7 +25,7 @@ import os
 import re
 import statistics
 
-from .calc import counts_in, must_pay, unissued_due, with_vat
+from .calc import _event_date, counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -359,10 +359,10 @@ def invoice_pairs(R):
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
         ev = p.get("event_date") or ""
-        try:
-            end = dt.date(*[int(x) for x in ev[-10:].split("-")]) if ev else None
-        except ValueError:
-            end = None
+        # 2차 전수조사 D2 (2026-11-18): '2026.10.27' 꼴을 못 읽어 늘 0건이었음 → 다른 곳과 같은 읽기(calc._event_date, 기간은 끝난 날)
+        end = _event_date(ev)
+        if end is not None:
+            ev = end.isoformat()
         if end is None or end >= asof:
             continue
         sold = max(issued.get(p.get("id"), 0), p.get("recognized") or 0)
@@ -598,7 +598,6 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
 def _as_date(v):
     if isinstance(v, dt.date):
         return v
-    from .calc import _event_date
     try:
         return _event_date(v)
     except Exception:

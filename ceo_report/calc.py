@@ -143,6 +143,9 @@ def two_sources(events, asof):
     return out
 
 
+DATE_FAR_DAYS = 3 * 366   # 기준일에서 이만큼 넘게 뒤인 날짜는 오타로 본다 (2차 전수조사 A7)
+
+
 def compute(d, kind, asof, start=None, pick=None, payday=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
@@ -157,6 +160,14 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     if payday is not None and payday <= asof:   # 조용히 바꾸지 않고 알린다 (코덱스 검토 2026-11-14)
         issues.add("출금일", "-", "넣은 출금일 %s이 기준일 %s과 같거나 앞이라 다음 금요일 %s로 잡음"
                    % (payday.isoformat(), asof.isoformat(), R["payday"].isoformat()))
+    # 2차 전수조사 A7 (2026-11-18): 기준일에서 3년 넘게 뒤인 날짜는 오타로 보고 알린다 (2060-09-18 같은 값이 경고 없이 일정 밖으로 빠졌음)
+    far = asof + dt.timedelta(days=DATE_FAR_DAYS)
+    for rows_, what in ((d.execs, "일자"), (d.schedule, "예정일"), (invs, "입금예정일")):
+        for x in rows_:
+            day = x.get("due") if what == "입금예정일" else x.get("date")
+            if isinstance(day, dt.date) and day > far and x.get("row"):
+                issues.add(x["row"]["_file"], x["row"]["_line"], "%s %s 날짜 의심 (기준일에서 3년 넘게 뒤) — 오타인지 확인하고 원본에서 고치기"
+                           % (what, day.isoformat()))
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
     R["settings"] = dict(d.settings)
