@@ -141,6 +141,10 @@ def _names(L):
     return nm
 
 
+MON_KINDS = ("rev", "cogs", "sga", "nin", "nout", "tax")
+MON_NAMES = {"rev": "매출", "cogs": "매출원가 (프로젝트 원가)", "sga": "판매비와관리비", "nin": "영업외수익", "nout": "영업외비용", "tax": "법인세등 (장부)"}
+
+
 def compute(input_dir, asof):
     """-> dict (엑셀·경영관리 한 줄에 쓰는 숫자). 장부를 처음부터 못 셀 때는 {'error': 까닭}."""
     from .convert import read_config
@@ -160,6 +164,7 @@ def compute(input_dir, asof):
     prev = collections.defaultdict(lambda: collections.defaultdict(int))   # 지난해들 영업외수익 [연도][계정]
     prev_pl = collections.defaultdict(lambda: collections.defaultdict(int))  # 지난해들 손익 종류별
     kinds = {}
+    monthly = collections.defaultdict(lambda: [0] * 13)   # 올해 손익 계정별 달별 (사용자 2026-11-18: 계정을 세목별·월별로 가져와 비용을 만듦)
     for m, code, name, d, c in L["rows"]:
         if m > ym:
             continue
@@ -173,6 +178,7 @@ def compute(input_dir, asof):
         elif k in ("rev", "nin"):
             if y == Y:
                 ytd[code] += c - d
+                monthly[code][int(m[5:7])] += c - d
             else:
                 prev_pl[y][k] += c - d
                 if k == "nin":
@@ -180,6 +186,7 @@ def compute(input_dir, asof):
         elif k in ("cogs", "sga", "nout", "tax"):
             if y == Y:
                 ytd[code] += d - c
+                monthly[code][int(m[5:7])] += d - c
             else:
                 prev_pl[y][k] += d - c
         else:
@@ -274,7 +281,11 @@ def compute(input_dir, asof):
     retained = A - Lb - cap - cur_profit      # 지난해까지 쌓인 이익 등 (장부 결산 대체 여부와 상관없이 맞음)
 
     over = overstated(input_dir, L, kinds, names, ytd, Y, M, adj, T_all, nin_rows)
-    return {"dept": dept_costs(input_dir, Y, M), "costs": costs, "asof": asof, "ym": ym, "Y": Y, "M": M, "P": P, "nin_rows": nin_rows, "X1": X1, "X0": X0, "T0": T0,
+    mon = collections.OrderedDict((k, []) for k in MON_KINDS)
+    for code in sorted(monthly):
+        if any(monthly[code][1:M + 1]):
+            mon[kinds[code]].append((code, names.get(code, code), monthly[code][1:M + 1]))
+    return {"monthly": mon, "dept": dept_costs(input_dir, Y, M), "costs": costs, "asof": asof, "ym": ym, "Y": Y, "M": M, "P": P, "nin_rows": nin_rows, "X1": X1, "X0": X0, "T0": T0,
             "tax_in": tax_in, "rate0": rate0, "tax_all": T_all, "base": base, "tax_src": tax_src, "how0": how0,
             "prev_years": sorted(y for y in prev if sum(prev[y].values())),
             "groups": groups, "capital": capital, "unknown": unknown, "retained": retained, "cur_profit": cur_profit,
@@ -358,7 +369,7 @@ STYLES = {
 for _v in STYLES.values():   # 여러 줄 설명 옆 숫자도 가운데 높이에
     if _v.get("border"):
         _v.setdefault("valign", "center")
-S_SUM, S_IN, S_PL, S_BS, S_REF = "요약", "바꿀 값", "손익", "재무상태표", "참고"
+S_SUM, S_IN, S_PL, S_MO, S_BS, S_REF = "요약", "바꿀 값", "손익", "계정별 월별", "재무상태표", "참고"
 
 
 def q(sheet, a):
@@ -381,9 +392,10 @@ def build(C, sources=""):
     sm = bk.sheet(S_SUM)
     ip = bk.sheet(S_IN)
     pl_ = bk.sheet(S_PL)
+    mo = bk.sheet(S_MO)
     bs_ = bk.sheet(S_BS)
     rf = bk.sheet(S_REF)
-    for sh_, tab in ((sm, "1F3864"), (ip, "FFC000"), (pl_, "5B9BD5"), (bs_, "5B9BD5"), (rf, "A5A5A5")):
+    for sh_, tab in ((sm, "1F3864"), (ip, "FFC000"), (pl_, "5B9BD5"), (mo, "70AD47"), (bs_, "5B9BD5"), (rf, "A5A5A5")):
         sh_.protect, sh_.tab = True, tab
     B, Cc, Dd, Ee, F = 2, 3, 4, 5, 6
     for sh_ in (sm, pl_, bs_):
@@ -414,6 +426,9 @@ def build(C, sources=""):
         if h:
             sh_.heights[r] = h
         return r + 1
+
+    # ══════════ 계정별 월별 (분개장 계정을 세목별·달별로, 사용자 2026-11-18) ══════════
+    TOT = monthly_sheet(mo, C, para)
 
     # ══════════ 바꿀 값 (노란 칸) ══════════
     r = 1
@@ -592,9 +607,10 @@ def build(C, sources=""):
         return r - 1
     A_ = lambda row: xlsxw.addr(row, Cc)
     E_ = lambda row: xlsxw.addr(row, Dd)
-    rv = pl("매출", P["rev"], note="장부 매출 (계산서 기준).")
-    cg = pl("매출원가 (프로젝트 원가)", P["cogs"], note=_mark(over_where["원가"]))
-    sg = pl("판매비와관리비 (장부)", P["sga"], note=("경영관리 부서 비용·급여와 회사 공통 비용(플랜트8)이 모두 들어 있습니다 (아래 줄). " if C.get("dept") else "")
+    mo_note = "'계정별 월별' 탭 %s 합계. "
+    rv = pl("매출", f=TOT["rev"], note=mo_note % "매출")
+    cg = pl("매출원가 (프로젝트 원가)", f=TOT["cogs"], note=mo_note % "매출원가" + _mark(over_where["원가"]))
+    sg = pl("판매비와관리비 (장부)", f=TOT["sga"], note=mo_note % "판매비와관리비" + ("경영관리 부서 비용·급여와 회사 공통 비용(플랜트8)이 모두 들어 있습니다 (아래 줄). " if C.get("dept") else "")
             + _mark(over_where["판관비"]))
     for nm_, sal_, oth_ in C.get("dept") or []:   # 판관비에 이미 든 몫을 보여 주기만 (합계에 다시 더하지 않음)
         sh.set(r, B, "   └ 그중 %s (급여 %s원 + 그 밖 %s원)" % (nm_, _won(sal_), _won(oth_)), s="tds")
@@ -606,9 +622,9 @@ def build(C, sources=""):
     kc = pl("결산 때 들어갈 비용", f=K, note="'바꿀 값' 탭 1번에서 '예'로 둔 것 (감가상각·대손충당금·퇴직급여·상여금 등).")
     op = pl("영업이익", f="%s-%s-%s-%s" % (A_(rv), A_(cg), A_(sg), A_(kc)), fe="%s-%s-%s-%s" % (E_(rv), E_(cg), E_(sg), E_(kc)), bold=True,
             note="매출 − 매출원가 − 판관비 − 결산 비용. 본업으로 번 돈.")
-    ni = pl("영업외수익 (이자·정부지원금·잡이익 등)", P["nin"], fe="%s-%s" % (A_(r), X1),
-            note="본업이 아닌 데서 들어온 돈. 기획본부 기준에서는 '바꿀 값' 탭 2번에서 '예'로 둔 만큼 뺍니다.")
-    no = pl("영업외비용 (대출 이자 등)", P["nout"], note="빼지 않고 그대로 둡니다. " + _mark(over_where["영업외비용"]))
+    ni = pl("영업외수익 (이자·정부지원금·잡이익 등)", f=TOT["nin"], fe="%s-%s" % (A_(r), X1),
+            note=mo_note % "영업외수익" + "본업이 아닌 데서 들어온 돈. 기획본부 기준에서는 '바꿀 값' 탭 2번에서 '예'로 둔 만큼 뺍니다.")
+    no = pl("영업외비용 (대출 이자 등)", f=TOT["nout"], note=mo_note % "영업외비용" + "빼지 않고 그대로 둡니다. " + _mark(over_where["영업외비용"]))
     pre = pl("세금 내기 전 이익", f="%s+%s-%s" % (A_(op), A_(ni), A_(no)), fe="%s+%s-%s" % (E_(op), E_(ni), E_(no)), bold=True,
              note="영업이익 + 영업외수익 − 영업외비용.")
     r += 1
@@ -625,7 +641,7 @@ def build(C, sources=""):
     TAX, TAXE = q(S_PL, A_(tx)), q(S_PL, E_(tx))
     tb = None
     if P["tax_booked"]:
-        tb = pl("장부에 이미 넣은 법인세등", P["tax_booked"], note="올해 장부의 법인세등 계정. 위 예상과 겹칠 수 있으니 확인하세요.")
+        tb = pl("장부에 이미 넣은 법인세등", f=TOT["tax"], note="올해 장부의 법인세등 계정. 위 예상과 겹칠 수 있으니 확인하세요.")
     r += 1
     net = pl("올해 순이익 (세금 뺀 뒤)", f="%s-%s%s" % (A_(pre), A_(tx), ("-" + A_(tb)) if tb else ""),
              fe="%s-%s%s" % (E_(pre), E_(tx), ("-" + E_(tb)) if tb else ""), bold=True,
@@ -800,7 +816,7 @@ def build(C, sources=""):
               "③ 바꾸면 이 요약과 '손익'·'재무상태표' 탭이 바로 다시 계산됩니다. 되돌리려면 '처음 값' 칸 숫자를 다시 적으세요."):
         r = para(sh, r, t, s="yel", h=30)
     r += 1
-    r = para(sh, r, "탭 안내: 요약(이 장) · 바꿀 값(노란 칸) · 손익(이익과 세금 계산) · 재무상태표(계정별) · 참고(크게 잡혔을 수 있는 비용·낱말 풀이)", s="sub")
+    r = para(sh, r, "탭 안내: 요약(이 장) · 바꿀 값(노란 칸) · 손익(이익과 세금 계산) · 계정별 월별(분개장 계정을 달마다, 손익의 근거) · 재무상태표(계정별) · 참고(크게 잡혔을 수 있는 비용·낱말 풀이)", s="sub")
 
     # ══════════ 참고 ══════════
     sh = rf
@@ -849,11 +865,79 @@ def build(C, sources=""):
         sh.set(r, c, "", s="sec")
     r += 1
     r = para(sh, r, made, h=30)
-    r = para(sh, r, "회사 전체 칸은 위하고 분개장(계정 합계)과 프로그램 예상(결산 비용·법인세)입니다. 진행 중 프로젝트의 남은 원가는 넣지 않았습니다.", h=30)
+    r = para(sh, r, "회사 전체 칸은 위하고 분개장(계정별·달별 합계, '계정별 월별' 탭)과 프로그램 예상(결산 비용·법인세)입니다. 진행 중 프로젝트의 남은 원가는 넣지 않았습니다.", h=30)
 
     C["_cells"] = {"check": [q(S_BS, xlsxw.addr(chk, c)) for c in (Cc, Dd)], "net": PL["net"], "K": K, "tax": (TAX, TAXE),
                    "equity": BSX["equity"], "assets": BSX["assets"]}
     return bk
+
+
+def monthly_sheet(sh, C, para):
+    """'계정별 월별' 탭: 올해 손익 계정을 계정(세목)마다 1~M월로. -> {종류: 합계 칸 주소(다른 탭에서 쓰는 꼴)}."""
+    M = C["M"]
+    B, c1 = 2, 3
+    tc = c1 + M          # 합계 열
+    sh.widths[1], sh.widths[B] = 2, 36
+    for c in range(c1, tc):
+        sh.widths[c] = 13
+    sh.widths[tc] = 15
+    r = 1
+    sh.set(r, B, "계정별 월별 — %d년 1~%d월 (분개장)" % (C["Y"], M), s="title")
+    sh.heights[r] = 26
+    r += 1
+    sh.set(r, B, "위하고 분개장의 손익 계정을 계정과목(세목)마다 달별로 더한 표입니다. '손익' 탭의 매출·원가·판관비·영업외수익·영업외비용은 이 표의 합계에서 계산합니다. "
+                 "수익은 대변 − 차변, 비용은 차변 − 대변. 결산 때 들어갈 비용(감가상각 예상 등)은 장부에 아직 없어 여기 없고 '바꿀 값' 탭에 있습니다.", s="box")
+    for c in range(B + 1, tc + 1):
+        sh.set(r, c, "", s="box")
+    sh.merge(r, B, r, tc)
+    sh.heights[r] = 34
+    r += 2
+    sh.set(r, B, "계정 [코드]", s="th")
+    for i in range(M):
+        sh.set(r, c1 + i, "%d월" % (i + 1), s="th")
+    sh.set(r, tc, "합계 (1~%d월)" % M, s="th")
+    r += 1
+    tot, sub = {}, {}
+    for k in MON_KINDS:
+        items = C["monthly"].get(k) or []
+        if k == "tax" and not items:
+            continue
+        sh.set(r, B, MON_NAMES[k], s="grp")
+        for c in range(c1, tc + 1):
+            sh.set(r, c, "", s="grp")
+        r += 1
+        first = r
+        for code, name, months in items:
+            sh.set(r, B, "  %s [%s]" % (name, code), s="td")
+            for i, v in enumerate(months):
+                sh.set(r, c1 + i, v, s="num")
+            sh.set(r, tc, f="SUM(%s:%s)" % (xlsxw.addr(r, c1), xlsxw.addr(r, tc - 1)), s="numb")
+            r += 1
+        if not items:
+            sh.set(r, B, "  (없음)", s="tds")
+            for c in range(c1, tc):
+                sh.set(r, c, 0, s="num")
+            sh.set(r, tc, f="SUM(%s:%s)" % (xlsxw.addr(r, c1), xlsxw.addr(r, tc - 1)), s="numb")
+            r += 1
+        sh.set(r, B, MON_NAMES[k] + " 합계", s="tdb")
+        for c in range(c1, tc + 1):
+            sh.set(r, c, f="SUM(%s:%s)" % (xlsxw.addr(first, c), xlsxw.addr(r - 1, c)), s="numt")
+        sub[k] = r
+        tot[k] = q(S_MO, xlsxw.addr(r, tc))
+        r += 1
+    r += 1
+    sh.set(r, B, "달별 이익 (결산 비용 넣기 전)", s="grp")
+    for c in range(c1, tc + 1):
+        sh.set(r, c, "", s="grp")
+    r += 1
+    for label, f in (("영업이익", "{rev}-{cogs}-{sga}"), ("세금 내기 전 이익", "{rev}-{cogs}-{sga}+{nin}-{nout}")):
+        sh.set(r, B, label, s="tdb")
+        for c in range(c1, tc + 1):
+            sh.set(r, c, f=f.format(**dict((k, xlsxw.addr(v, c)) for k, v in sub.items())), s="numb")
+        r += 1
+    sh.protect, sh.tab = True, "70AD47"
+    tot.setdefault("tax", "0")
+    return tot
 
 
 def _circ(i):

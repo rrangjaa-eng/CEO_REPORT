@@ -200,7 +200,7 @@ class TestPlanBS(unittest.TestCase):
     def test_easy_layout(self):
         # 사용자 2026-11-18: 무엇을 어떻게 바꾸는지 알기 쉽게 → 요약이 첫 탭, 노란 칸은 '바꿀 값' 탭에만, 나머지는 잠금
         bk = planbs.build(self.C)
-        self.assertEqual([x.name for x in bk.sheets], ["요약", "바꿀 값", "손익", "재무상태표", "참고"])
+        self.assertEqual([x.name for x in bk.sheets], ["요약", "바꿀 값", "손익", "계정별 월별", "재무상태표", "참고"])
         self.assertTrue(all(x.protect for x in bk.sheets))
         unlocked = set(k for k, v in planbs.STYLES.items() if v.get("unlocked"))
         self.assertEqual(unlocked, {"in", "inp", "inc"})
@@ -221,6 +221,31 @@ class TestPlanBS(unittest.TestCase):
         xml = bk._sheet_xml(sm, dict((k, i) for i, k in enumerate(["_"] + sorted(planbs.STYLES))))
         self.assertIn("<sheetProtection", xml)
         self.assertIn('tabColor rgb="FF1F3864"', xml)
+
+    def test_monthly_accounts_feed_pl(self):
+        # 사용자 2026-11-18: 분개장 계정을 세목별·월별로 가져와 그 표로 비용을 만듦
+        mon = self.C["monthly"]
+        self.assertEqual([x[0] for x in mon["sga"]], ["81100", "81800"])
+        self.assertEqual(dict((c, m) for c, n, m in mon["sga"])["81100"], [0, 78_000_000] + [0] * 8)
+        self.assertEqual(dict((c, m) for c, n, m in mon["nin"])["93000"], [0, 0, 5_000_000] + [0] * 7)   # 11월 이자는 기준 달 뒤라 없음
+        bk = planbs.build(self.C)
+        mo = [x for x in bk.sheets if x.name == "계정별 월별"][0]
+        pl = [x for x in bk.sheets if x.name == "손익"][0]
+        P = self.C["P"]
+        got = {}
+        for (r, c), (v, f, s) in pl.cells.items():
+            if c == 3 and f and "계정별 월별" in f:
+                got[pl.cells[(r, 2)][0]] = bk.value("'손익'!" + xlsxw.addr(r, c))
+        self.assertEqual(got["매출"], P["rev"])
+        self.assertEqual(got["매출원가 (프로젝트 원가)"], P["cogs"])
+        self.assertEqual(got["판매비와관리비 (장부)"], P["sga"])
+        self.assertEqual(got["영업외비용 (대출 이자 등)"], P["nout"])
+        self.assertEqual(got["영업외수익 (이자·정부지원금·잡이익 등)"], P["nin"])
+        # 월별 표의 칸 하나를 바꾸면 손익·재무상태표 회사 전체가 따라 바뀜 (자료 기반 계산)
+        row = [r for (r, c), (v, f, s) in mo.cells.items() if c == 2 and str(v).strip().startswith("복리후생비")][0]
+        mo.cells[(row, 4)] = (78_000_000 + 1_000_000, None, "num")
+        bk._memo = {}
+        self.assertEqual(bk.value("'손익'!" + [xlsxw.addr(r, 3) for (r, c), (v, f, s) in pl.cells.items() if c == 2 and v == "판매비와관리비 (장부)"][0]), P["sga"] + 1_000_000)
 
     def test_no_books(self):
         d = tempfile.mkdtemp()
