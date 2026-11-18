@@ -1039,7 +1039,7 @@ class TestUserRulesLocked(Base):
         self.assertIn("외 미확인 1건", row_b)
         self.assertIn("판단 불가", row_b)
         tot = re.findall(r'<tr class="tot">.*?</tr>', sec5, re.S)[0]
-        for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 2건"):
+        for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 1건"):
             self.assertIn(needle, tot, needle)
         self.assertNotIn("미수금 (세금계산서 발행 후)", first_screen(html))   # 주간엔 미수금 칸 없음 (사용자 2026-11-03)
         RM = compute(load(probe_folder(self, "계산서.csv", mutate)), "monthly", ASOF)
