@@ -654,6 +654,21 @@ VAT_IN_CODES = ("13500",)    # 부가세대급금
 VAT_OUT_CODES = ("25500",)   # 부가세예수금
 
 
+# 위하고가 매입·매출 전표 적요에 넣어 주는 정해진 표시 (2차 전수조사 P8): '[수금예정일:2026.03.06]' · '[지급예정일:2025.11.28]'
+MEMO_DUE_RE = re.compile(r"\[(수금|지급)예정일\s*:\s*(20\d{2})\.(\d{1,2})\.(\d{1,2})\]")
+
+
+def memo_due(memo, kind):
+    """적요의 '[수금예정일:…]'(kind '수금') · '[지급예정일:…]'(kind '지급') 날짜. 없거나 날짜가 아니면 None."""
+    for m in MEMO_DUE_RE.finditer(str(memo or "")):
+        if m.group(1) == kind:
+            try:
+                return dt.date(int(m.group(2)), int(m.group(3)), int(m.group(4)))
+            except ValueError:
+                return None
+    return None
+
+
 def invoices_from_journal(journal):
     """분개장 '유형'이 매입전표·매출전표인 전표를 (전표일자, 전표번호)로 묶어 계산서 한 장씩 -> (매입 행, 매출 행).
 
@@ -683,6 +698,8 @@ def invoices_from_journal(journal):
                     None) or project_code(item)
         row = {"date": date, "no": no, "vendor": vendor, "item": item, "supply": total - vat, "vat": vat, "total": total,
                "code": code, "vendor_norm": norm_vendor(vendor), "vendor_code": vcode}
+        # P8: 받은 자료에 예정일이 있으면 그 값이 먼저 (작성일 + 60일 추정은 없을 때만). 전표 줄 가운데 처음 나오는 표시
+        row["due_memo"] = next((d for d in (memo_due(ln.get("memo"), "수금" if kind == "매출" else "지급") for ln in lines) if d), None)
         if kind == "매출":
             row["type"] = ""
             # 선금 계산서: 품명 낱말이 아니라 대변에 선수금 계정 줄이 있는지로 판단 (사용자 2026-11-14 "계정과목으로 판단")
@@ -1102,7 +1119,8 @@ def _sales_row(item):
             "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", ""),
             "deducted": item.get("deducted") or 0, "advance": item.get("advance"),
             # 2차 전수조사 D6 (2026-11-18): 이 칸을 넘기지 않아 계산서.csv 거래처코드가 모두 비었고, 그래서 코드 대신 이름으로 묶였음
-            "vendor_code": str(item.get("vendor_code") or "").strip().lstrip("0")}
+            "vendor_code": str(item.get("vendor_code") or "").strip().lstrip("0"),
+            "due_memo": item.get("due_memo")}   # 분개장 적요 '[수금예정일:…]' (P8)
 
 
 def load_sales(folder, asof, books):

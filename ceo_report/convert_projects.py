@@ -487,6 +487,9 @@ def _wehago_rows(books, costs, cfg):
             continue
         g["state"] = "카드사용미결제" if g["card"] else "요청미지급"
         g["firm"] = g["card"]
+        if not g["card"]:   # 2차 전수조사 P8: 위하고 전표 적요 '[지급예정일:…]' — 지급요청 날짜가 없을 때 쓴다 (아래 표 쓰는 곳)
+            from .wehago import memo_due
+            g["memo_day"] = next((d for d in (memo_due(books.journal[i].get("memo"), "지급") for i in idxs) if d), None)
         extra = ""
         if it is not None and it["applied"] > 0:
             extra = " · 일부 지급 %s" % won(it["applied"])
@@ -524,9 +527,13 @@ def _wehago_rows(books, costs, cfg):
 
 
 def _row_of(g):
+    day, basis = g["paid_day"], g["basis"]
+    if day is None and g.get("state") == "요청미지급" and g.get("memo_day") is not None:
+        # 2차 전수조사 P8: 지급요청으로 날짜를 못 정한 '아직 안 준 돈'은 위하고 전표 적요의 지급예정일을 쓴다 (추정)
+        day, basis = g["memo_day"], basis + " · 위하고 전표 지급예정일"
     return {"프로젝트번호": g["project"], "항목": g["item"], "거래처": g["vendor_text"], "상태": g["state"],
-            "공급가액": g["supply_cell"], "부가세": g["vat_cell"], "일자": cell_date(g["paid_day"]),
-            "확정여부": "확정" if g["firm"] else "추정", "근거": g["basis"]}
+            "공급가액": g["supply_cell"], "부가세": g["vat_cell"], "일자": cell_date(day),
+            "확정여부": "확정" if g["firm"] else "추정", "근거": basis}
 
 
 # ───────────── 프로젝트집행.csv: 아직 장부에 없는 지급요청 (D-42, D-50) ─────────────
