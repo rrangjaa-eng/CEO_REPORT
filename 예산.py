@@ -62,7 +62,14 @@ def main(argv=None):
         _say("%d년 팀 매출 자료(손익.csv 팀 줄)가 없어 예산을 만들 수 없습니다. 먼저 '자료 변환'을 하세요." % B["base"])
         return 2
     confirmed = None
-    if a.확정 == "함":
+    from ceo_report import gate
+    stop = gate.check_dir(a.입력, asof)   # 예산 대표용도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
+    if a.확정 == "함" and stop:
+        # 2차 전수조사 V2 (2026-11-18): 자료 확인에서 막힌 날은 예산을 확정하지 않는다 (예전: 대표용이 막힌 날에도 예산확정.csv 는
+        # 먼저 저장돼, 오래된 자료로 만든 예산이 월간 '예산 대비'의 기준으로 굳었음)
+        _say("예산을 확정하지 않았습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
+        _say("자료를 받아 '자료 변환'을 한 뒤 다시 확정하세요. 이번에는 초안만 만듭니다 (예전에 확정한 예산은 그대로).")
+    elif a.확정 == "함":
         try:
             n = budget.confirm(a.입력, B, asof)
         except OSError as e:
@@ -77,8 +84,6 @@ def main(argv=None):
     browser = 보고서.find_browser() if a.pdf == "만듦" else None
     made = []
     company = (d.settings.get("회사명") or "").strip()
-    from ceo_report import gate
-    stop = gate.check_dir(a.입력, asof)   # 예산 대표용도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
     if stop:
         _say("예산 대표용을 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
     for mode, who in (("ceo", "대표용"), ("mgmt", "경영관리용")):
