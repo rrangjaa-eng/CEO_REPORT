@@ -239,6 +239,25 @@ def _month_span(months):
     return out
 
 
+def journal_months(books):
+    """분개장이 다루는 달: 첫 전표 달 ~ 마지막 전표 달 전부 (어느 파일에도 없는 빈 기간에 통째로 든 달은 뺌).
+    2차 전수조사 P7 (2026-11-18): 누적 파일(계정별비용·부서비용·사원급여·부서계정비용)은 '이번 분개장에 줄이 있는 달'만 새로 써서,
+    날짜를 잘못 넣은 전표를 고쳐 그 달이 통째로 사라지면 예전 줄이 영영 남았다 → 분개장 기간 안의 달은 줄이 없어도 예전 줄을 지운다."""
+    import datetime as dt
+    dated = [ln["date"] for ln in (getattr(books, "journal", None) or []) if ln.get("date") is not None]
+    if not dated:
+        return set()
+    out = _month_span([min(dated).strftime("%Y-%m"), max(dated).strftime("%Y-%m")])
+    for g0, g1 in getattr(books, "journal_gaps", None) or []:
+        for ym in _month_span([g0.strftime("%Y-%m"), g1.strftime("%Y-%m")]):
+            y, m = int(ym[:4]), int(ym[5:7])
+            first = dt.date(y, m, 1)
+            last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1))
+            if g0 <= first and last <= g1:
+                out.discard(ym)
+    return out
+
+
 def _ranges(months):
     """달 목록 -> '2026-01~2026-08, 2026-11' (이어지는 달은 묶는다; 달 모양이 아닌 글자는 그대로)."""
     good = sorted(m for m in set(months) if re.match(r"^\d{4}-\d{2}$", m))
@@ -462,6 +481,7 @@ def build_dept(books, cfg, prev_rows=()):
         else:
             cell[0] += amount
     months = set(k[0] for k in cells)
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept), c in sorted(cells.items()):
         paid = [n for n, v in c["names"].items() if v is None or v > 0]   # 합을 모르는 사람(None)은 센다
@@ -517,6 +537,7 @@ def build_staff(books, cfg, prev_rows=()):
             c[1] += 1
         else:
             c[0] += amount
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept, name), c in sorted(cells.items()):
         rows.append(dict(zip(data.STAFF_KEYS, [ym, dept, name, cell_amount(_cell(c))])))
@@ -555,6 +576,7 @@ def build_dept_accounts(books, cfg, prev_rows=()):
         else:
             c["sum"][0] += amount
             t[0] += amount
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept, code), c in sorted(cells.items()):
         rows.append(dict(zip(data.DEPT_ACCOUNT_KEYS, [ym, dept, code, c["name"], cell_amount(_cell(c["sum"]))])))
@@ -604,6 +626,7 @@ def build_accounts(books, cfg, prev_rows=()):
         else:
             c["sum"][0] += amount
     months = set(k[0] for k in cells)
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, group, code), c in sorted(cells.items()):
         rows.append(dict(zip(data.ACCOUNT_KEYS, [ym, group, code, c["name"], cell_amount(_cell(c["sum"]))])))

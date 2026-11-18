@@ -171,7 +171,7 @@ def lights(R, I=None):
             if cdiff:
                 facts.append("위하고 대조: 보통예금 장부 잔액과 계좌잔액.csv 합계 차이 %s원." % "{:,}".format(cdiff))
             if facts:
-                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (부록 B-8)"
+                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (7. 위하고 대조)"
         else:
             lv, num, sub = WA, st or "자료 없음", "대조 자료 확인 필요"
             facts = ["위하고 대조: %s." % (X.get("reason") or st or "자료 없음")]

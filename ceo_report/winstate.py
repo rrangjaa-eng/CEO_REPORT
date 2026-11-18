@@ -1,7 +1,7 @@
 """창(gui.py)이 보여 줄 상태를 계산하는 곳 (사용자 2026-11-05: 창을 쓰기 편하게 다시 꾸미기).
 
 tkinter 없이 시험할 수 있게 계산만 여기 둔다.
-- 자료가 얼마나 최신인가 (freshness): 분개장·자금계획서·인트라넷·홈택스·통장 잔액이 기준일에서 며칠 지났는지
+- 자료가 얼마나 최신인가 (freshness): 분개장·자금계획서·인트라넷·통장 잔액이 기준일에서 며칠 지났는지
 - 단계 상태 (steps): 1 자료 모으기 → 2 변환하고 확인 → 3 보고 만들기, 변환 뒤 새 자료가 들어왔는지
 - 창 입력값 기억 (load/save): 출금일·가용자금 볼 날짜·마지막 작업 시각 → 입력\\창상태.json
 - 합칠 거래처 후보 (merge_candidates): 그 출금일 목록에서 2건 이상 나가는 거래처
@@ -188,7 +188,7 @@ def intranet_time(collect_dir):
 
 def sources(paths):
     """[(이름, 시각 또는 날짜, 설명)] — 받은 시각은 파일을 받은(저장한) 때."""
-    from . import checklist, fundplan, hometax, wehago
+    from . import checklist, fundplan, wehago
     wf = _files(paths.wehago)
     journal = [p for p in wf if wehago._kind_of(os.path.basename(p))[0] == "분개장"]
     plans = [p for p in wf if fundplan.is_fundplan_name(p) or fundplan.is_auto_plan_name(p)]   # 크롬 자동수집 json 도 (2026-11-10)
@@ -197,7 +197,6 @@ def sources(paths):
         ("분개장", _newest(journal), "수집\\위하고 에 받은 때"),
         ("자금계획서", _newest(plans), "수집\\위하고 에 받은 때"),
         ("인트라넷 (지급요청·견적)", intranet_time(paths.collect), "인트라넷 자료 가져오기"),
-        ("홈택스 세금계산서", _newest(_files(os.path.join(paths.collect, hometax.FOLDER))), "수집\\홈택스 에 받은 때"),
         ("통장 잔액", max(bank) if bank else None, "가끔 넣는 값 › 통장 잔액 대조"),
     ]
 
@@ -540,7 +539,7 @@ def steps(paths, dirs=None):
     'now': 지금 할 차례 단계 번호 (1~3)}. dirs: 크롬 다운로드 폴더 (시험용, 없으면 이 PC 크롬에서 찾음)."""
     from . import app as _app   # 2차 P1-11: 다운로드 폴더에 받아만 둔 자동수집 파일도 (변환 때 가져온다)
     pend = [w for _, w in _app.pending_downloads(dirs)]
-    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
+    src = sources(paths)[:3] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
     collected = [w for n, w, _ in src if isinstance(w, dt.datetime)]
     last_collect = max(collected) if collected else None
     conv = convert_time(paths.input)
@@ -722,6 +721,8 @@ def rc_message(task, rc, locked=False):
         why = "위하고 장부를 읽지 못했습니다. 수집\\위하고 폴더에 분개장 파일이 있는지 확인하세요"
     elif rc == 3 and task == "정합성":
         return True, "정합성 점검 끝. 맞지 않는 곳이 있어 확인할 것 화면을 엽니다"
+    elif rc == 4 and task == "정합성":   # 2차 전수조사 P17: 입력 파일 ↔ 새 변환 결과가 다름 — 정상으로 보이지 않게
+        return False, "정합성 점검 끝 — 입력 폴더의 파일이 지금 자료로 새로 변환한 결과와 다릅니다. '자료 변환'을 다시 하거나 손으로 고친 파일을 확인하세요"
     elif rc == 6:
         why = "예상하지 못한 오류입니다. 설정.csv 값과 입력 파일을 확인하세요"
     elif rc == 7:
@@ -762,7 +763,14 @@ def live_stale(paths, asof=None):
     conv = convert_time(paths.input)
     if conv is not None and made < conv:
         return True
-    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))
+    if any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS)):
+        return True
+    # 2차 전수조사 P21 (2026-11-18): 예전엔 위 3개 파일만 봐서 설정.csv 등 다른 입력을 바꿔도 예전 화면이 열렸다 → 입력 폴더의 표 파일 전부
+    try:
+        names = [n for n in os.listdir(paths.input) if n.lower().endswith(".csv")]
+    except OSError:
+        names = []
+    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in names))
 
 
 def caret_after_money(old, new, at):

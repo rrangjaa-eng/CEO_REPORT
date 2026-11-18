@@ -300,7 +300,7 @@ def _evidence(a, kind, asof):
         else:
             made.append(pdf)
             for gone in pdfname.prune(base):
-                _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("근거 %s · %s %s 경영관리 보고에서 뽑음" % (", ".join(nums), asof, label))
     _say("만든 파일:")
     for m in made:
@@ -334,7 +334,7 @@ def _annual_monthly(a, D, year, A):
         R["taxadj"] = taxadj.load(a.입력)
         R["taxret_dir"] = a.입력 if taxreturn.load(a.입력) else None
         R["filing"] = filing.load(a.입력)
-        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc, asof)
         R["payroll"] = payroll.for_report(a.입력, asof)
         return R, RD.annual_pack(R)
     except Exception as e:   # 이 계산 때문에 연간 보고를 못 만들면 안 된다
@@ -375,6 +375,7 @@ def _annual(a):
         return 2
     M, pack = _annual_monthly(a, D, year, A)
     annual.apply_monthly(A, M, pack)
+    xdiff = _xcheck(a, today, "annual", lambda X: X.from_annual(A))   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8)
     if M is not None:   # 8장 결산 처리 제안 (배당 판단)은 월간 계산이 있어야 붙는다
         try:
             from ceo_report import surplus
@@ -393,6 +394,9 @@ def _annual(a):
                 return 7
             continue
         page = annual.render(annual.blank_cash(A) if stop else A, mode)
+        if mode == "mgmt" and xdiff:
+            from ceo_report import xcheck
+            page = page.replace("<body>", "<body>" + xcheck.banner(xdiff, "annual"), 1)
         if stop:   # 항목은 남기고 통장 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 보고의 통장 숫자", blanked=True), 1)
         try:
@@ -410,7 +414,7 @@ def _annual(a):
             else:
                 made.append(pdf)
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     # 팀장용 연간 실적 (사용자 2026-11-17: 연간 보고도 대표용·경영관리용·팀장용). 월간 팀장 보고와 같은 숫자·같은 규칙(급여 금액 없음)
     if a.팀장용 == "만듦":
         from ceo_report import teamreport
@@ -442,7 +446,7 @@ def _annual(a):
                 else:
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
-                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     _say("%d년 연간 보고 · 손익 %d개월 · 결산 전표 %s" % (year, len(A["Y"]["months"]), "반영" if A["closed"] else "없음 (감가상각비·법인세 예상)"))
     if not A.get("has_annual"):
         _say("연간자료.csv 없음 — '자료 변환'을 다시 하면 거래처·통장 흐름·결산 법인세가 들어갑니다.")
@@ -454,6 +458,21 @@ def _annual(a):
     if a.pdf == "만듦" and not browser:
         _say("PDF: Edge/Chrome을 찾지 못해 HTML만 만들었습니다. HTML을 열고 인쇄 → 'PDF로 저장'을 쓰세요.")
     return 0
+
+
+def _xcheck(a, asof, kind, values):
+    """이 보고의 핵심 숫자를 같은 기준일·같은 변환으로 만든 다른 보고와 맞춰 보고 기록한다 -> 다른 것 목록 (실패해도 보고는 계속)."""
+    try:
+        from ceo_report import xcheck
+        diffs = xcheck.compare(a.출력, asof, kind, values(xcheck), xcheck.conv_stamp(a.입력))
+    except Exception as e:
+        _say("보고끼리 숫자 맞춰 보기를 하지 못했습니다 (%s) — 보고는 그대로 만듭니다." % type(e).__name__)
+        return []
+    if diffs:
+        _say("보고끼리 숫자가 다릅니다 %d건 — 경영관리 보고 맨 위에 적었습니다:" % len(diffs))
+        for x in xcheck.lines(diffs, kind):
+            _say("  " + x)
+    return diffs
 
 
 def _planbs(a):
@@ -585,7 +604,7 @@ def main(argv=None):
         R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
         from ceo_report import filehelp
         from ceo_report.util import esc as _esc
-        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc, asof)
         from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
         R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
@@ -593,6 +612,11 @@ def main(argv=None):
     R["auto_facts"] = insights.read_facts(a.입력)
     from ceo_report import gate as _gate   # 자료가 막히면 경영관리·현황에서도 자금 숫자를 비운다 (사용자 2026-11-14)
     _gate.blank_funds(R)
+
+    def _vals(X):
+        from ceo_report import render as _RD
+        return X.from_calc(R, _RD.annual_pack(R) if kind == "monthly" else None)
+    R["xcheck"] = _xcheck(a, asof, kind, _vals)   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8) — 경영관리 보고 맨 위에만
     R["_invoices"] = data.invoices
     R["auto_prev"] = insights.load_previous(a.출력, asof)
     R["auto_records"] = insights.load_records(a.출력)
@@ -643,6 +667,9 @@ def main(argv=None):
                 return 7
             continue
         page = render(R, mode)   # 먼저 다 만든 뒤 연다: 만들다 실패해도 이전 보고 파일이 빈 파일로 덮이지 않게
+        if mode == "mgmt":
+            from ceo_report import plainwords
+            page = plainwords.plain(page)   # 개발 용어를 쉬운 말로 (2차 전수조사 J12)
         try:
             _write_page(base + ".html", page)
         except OSError as e:
@@ -673,7 +700,7 @@ def main(argv=None):
                          % (got, limit, os.path.basename(pdf),
                             " — 출금 목록이 길면 '합칠 거래처'로 줄여 보세요" if kind == "weekly" else ""))
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and a.팀장용 == "만듦" and stop:
         from ceo_report.teamreport import team_names
         folder = os.path.join(a.출력, "팀장용")
@@ -706,7 +733,7 @@ def main(argv=None):
                 else:
                     made.append(pdf_path)
                     for gone in pdfname.prune(page_path[:-5]):
-                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                        _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     if kind == "monthly" and R.get("re"):
         # 이익잉여금 쉬운 설명·처분계산서·결산 처리 제안 양식 (사용자 2026-11-13): 출력/결산/ 에 따로 한 부
         from ceo_report import surplus
@@ -759,15 +786,15 @@ def main(argv=None):
              "계산했습니다 (실제보다 낮을 수 있음)." % ", ".join(R["s2"]["in_missing"]))
     n = len(R["s7"]["issues"])
     if n:
-        _say("입력 자료 확인 필요 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
+        _say("입력 자료 확인 필요 %d건 — 경영관리보고 '6. 자료·지급 관리' 안의 '입력 자료 확인 필요' 표에 있습니다 (대표보고에는 없음)." % n)
     bad = [c for c in R["s7"]["checks"] if not c[3]]
     if bad:
-        _say("대조 불일치 %d건 — 경영관리보고 '부록 B-7 변동·자료 범위' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
+        _say("대조 불일치 %d건 — 경영관리보고 '6. 자료·지급 관리' 안의 '보고 대조' 표를 확인하세요 (대표보고에는 없음)." % len(bad))
     if kind == "monthly" and R["xchk"]["state"] != "ok":
         if R["xchk"]["state"] == "자료 없음":
-            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다.")
+            _say("위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '7. 위하고 대조'에 들어갑니다.")
         else:
-            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
+            _say("위하고 대조 읽을 수 없음 — %s. 월간 경영관리보고 '7. 위하고 대조'에는 ‘읽을 수 없음’으로 적었습니다." % R["xchk"]["reason"])
     if R.get("_team_failed"):
         return 7   # 팀장 보고 일부를 못 씀 (P4-5): 대표·경영관리는 만들었지만 '완료'로 끝내지 않는다
     return 0

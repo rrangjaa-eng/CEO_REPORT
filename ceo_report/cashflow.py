@@ -151,10 +151,39 @@ def _is_deposit(ln):
     return "정기예" in n or "적금" in n
 
 
-def deposit_terms(journal):
+REGISTRY_DATES = re.compile(r"(\d{4})\D(\d{1,2})\D(\d{1,2})\s*~\s*(\d{4})\D(\d{1,2})\D(\d{1,2})")
+
+
+def registry_terms(wehago_dir):
+    """위하고 예적금현황(SAFM0107)에 가입일~만기일이 둘 다 적힌 예금 -> {이름: (가입일, 만기일)} (2차 전수조사 V17·J15).
+    받은 화면이 없거나 날짜가 한쪽만 있으면 넣지 않는다 (그때는 장부로 판단)."""
+    out = {}
+    if not wehago_dir:
+        return out
+    try:
+        from . import reconcile
+        got = (reconcile.raw_files(wehago_dir).get("SAFM0107") or [None])[0]
+        items = reconcile._resp(got[2], "/safm0107/balance/statement") if got else None
+    except Exception:   # 대조 화면은 참고 자료 — 못 읽어도 현금흐름표는 장부로 만든다
+        return out
+    for it in items if isinstance(items, list) else []:
+        m = REGISTRY_DATES.search(str(it.get("js_date") or "")) if isinstance(it, dict) else None
+        if not m:
+            continue
+        try:
+            a, b = dt.date(*[int(x) for x in m.groups()[:3]]), dt.date(*[int(x) for x in m.groups()[3:]])
+        except ValueError:
+            continue
+        if b >= a:
+            out[str(it.get("js_name") or "").strip()] = (a, b)
+    return out
+
+
+def deposit_terms(journal, registry=None):
     """정기예금 하나(거래처 = '신한260113' 처럼 가입일)마다 가입 → 만기 날수와 현금성 여부.
     -> {거래처: (날수 또는 None, 현금성 True/False, 근거)}. 적요에 '정기예금'이 없는 것(공제부금·적금)은 현금성이 아님.
-    아직 만기 전이면 지난 정기예금들이 모두 3개월 이내였을 때만 현금성으로 본다 (추정)."""
+    아직 만기 전이면: 위하고 예적금현황에 가입일~만기일이 있으면 그 날수로 (registry, 2차 전수조사 V17 — 받은 자료가 먼저),
+    없으면 지난 정기예금들이 모두 3개월 이내였을 때만 현금성으로 본다 (추정)."""
     info = collections.defaultdict(lambda: {"join": None, "end": None, "memo": "", "vendor": ""})
     for ln in journal:
         if ln.get("date") is None or not _is_deposit(ln):
@@ -179,9 +208,13 @@ def deposit_terms(journal):
                 join = dt.date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3)))
             except ValueError:
                 join = None
+        reg = (registry or {}).get(v)
         if join and e["end"]:
             days = (e["end"] - join).days
             out[v] = (days, days <= SHORT_DAYS, "가입 %s → 만기 %s" % (join.isoformat(), e["end"].isoformat()))
+        elif reg:
+            days = (reg[1] - reg[0]).days
+            out[v] = (days, days <= SHORT_DAYS, "만기 전 · 위하고 예적금현황 가입 %s → 만기 %s" % (reg[0].isoformat(), reg[1].isoformat()))
         else:
             out[v] = (None, None, "만기 전")
     known = [x[1] for x in out.values() if x[0] is not None]
@@ -231,10 +264,10 @@ def _memo_item(memo):
     return "기타"
 
 
-def build_rows(journal, cash_codes):
+def build_rows(journal, cash_codes, registry=None):
     """분개장 줄 → [(일자, 구분, 항목, 금액)] (날짜·항목별 합). 구분 '현금' = 통장 돈이 오간 이유, '변화' = 계정 묶음 증감(대변 − 차변)."""
     codes = set(_sq(c) for c in cash_codes)
-    terms = deposit_terms(journal)
+    terms = deposit_terms(journal, registry)
     short = set(v for v, x in terms.items() if x[1])
 
     def is_cash(ln):
@@ -284,11 +317,11 @@ def build_rows(journal, cash_codes):
     return sorted((d, g, k, v) for (d, g, k), v in agg.items() if v or g == "예금판정")
 
 
-def build_table(books, cfg):
+def build_table(books, cfg, wehago_dir=None):
     from .convert import Table
     if books.state != "ok" or not books.journal:
         return Table(FILE, KEYS, [], written=False, reason="분개장 없음 (기존 파일 그대로)")
-    rows = build_rows(books.journal, cfg["cash_codes"])
+    rows = build_rows(books.journal, cfg["cash_codes"], registry_terms(wehago_dir))
     out = [dict(zip(KEYS, [d.isoformat(), g, k, str(int(v))])) for d, g, k, v in rows]
     days = [r[0] for r in rows if r[1] in FLOW]
     note = "현금흐름표 자료 %d줄 (%s ~ %s)" % (len(out), min(days).isoformat(), max(days).isoformat()) if days else "현금흐름표 자료 없음"
@@ -394,6 +427,26 @@ def compute(rows, p0, p1, end_balance, start_check=None, label="이번 달"):
             months.append((m, f["op"], f["inv"], f["fin"], b))
     CF["months"] = months
     return CF
+
+
+TAX_ITEMS = ("세금", "원천")
+
+
+def flow_summary(rows, lo, hi):
+    """연간 보고 '통장 흐름' 그림용 묶음 (2차 전수조사 J10, 2026-11-18): 현금흐름표와 같은 분류로 -> [(이름, 금액)] 0원은 뺌.
+    예전 통장 흐름은 보통예금 상대 계정으로 따로 나눠, 정기예금·보증금·대표이사 돈이 '영업'에 섞이고 대출 이자가 '대출 갚음'에 들어가
+    같은 보고의 현금흐름표와 본업 현금이 달랐다. 합계 = 현금흐름표의 현금 증감. 통장(보통예금) 잔액과 맞추려고 현금성 정기예금 증감을 따로 둔다."""
+    if not rows:
+        return []
+    P = period(rows, lo, hi)
+    c = P["cash"]
+    ops = [v for k, v in c.items() if k not in TAX_ITEMS and k not in [x for x, _, _ in INV + FIN]]
+    short = short_balance(rows, hi) - short_balance(rows, lo - dt.timedelta(days=1))
+    out = [("자본금 납입", c.get("자본", 0)), ("영업 입금", sum(v for v in ops if v > 0)), ("영업 지급", sum(v for v in ops if v < 0)),
+           ("세금·4대보험", sum(c.get(k, 0) for k in TAX_ITEMS)), ("투자", P["inv"]),
+           ("대출 받음", c.get("대출받음", 0)), ("대출 갚음", c.get("대출갚음", 0)), ("대표이사 돈", c.get("대표", 0)),
+           ("3개월 이내 정기예금", -short)]
+    return [(n, v) for n, v in out if v]
 
 
 def annual(rows, year, end_balance, start_balance=None, upto=None):
@@ -978,6 +1031,10 @@ def diagnose(CF):
         return sg, k
     sg, k = key(P)
     name, lv, what, look = STATES[k]
+    if sg[0] == "0":   # 2차 전수조사 J13 (2026-11-18): 본업 현금이 0 근처인데 플러스로 봐 '안정형'이 될 수 있었다
+        name, lv = "판단 어려움", "info"
+        what = "본업에서 들어오고 나간 돈이 거의 같아(%s원) 어느 모습인지 정하기 어렵습니다." % W(P["op"])
+        look = "한두 건의 입금·지급으로 플러스·마이너스가 바뀌는 크기입니다. 다음 달 자료가 쌓이면 다시 보세요."
     why = []
     r = P["rec"]
     if P["op"] < 0 and r["받을돈"] < 0:
@@ -1025,15 +1082,24 @@ def health(CF):
     end = CF.get("end")
     run = None
     if end is not None and CF.get("_rows"):
-        lo = dt.date(CF["p1"].year, max(1, CF["p1"].month - 2), 1)
-        q = period(CF["_rows"], lo, CF["p1"])
+        # 2차 전수조사 J14 (2026-11-18): 예전엔 이번 달을 하루만 지나도 한 달로 세어 달 중간에는 월평균 지출이 작게(버틸 기간이 길게) 나왔다
+        # → 끝난 달만으로 평균 (기준일이 말일이면 그 달 포함). 올해 끝난 달이 없으면(1월 중간) 지난 날수를 달로 바꿔 센다
+        p1 = CF["p1"]
+        full = (p1 + dt.timedelta(days=1)).day == 1
+        hi = p1 if full else dt.date(p1.year, p1.month, 1) - dt.timedelta(days=1)
+        if hi.year == p1.year:
+            lo = dt.date(hi.year, max(1, hi.month - 2), 1)
+            n = float(hi.month - lo.month + 1)
+        else:
+            lo, hi, n = dt.date(p1.year, 1, 1), p1, p1.day / 30.4
+        q = period(CF["_rows"], lo, hi)
         spent = sum(-v for k, v in q["cash"].items() if v < 0 and k in [x for x, _, _ in OPS])
-        n = CF["p1"].month - lo.month + 1
         if spent > 0:
-            run = end / (spent / float(n))
+            run = end / (spent / n)
+            run_basis = "%d~%d월" % (lo.month, hi.month) if lo.month != hi.month else "%d월" % lo.month
     if run is not None:
         lv = "ok" if run >= 3 else ("info" if run >= 1.5 else "warn")
-        out.append(("버틸 돈이 있는가 (잔액)", "통장 %s원 = 최근 3달 평균으로 본업에 나가는 돈의 %.1f달 치 (들어오는 돈 없이 버틸 수 있는 기간)" % (W(end), run), lv))
+        out.append(("버틸 돈이 있는가 (잔액)", "통장 %s원 = 끝난 최근 달(%s) 평균으로 본업에 나가는 돈의 %.1f달 치 (들어오는 돈 없이 버틸 수 있는 기간)" % (W(end), run_basis, run), lv))
     elif end is not None:
         out.append(("버틸 돈이 있는가 (잔액)", "통장 %s원" % W(end), "info"))
     warn = [q for q, a, lv in out if lv == "warn"]

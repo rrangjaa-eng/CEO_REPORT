@@ -668,7 +668,7 @@ class Window(object):
         b = ttk.Button(box, text="화면 열기", command=self.open_checklist)
         b.pack(side="right")
         self.buttons.append(b)
-        self._hint(c, "중복 의심 전표·지급 예정>장부·통장 대조·홈택스 대조 등. 브라우저에서 건마다 결정을 고릅니다", wrap=W)
+        self._hint(c, "중복 의심 전표·지급 예정>장부·통장 대조 등. 브라우저에서 건마다 결정을 고릅니다", wrap=W)
 
         # 3 보고 만들기
         s3 = self.s3 = self._step(tab, 2, 3, STEPS[2])
@@ -1024,7 +1024,7 @@ class Window(object):
 
         # 기업신용평가 미리보기 체크리스트 (사용자 2026-11-12): 비재무 항목·대출 만기·작년 평가 결과
         p = panel("신용평가 체크리스트")
-        self._hint(p, "9월분 월간(결산 준비)·연간 보고(대표용·경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다",
+        self._hint(p, "9월분 월간(결산 준비)·연간 보고(경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다",
                    wrap=560)
         r = self._row(p, (6, 0))
         self._btn(r, "신용평가 체크리스트 열기", self.credit_checklist)
@@ -1159,7 +1159,7 @@ class Window(object):
         except ValueError:
             self.wi_out.set("날짜는 YYYY-MM-DD 로 넣어 주세요")
             return
-        kind, asof = self.wi_kind.get(), self.today
+        kind, asof = self.wi_kind.get(), self._asof_date()   # 2차 전수조사 J24: 창의 기준일로 (예전엔 늘 오늘이라 보고 숫자와 기준이 달랐다)
         self.wi_out.set("계산 중…")
 
         def work():
@@ -2732,7 +2732,7 @@ class Window(object):
         self._dialog(top)
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="9월분 월간(결산 준비)·연간 보고(대표용·경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
+        ttk.Label(frm, text="9월분 월간(결산 준비)·연간 보고(경영관리용)의 '기업신용평가 미리보기'에 쓰입니다. 모르는 칸은 비워 두면 등급 범위가 넓어집니다.",
                   wraplength=560).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         vars_ = {}
         for i, (k, hint) in enumerate(credit.INPUT_ITEMS, 1):

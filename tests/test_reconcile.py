@@ -260,20 +260,6 @@ class TestScreens091(unittest.TestCase):
         only = RC.opening_rows([ln(D(2026, 1, 5), "10300", 1)], RC.raw_files(self.t))
         self.assertEqual([r["판정"] for r in only], ["참고"])
 
-    def test_collect_status_error_and_late(self):
-        save(self.t, "261115 대조_자료수집현황 자동수집.json", raw("SAAC0110", "2026-11-15 02:00:00", {
-            "/superbook/collectingdata/top_select": {"status": 200, "data": {"da_scrpend": "20261115"}},
-            "/superbook/collectingdata/bottom_select": {"status": 200, "data": [
-                {"nm_type": "카드", "nm_card": "신한카드", "da_end": "20261114", "error_yn": "N"},
-                {"nm_type": "은행", "nm_bank": "기업은행", "da_end": "20261020", "error_yn": "N"},
-                {"nm_type": "홈택스", "nm_bank": "", "nm_card": "", "da_end": "20261001", "error_yn": "Y", "nm_errview": "인증서 만료"}]}}))
-        rows = RC.collect_rows(RC.raw_files(self.t), D(2026, 11, 15))
-        v = {r["항목"]: r["판정"] for r in rows}
-        self.assertEqual(v["은행 기업은행"], "참고")
-        self.assertEqual(v["홈택스"], "다름")
-        self.assertNotIn("카드 신한카드", v)
-        self.assertEqual(rows[-1]["판정"], "다름")
-
     def test_loan_schedule_adds_rate(self):
         save(self.t, "261115 대조_차입금현황 자동수집.json", raw("SAFM0109", "2026-11-15 02:00:00", {"/smarta/safm0109/": {"group01": [
             {"cd_trade": "0000000679", "nm_trade": "하나캐피탈", "da_expire": "20300921", "da_floan": "20250924", "mn_prin": 80_330_000,

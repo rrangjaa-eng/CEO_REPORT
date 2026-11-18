@@ -199,9 +199,36 @@ def for_report(input_dir, asof, base_now=None, tax_now=None):
             out["notes"].append("업무용 승용차(%s 취득) 감가상각비 %s원 중 1년 800만 원(산 해는 달 수만큼) 한도를 넘은 %s원은 비용으로 인정되지 않았습니다. 이 몫은 버려지는 게 아니라 나중에 한도 안에서 해마다 비용으로 돌아옵니다."
                                 % (last.get("승용차취득일") or "작년", W(last.get("승용차상각비")), W(last["승용차상각초과"])))
     if mid:
-        out["notes"].append("올해 중간예납 %s원은 이미 냈고(장부 선납세금에 있음), 내년 3월 낼 법인세에서 빠집니다."
-                            % W(mid.get("차감납부세액")))
+        # 2차 전수조사 J18 (2026-11-18): 예전엔 신고서 값만 보고 '이미 냈고(장부 선납세금에 있음)'이라 적었고, 월간 대표의
+        # '기납부'(장부 선납세금)와 숫자가 다른데 설명이 없었음 → 장부 선납세금을 읽어 견주고 차이를 적는다
+        m = mid.get("차감납부세액")
+        book = book_prepaid(input_dir, asof.year)
+        if book is None or m is None:
+            out["notes"].append("올해 중간예납 신고 금액 %s원은 내년 3월 낼 법인세에서 빠집니다. 장부 선납세금은 확인하지 못해 실제 납부 여부는 통장·납부서로 확인하세요."
+                                % W(m))
+        elif book >= m:
+            out["notes"].append("올해 중간예납 %s원은 장부 선납세금 %s원 안에 있어 낸 것으로 보이고, 내년 3월 낼 법인세에서 빠집니다.%s"
+                                % (W(m), W(book), " 선납세금이 %s원 더 많은 것은 이자에서 미리 뗀 법인세 등 선납세금 계정의 다른 줄입니다 "
+                                                  "(월간 보고 ‘기납부’는 이 합계)." % W(book - m) if book > m else ""))
+        else:
+            out["notes"].append("올해 중간예납 신고 금액은 %s원인데 장부 선납세금은 %s원뿐입니다 (%s원 모자람) — 납부했는지, 전표를 넣었는지 확인하세요."
+                                % (W(m), W(book), W(m - book)))
     return out
+
+
+def book_prepaid(input_dir, year):
+    """세금예상.csv 의 그해 법인세 줄 '기납부'(장부 선납세금 = 중간예납 + 이자 원천징수 등). 없으면 None."""
+    try:
+        with _open_text(os.path.join(input_dir, "세금예상.csv")) as f:
+            rows = list(csv.DictReader(f))
+    except (OSError, ValueError):
+        return None
+    for r in rows:
+        if (r.get("세목") or "").strip() == "법인세" and str(year) in (r.get("대상기간") or "") and (r.get("기납부") or "").strip():
+            v = _n(r.get("기납부"))
+            if v is not None:
+                return v
+    return None
 
 
 def render(T, esc):

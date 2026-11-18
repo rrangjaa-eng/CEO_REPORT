@@ -169,8 +169,9 @@ class G6G7CashWords(Base):
         for mode in ("ceo", "mgmt"):
             h = render_budget(self.B(), mode)
             self.assertNotIn("1년 내내", h)
-        h = render_budget(self.B(), "ceo")
-        self.assertIn("매달 말 잔액", h)
+        # 제안 28 (1차 B7, 2026-11-18): '…최소 보유현금 위에 있습니다' 문장은 경영관리용에만 (대표용에는 판단 문장을 넣지 않음)
+        self.assertIn("매달 말 잔액", render_budget(self.B(), "mgmt"))
+        self.assertNotIn("위에 있습니다", render_budget(self.B(), "ceo"))
 
     def test_collect_days_default_60_with_few_invoices(self):
         B = self.B()
@@ -415,7 +416,8 @@ class MidYearAnnual(unittest.TestCase):
             self.assertIn("2026-10-31", h)            # 손익 집계 기간 끝
             self.assertIn("2026년 1~10월 매출", h)
             self.assertNotIn("연말 통장 잔액", h)
-            self.assertIn("기간 비례", h)
+            self.assertNotIn("기간 비례", h)   # 2차 전수조사 J2: 판정은 올해 매출 예상 기준
+            self.assertIn("올해 매출 예상", h)
             self.assertNotIn("<td>2026-12-31</td>", h)
         mg = annual.render(A, "mgmt")
         self.assertIn("1~10월 이익 기준 예상", mg)

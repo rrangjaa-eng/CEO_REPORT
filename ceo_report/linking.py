@@ -14,7 +14,7 @@ import os
 import re
 from collections import OrderedDict
 
-from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code
+from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code, request_day
 from .screen_values import PROJECT_STAGE_ALL_DONE, PROJECT_STAGE_DONE
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
@@ -40,8 +40,9 @@ def requests_of(snap, asof, now):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
-              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "",
+              "request_date": None, "date": None, "rule": "",
               "status_text": (row.get("사장님승인") or "").strip()}   # 읽은 그대로 (D-52 '상태 확인 필요 (<값>)')
+        rq["request_date"], rq["date_suspect"] = request_day(row, rq["registered"])   # 2차 전수조사 A7
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         out.append(rq)
     return out

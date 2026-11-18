@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """연간 보고 세 가지 (사용자 2026-11-17 '연간보고에 넣어야 할 항목들을 전부 넣고 대표용과 경영관리용, 팀장용으로 구분해서 만들어').
 - 법인세·당기순이익은 월간 보고와 같은 계산 (감가상각 달 수만큼·대손충당금·세무조정·기납부)
-- 대표용: 7. 기업신용평가 미리보기, 사용한 자료 한 줄, 쪽 아래 글. 안내 문구(쉬운 설명·제안) 없음
+- 대표용: 사용한 자료 한 줄, 쪽 아래 글. 안내 문구(쉬운 설명·제안) 없음. 기업신용평가 미리보기는 뺌 (사용자 2026-11-18, 경영관리 9장에만)
 - 경영관리용: 10~14장 (법인세·세무조정, 감면·공제, 신고, 급여·연말정산, 예산 대비)
 - 팀장용: 팀마다 한 부, 급여 금액 없음"""
 import datetime as dt
@@ -102,7 +102,8 @@ class TestSameAsMonthly(Base):
 class TestCeo(Base):
     def test_credit_preview_and_sources(self):
         t = text(self.ceo)
-        self.assertIn("7. 기업신용평가 미리보기", t)
+        self.assertNotIn("기업신용평가 미리보기", t)   # 사용자 2026-11-18 결정: 대표 보고에서 뺌 (경영관리 9장에만)
+        self.assertNotIn("추정 등급", t)
         self.assertIn("사용한 자료: 분개장", t)
         self.assertIn("class='rd'", self.ceo)                      # 보는 사람 기준 양식
         self.assertIn("2026년 연간 보고 · 기준일 2026-10-31", self.ceo)   # 쪽 아래 글
@@ -114,16 +115,6 @@ class TestCeo(Base):
             self.assertNotIn(w, t)
         self.assertNotIn("<script", self.ceo)
 
-    def test_credit_brief_has_no_judgement(self):
-        from ceo_report import credit
-        C = credit.compute(self.inp, ASOF, annual=True)
-        h = credit.render_brief(C)
-        self.assertNotIn("쉬운 설명", h)
-        self.assertNotIn("class='tg", h)
-        if C is not None:
-            self.assertIn("추정 등급 범위", h)
-            self.assertIn(credit.grade_text(C["grade"]), h)
-
 
 class TestMgmt(Base):
     def test_new_chapters(self):
@@ -131,8 +122,9 @@ class TestMgmt(Base):
         self.assertEqual(ids[-5:], ["d10", "d11", "d12", "d13", "d14"])
         t = text(self.mg)
         for w in ("10. 법인세 예상 · 세무조정 예상", "11. 법인세 감면·공제 전체 검토", "12. 신고 일정 · 신고 도우미",
-                  "13. 급여 점검 · 연말정산 예상", "14. 예산 대비", "7. 기업신용평가 미리보기", "9. 기업신용평가 미리보기"):
+                  "13. 급여 점검 · 연말정산 예상", "14. 예산 대비", "9. 기업신용평가 미리보기"):
             self.assertIn(w, t)
+        self.assertNotIn("7. 기업신용평가 미리보기", t)
         self.assertEqual(self.mg.count("<div"), self.mg.count("</div>"))
 
     def test_tax_table_is_the_monthly_one(self):

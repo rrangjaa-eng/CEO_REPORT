@@ -19,7 +19,7 @@
   9  위하고 차입금현황(만기·상환 방식만, 잔액은 장부), 손익계산서, 예적금현황(정기예금 만기), 전자세금계산서(매출) ↔ 장부 매출전표,
      신용카드(실제 사용액), 거래처원장(거래처별 미지급금).
   0.9.1 (사용자 2026-11-15 카드): 원천징수이행상황신고서 소득세 ↔ 장부 예수금(세무서), 거래처별초기이월 ↔ 작년 말 장부,
-     자료수집현황(은행·카드·홈택스 자료가 언제까지·오류), 부가세 예정고지, 차입금스케줄관리(이자율·상환 시작일 → 차입금.csv).
+     부가세 예정고지, 차입금스케줄관리(이자율·상환 시작일 → 차입금.csv).
 개인정보: 위하고 원본의 계좌번호·카드번호·담당자 이름은 쓰지 않는다 (확장이 저장할 때도 지운다).
 """
 import collections
@@ -621,6 +621,18 @@ def deposit_rows(journal, raw, asof):
     items = _resp(d, "/safm0107/balance/statement")
     if not isinstance(items, list):
         return []
+    # 2차 전수조사 J15 (2026-11-18): 예전엔 '기준일부터 만기까지 92일 안'으로 세어 규칙(가입 때 만기 3개월 이내)·현금흐름표와 달랐다
+    # → 현금흐름표와 같은 판단(cashflow.deposit_terms: 가입일~만기일, 예적금현황 날짜가 있으면 그것 먼저)을 쓴다
+    from . import cashflow
+    reg = {}
+    for it in items:
+        m = cashflow.REGISTRY_DATES.search(str(it.get("js_date") or "")) if isinstance(it, dict) else None
+        if m:
+            try:
+                reg[str(it.get("js_name") or "").strip()] = (dt.date(*[int(x) for x in m.groups()[:3]]), dt.date(*[int(x) for x in m.groups()[3:]]))
+            except ValueError:
+                pass
+    terms = cashflow.deposit_terms(journal, reg)
     tot, soon, n = 0, 0, 0
     for it in items:
         amt = _num(it.get("js_janack"))
@@ -628,14 +640,13 @@ def deposit_rows(journal, raw, asof):
             continue
         n += 1
         tot += amt
-        end = _day(it.get("js_end"))
-        if end and asof and (end - asof).days <= 92:
+        if (terms.get(str(it.get("js_name") or "").strip()) or (None, False))[1]:
             soon += amt
     bal = book_balances(journal, when.date() if when != dt.datetime.min else None)
     book = sum(v for g, v in bal.items() if g in ("103", "105", "106"))
     return [_row("예적금", "예적금 %d개 잔액 합" % n, "예적금현황", tot, book, "보통·정기예금 등 (장부 103·105·106)",
                  "같음" if tot == book else "참고",
-                 "만기 3개월 안 정기예금 %s원 (이것만 현금성으로 봄)." % _won(soon) + ("" if tot == book else " 위하고 예적금 등록이 장부와 다릅니다(등록 안 한 통장일 수 있음)."))]
+                 "가입 때 만기 3개월 이내인 정기예금 %s원 (이것만 현금성으로 봄 — 현금흐름표와 같은 기준)." % _won(soon) + ("" if tot == book else " 위하고 예적금 등록이 장부와 다릅니다(등록 안 한 통장일 수 있음)."))]
 
 
 def etax_rows(journal, raw):
@@ -732,7 +743,7 @@ def ledger_rows(journal, raw):
     return rows
 
 
-# ───────────── 0.9.1 원천세 신고·초기이월·자료수집현황·부가세 예정고지 ─────────────
+# ───────────── 0.9.1 원천세 신고·초기이월·부가세 예정고지 (자료수집현황은 뺌: 확장이 11/17부터 안 받음, 2차 전수조사 제안 31) ─────────────
 def _ym(v):
     t = re.sub(r"\D", "", str(v or ""))[:6]
     return (int(t[:4]), int(t[4:6])) if len(t) == 6 and 1 <= int(t[4:6]) <= 12 else None
@@ -808,38 +819,6 @@ def opening_rows(journal, raw):
     return rows
 
 
-def collect_rows(raw, asof):
-    """위하고 자료수집현황: 은행·카드·홈택스 자료가 언제까지 들어왔는지·오류."""
-    got = (raw.get("SAAC0110") or [None])[0]
-    if not got:
-        return []
-    when, year, d = got
-    items = None
-    for r in d.get("응답") or []:
-        data = r.get("data")
-        if "bottom_select" in str(r.get("path") or "") and isinstance(data, dict) and isinstance(data.get("data"), list):
-            items = data["data"]
-    if not items:
-        return []
-    rows, late, bad = [], 0, 0
-    for it in items:
-        name = " ".join(x for x in (str(it.get("nm_type") or "").strip(), str(it.get("nm_bank") or it.get("nm_card") or "").strip()) if x)
-        end = _day(it.get("da_end"))
-        err = str(it.get("error_yn") or "").upper() == "Y"
-        if err:
-            bad += 1
-            rows.append(_row("위하고 수집", name or "자료", "자료수집현황", None, None, "마지막 %s" % (end.isoformat() if end else "?"), "다름",
-                             "위하고가 이 자료를 받지 못하고 있습니다%s. 위하고에서 연결(인증서·비밀번호)을 다시 해 주세요."
-                             % (" (%s)" % str(it.get("nm_errview")).strip() if it.get("nm_errview") else "")))
-        elif end and asof and (asof - end).days > STALE_DAYS:
-            late += 1
-            rows.append(_row("위하고 수집", name or "자료", "자료수집현황", None, None, "마지막 %s" % end.isoformat(), "참고",
-                             "위하고에 %s까지만 들어와 있습니다. 그 뒤 거래는 자동전표로 아직 안 올라옵니다." % end.isoformat()))
-    rows.append(_row("위하고 수집", "자료 %d곳" % len(items), "자료수집현황", None, None, "%s 받음" % _hm(when),
-                     "다름" if bad else ("참고" if late else "같음"), "오류 %d곳 · 늦음 %d곳" % (bad, late) if bad or late else ""))
-    return rows
-
-
 def vat_notice_rows(raw):
     """위하고 부가가치세 예정고지세액: 세무서가 고지한 부가세가 있으면 알림 (없으면 줄 없음)."""
     got = (raw.get("SAVF0119") or [None])[0]
@@ -876,7 +855,6 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
         rows += ledger_rows(journal, raw)
         rows += withholding_rows(journal, raw)
         rows += opening_rows(journal, raw)
-    rows += collect_rows(raw, asof)
     rows += vat_notice_rows(raw)
     for n in sorted(skipped):   # P1-4: 화면 자료가 없는 원본 — 쓰지 않았다고 경영관리 '자료 대조'에 남긴다
         rows.append(_row("수집", n, "위하고 원본", None, None, "", "참고",
@@ -884,6 +862,13 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     loans, lrows = loan_rows(journal, raw, input_dir, asof)
     rows += lrows
     cards = card_table(raw)
+    if getattr(books, "cut_after", None):
+        # 2차 전수조사 D1: 지난 기준일로 자른 장부는 오늘 받은 위하고 화면과 다른 것이 정상 → '다름'·대표 경고로 올리지 않는다
+        for r in rows:
+            if r["판정"] == "다름":
+                r["판정"], r["대표경고"] = "참고", ""
+                r["할일"] = "지난 기준일(%s)까지 자른 장부라 받은 날 위하고 화면과 견주지 않음" % books.cut_after["asof"].isoformat()
+        notes.append("지난 기준일 변환 — 위하고 화면(받은 날 값)과 다른 줄은 '참고'로만 둠")
     n_diff = sum(1 for r in rows if r["판정"] == "다름")
     notes.append("자료 대조 %d줄 (다름 %d, 대표 경고 %d)" % (len(rows), n_diff, sum(1 for r in rows if r["대표경고"])))
     out = [Table(FILE, KEYS, rows, notes=notes) if rows else Table(FILE, KEYS, [], written=False, reason="비교할 위하고 자료 없음")]

@@ -1282,22 +1282,6 @@ class TestWehagoInvoiceClaims(unittest.TestCase):
                           journal=[(dt.date(2026, 10, 3), "7", "미지급금", 33000000, "가상제작", "[26299] 다른 행사")])
         self.assertEqual(self.w.paid_invoices(books), set())
 
-    def test_build_schedules_the_larger_amount_and_says_so(self):
-        """approval.build: 계산서가 더 적은 금액 차이 요청은 인트라넷 요청 금액으로 일정에 들어간다 (D-30b)."""
-        tmp = new_tmp(self)
-        folder = os.path.join(tmp, "위하고")
-        led = [r for r in FAKE_LEDGER if r[2] != 2]
-        led.append(_L("매입", "2026-10-21", 2, "㈜가상제작", "000-00-00002", "[26220] 가상 전시 제작", 100000000, 10000000))
-        write_fake_books(folder, ledger=led)
-        snap = mod("snapshot").read_snapshot(write_fake_snapshot(os.path.join(tmp, "수집")))
-        A = mod("approval").build(mod("data").load(SAMPLE), snap, ASOF, NOW, folder)
-        rq = [r for r in A["requests_all"] if r["번호"] == "5103"][0]
-        self.assertEqual((rq["xstatus"], rq["schedule_amount"], rq["amount_source"]), ("금액 차이", 160500000, "인트라넷 요청"))
-        self.assertEqual(rq["xchk"], "금액 차이 (계산서 110,000,000 · 차액 −50,500,000 · 일정은 인트라넷 요청 금액)")
-        item = [r for r in A["data"]["requests"] if r["id"] == rq["id"]][0]
-        self.assertEqual(item["amount"], 160500000)
-        self.assertIn("금액 차이 1건 110,000,000 (인트라넷 요청 160,500,000 · 차액 −50,500,000, "
-                      "일정은 인트라넷 요청 금액: 계산서가 더 적음)", mod("approval_render").xchk_summary_text(A))
 
 
 # ───────────── WR-01: 승인 전 요청·등록일 없는 요청은 금액만으로 '이미 지급'이 되지 않는다 ─────────────

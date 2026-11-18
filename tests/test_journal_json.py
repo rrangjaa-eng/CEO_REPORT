@@ -56,6 +56,22 @@ class TestJournalJson(unittest.TestCase):
         self.assertEqual(got.files["분개장"]["name"], "261105 분개장 자동수집.json")
         self.assertEqual(got.files["분개장"]["file_date"], dt.date(2026, 11, 5))
 
+    def test_short_period_warns_and_moves_ref_date(self):
+        """2차 전수조사 P24: 조회 기간 끝(10/31)이 받은 날(11/5)보다 앞이면 알리고, 자료일은 기간 끝으로 본다."""
+        write_fake_books(self.dir, drop=("분개장",))
+        write_json(self.dir, "261105 분개장 자동수집.json", auto_json())
+        got = wehago.load_books(self.dir, dt.date(2026, 11, 5), None)
+        self.assertEqual(got.files["분개장"]["ref_date"], dt.date(2026, 10, 31))
+        self.assertTrue(any("2026-10-31까지만 조회" in n for n in got.notes), got.notes)
+
+    def test_full_period_no_warning(self):
+        write_fake_books(self.dir, drop=("분개장",))
+        write_json(self.dir, "261105 분개장 자동수집.json", auto_json(end="20261105"))
+        got = wehago.load_books(self.dir, dt.date(2026, 11, 5), None)
+        self.assertEqual(got.files["분개장"]["ref_date"], dt.date(2026, 11, 5))
+        self.assertFalse(any("까지만 조회" in n for n in got.notes), got.notes)
+        self.assertIsNone(wehago.short_period((dt.date(2025, 1, 1), dt.date(2025, 12, 31)), dt.date(2026, 11, 5)))   # 지난해 장부
+
     def test_codes_stripped_from_dept_emp_project(self):
         rows = wehago.read_journal_json(self._write(auto_json(dept="[0002]기획1팀", emp="[0007]가나다",
                                                               project="[00001][26222] 가상행사")))

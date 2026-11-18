@@ -61,7 +61,7 @@ def classify_duplicates(journal):
     """중복 의심 묶음을 장부로 더 따져 본다 (사용자 2026-11-05: 확인할 것이 최소한으로).
 
     정상으로 보는 것 (확인할 것에 올리지 않음):
-      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표가 있으면 적요로)
+      · 관리항목 프로젝트가 전표마다 다름 → 다른 행사 (프로젝트 빈 전표는 적요로 가리지 않음 — 2차 전수조사 D8)
       · 같은 거래처 같은 금액의 취소(−) 전표가 앞뒤 31일 안에 있음 → 취소 후 다시 발행
       · 전표 수만큼 같은 금액이 정산됨(미지급금 지급·외상매출금 입금) → 각각 실제로 오간 돈
     -> [(날짜, [전표번호], 금액, 판단 글, 정상 여부)] 금액 큰 순."""
@@ -82,8 +82,6 @@ def classify_duplicates(journal):
         has_proj = bool(projs) and all(any(p) for p in projs)
         if len(projs) > 1 and has_proj:
             why, ok = "관리항목 프로젝트가 전표마다 다름 → 다른 거래로 봄", True
-        elif not has_proj and len(memos) > 1:
-            why, ok = "프로젝트 없음 · 적요가 전표마다 다름 → 다른 거래로 봄 (적요로 판단)", True
         elif sort:
             code, side = CONTROL[sort]
             other = "credit" if side == "debit" else "debit"
@@ -103,6 +101,10 @@ def classify_duplicates(journal):
                     "프로젝트" if has_proj else "적요", "지급" if sort == "매입전표" else "입금", len(settled), len(nos))
         else:
             why = ("프로젝트 같음" if has_proj else "적요 같음") + " → 이중 입력 가능성"
+        # 2차 전수조사 D8 (2026-11-18): 예전엔 프로젝트가 없고 적요만 다르면 '다른 거래'로 보고 확인할 것에서 뺐음 (적요 낱말로 판단).
+        # 이제 적요는 판단에 쓰지 않고 참고로만 붙인다 — 취소 전표·정산(계정·거래처·금액)으로 가려지지 않으면 확인할 것에 남는다.
+        if not ok and not has_proj and len(memos) > 1:
+            why = why.replace("적요 같음", "프로젝트 없음") + " · 적요는 전표마다 다름 (참고)"
         out.append((day, nos, total, why, ok))
     return out
 
@@ -252,6 +254,7 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             and (b[0].isoformat(), b[3], b[1]) not in before and (b[0].isoformat(), b[3], None) not in before]
     used = set()
     hits = {}
+    loose = set()   # 2차 전수조사 V18: 거래처를 확인하지 못하고 금액·날짜(±3일)만으로 맞춘 줄
     pairs = []   # 2차 P2-11 (2026-11-15): 맞을 수 있는 (일정 줄, 통장 줄)을 모두 모은 뒤 가장 가까운 짝부터 정한다
     order = sorted(range(len(rows)), key=lambda i: (util.date(rows[i].get("예정일"), util.Issues(), rows[i], "예정일") or dt.date.max, i))
     for i in order:
@@ -290,6 +293,8 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
             continue
         used.add(k)
         hits[i] = k
+        if rank[0]:
+            loose.add(i)
     keep, moved = [], []
     for i, r in enumerate(rows):
         if i not in hits:
@@ -299,8 +304,9 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         day = util.date(r.get("예정일"), util.Issues(), r, "예정일")
         when = "예정일 %d일 전" % (day - bday).days if bday < day - dt.timedelta(days=MATCH_DAYS) else (
             "예정일 %d일 뒤" % (bday - day).days if bday > day + dt.timedelta(days=MATCH_DAYS) else "")
-        moved.append((r, "분개장 %s 전표 %s 보통예금 %s과 맞음%s" % (
-            bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "")))
+        moved.append((r, "분개장 %s 전표 %s 보통예금 %s과 맞음%s%s" % (
+            bday.isoformat(), bno, "출금" if bio == "지급" else "입금", " (%s)" % when if when else "",
+            " · 거래처 확인 못 함(금액·날짜만 같음)" if i in loose else "")))
     if not moved:
         return ["자금일정 정리: 통장에서 이미 나가거나 들어온 줄 없음"]
     base = data.SCHEMA[SCHEDULE] + (data.SCHED_OPTIONAL if has_code else [])
@@ -354,6 +360,12 @@ def archive_paid_schedule(input_dir, journal, book_date, cash_codes=("10300",)):
         len(moved), util.won(sum(abs(util.num(r.get("금액")) or 0) for r, _ in moved)), ARCHIVE)]
     for r, why in moved:
         out.append("  옮김 %s %s원 — %s" % (r.get("예정일", ""), util.won(abs(util.num(r.get("금액")) or 0)), why))
+    # 2차 전수조사 V18 (2026-11-18): 금액만 같은 다른 돈 때문에 나갈 일정이 조용히 빠질 수 있었다 → 그런 줄은 따로 알린다
+    amount_only = [(r, why) for r, why in moved if "거래처 확인 못 함" in why]
+    if amount_only:
+        out.append("[확인] 자금일정에서 금액·날짜만 같아 '이미 나감·들어옴'으로 옮긴 줄 %d건 (거래처를 확인하지 못함): %s — 다른 돈이었다면 그 일정을 다시 넣으세요 (%s 에 남아 있음)" % (
+            len(amount_only), ", ".join("%s %s %s원" % (r.get("예정일", ""), (r.get("거래처") or "거래처 없음").strip() or "거래처 없음",
+                                                     util.won(abs(util.num(r.get("금액")) or 0))) for r, _ in amount_only[:8]), ARCHIVE))
     return out
 
 

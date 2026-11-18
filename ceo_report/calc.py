@@ -3,6 +3,7 @@ import calendar
 import datetime as dt
 from collections import OrderedDict, defaultdict
 
+from . import codes as _codes
 from . import fundplan
 from .data import DEFAULT_SETTINGS, EXEC_STATES, TRANSFER, is_prior
 from .util import Issues, is_blank, setting_num, ssum, ssum_or_none, won, d2s
@@ -143,6 +144,9 @@ def two_sources(events, asof):
     return out
 
 
+DATE_FAR_DAYS = 3 * 366   # 기준일에서 이만큼 넘게 뒤인 날짜는 오타로 본다 (2차 전수조사 A7)
+
+
 def compute(d, kind, asof, start=None, pick=None, payday=None):
     # compute()는 읽어 온 Data를 바꾸지 않는다: 입력 확인 목록과 계산서 줄은 복사본에서 다룬다 (두 번 계산해도 같은 결과).
     issues = Issues()
@@ -151,12 +155,22 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 계산서 입금은 일정에 넣지 않는다 (입금이 빠지면 계산 잔액은 낮아지는 쪽이므로 최저 잔액은 그대로 계산한다).
     in_missing = list(getattr(d, "in_missing", []))
     invs = [] if in_missing else [dict(v) for v in d.invoices]
-    R = {"kind": kind, "asof": asof}
+    R = {"kind": kind, "asof": asof, "input_dir": getattr(d, "input_dir", None)}
+    R["targets_problem"] = getattr(d, "targets_problem", "")
+    R["sched_dropped"] = list(getattr(d, "sched_dropped", []) or [])
     # 주간 출금 목록의 출금일 (사용자 2026-11-04: 날짜를 따로 넣으면 그 날 기준). 비우면 기준일 뒤 첫 금요일
     R["payday"] = payday if payday is not None and payday > asof else pay_friday(asof)
     if payday is not None and payday <= asof:   # 조용히 바꾸지 않고 알린다 (코덱스 검토 2026-11-14)
         issues.add("출금일", "-", "넣은 출금일 %s이 기준일 %s과 같거나 앞이라 다음 금요일 %s로 잡음"
                    % (payday.isoformat(), asof.isoformat(), R["payday"].isoformat()))
+    # 2차 전수조사 A7 (2026-11-18): 기준일에서 3년 넘게 뒤인 날짜는 오타로 보고 알린다 (2060-09-18 같은 값이 경고 없이 일정 밖으로 빠졌음)
+    far = asof + dt.timedelta(days=DATE_FAR_DAYS)
+    for rows_, what in ((d.execs, "일자"), (d.schedule, "예정일"), (invs, "입금예정일")):
+        for x in rows_:
+            day = x.get("due") if what == "입금예정일" else x.get("date")
+            if isinstance(day, dt.date) and day > far and x.get("row"):
+                issues.add(x["row"]["_file"], x["row"]["_line"], "%s %s 날짜 의심 (기준일에서 3년 넘게 뒤) — 오타인지 확인하고 원본에서 고치기"
+                           % (what, day.isoformat()))
     p0, p1 = period_of(kind, asof, start)
     R["period"] = (p0, p1)
     R["settings"] = dict(d.settings)
@@ -655,6 +669,19 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # 1차 점검 자금-20 (2026-11-15): 세금예상.csv 가 없거나 못 읽으면 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠진 큰 숫자 —
     # 자료 확인(gate)이 막는다
     R["tax_missing"] = getattr(d, "tax", None) is None
+    # 2차 전수조사 A6 (사용자 2026-11-18 결정 카드, 권장안 "'예상'으로 따로"): 창 '배당'에 넣은 '장부·자금계획에 없는 큰 지출'을
+    # 자금 일정에 예상 지급 한 줄로 넣는다. 확정이 아니라 큰 숫자(여유 자금)에서는 빼지 않고, 예상 줄·기간 전망에만 든다.
+    R["big_outflow"] = None
+    if R.get("input_dir"):
+        from .dividend import big_outflow
+        bo = big_outflow(R["input_dir"])
+        if bo and bo[1] is not None and bo[1] > asof:
+            events.append({"date": bo[1], "io": "out", "amount": bo[0], "firm": False, "cat": BIG_OUT_CAT, "desc": "사용자가 넣은 값",
+                           "basis": "창 '배당' 질문에 넣은 큰 지출 (장부·자금계획서에 없는 돈, 확정 전이라 예상으로 넣음)",
+                           "project": "", "source": "큰지출"})
+            R["big_outflow"] = {"amount": bo[0], "date": bo[1]}
+        elif bo:
+            R["big_outflow"] = {"amount": bo[0], "date": bo[1], "skipped": "시기를 모름" if bo[1] is None else "시기가 지남"}
     mark_must(events, R["tax"])   # 꼭 나갈 정기 지출은 '예상'이어도 큰 숫자에서 뺀다 (2026-11-14 D1)
     from .paydetail import attach   # 금요일 출금 목록 상세 내역 (사용자 2026-11-03)
     attach(events, getattr(d, "pay_details", None) or [])
@@ -791,6 +818,9 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     # ───────────── 4. 매출·손익 ─────────────
     ym = asof.strftime("%Y-%m")
     year = asof.strftime("%Y")
+    # 2차 전수조사 A2 (2026-11-18): 기준일이 달 중간이면 그 달은 '마감 전' — 급여·카드 전표가 덜 들어와 이익이 크게 좋게 보인다
+    # (11/18 실제: 11월 영업이익률 49.2%, 누적은 8.1%). 누적 손익·세금은 다 끝난 달(closed_ym)까지만 본다. 1월 중간이면 끝난 달 없음(None)
+    open_month, closed_ym = month_scope(asof)
     pl_out = OrderedDict()
     for src in sorted(set(p["source"] for p in d.pl), key=lambda x: (x != "WEHAGO", x)):
         rows = [p for p in d.pl if p["source"] == src]
@@ -802,13 +832,14 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
         for (unit, target), ps in units.items():
             cur = [p for p in ps if p["ym"] == ym]
             ytd = [p for p in ps if p["ym"][:4] == year and p["ym"] <= ym]
-            table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd)})
+            done = [p for p in ytd if closed_ym and p["ym"] <= closed_ym]
+            table.append({"unit": unit, "target": target, "cur": _pl_sum(cur), "ytd": _pl_sum(ytd), "ytd_closed": _pl_sum(done)})
         # 올해 달마다의 표 (팀 순수익의 '비용 나눈 뒤' 누적: 달마다 인원이 달라 달마다 나눠 더함, 사용자 2026-11-03)
         by_month = [(m, [{"unit": unit, "target": target, "cur": _pl_sum([p for p in ps if p["ym"] == m]), "ytd": None}
                          for (unit, target), ps in units.items()])
                     for m in months if m[:4] == year and m <= ym]
         pl_out[src] = {"table": table, "latest": months[-1] if months else None, "has_cur": ym in months, "by_month": by_month}
-    R["s4"] = {"ym": ym, "sources": pl_out, "projects": plist,
+    R["s4"] = {"ym": ym, "open": open_month, "closed_ym": closed_ym, "sources": pl_out, "projects": plist,
                "unrecognized": ssum_or_none(P["unrecognized"] for P in plist)[0],
                "unrecognized_missing": sum(1 for P in plist if P["unrecognized"] is None),
                # 부서별 급여·판관비 (선택 파일 부서비용.csv, 사용자 2026-11-03). None = 파일 없음, 팀 순수익은 미확인
@@ -929,6 +960,8 @@ def compute(d, kind, asof, start=None, pick=None, payday=None):
     from .corptax import depreciation   # 법인세 예상용 감가상각비 (사용자 2026-11-04)
     R["evid_month"] = getattr(d, "evid_month", None)   # 증빙 작성일자 기준 달별 매출·매입 (월간 흐름 그림)
     R["dep"] = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, ym)
+    R["dep_closed"] = (depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, closed_ym)
+                       if open_month and closed_ym else None)
     R["acct_year"] = account_year(getattr(d, "accounts", None), ym, getattr(d, "accounts_problem", ""))
     R["last_pay"] = last_payday_out(d.txns, R["payday"])
     from .gate import blank_plan_gaps   # F8 (2026-11-14): 자금계획서 빠진 달까지 걸친 기간 여유 자금은 비움 (경고·분석보다 먼저)
@@ -1038,8 +1071,11 @@ def period_ends(kind, asof, payday=None):
 
 MUST_KINDS = ("급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금", "고정 지출")   # 고정 지출: 결정 g (2026-11-15, tax.fixed_costs)
 MUST_CAT_EXTRA = ("세금", "회사부담금")
-MUST_VENDOR = ("세무서", "구청", "시청", "군청", "공단")
+MUST_VENDOR = _codes.TAX_OFFICE + _codes.LOCAL_OFFICE + ("공단",)   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 LOAN_WORDS = ("차입금", "대출", "이자")
+
+
+BIG_OUT_CAT = "장부에 없는 큰 지출 (예상)"
 
 
 def must_pay(ev, card=True, loans=False, pay=True):
@@ -1124,13 +1160,22 @@ def available_periods(start, dated, ends, min_cash, asof):
             pin = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "in" and counts_in(e, mode))
             pout = sum(e["amount"] for e in dated if frm < e["date"] <= end and e["io"] == "out" and counts_in(e, mode))
             r = {"in": tin, "out": tout, "pin": pin, "pout": pout, "bal": None, "low": None, "low_date": None, "avail": None}
+            r.update(plow=None, plow_date=None, pavail=None)
             if start is not None:
                 bal, low, low_d = start, start, asof
+                plow, plow_d = None, None   # 그 기간 안에서만 본 가장 적은 잔액 (2차 전수조사 J1: 월간 표는 줄마다 그 달 값)
                 for day in sorted(daily):
+                    if day > frm and plow is None:
+                        plow, plow_d = bal, frm   # 기간 첫날 아침 잔액 (앞 기간 끝 잔액)
                     bal += daily[day]
                     if bal < low:
                         low, low_d = bal, day
-                r.update(bal=bal, low=low, low_date=low_d, avail=None if min_cash is None else low - min_cash)
+                    if day > frm and bal < plow:
+                        plow, plow_d = bal, day
+                if plow is None:   # 그 기간에 일정이 없음 → 기간 내내 같은 잔액
+                    plow, plow_d = bal, frm
+                r.update(bal=bal, low=low, low_date=low_d, avail=None if min_cash is None else low - min_cash,
+                         plow=plow, plow_date=plow_d, pavail=None if min_cash is None else plow - min_cash)
             row[mode] = r
         out.append(row)
     return out
@@ -1355,6 +1400,16 @@ def _blank_proj(p, rate):
     return P
 
 
+def month_scope(asof):
+    """-> (이번 달이 마감 전인가, 누적 손익을 볼 마지막 달 'YYYY-MM' 또는 None).
+    기준일이 그 달 말일이면 (False, 그 달). 달 중간이면 (True, 지난달) — 지난달이 작년이면 올해 끝난 달이 없으므로 None."""
+    import calendar
+    ym = asof.strftime("%Y-%m")
+    if asof.day == calendar.monthrange(asof.year, asof.month)[1]:
+        return False, ym
+    return True, ("%d-%02d" % (asof.year, asof.month - 1) if asof.month > 1 else None)
+
+
 def _pl_sum(rows):
     if not rows:
         return None
@@ -1374,8 +1429,9 @@ def risks(R):
     sn = R["settings_num"]
     out = []
 
-    def add(level, area, fact, action):
-        out.append({"level": level, "area": area, "fact": fact, "action": action})
+    def add(level, area, fact, action, due=None):
+        # due = 그 일의 실제 기한 (2차 전수조사 J6: 잔액이 가장 적은 날·대출 만기). 없으면 경영관리 할 일 표가 '다음 보고 날'을 씀
+        out.append({"level": level, "area": area, "fact": fact, "action": action, "due": due})
 
     min_cash = sn["위험_최소보유현금"]
     ar_days = sn["위험_미수경과일"]
@@ -1392,14 +1448,14 @@ def risks(R):
             add("높음" if low < 0 else "중간", "자금",
                 "%s 기준 최저 계산 잔액 %s원 (%s). 최소 보유 기준 %s원." % (label, won(low), d2s(low_d), won(min_cash)),
                 "%s 이전 입금예정 건의 입금일 확인·앞당김 요청, 같은 기간 지급 중 조정 가능한 건의 지급일 협의, "
-                "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d))
+                "필요 시 단기 자금(한도대출 등) 사전 확보." % d2s(low_d), low_d)
     from .debts import extend_checks   # 결정 A8 (2026-11-15, 보고-08): 매년 연장 대출은 만기 60일 전부터 연장 확인 할 일
     for L in extend_checks(R.get("debts"), R["asof"]):
         left = "%d일 남음" % L["days"] if L["days"] >= 0 else "%d일 지남" % -L["days"]
         add("중간" if L["days"] >= 0 else "높음", "자금",
             "대출 %s 만기 %s (%s) — 매년 연장 예정이라 원금 %s원을 갚을 돈으로 잡지 않음." % (L["vendor"], d2s(L["due"]), left, won(L["balance"])),
             "은행·보증기관에 연장되는지 확인하세요. 연장되면 입력 폴더 대출만기.csv 에 새 만기일과 근거(메모)를 넣고, "
-            "안 되면 원금 상환 일정을 자금계획서에 넣으세요.")
+            "안 되면 원금 상환 일정을 자금계획서에 넣으세요.", L["due"])
     late = [P for P in R["s3"]["projects"] if P.get("remain_overdue") and P.get("remain_cash")]
     if late:   # M2 (결정 카드 2026-11-17): 행사 끝나고 처음 예상 지급일이 지난 남은 예산 — 할 일만, 예상 지급엔 그대로
         late.sort(key=lambda P: -P["remain_cash"])
@@ -1481,4 +1537,9 @@ def risks(R):
             add("높음", "자료", "대조 불일치: %s (%s / %s)." % (c[0], won(c[1]), won(c[2])), "입력 자료를 다시 확인.")
     order = {"높음": 0, "중간": 1}
     out.sort(key=lambda r: order.get(r["level"], 2))
+    try:   # 해가 바뀔 때 손볼 것 (12월~3월, 2차 전수조사 P9·P10·D5) — 경영관리 할 일로
+        from . import yearly
+        out.extend(yearly.items(R))
+    except Exception:
+        pass
     return out

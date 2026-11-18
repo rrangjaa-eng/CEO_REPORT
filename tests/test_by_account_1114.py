@@ -101,11 +101,12 @@ class TestDuplicateByProject(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("관리항목 프로젝트", why)
 
-    def test_no_project_falls_back_to_memo(self):
+    def test_no_project_does_not_fall_back_to_memo(self):
+        # 2차 전수조사 D8 (2026-11-18): 프로젝트가 비었을 때 적요로 가리던 것을 없앰 — 정산·취소 전표로 가려지지 않으면 확인할 것에
         j = dup(D(2026, 10, 1), "1", "", "현수막") + dup(D(2026, 10, 1), "2", "", "배너")
         (_, _, _, why, ok), = RC.classify_duplicates(j)
-        self.assertTrue(ok)
-        self.assertIn("적요로 판단", why)
+        self.assertFalse(ok)
+        self.assertIn("적요는 전표마다 다름 (참고)", why)
 
 
 if __name__ == "__main__":

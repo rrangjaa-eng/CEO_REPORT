@@ -63,6 +63,19 @@ def _tax_row(input_dir, year):
     return None, None, ""
 
 
+def excel_tax(base, TI, year):
+    """엑셀 '세금 계산' 수식과 똑같은 계산 (파이썬). -> 법인세(감면·공제 뒤 + 농특세) + 지방소득세."""
+    base = max(int(base), 0)
+    cp = corptax.corp_tax(base, year)
+    floor = int(base * TI["min"])
+    sp = min(int(cp * TI["sp_rate"]), max(cp - floor, 0))
+    used = min(TI["pool"], max(cp - sp - floor, 0))
+    left = cp - sp - used
+    out = min(TI["out"], max(left, 0))
+    nong = int(used * TI["nong_share"] * TI["nong"]) // 10 * 10
+    return left - out + nong + int(cp * TI["local"])
+
+
 def _tax_rows(input_dir):
     return _rows(os.path.join(input_dir, "세금예상.csv"))
 
@@ -95,13 +108,16 @@ def closing_costs(input_dir, kinds, names, ytd, Y, M):
     ct = [r for r in rows if (r.get("세목") or "").strip() == "법인세" and (r.get("대상기간") or "").startswith("%d년 (1월~" % Y)]
     basis = (ct[0].get("근거") or "") if ct else ""
     out = []
-    m = re.search(r"감가상각비 예상 ([\d,]+)", basis)
-    dep = _int(m.group(1)) if m else 0
+    dep = _int(ct[0].get("감가상각")) if ct and (ct[0].get("감가상각") or "").strip() else None   # 숫자 칸 먼저 (2차 전수조사 P3)
+    m = dep is not None
+    if not m:   # 옛 파일만 근거 글에서
+        m = re.search(r"감가상각비 예상 ([\d,]+)", basis)
+        dep = _int(m.group(1)) if m else 0
     out.append({"key": "dep", "name": "감가상각비 (결산 전 몫)", "amount": dep or 0, "in_base": bool(m), "side": "asset",
                 "why": "연말 결산 때 한 번에 들어가 지금 장부엔 없는 감가상각비 중 1~%d월 몫 (프로그램 법인세 예상과 같은 값%s). 통장 돈은 줄지 않고 장비 값이 줄어듭니다."
                        % (M, "" if m else ", 값 없음")})
     bad = _int(ct[0].get("대손충당금")) if ct else None
-    bad_in = bool(re.search(r"−\s*대손충당금", basis))
+    bad_in = bool(re.search(r"−\s*대손충당금", basis)) or bool(ct and (ct[0].get("감가상각") or "").strip() and bad is not None)   # 새 파일: 숫자 칸이 있으면 과세표준에 이미 빠진 것
     out.append({"key": "bad", "name": "대손충당금 (못 받을 수 있는 돈)", "amount": bad or 0, "in_base": bad_in, "side": "asset",
                 "why": "아직 못 받은 돈의 일부를 결산 때 '못 받을 수도 있다'고 미리 비용으로 잡는 값 (프로그램 계산%s). 받으면 다시 이익으로 돌아옵니다."
                        % ("" if bad is not None else ", 값 없음")})
@@ -127,8 +143,10 @@ def closing_costs(input_dir, kinds, names, ytd, Y, M):
     pay = sum(v for c, v in ytd.items() if kinds.get(c) in ("cogs", "sga") and any(w in names.get(c, "") for w in ("급여", "임금", "상여", "제수당"))
               and "퇴직" not in names.get(c, ""))
     paid = sum(v for c, v in ytd.items() if kinds.get(c) in ("cogs", "sga") and "퇴직" in names.get(c, ""))
-    out.append({"key": "ret", "name": "퇴직급여 (올해 쌓일 몫)", "amount": max(int(round(pay / 12.0)) - paid, 0), "in_base": False, "side": "liab",
-                "why": "1년 일하면 한 달 치 급여만큼 퇴직금이 쌓입니다. 올해 1~%d월 급여 ÷ 12 − 장부에 이미 넣은 퇴직급여 %s원 (어림)." % (M, "{:,}".format(paid))})
+    out.append({"key": "ret", "name": "퇴직급여 (올해 쌓일 몫)", "amount": max(int(round(pay / 12.0)) - paid, 0), "in_base": False, "side": "liab", "no_deduct": True,
+                "why": "1년 일하면 한 달 치 급여만큼 퇴직금이 쌓입니다. 올해 1~%d월 급여 ÷ 12 − 장부에 이미 넣은 퇴직급여 %s원 (어림). "
+                       "이익에서는 빼지만 세금 계산에서는 빼지 않습니다 (세법은 쌓아 둔 퇴직급여를 비용으로 인정하지 않고, 실제로 준 퇴직금·퇴직연금에 낸 돈만 인정)."
+                       % (M, "{:,}".format(paid))})
     out.append({"key": "bonus", "name": "연말 직원 상여금", "amount": 0, "in_base": False, "side": "liab",
                 "why": "연말 상여금이 정해지면 금액을 넣으세요 (아직 안 준 돈이라 빚으로 잡고, 이익·세금이 그만큼 줄어듭니다)."})
     return out
@@ -218,9 +236,13 @@ def compute(input_dir, asof):
     # 결산 비용은 회사 전체(진짜 재무상태표)에도 들어간다 (사용자 2026-11-17). 법인세 예상 과세표준에 이미 빠진 것(감가상각)은 빼고 줄인다
     K_new = sum(c["amount"] for c in costs if not c["in_base"])
     adj_fill = base - (P["pre"] - sum(c["amount"] for c in costs if c["in_base"]))   # 세법 조정(세무조정 등): 프로그램 과세표준과 맞춤
-    base_c = base - K_new
+    # 2차 전수조사 V1 (2026-11-18): 퇴직급여 쌓는 몫은 이익에서는 빼되 과세표준에서는 빼지 않는다
+    # (법인세법 시행령 60조: 퇴직급여충당금 손금 한도 0 — 실제로 준 퇴직금·퇴직연금 부담금만 비용)
+    K_ded = sum(c["amount"] for c in costs if not c["in_base"] and not c.get("no_deduct"))
+    base_c = base - K_ded
     corp_c = corptax.corp_tax(max(base_c, 0), Y)
-    nat_c = corptax.national(max(base_c, 0), str(Y), input_dir)[0] or 0
+    nat_c, _, CR = corptax.national(max(base_c, 0), str(Y), input_dir)
+    nat_c = nat_c or 0
     from . import taxreturn as _tr
     try:
         min_rate = _tr._min_rate(input_dir, Y)
@@ -229,6 +251,20 @@ def compute(input_dir, asof):
     T_all = nat_c + int(corp_c * corptax.LOCAL_RATE)
     tax_in = {"brackets": [(top, rate) for top, rate in corptax.brackets(Y)], "local": corptax.LOCAL_RATE, "min": min_rate,
               "credit": corp_c - nat_c, "adj": adj_fill, "base_c": base_c}
+    # V16: 감면·공제를 고정 금액이 아니라 계산 방식 그대로 (특별세액감면은 산출세액의 비율, 공제는 최저한세까지만, 쓴 공제의 농특세)
+    from . import taxlaw
+    if CR:
+        mt = [x for x in CR.get("extra") or [] if x.get("mt")]
+        out = [x for x in CR.get("extra") or [] if not x.get("mt")]
+        pool = (CR["avail"] if CR["take_carry"] else 0) + sum(int(x["amount"]) for x in mt)
+        pool_nong = (CR["avail"] if CR["take_carry"] else 0) + sum(int(x["amount"]) for x in mt if x.get("nong"))
+        tax_in.update({"sp_rate": CR["sp_rate"] if CR["take_sp"] else 0.0, "pool": pool,
+                       "nong_share": (pool_nong / float(pool)) if pool else 0.0,
+                       "out": sum(int(x["amount"]) for x in out),
+                       "nong": taxlaw.checked(input_dir, Y, "농특세율", _tr.NONG_RATE)[0]})
+    else:
+        tax_in.update({"sp_rate": 0.0, "pool": 0, "nong_share": 0.0, "out": 0, "nong": 0.0})
+    tax_in["same"] = excel_tax(base_c, tax_in, Y) == T_all   # '처음 값 그대로면 프로그램 예상과 같다'를 사실일 때만 적는다
 
     # 지난해까지 세금 (해마다)
     from . import taxreturn
@@ -553,7 +589,13 @@ def build(C, sources=""):
         return a
     LOC = tax_row("지방소득세율 (법인세의 몇 %)", TI["local"], "inp", "origp", "법인지방소득세 = 법인세 산출세액 × 이 비율.")
     MINR = tax_row("최저한세율", TI["min"], "inp", "origp", "감면·공제를 받아도 법인세는 '세금 매기는 이익 × 이 비율' 밑으로는 안 줄어듭니다 (중소기업).")
-    CRD = tax_row("감면·공제 금액", TI["credit"], "in", "orig", "세금에서 바로 빼 주는 금액 (프로그램 법인세 예상에서 '받음' 표시한 감면·공제).")
+    SPR = tax_row("중소기업 특별세액감면 비율", TI["sp_rate"], "inp", "origp",
+                  "감면 전 법인세 × 이 비율만큼 깎아 줍니다 (작년 신고서의 감면 ÷ 산출세액). 이익이 줄면 감면도 같이 줄어듭니다.")
+    POOL = tax_row("쓸 수 있는 세액공제 (넘어온 것 + 올해 '받음')", TI["pool"], "in", "orig",
+                   "세금에서 바로 빼 주는 금액. 최저한세 밑으로는 못 줄여서, 남는 몫은 내년으로 넘어갑니다.")
+    NSH = tax_row("그 공제 중 농어촌특별세 대상 비율", TI["nong_share"], "inp", "origp", "고용·투자 공제처럼 쓴 만큼 농어촌특별세를 따로 내는 공제의 몫.")
+    NONG = tax_row("농어촌특별세율", TI["nong"], "inp", "origp", "쓴 공제(농특세 대상) × 이 비율을 농어촌특별세로 냅니다.")
+    OUTC = tax_row("최저한세와 상관없이 빼는 공제", TI["out"], "in", "orig", "연구·인력개발비 공제처럼 최저한세 밑으로도 줄여 주는 공제 ('받음' 표시한 것).")
     ADJ = tax_row("세법 조정 금액 (세무조정)", TI["adj"], "in", "orig",
                   "세법이 비용으로 안 쳐 주는 금액(접대비 한도 초과 등)을 이익에 더하는 값. 프로그램 법인세 예상과 맞춘 값입니다.")
     R0 = tax_row("지난해까지 영업외수익에 낸 세금 비율", round(C["rate0"], 4), "inp", "origp",
@@ -613,7 +655,8 @@ def build(C, sources=""):
     sg = pl("판매비와관리비 (장부)", f=TOT["sga"], note=mo_note % "판매비와관리비" + ("경영관리 부서 비용·급여와 회사 공통 비용(플랜트8)이 모두 들어 있습니다 (아래 줄). " if C.get("dept") else "")
             + _mark(over_where["판관비"]))
     for nm_, sal_, oth_ in C.get("dept") or []:   # 판관비에 이미 든 몫을 보여 주기만 (합계에 다시 더하지 않음)
-        sh.set(r, B, "   └ 그중 %s (급여 %s원 + 그 밖 %s원)" % (nm_, _won(sal_), _won(oth_)), s="tds")
+        # 급여와 그 밖을 합친 한 금액만 (사용자 2026-11-18 결정 '합쳐서 한 금액으로': 부서 인원이 적으면 급여 금액이 곧 개인 급여)
+        sh.set(r, B, "   └ 그중 %s (급여 포함)" % nm_, s="tds")
         sh.set(r, Cc, sal_ + oth_, s="nums")
         sh.set(r, Dd, sal_ + oth_, s="nums")
         sh.set(r, Ee, 0, s="dif")
@@ -629,15 +672,28 @@ def build(C, sources=""):
              note="영업이익 + 영업외수익 − 영업외비용.")
     r += 1
     r = head(sh, r, "세금 계산 (올해 법인세 예상)", ("항목", "회사 전체", "기획본부 기준", "차이", "설명"))
-    bs = pl("세금 매기는 이익 (과세표준)", f="MAX(0,%s+%s)" % (A_(pre), ADJ), fe="MAX(0,%s+%s)" % (E_(pre), ADJ), small=True,
-            note="세금 내기 전 이익 + 세법 조정 금액 ('바꿀 값' 탭 3번).")
+    nd_f = "+".join('IF(%s="예",%s,0)' % (K_rows[x["key"]][1], K_rows[x["key"]][0]) for x in costs if x.get("no_deduct")) or "0"
+    nd = pl("세금 계산에서는 안 빼는 결산 비용 (퇴직급여 쌓는 몫)", f=nd_f, small=True,
+            note="이익에서는 뺐지만 세법이 비용으로 인정하지 않아 세금 매기는 이익에는 다시 더합니다 (실제로 준 퇴직금·퇴직연금에 낸 돈만 인정).")
+    bs = pl("세금 매기는 이익 (과세표준)", f="MAX(0,%s+%s+%s)" % (A_(pre), ADJ, A_(nd)), fe="MAX(0,%s+%s+%s)" % (E_(pre), ADJ, E_(nd)), small=True,
+            note="세금 내기 전 이익 + 세법 조정 금액 ('바꿀 값' 탭 3번) + 위 줄.")
     cp = pl("법인세 (감면 전)", f=corp_f(A_(bs)), fe=corp_f(E_(bs)), small=True, note="세금 매기는 이익 × 구간별 법인세율.")
-    nt = pl("법인세 (감면·공제 뒤)", f="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, A_(cp), CRD, A_(bs), MINR, A_(cp)),
-            fe="IF(%s>0,MAX(%s-%s,INT(%s*%s)),%s)" % (CRD, E_(cp), CRD, E_(bs), MINR, E_(cp)), small=True,
-            note="감면 전 법인세 − 감면·공제. 단 최저한세 밑으로는 안 줄어듭니다.")
+    def cred_f(cp_, bs_):
+        fl = "INT(%s*%s)" % (bs_, MINR)
+        sp = "MIN(INT(%s*%s),MAX(%s-%s,0))" % (cp_, SPR, cp_, fl)
+        return sp, "MIN(%s,MAX(%s-%s-%s,0))" % (POOL, cp_, sp, fl)
+    spA, usA = cred_f(A_(cp), A_(bs))
+    spE, usE = cred_f(E_(cp), E_(bs))
+    sp_r = pl("   − 중소기업 특별세액감면", f=spA, fe=spE, small=True, note="감면 전 법인세 × 감면 비율. 최저한세 밑으로는 못 줄입니다.")
+    us_r = pl("   − 세액공제 쓴 금액", f=usA, fe=usE, small=True, note="쓸 수 있는 공제 중 최저한세까지 줄이는 데 쓴 금액.")
+    nt = pl("법인세 (감면·공제 뒤, 농어촌특별세 포함)",
+            f="%s-%s-%s-MIN(%s,MAX(%s-%s-%s,0))+INT(%s*%s*%s/10)*10" % (A_(cp), A_(sp_r), A_(us_r), OUTC, A_(cp), A_(sp_r), A_(us_r), A_(us_r), NSH, NONG),
+            fe="%s-%s-%s-MIN(%s,MAX(%s-%s-%s,0))+INT(%s*%s*%s/10)*10" % (E_(cp), E_(sp_r), E_(us_r), OUTC, E_(cp), E_(sp_r), E_(us_r), E_(us_r), NSH, NONG), small=True,
+            note="감면 전 법인세 − 감면 − 공제 + 쓴 공제의 농어촌특별세.")
     lc = pl("법인지방소득세", f="INT(%s*%s)" % (A_(cp), LOC), fe="INT(%s*%s)" % (E_(cp), LOC), small=True, note="감면 전 법인세 × 지방소득세율.")
     tx = pl("올해 세금 예상 합계", f="%s+%s" % (A_(nt), A_(lc)), fe="%s+%s" % (E_(nt), E_(lc)), bold=True,
-            note="처음 값 그대로면 프로그램 법인세 예상과 같습니다. " + _mark(over_where["법인세"]))
+            note=("처음 값 그대로면 프로그램 법인세 예상과 같은 계산입니다 (결산 비용을 더 넣은 만큼 이익이 줄어 세금은 그보다 적습니다). "
+                  if TI.get("same") else "프로그램 법인세 예상과 계산이 조금 다릅니다 (감면·공제 순서). ") + _mark(over_where["법인세"]))
     TAX, TAXE = q(S_PL, A_(tx)), q(S_PL, E_(tx))
     tb = None
     if P["tax_booked"]:
@@ -680,11 +736,11 @@ def build(C, sources=""):
         r += 1
         return r - 1
 
-    def group(title, items, extra=None):
+    def group(title, items, extra=None, note=""):
         nonlocal r
         sh.set(r, B, title, s="grp")
         for c in (Cc, Dd, Ee, F):
-            sh.set(r, c, "", s="grp")
+            sh.set(r, c, note if c == F else "", s="grp")
         r += 1
         first = r
         for code, name, v in items:
@@ -730,7 +786,9 @@ def build(C, sources=""):
         line("  결산 비용 중 낼 돈 (퇴직급여·상여금·카드·4대보험, 예상)", f=side_sum("liab"),
              note="'바꿀 값' 탭 1번의 퇴직급여·상여금·카드값·4대보험 회사분 중 '예'인 것. 아직 안 낸 돈이라 빚으로 잡습니다.")
     cl = group("유동부채 (1년 안에 갚을 것)", G["cl"], cl_extra)
-    nl = group("비유동부채 (1년 뒤 갚을 것)", G["nl"])
+    # 2차 전수조사 J23: 만기가 1년 안에 오는 대출이 '1년 뒤 갚을 것'에 있어 헷갈림 → 장부 분류 그대로인 까닭을 적음
+    nl = group("비유동부채 (1년 뒤 갚을 것)", G["nl"],
+               note="위하고 장부 분류 그대로입니다. 대출은 만기가 1년 안에 와도 매년 연장할 예정이라 여기에 둡니다 (만기일은 경영관리 보고 ‘자금’)." if G["nl"] else "")
     tl = total("부채 총계 (갚을 것)", cl, nl)
 
     def eq_extra():

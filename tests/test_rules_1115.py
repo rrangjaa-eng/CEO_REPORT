@@ -1598,10 +1598,11 @@ class TestBlindCashTodosNotDone(unittest.TestCase):
         R = {"asof": D(2026, 11, 8), "todo_prev": prev, "todo_decisions": {}, "_gate_hidden": {}}
         _, done = M.todo_status(R, [])
         st = dict((d["id"], d["st"]) for d in done)
-        self.assertEqual(st, {"할일|자금|x": "na", "할일|자료|y": "done"})
+        # 2차 전수조사 J4 (2026-11-18): 사람이 정하지 않은 것은 '처리'(done)가 아니라 '이번엔 안 걸림'(gone)
+        self.assertEqual(st, {"할일|자금|x": "na", "할일|자료|y": "gone"})
         R.pop("_gate_hidden")
         _, done = M.todo_status(R, [])
-        self.assertEqual(set(d["st"] for d in done), {"done"})
+        self.assertEqual(set(d["st"] for d in done), {"gone"})
 
 
 class TestPlanMatchNeedsSameVendor(unittest.TestCase):
@@ -2276,14 +2277,14 @@ class TestConvertRollsBackOnLateError(unittest.TestCase):
 
     def test_late_error_restores_csvs_and_says_so(self):
         from unittest import mock
-        from ceo_report import hometax
+        from ceo_report import review_checks
         from test_convert_review_fixes import company, result_text, run_convert_core
         tmp, input_dir, collect, wehago_dir = company(self)
         self.assertEqual(run_convert_core(input_dir, collect, wehago_dir).code, 0)
         marker = "예정일,세목\n2026-01-01,지난 변환\n"
         with open(os.path.join(input_dir, "세금예상.csv"), "w", encoding="utf-8-sig") as f:
             f.write(marker)
-        with mock.patch.object(hometax, "compare", side_effect=RuntimeError("가상 오류")):
+        with mock.patch.object(review_checks, "duplicate_lines", side_effect=RuntimeError("가상 오류")):
             res = run_convert_core(input_dir, collect, wehago_dir)
         self.assertEqual(res.code, 7)
         self.assertIn("되돌림", res.lines[0])
@@ -2580,46 +2581,6 @@ class TestEvidenceNamesHandEdits(unittest.TestCase):
         # 원래 보고를 다시 만들어 _수정 이 더 오래되면 (쓰이지 않으니) 알리지 않는다
         os.utime(ed, (t - 120, t - 120))
         self.assertIsNone(editmode.edits_for(orig))
-
-
-# ───────────── 2차 P1-19·P1-20: 홈택스 계산서 — 못 읽은 줄 수를 알리고, 같은 파일 안 중복·빈 승인번호를 바르게 ─────────────
-class TestHometaxRowsCounted(unittest.TestCase):
-    HEAD = ["작성일자", "승인번호", "공급자사업자등록번호", "상호", "공급받는자사업자등록번호", "상호", "합계금액", "공급가액", "세액"]
-
-    def _rows(self):
-        r = lambda day, no, buyer, total: [day, no, "111", "우리", buyer, "가상%s" % buyer, total, total // 11 * 10, total // 11]
-        return [["목록"], self.HEAD,
-                r("2026-10-01", "A-1", "21", 1100),
-                r("2026-10-02", "A-1", "21", 1100),        # 같은 파일 안 같은 승인번호
-                r("2026-10-03", "", "22", 2200),           # 승인번호 빈 계산서 둘은 서로 다른 것
-                r("2026-10-04", "", "23", 3300),
-                r("날짜아님", "A-9", "24", 4400),           # 날짜를 읽지 못한 줄
-                ["", "", "", "", "", "합계", 12100, 0, 0],   # 합계 줄은 세지 않음
-                []]
-
-    def test_parse_counts_bad(self):
-        from ceo_report import hometax
-        info = {}
-        side, rows = hometax.parse_rows(self._rows(), "매출.xlsx", info)
-        self.assertEqual((side, len(rows), info["bad"]), ("매출", 4, 1))
-
-    def test_load_dedupes_inside_file_keeps_blank_numbers(self):
-        import shutil
-        import tempfile
-        from unittest import mock
-        from ceo_report import hometax
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp, True)
-        os.makedirs(os.path.join(tmp, hometax.FOLDER))
-        for n in ("1 매출.xlsx", "2 매출.xlsx"):
-            open(os.path.join(tmp, hometax.FOLDER, n), "wb").close()
-        with mock.patch.object(hometax, "_read", return_value=self._rows()):
-            got, notes = hometax.load(tmp)
-        # 첫 파일: A-1 한 번 + 빈 번호 2건(서로 다른 계산서) = 3건 · 둘째 파일(겹치게 받음): 모두 이미 있음
-        self.assertEqual(len(got["매출"]), 3)
-        self.assertIn("같은 승인번호 1건은 한 번만", notes[0])
-        self.assertIn("매출 0건", notes[1])
-        self.assertIn("읽지 못한 줄 1건", notes[0])
 
 
 # ───────────── 2차 P3-16: 새 시산표·급여·카드 자료도 '다시 변환' 판단에 ─────────────
@@ -3083,7 +3044,7 @@ flush(false).then((r) => console.log(JSON.stringify({r, left: store.pendingSaves
 
     def test_manifest_version(self):
         with open(os.path.join(ROOT, "chrome_extension", "manifest.json"), encoding="utf-8") as f:
-            self.assertIn('"version": "0.9.11"', f.read())
+            self.assertIn('"version": "0.9.12"', f.read())   # 2차 전수조사 제안 24
 
 
 # ───────────── 1차 E11: 지금 현황을 새로 못 만들면 예전 화면이 최신처럼 열리지 않음 ─────────────

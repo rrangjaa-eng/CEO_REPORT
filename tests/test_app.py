@@ -276,6 +276,23 @@ class TestSelfCheck(unittest.TestCase):
         self.assertIn("_주간_대표보고.html", text)
         self.assertNotIn("만들지 않음", text)
         self.assertNotIn("만들지 않습니다", text)
+        # 2차 전수조사 P22: 주간만이 아니라 월간·연간·예산도 한 번씩 만들고 기획본부도 돌려 본다
+        for name in ("월간: 2026-10-31_월간_대표보고.html", "연간: 2026_연간_대표보고.html", "예산: 2027_예산_대표용.html", "기획본부:"):
+            self.assertIn(name, text)
+
+    def test_check_fails_when_a_later_report_fails(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        real = app.run_task
+
+        def fake(task, *a, **k):
+            return (7, []) if task == "연간" else real(task, *a, **k)
+        app.run_task = fake
+        self.addCleanup(setattr, app, "run_task", real)
+        log = os.path.join(tmp, "점검결과.txt")
+        self.assertEqual(app.self_check(log, base=ROOT), 12)   # 11 월간 · 12 연간 · 13 예산 · 14 기획본부
+        with open(log, encoding="utf-8") as f:
+            self.assertIn("연간 보고를 만들지 못함", f.read())
 
 
 if __name__ == "__main__":

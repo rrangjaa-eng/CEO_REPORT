@@ -208,16 +208,20 @@ class TestF2OnSample(unittest.TestCase):
             self.assertNotIn("예상 지급까지 빼면", ceo, R["kind"])
         self.assertIn("떼면", render(self.W, "mgmt"))
 
-    def test_expected_payments_line_leaves_out_expected_income(self):
+    def test_small_line_has_expected_income_and_payments(self):
+        """사용자 2026-11-18 결정 '예상 입금도 넣음': 대표 보고 작은 줄은 예상 입금·지급을 모두 넣은 값 하나.
+        예전 '프로젝트 지급 예상 등까지 빼면'(지급만)은 경영관리용에만 남는다."""
         from ceo_report.render import render
         html = render(self.W, "ceo")
         shown = 0
         for p in self.W["s2"]["periods"]:
-            f, s = p["firm"]["avail"], p["spend"]["avail"]
+            f, s = p["firm"]["avail"], p["all"]["avail"]
             if s != f:
                 shown += 1
-                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(s), html)
+                self.assertIn("예상 입금·지급까지 넣으면 %s" % "{:,}".format(s).replace("-", "−"), html)
         self.assertTrue(shown)
+        self.assertNotIn("프로젝트 지급 예상 등까지 빼면", html)
+        self.assertIn("프로젝트 지급 예상 등까지 빼면", render(self.W, "mgmt"))
 
     def test_monthly_first_line_is_one_number_for_ceo(self):
         from ceo_report import render as RD
@@ -622,7 +626,9 @@ class TestP5P6MonthStrip(unittest.TestCase):
             self.assertNotIn("11월말", h, m)
             self.assertNotIn("월말 잔액", h, m)
             self.assertIn("11/14 잔액", h, m)
-            self.assertIn("11월 영업이익 (11/14까지)", h, m)
+            # 2차 전수조사 A2 (2026-11-18): 달 중간에는 이번 달 영업이익 대신 매출 (이익은 경영관리용 '마감 전' 표에만)
+            self.assertIn("11월 매출 (11/14까지)", h, m)
+            self.assertNotIn("11월 영업이익 (11/14까지)", h, m)
         for m, h in self.end.items():   # 말일에 만든 월간은 그대로
             self.assertIn("월말 잔액", h, m)
             self.assertNotIn("(10/31까지)", h, m)

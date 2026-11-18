@@ -110,6 +110,18 @@ def parse_registered(text):
     return None
 
 
+DATE_FAR_DAYS = 3 * 366   # 등록일·기준일에서 이만큼 넘게 벗어난 날짜는 오타로 본다 (2차 전수조사 A7: 2060-09-18, 2002-06-05)
+
+
+def request_day(row, registered):
+    """지급요청일 → (날짜, 의심 글자). 등록일에서 3년 넘게 벗어나면 오타로 보고 날짜는 None, 읽은 글자를 돌려준다."""
+    raw = (row.get("지급요청일") or "").strip()
+    day = parse_date(raw)
+    if day is not None and registered is not None and abs((day - registered.date()).days) > DATE_FAR_DAYS:
+        return None, raw
+    return day, ""
+
+
 def project_code(text):
     """행사명 맨 앞 [ ] 안의 숫자(프로젝트 코드). 앞 공백은 허용하고, 없으면 None (P-4)."""
     m = _CODE_RE.match(text or "")
@@ -174,6 +186,14 @@ def _read_settings(d, issues):
 
 def _expected_date(rq, asof, now):
     """예상 지급일과 근거 규칙 (A-2, P-1, P-2). 날짜를 정할 수 없으면 (None, '')."""
+    day, rule = _expected_date0(rq, asof, now)
+    if rq.get("date_suspect") and day is not None:
+        # 2차 전수조사 A7: 오타로 보이는 지급요청일은 쓰지 않고, 왜 다른 날짜인지 적는다
+        rule = rule.replace("지급요청일 없음", "지급요청일 '%s' 날짜 의심(등록일과 3년 넘게 차이)" % rq["date_suspect"])
+    return day, rule
+
+
+def _expected_date0(rq, asof, now):
     req = rq["request_date"]
     if req and req > asof:
         return req, "지급요청일"
@@ -229,6 +249,7 @@ def _panel(L):
         "date_unknown": {"n": len(L["date_unknown"])},
         "status_unknown": _agg(L["status_unknown"]),
         "rule_no_date": {"n": sum(1 for r in req if r["rule"].startswith("지급요청일 없음"))},
+        "date_suspect": {"n": sum(1 for r in req if r.get("date_suspect"))},   # 2차 전수조사 A7
         "rule_past": {"n": sum(1 for r in req if r["rule"].startswith("지급요청일 지남"))},
         "amount_unknown_events": {"n": len(L["amount_unknown_events"])},
         "undated": _by_io(L["undated"]),
@@ -536,11 +557,12 @@ def build(d, snap, asof, now, wehago_dir=None, input_dir=None):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
-              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "", "reason": "", "toggle": False,
+              "request_date": None, "date": None, "rule": "", "reason": "", "toggle": False,
               "scheduled": False,  # 8주 일정에 금액이 실제로 들어갔는가 (WR-06)
               "stages": (row.get("팀장승인", ""), row.get("관리팀승인", ""), row.get("사장님승인", "")),
               "status_text": (row.get("사장님승인") or "").strip()}   # linking.requests_of 와 같은 모양 (D-52 근거 글자)
         rq["schedule_amount"], rq["amount_source"] = rq["amount"], "인트라넷 요청"
+        rq["request_date"], rq["date_suspect"] = request_day(row, rq["registered"])
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         req_all.append(rq)
 

@@ -444,6 +444,10 @@ def read_journal_json(path):
         out.period = (start, end) if end >= start else None
     except (TypeError, ValueError):
         out.period = None
+    try:   # 2차 전수조사 P24: 받은 날 (조회 기간 끝이 받은 날보다 앞인지 보려고)
+        out.taken = dt.date.fromisoformat(str(doc.get("수집시각") or "")[:10])
+    except ValueError:
+        out.taken = None
     # 안전-08 (N3, 2026-11-15): 위하고가 알려 준 전표 수(조회 응답 tot)·줄 수와 받은 것이 다르면 일부만 받은 것 — 쓰지 않고 막는다 (P1-2)
     tot, n_lines = doc.get("전표수"), doc.get("줄수")
     if isinstance(n_lines, int) and not isinstance(n_lines, bool) and n_lines != len(doc["줄"]):
@@ -497,7 +501,7 @@ def read_book(path, kind, file_date=None, asof=None, keep_sales=False):
     info = {"last_date": None, "rows": 0, "skipped": 0, "undated": 0, "sales": 0, "other": 0, "after_ref": 0,
             "extra_columns": list(extra), "extra_note": ("추가 열 무시: " + ", ".join(extra)) if extra else "",
             "sales_rows": [], "slip_projects": {}, "period": getattr(rows, "period", None),
-            "company": getattr(rows, "company", "") or ""}
+            "company": getattr(rows, "company", "") or "", "taken": getattr(rows, "taken", None)}
     slips = {}   # (전표일자 ISO, 번호) -> 코드, 한 전표에 서로 다른 코드가 있으면 None (쓰지 않음)
     for row in rows[1:]:
         if not any(c.strip() for c in row):
@@ -654,6 +658,21 @@ VAT_IN_CODES = ("13500",)    # 부가세대급금
 VAT_OUT_CODES = ("25500",)   # 부가세예수금
 
 
+# 위하고가 매입·매출 전표 적요에 넣어 주는 정해진 표시 (2차 전수조사 P8): '[수금예정일:2026.03.06]' · '[지급예정일:2025.11.28]'
+MEMO_DUE_RE = re.compile(r"\[(수금|지급)예정일\s*:\s*(20\d{2})\.(\d{1,2})\.(\d{1,2})\]")
+
+
+def memo_due(memo, kind):
+    """적요의 '[수금예정일:…]'(kind '수금') · '[지급예정일:…]'(kind '지급') 날짜. 없거나 날짜가 아니면 None."""
+    for m in MEMO_DUE_RE.finditer(str(memo or "")):
+        if m.group(1) == kind:
+            try:
+                return dt.date(int(m.group(2)), int(m.group(3)), int(m.group(4)))
+            except ValueError:
+                return None
+    return None
+
+
 def invoices_from_journal(journal):
     """분개장 '유형'이 매입전표·매출전표인 전표를 (전표일자, 전표번호)로 묶어 계산서 한 장씩 -> (매입 행, 매출 행).
 
@@ -683,6 +702,8 @@ def invoices_from_journal(journal):
                     None) or project_code(item)
         row = {"date": date, "no": no, "vendor": vendor, "item": item, "supply": total - vat, "vat": vat, "total": total,
                "code": code, "vendor_norm": norm_vendor(vendor), "vendor_code": vcode}
+        # P8: 받은 자료에 예정일이 있으면 그 값이 먼저 (작성일 + 60일 추정은 없을 때만). 전표 줄 가운데 처음 나오는 표시
+        row["due_memo"] = next((d for d in (memo_due(ln.get("memo"), "수금" if kind == "매출" else "지급") for ln in lines) if d), None)
         if kind == "매출":
             row["type"] = ""
             # 선금 계산서: 품명 낱말이 아니라 대변에 선수금 계정 줄이 있는지로 판단 (사용자 2026-11-14 "계정과목으로 판단")
@@ -885,9 +906,21 @@ def _prior_years(folder, kind, names, rows, asof, company="", foreign=None, peri
     return added, sorted(used), skipped, slips, spans, failed
 
 
+def short_period(period, taken):
+    """자동수집 분개장의 조회 기간 끝이 받은 날보다 앞이면 (기간 끝, 받은 날), 아니면 None (2차 전수조사 P24).
+    지난해 장부(기간 끝이 받은 해보다 앞 해)는 원래 그 해 말까지라 해당 없음."""
+    if not period or not taken:
+        return None
+    end = period[1]
+    return (end, taken) if end.year == taken.year and end < taken else None
+
+
 def journal_gaps(spans):
     """분개장 파일들이 맡은 기간 [(시작, 끝)] 사이에 어느 파일에도 없는 기간 [(시작, 끝)] (2026-11-14 K3)."""
     return _gaps([s for s in spans if s is not None])
+
+
+CUT_MARK = "[지난 기준일 변환]"   # 변환결과.txt 에 이 말이 있으면 장부를 기준일까지 자른 변환 (gate 가 읽음)
 
 
 def load_books(folder, asof, stale_days):
@@ -956,6 +989,12 @@ def load_books(folder, asof, stale_days):
             company = info.get("company") or ""
             if kind == "분개장":
                 entry["company"] = books.company = company
+                short = short_period(info.get("period"), info.get("taken"))
+                if short:   # 2차 전수조사 P24: 조회 기간 끝이 받은 날보다 앞 — 그 뒤 전표는 파일에 없다. 자료일도 기간 끝으로 본다
+                    entry["ref_date"] = min(entry["ref_date"], short[0]) if entry["ref_date"] else short[0]
+                    books.notes.insert(0, "[확인] 분개장 %s 은 %s까지만 조회해 받았음 (받은 날 %s) — 그 뒤 전표는 빠져 있습니다. "
+                                          "위하고 분개장 화면의 기간 끝을 오늘로 두고 다시 받으세요"
+                                       % (name, short[0].isoformat(), short[1].isoformat()))
             if kind == "분개장" and info.get("period") and names_left:
                 layer_rows, entry["layers"], names_left, layer_slips, spans = _same_year_layers(
                     folder, names_left, rows, info["period"], asof, company, foreign)
@@ -987,6 +1026,27 @@ def load_books(folder, asof, stale_days):
             elif kind == "분개장":
                 journal_slips = dict(prior_slips)
                 journal_slips.update(info["slip_projects"])
+    # 2차 전수조사 D1 (2026-11-18): 지난 날짜를 기준일로 넣으면(장부를 받은 날보다 앞) 그 뒤 전표는 빼고 계산한다.
+    # 예전엔 통장만 그 날로 잘리고 미수금·미지급금·차입금·세금은 받은 날 장부 값이 들어갔음 (10/31 기준 미수금 +1.7억).
+    # 기준일이 장부 받은 날과 같거나 뒤면(보통 날) 아무것도 빼지 않는다 — 앞날짜로 미리 넣은 전표는 그대로.
+    books.cut_after = None
+    cut_n, cut_last = 0, None
+    for kind in list(staged):
+        ref = books.files[kind].get("ref_date")
+        if ref is None or asof is None or asof >= ref:
+            continue
+        keep = [r for r in staged[kind] if r.get("date") is None or r["date"] <= asof]
+        gone = [r["date"] for r in staged[kind] if r.get("date") is not None and r["date"] > asof]
+        if gone:
+            cut_n += len(gone)
+            cut_last = max(gone + ([cut_last] if cut_last else []))
+            staged[kind] = keep
+            if kind == "매입매출장":
+                ledger_sales = [r for r in ledger_sales if r.get("date") is None or r["date"] <= asof]
+    if cut_n:
+        books.cut_after = {"asof": asof, "n": cut_n, "last": cut_last}
+        books.notes.insert(0, "%s %s — 그 뒤 전표 %d줄(~%s)을 빼고 계산. 통장 잔액·장부 값은 그 날 기준이고, 인트라넷·자금계획서·급여 자료는 "
+                              "되돌릴 수 없어 받은 날 기준 그대로" % (CUT_MARK, asof.isoformat(), cut_n, cut_last.isoformat()))
     # D-57: 인쇄 분개장에 매입전표·매출전표가 있으면 분개장 하나로 충분하다. 매입매출장·전자세금계산서(매입)는 있으면 대조만 한다
     derived = invoices_from_journal(staged["분개장"]) if "분개장" in staged else ([], [])
     from_journal = bool(derived[0] or derived[1])
@@ -1076,7 +1136,10 @@ def _sales_row(item):
     return {"date": item["date"], "no": item.get("no", ""), "vendor": item["vendor"], "vendor_norm": item["vendor_norm"],
             "item": item["item"], "supply": item["supply"], "vat": item["vat"], "total": item["total"],
             "code": item["code"], "type": item.get("type", ""), "credit_account": item.get("credit_account", ""),
-            "deducted": item.get("deducted") or 0, "advance": item.get("advance")}
+            "deducted": item.get("deducted") or 0, "advance": item.get("advance"),
+            # 2차 전수조사 D6 (2026-11-18): 이 칸을 넘기지 않아 계산서.csv 거래처코드가 모두 비었고, 그래서 코드 대신 이름으로 묶였음
+            "vendor_code": str(item.get("vendor_code") or "").strip().lstrip("0"),
+            "due_memo": item.get("due_memo")}   # 분개장 적요 '[수금예정일:…]' (P8)
 
 
 def load_sales(folder, asof, books):

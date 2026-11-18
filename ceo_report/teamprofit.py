@@ -89,17 +89,18 @@ def _row(label, kind, revenue=None, gp=None, salary=None, sga=None, heads=None, 
             "heads": heads, "has_rev": has_rev}
 
 
-def build(pl_table, dept_rows, ym, ytd=False):
-    """pl_table: R['s4']['sources']['WEHAGO']['table']. -> {"rows", "company", "dept_ok", "check"} 또는 None (팀 손익 없음)."""
-    key = "ytd" if ytd else "cur"
+def build(pl_table, dept_rows, ym, ytd=False, key=None):
+    """pl_table: R['s4']['sources']['WEHAGO']['table']. -> {"rows", "company", "dept_ok", "check"} 또는 None (팀 손익 없음).
+    key: 표에서 읽을 묶음 ('ytd_closed' = 다 끝난 달까지 누적, calc.month_scope). 없으면 ytd 에 따라 'ytd'·'cur'."""
+    key = key or ("ytd" if ytd else "cur")
     teams = OrderedDict()
     special, company = [], None
     for r in pl_table:
-        v = r[key] or {"revenue": None, "gp": None, "common": None}
+        v = r.get(key) or {"revenue": None, "gp": None, "common": None}
         if r["unit"] == "회사":
             company = v
         elif r["unit"] == "팀":
-            if r[key] is None:   # 그 기간에 손익 줄이 없는 팀 (예: 10월에 원가·매출이 없는 기획3팀): 줄을 만들지 않는다
+            if r.get(key) is None:   # 그 기간에 손익 줄이 없는 팀 (예: 10월에 원가·매출이 없는 기획3팀): 줄을 만들지 않는다
                 continue
             if r["target"] in SPECIAL:
                 special.append((r["target"], v))

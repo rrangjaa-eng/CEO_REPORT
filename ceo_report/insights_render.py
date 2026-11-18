@@ -142,7 +142,14 @@ def ceo_issue(D, top=3, compact=False):
             % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
     if D["late"]:
         pay = D.get("pay_if_today") or rows[0]["pay_if_today"]
-        head += "<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
+        n_c, amt_c = D.get("could") or (None, 0)
+        if n_c == 0:   # 그 기한에는 행사가 끝난 것이 없었다 → 늦게 발행한 탓이 아님
+            head += "그 전에 받으려면 %s까지 발행해야 했지만 그때는 행사가 끝나지 않았습니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
+        elif n_c and n_c < len(rows):
+            head += ("<b class='ins-neg'>%s까지 발행했어야</b> 합니다 (그때 행사가 끝나 있던 것은 %d건 %s원) · 오늘 발행해도 %s 입금."
+                     % (_md(D["deadline"]), n_c, W(amt_c), _md(pay)))
+        else:
+            head += "<b class='ins-neg'>%s까지 발행했어야</b> 합니다 · 오늘 발행해도 %s 입금." % (_md(D["deadline"]), _md(pay))
     else:
         head += "<b class='ins-neg'>%s까지 발행</b>해야 그 전에 들어옵니다." % _md(D["deadline"])
     if compact:
@@ -196,7 +203,8 @@ def team_section(I, R, team, start_no=7):
             body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>매출 기준</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
                     "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         if miss:
-            body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
+            # 제안 28 (1차 C1, 2026-11-18): 팀장 보고에는 개수(사실)만 — 안내 꼬리('인트라넷에 사전견적을 넣으면 나옵니다')는 경영관리에만
+            body += "<p class='note'><b>%s</b></p>" % esc((insights.MISSING_CONTRACT % miss).split(" — ")[0] + ".")
         sec("프로젝트 이익 흐름 (견적 때 → 지금)", body)
         no += 1
     # 4 경보 (그 팀 프로젝트)

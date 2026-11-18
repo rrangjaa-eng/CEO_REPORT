@@ -76,7 +76,6 @@ def run_cli(test, argv, user=USER, password=PASSWORD, site=None, input_mock=None
         stack.enter_context(mock.patch("builtins.input", mocks["input"]))
         stack.enter_context(mock.patch.object(cli.getpass, "getpass", mocks["getpass"]))
         stack.enter_context(mock.patch.object(cli, "make_collector_opener", mocks["opener"]))
-        stack.enter_context(mock.patch.object(cli.webbrowser, "open", mocks["browser"]))
         for p in patches:
             stack.enter_context(p)
         stack.enter_context(contextlib.redirect_stdout(out))
@@ -167,7 +166,7 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
     def success(self):
         return run_cli(self, self.argv())
 
-    def test_success_run_writes_one_snapshot_and_one_screen(self):
+    def test_success_run_writes_one_snapshot_and_no_screen(self):
         rc, out, err, fake, mocks = self.success()
         self.assertEqual(rc, 0, out + err)
         mocks["input"].assert_called_once()
@@ -179,17 +178,9 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
         self.assertEqual(len(snap.payments), 9)
         self.assertEqual(len(snap.projects), 4)
         self.assertEqual(snap.info["지급요청_페이지수"], "1")
-        htmls = entries(self.out)
-        self.assertEqual(len(htmls), 1, htmls)
-        self.assertRegex(htmls[0], r"^승인검토_\d{8}_\d{4}\.html$")
-        with open(os.path.join(self.out, htmls[0]), encoding="utf-8") as f:
-            page = f.read()
-        self.assertIn(HEADLINE, text_of(element_html(page, "headline")))
-        self.assertIn("(이번 실행에서 수집)", text_of(element_html(page, "start-line")))
-        mocks["browser"].assert_called_once()
-        target = mocks["browser"].call_args[0][0]
-        self.assertTrue(target.startswith("file://"), target)
-        self.assertTrue(urllib.parse.unquote(target).endswith(htmls[0]))
+        # 화면을 뺌 (사용자 2026-11-18): 출력 폴더에는 구조 점검 기록만, 브라우저도 열지 않는다
+        self.assertEqual([n for n in entries(self.out) if n.endswith(".html")], [])
+        mocks["browser"].assert_not_called()
 
     def test_success_prints_summary_line(self):
         rc, out, err, fake, mocks = self.success()
@@ -222,7 +213,8 @@ class TestApprovalCollectRun(_TmpMixin, unittest.TestCase):
             mocks[name].assert_not_called()
         mocks["browser"].assert_not_called()
         self.assertEqual(fake.calls, [])
-        self.assertIn("(마지막 스냅숏)", out)
+        self.assertIn("화면은 뺐습니다", out)   # 2차 전수조사 제안 29 (사용자 2026-11-18 '화면을 뺌')
+        self.assertEqual(entries(self.out), [])
 
     def test_explicit_no_collect_after_collect_flag_wins(self):
         write_fake_snapshot(self.root)
@@ -331,14 +323,11 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
                           ("GET", "/project/index"): (200, {}, project_page(FAKE_PROJECTS + [RRN_PROJECT]))})
         rc, out, err, fake, mocks = run_cli(self, self.argv(), site=site)
         self.assertEqual(rc, 0, out + err)
-        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 6)  # 스냅숏 CSV 3개 + 지급요청서 1개 + 화면 1개 + 구조 점검 기록
+        self.assertEqual(assert_no_rrn(self, self.tmp, [out, err]), 5)  # 스냅숏 CSV 3개 + 지급요청서 1개 + 구조 점검 기록
         snap = snapshot_module().read_snapshot(os.path.join(self.root, entries(self.root)[0]))
         names = dict((p["번호"], (p["행사명"], p["파트너"])) for p in snap.payments)
         self.assertEqual(names["5201"], ("[26201] 강사료 홍길동 ******-*******", "홍길동 ******-*******"))
         self.assertEqual(names["5201"][0][:7], "[26201]")  # 프로젝트 코드는 그대로 읽힌다
-        with open(os.path.join(self.out, entries(self.out)[0]), encoding="utf-8") as f:
-            page = f.read()
-        self.assertIn("******-*******", page)
 
     def test_crawler_rows_are_masked_where_they_are_read(self):
         opener = intranet().make_opener(
@@ -355,20 +344,19 @@ class TestIntranetRrnMasked(_TmpMixin, unittest.TestCase):
                                 as_dicts(RRN_PAYMENTS, s.PAYMENT_COLUMNS), as_dicts([RRN_PROJECT], s.PROJECT_COLUMNS))
         self.assertEqual(assert_no_rrn(self, path, []), 3)
 
-    def test_an_older_unmasked_snapshot_is_masked_on_the_page(self):
+    def test_an_older_unmasked_snapshot_is_masked_when_read(self):
         snap = write_fake_snapshot(self.root, extra=RRN_PAYMENTS)
         # 이전 버전이 가리지 않고 쓴 스냅숏을 흉내 낸다: CSV 에 원래 값을 다시 써 넣는다
         unmasked_snapshot(snap, RRN_PAYMENTS, [RRN_PROJECT])
         with open(os.path.join(snap, "지급요청.csv"), encoding="utf-8-sig") as f:
             self.assertIn(RRN_PARTS[0], f.read())  # 시험 준비 확인: 디스크의 옛 스냅숏에는 원래 값이 있다
-        rc, out, err, fake, mocks = run_cli(
-            self, ["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
-        self.assertEqual(rc, 0, out + err)
-        assert_no_rrn(self, self.out, [out, err])
-        with open(os.path.join(self.out, entries(self.out)[0]), encoding="utf-8") as f:
-            page = f.read()
-        self.assertIn("강사료 홍길동 ******-*******", page)
-        self.assertIn("개인 강의 ******-*******", page)
+        from ceo_report import approval, data
+        A = approval.build(data.load(SAMPLE), snapshot_module().read_snapshot(snap), dt.date(2026, 11, 2),
+                           dt.datetime(2026, 11, 2))
+        text = repr(A["requests_all"])
+        for part in RRN_PARTS:
+            self.assertNotIn(part, text)
+        self.assertIn("******-*******", text)
 
 
 class TestDuplicateNumbers(_TmpMixin, unittest.TestCase):
@@ -393,14 +381,11 @@ class TestDuplicateNumbers(_TmpMixin, unittest.TestCase):
         result = self.collect(list(FAKE_PAYMENTS) + [list(FAKE_PAYMENTS[2])])
         self.assertEqual([p["번호"] for p in result.payments], [r[0] for r in FAKE_PAYMENTS])
 
-    def test_cli_stops_on_a_snapshot_with_a_repeated_number(self):
-        write_fake_snapshot(self.root, extra=[list(FAKE_PAYMENTS[0])])
-        rc, out, err, fake, mocks = run_cli(
-            self, ["--기준일", "2026-11-02", "--입력", SAMPLE, "--수집폴더", self.root, "--출력", self.out, "--열기", "안함"])
-        self.assertEqual(rc, 2, out)
-        self.assertIn("스냅숏을 읽지 못했습니다", out)
-        self.assertIn("번호가 겹치는 줄 2건 (1201)", out)
-        self.assertEqual(entries(self.out), [])
+    def test_a_snapshot_with_a_repeated_number_is_refused(self):
+        snap = write_fake_snapshot(self.root, extra=[list(FAKE_PAYMENTS[0])])
+        with self.assertRaises(snapshot_module().SnapshotError) as cm:
+            snapshot_module().read_snapshot(snap)
+        self.assertIn("번호가 겹치는 줄 2건 (1201)", str(cm.exception))
 
 
 class TestApprovalCollectStops(_TmpMixin, unittest.TestCase):
@@ -494,16 +479,6 @@ class TestApprovalCollectStops(_TmpMixin, unittest.TestCase):
         out, _, _, _ = self.stopped(7, patches=[patch])
         self.assertIn("저장 실패", out)
 
-    def test_disk_failure_in_make_screen_is_7(self):
-        cli = load_approval_cli()
-        patch = mock.patch.object(cli, "make_screen", side_effect=OSError("가상"))
-        rc, out, err, fake, mocks = run_cli(self, self.argv(), patches=[patch])
-        self.assertEqual(rc, 7, out + err)
-        self.assertIn("저장 실패", out)
-        self.assertNotIn("인트라넷 연결 실패", out)
-        mocks["browser"].assert_not_called()
-        sweep(self, self.tmp, [out, err], fake)
-
 
 # ---------------------------------------------------------------------------
 # Task 2: 구조 점검
@@ -527,7 +502,7 @@ class TestStructureCheck(_TmpMixin, unittest.TestCase):
 
     def check(self, extra=None, **kw):
         cli = load_approval_cli()
-        patches = [mock.patch.object(cli, "write_snapshot"), mock.patch.object(cli, "make_screen")]
+        patches = [mock.patch.object(cli, "write_snapshot")]
         rc, out, err, fake, mocks = run_cli(self, self.check_argv(), site=fake_site(extra), patches=patches, **kw)
         self.assertEqual(entries(self.tmp), [], "구조 점검이 파일이나 폴더를 만듦")
         self.assertFalse(os.path.exists(self.root))

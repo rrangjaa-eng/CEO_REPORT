@@ -4,7 +4,7 @@
 
   · 가수금 잔액: 계정잔액.csv (자료 변환이 분개장으로 만듦) 의 가수금(257…) 대변 − 차변, 보고 기준 달까지.
     분개장이 회사 처음부터가 아니면 잔액을 모르므로 계산하지 않는다.
-  · 날마다 통장 잔액: 2장 자금 일정과 같은 숫자 (s2 start + dated). 확정분만 / 예상 지급 포함 두 가지.
+  · 날마다 통장 잔액: 2장 자금 일정의 일정 (s2 start + dated). 확정분만 / 예상 입금·지급 포함 두 가지.
   · 갚는 날 후보: 이번 주 금요일, 다음 주 금요일, 이번 달·다음 달·다다음 달 마지막 평일 (자금계획서가 닿는 날까지).
   · 자금계획서가 기준일부터 60일 넘게 닿지 않으면 판단하지 않는다 (P3-3, 계획 없는 날을 '안전'으로 보지 않게).
   · '안전' = 그날 전부 갚아도 그 뒤 어느 날도 최소 보유현금(설정, 기본 1억) 아래로 내려가지 않음.
@@ -18,6 +18,8 @@ import datetime as dt
 from .util import won, esc, d2s
 
 CODE = "257"          # 가수금
+EST_IN_OUT = True     # '예상 포함' 잔액에 예상 입금도 넣는가 (J24)
+ALL_LABEL = "예상 입금·지급 포함"
 MIN_DAYS = 60         # 자금계획서가 기준일부터 이만큼은 닿아야 판단한다 (P3-3: 모자라면 늘리지 않고 판단을 미룸)
 
 
@@ -92,6 +94,10 @@ def path(R, firm_only, end, pay=None):
     days = collections.defaultdict(int)
     for e in s2.get("dated") or []:
         if firm_only and not (e.get("firm") or e.get("must")):   # 큰 숫자와 같은 기준: 확정 + 꼭 나갈 정기 지출 예상 (2026-11-14 D1)
+            continue
+        # 2차 전수조사 J24 (2026-11-18): 이 길은 예상 입금도 함께 더한다 — 이름이 '예상 지급 포함'이라 입금은 확정만인 것처럼 읽혔다.
+        # EST_IN_OUT = False 로 두면 예상은 지급만 넣는다 (실제 자료로 해 보니 2027-04-30까지 '갚을 수 있는 날 없음'이 되어, 결정 카드로 물음)
+        if not EST_IN_OUT and not firm_only and e["io"] == "in" and not e.get("firm"):
             continue
         a = e.get("amount")
         if a is None:
@@ -237,7 +243,7 @@ def advice(G):
     if early:
         c = early[0]
         r = c["all"]["ranges"]
-        out.append("%s(%s)에 갚으면 예상 지급 포함 %s 최소 보유현금보다 최대 %s원 모자랍니다 (갚지 않을 때보다 %s원 더)." % (
+        out.append("%s(%s)에 갚으면 예상 입금·지급 포함 %s 최소 보유현금보다 최대 %s원 모자랍니다 (갚지 않을 때보다 %s원 더)." % (
             c["label"], _md(c["date"]), ("%s~%s" % (_md(r[0][0]), _md(r[-1][1]))) if r else "",
             won(c["all"]["short"]), won(c["all"]["more"])))
     if ff == asof and fa != asof:
@@ -245,7 +251,7 @@ def advice(G):
     b = G["base"]["all"]
     if b["ranges"]:
         r = b["ranges"]
-        out.append("갚지 않아도 예상 지급 포함 %s~%s에 최소 보유현금보다 최대 %s원 모자랍니다 (2장 자금 일정 참고)." % (
+        out.append("갚지 않아도 예상 입금·지급 포함 %s~%s에 최소 보유현금보다 최대 %s원 모자랍니다 (2장 자금 일정 참고)." % (
             _md(r[0][0]), _md(r[-1][1]), won(b["short"])))
     if G.get("now_all"):
         out.append("나눠 갚는다면 지금 %s원까지는 예상 지급을 넣어도 최소 보유현금이 지켜집니다." % won(min(G["now_all"], rest)))
@@ -285,7 +291,7 @@ def render(G):
         rows.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                     % (esc(c["label"]), d2s(c["date"]), cell(c["firm"]), cell(c["all"]), mark))
     h.append("<div class='tw'><table class='pt evt dgx nofold'><thead><tr><th>갚는 때</th><th>날짜</th><th>확정분만</th>"
-             "<th>예상 지급 포함</th><th>판정</th></tr></thead><tbody>%s</tbody></table></div>" % "".join(rows))
+             "<th>예상 입금·지급 포함</th><th>판정</th></tr></thead><tbody>%s</tbody></table></div>" % "".join(rows))
     h.append("<div class='note'>날마다 잔액은 2장 자금 일정과 같은 숫자입니다(오늘 통장 잔액 + 날짜별 입금 − 출금). "
              "‘안전’은 그날 %s원을 전부 갚아도 그 뒤 계산 기간 안에 최소 보유현금 아래로 내려가는 날이 없다는 뜻입니다. "
              "예상 지급 = 급여·카드대금(장부 계산)·프로젝트 남은 예산 등 날짜·금액이 아직 확정되지 않은 돈.</div>" % won(G["rest"]))

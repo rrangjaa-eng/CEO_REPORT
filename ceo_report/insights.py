@@ -25,7 +25,8 @@ import os
 import re
 import statistics
 
-from .calc import counts_in, must_pay, unissued_due, with_vat
+from . import codes as _codes
+from .calc import _event_date, counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -41,7 +42,7 @@ def _sq(t):
 # ───────────── 장부로 계산 (자료 변환 때) ─────────────
 CARD_RE = re.compile(r"^(신한|롯데|비씨|BC|삼성|현대|국민|KB|하나|우리|농협|NH)[_\s-]?\d{4}$")
 INSURERS = ("국민연금", "건강보험", "근로복지", "고용보험")
-TAXOFF = ("세무서", "구청", "시청", "군청")
+TAXOFF = _codes.TAX_OFFICE + _codes.LOCAL_OFFICE   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 
 
 def _months_back(asof, n):
@@ -359,10 +360,10 @@ def invoice_pairs(R):
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
         ev = p.get("event_date") or ""
-        try:
-            end = dt.date(*[int(x) for x in ev[-10:].split("-")]) if ev else None
-        except ValueError:
-            end = None
+        # 2차 전수조사 D2 (2026-11-18): '2026.10.27' 꼴을 못 읽어 늘 0건이었음 → 다른 곳과 같은 읽기(calc._event_date, 기간은 끝난 날)
+        end = _event_date(ev)
+        if end is not None:
+            ev = end.isoformat()
         if end is None or end >= asof:
             continue
         sold = max(issued.get(p.get("id"), 0), p.get("recognized") or 0)
@@ -588,7 +589,20 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     if short:
         out["deadline"] = short[0] - dt.timedelta(days=days)
         out["late"] = out["deadline"] < asof
+        # 2차 전수조사 B3 (2026-11-18): 기한이 이미 지났을 때, 그 기한에 행사가 끝나 있어 발행할 수 있었던 것만 '늦었다'고 말한다
+        # (11/17 행사를 10/11까지 발행했어야 한다고 적혔음)
+        could = [r for r in rows if _as_date(r.get("event")) is not None and _as_date(r["event"]) <= out["deadline"]]
+        out["could"] = (len(could), sum(r["amount"] for r in could))
     return out
+
+
+def _as_date(v):
+    if isinstance(v, dt.date):
+        return v
+    try:
+        return _event_date(v)
+    except Exception:
+        return None
 
 
 def _merge_cards(presence):
@@ -897,7 +911,9 @@ def load_profit_forecasts(out_dir):
 
 
 def load_previous(out_dir, asof, lookback=14):
-    """기준일 전 lookback 일 안의 가장 최근 기록 -> 일정 목록 또는 None."""
+    """기준일 전 lookback 일 안의 기록 중 '7일 전'에 가장 가까운 것 -> 일정 목록 또는 None.
+    2차 전수조사 P14 (2026-11-18): 예전엔 가장 최근 기록이라, 보고를 매일 만들면 '지난주 대비'가 어제 기록과의 비교가 됐다.
+    한 주에 한 번만 만들면 예전과 같은 기록이 골라진다."""
     folder = os.path.join(out_dir, RECORD_DIR)
     try:
         names = os.listdir(folder)
@@ -913,7 +929,9 @@ def load_previous(out_dir, asof, lookback=14):
     if not found:
         return None
     try:
-        with open(os.path.join(folder, max(found)[1]), encoding="utf-8") as f:
+        week = asof - dt.timedelta(days=7)
+        pick = min(found, key=lambda x: (abs((x[0] - week).days), x[0]))
+        with open(os.path.join(folder, pick[1]), encoding="utf-8") as f:
             x = json.load(f)
         return x if isinstance(x, list) else None
     except (OSError, ValueError):

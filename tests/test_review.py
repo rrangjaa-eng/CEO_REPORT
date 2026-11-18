@@ -61,17 +61,6 @@ def sample_folder(test, edit=None):
     return folder
 
 
-def approval_page(test, folder):
-    """가상 스냅숏 + 입력 폴더로 승인 검토 화면 HTML."""
-    import test_approval as ta
-    from ceo_report.approval import build
-    from ceo_report.approval_render import render_approval
-    from ceo_report.snapshot import read_snapshot
-    snap = ta.write_fake_snapshot(os.path.join(new_tmp(test), "수집"))
-    A = build(load(folder), read_snapshot(snap), ta.ASOF, ta.NOW, None)
-    return render_approval(A, False), A
-
-
 # ───────────── 1. 주민번호 모양 값은 HTML·출력에 나오지 않는다 ─────────────
 def _rrn_edit(S):
     S["입출금내역.csv"][0][7] = "급여 홍길동 " + FAKE_RRN      # 적요 → 1번 묶음 표
@@ -98,12 +87,6 @@ class TestRrnMasked(unittest.TestCase):
                 if mode == "mgmt":   # 입력 확인 목록(상세 7번)은 경영관리 보고에만 있다 (대표 보고는 요약만, 2026-11-03)
                     self.assertIn(MASK, h, (kind, mode))
 
-    def test_approval_screen_masks_issue_lines(self):
-        folder = sample_folder(self, _rrn_edit)
-        page, A = approval_page(self, folder)
-        self.assertTrue(any(FAKE_RRN in str(m) for _, _, m in A["issues"]))
-        self.assertNotIn(FAKE_RRN, page)
-        self.assertIn(MASK, page)
 
     def test_report_cli_stdout_masked(self):
         import test_report as tr
@@ -195,12 +178,6 @@ class TestNegativeOutflow(unittest.TestCase):
         self.assertTrue(any("공급가액" in x[2] and "(40,000,000)" in x[2] for x in msgs), msgs)
         self.assertTrue(any("부가세" in x[2] and "-4,000,000" in x[2] for x in msgs), msgs)
 
-    def test_approval_schedule_keeps_outflow(self):
-        def edit(S):
-            S["자금일정.csv"].append(["2026-11-05", "지급", "(30,000,000)", "확정", "회사공통지출", "", "가상업체", "청구서", ""])
-        _, A0 = approval_page(self, sample_folder(self))
-        _, A = approval_page(self, sample_folder(self, edit))
-        self.assertEqual(sum(A["data"]["base_out"]) - sum(A0["data"]["base_out"]), 30000000)
 
 
 # ───────────── 3. 취소·수정(음수) 계산서는 같은 프로젝트 미수를 줄인다 ─────────────

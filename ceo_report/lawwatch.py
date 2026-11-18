@@ -234,6 +234,44 @@ def find_law(oc, name, opener=None, ref=None):
     return _in_force(cands, ref) if ref else None
 
 
+NO_BODY = "(본문은 첨부 파일에만 있음)"
+
+
+def _tag(name, n, sub):
+    return name if name in ADMRUL else "%s %s" % (name, jo_name(n, sub))
+
+
+def _compare_split(keys, input_dir=None, year=None):
+    """키들 -> (숫자로 조문과 맞춰 볼 수 있는 키, 표·글이라 맞춰 보지 못하는 키)."""
+    from . import taxlaw
+    cmp_, nocmp = [], []
+    for k in keys:
+        (cmp_ if taxlaw.UNIT.get(k) in ("원", "비율") else nocmp).append(k)
+    return cmp_, nocmp
+
+
+def coverage(S):
+    """받아 둔 조문이 지켜보는 목록(WATCH)을 얼마나 덮는가 (2차 전수조사 P2).
+    -> {total, got, missing: [조문], compared: 값 맞춰 본 키 수, not_compared: [(조문, 키 이름들)]}."""
+    from . import taxlaw
+    items = S.get("items") or {}
+    missing, comp, nocomp, got = [], 0, [], 0
+    for keys, name, n, sub in WATCH:
+        tag = _tag(name, n, sub)
+        it = items.get(tag)
+        if not it:
+            missing.append(tag)
+            continue
+        got += 1
+        cmp_, nocmp = _compare_split(keys)
+        if str(it.get("text") or "").startswith(NO_BODY):
+            cmp_, nocmp = [], list(keys)
+        comp += len(cmp_)
+        if nocmp:
+            nocomp.append((tag, [taxlaw.LABEL.get(k, k) for k in nocmp]))
+    return {"total": len(WATCH), "got": got, "missing": missing, "compared": comp, "not_compared": nocomp}
+
+
 def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
     if kind == "admrul":
         q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "ID": mst})
@@ -247,7 +285,7 @@ def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
                 if d.get("첨부파일명"):
                     names += [str(x) for x in _flat(d["첨부파일명"])]
             if names:
-                text = "(본문은 첨부 파일에만 있음) " + " · ".join(dict.fromkeys(names))
+                text = NO_BODY + " " + " · ".join(dict.fromkeys(names))
         return text
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "MST": mst, "JO": _jo(n, sub)})
     return _texts(_get(BASE + "lawService.do?" + q, opener))
@@ -292,7 +330,7 @@ def check(input_dir, year, today=None, opener=None):
     out, laws, got = [], {}, {}
     ref = max(today, dt.date(int(year), 1, 1)).strftime("%Y%m%d") if str(year).isdigit() else today.strftime("%Y%m%d")
     for keys, name, n, sub in WATCH:
-        tag = name if name in ADMRUL else "%s %s" % (name, jo_name(n, sub))
+        tag = _tag(name, n, sub)
         try:
             if name not in laws:   # P1-22: 값을 쓰는 해(year)에 시행 중인 시행본 — 올해면 오늘, 다음 해면 그해 1월 1일
                 laws[name] = (find_admrul(S["oc"], ADMRUL[name], opener, ref) if name in ADMRUL
@@ -319,8 +357,21 @@ def check(input_dir, year, today=None, opener=None):
                 pool = nums["원"] if taxlaw.UNIT[k] == "원" else nums["비율"]
                 if not any(abs(p - v) < 1e-6 * max(1, abs(v)) for p in pool):
                     miss.append(taxlaw.LABEL[k])
-        note = ("지금 값이 조문에 안 보임: %s · 조문 숫자 %s" % (", ".join(miss), _short(nums))) if miss else \
-            ("지금 값이 조문에 있음" if keys else "감면·공제 검토용 (조문·법 기한만 봄)")
+        # 2차 전수조사 P2 (2026-11-18): 숫자로 맞춰 본 값만 '조문에 있음'. 세율표·공제표 같은 글 값과 본문이 첨부에만 있는 고시는
+        # 맞춰 보지 못했다고 사실대로 적는다 (예전: 대조하지 않은 표도 '지금 값이 조문에 있음')
+        cmp_, nocmp = _compare_split(keys, input_dir, year)
+        no_body = text.startswith(NO_BODY)
+        if miss and not no_body:
+            note = "지금 값이 조문에 안 보임: %s · 조문 숫자 %s" % (", ".join(miss), _short(nums))
+        elif not keys:
+            note = "감면·공제 검토용 (조문·법 기한만 봄)"
+        elif no_body:
+            note = "본문이 첨부 파일에만 있어 값을 맞춰 보지 못함 (사람이 확인): %s" % ", ".join(taxlaw.LABEL[k] for k in keys)
+        else:
+            note = " · ".join(([("지금 값이 조문에 있음 (%d개)" % len(cmp_))] if cmp_ else [])
+                              + (["표·글이라 값을 맞춰 보지 못함 (사람이 확인): %s" % ", ".join(taxlaw.LABEL[k] for k in nocmp)] if nocmp else []))
+        if no_body:
+            miss = []
         got[tag] = {"hash": h, "text": text[:4000], "시행일자": info["시행일자"], "공포일자": info["공포일자"],
                     "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
                     # 11/17: 예전엔 한 번 켜지면 계속 켜져 있었음 → 지금 값이 조문에 안 보이거나 개정된 적이 있을 때만
@@ -381,7 +432,12 @@ def due(input_dir, today=None):
     except (OSError, ValueError):
         return False
     last = _last(S)
-    return bool(S.get("oc")) and (last is None or (today - last).days >= FRESH_DAYS)
+    if not S.get("oc"):
+        return False
+    if last is None or (today - last).days >= FRESH_DAYS:
+        return True
+    # P2: 지켜보는 목록이 늘어 아직 못 받은 조문이 있으면 7일을 기다리지 않고 바로 받는다 (하루 한 번)
+    return bool(coverage(S)["missing"]) and (S.get("last_try") or {}).get("날") != today.isoformat()
 
 
 def state(input_dir, today=None):
@@ -400,10 +456,20 @@ def state(input_dir, today=None):
                 "msg": "최신 법령 확인 못 함 — %s. 아래 법령 관련 판단은 프로그램에 넣어 둔 기준(확인 안 된 최신 여부)으로 만든 것입니다" % why}
     days = (today - last).days
     fail = tr.get("날") == today.isoformat() and tr.get("실패")
+    cov = coverage(S)
+    when = "%s%s" % (last.isoformat(), " (오늘)" if days == 0 else " (%d일 전)" % days)
+    tail = " · 값을 조문과 맞춰 본 항목 %d개" % cov["compared"]
+    if cov["not_compared"]:
+        tail += ", 표·글이라 맞춰 보지 못한 항목 %d개 (사람이 확인: %s)" % (
+            sum(len(k) for _, k in cov["not_compared"]), ", ".join(n for _, k in cov["not_compared"] for n in k))
+    if days < FRESH_DAYS and not fail and cov["missing"]:
+        # P2: 예전엔 13개를 한 번도 못 받았는데도 '최신 법령 확인함'으로 나왔다
+        return {"ok": False, "last": last, "days": days, "coverage": cov,
+                "msg": "법령 확인 일부만 됨 — %s 지켜보는 조문 %d개 중 %d개 받음. 못 받은 %d개(%s)에 딸린 판단은 프로그램에 넣어 둔 기준 그대로입니다%s"
+                       % (when, cov["total"], cov["got"], len(cov["missing"]), ", ".join(cov["missing"]), tail)}
     if days < FRESH_DAYS and not fail:
-        return {"ok": True, "last": last, "days": days,
-                "msg": "최신 법령 확인함: %s%s 국가법령정보에서 조문 %s개 받음" % (last.isoformat(), " (오늘)" if days == 0 else " (%d일 전)" % days,
-                                                                tr.get("받음", "?"))}
+        return {"ok": True, "last": last, "days": days, "coverage": cov,
+                "msg": "최신 법령 확인함: %s 국가법령정보에서 지켜보는 조문 %d개를 모두 받음%s" % (when, cov["total"], tail)}
     return {"ok": False, "last": last, "days": days,
             "msg": "최신 법령 확인 못 함 — 마지막 확인 %s (%d일 전)%s. 그 뒤 바뀐 법령은 반영되지 않았을 수 있습니다"
                    % (last.isoformat(), days, ", 오늘 받기 실패: " + "; ".join(fail)[:150] if fail else "")}

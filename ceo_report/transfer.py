@@ -507,31 +507,13 @@ def ready_problems(R, input_dir, collect_dir=None, downloads=None):
         out.append("마지막 자료 변환이 실패함 (%s) — 다시 변환하세요" % failed[:60])
     elif when is None:
         out.append("자료 변환 시각을 모름 (변환결과.txt) — 자료 변환을 먼저 하세요")
-    if when is not None and collect_dir and os.path.isdir(collect_dir):
-        newer = []
-        for n in sorted(os.listdir(collect_dir)):
-            if ("분개장" in n or "자금계획" in n) and n.lower().endswith((".json", ".xls", ".xlsx")):
-                try:
-                    t = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(collect_dir, n)))
-                except (OSError, ValueError, OverflowError):
-                    continue
-                if t > when + dt.timedelta(seconds=60):
-                    newer.append(n)
-        if newer:
-            out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(newer[:3]) + (" 외 %d개" % (len(newer) - 3) if len(newer) > 3 else "")))
-    if when is not None and (downloads is not None or collect_dir):
-        from . import app as _app
-        try:
-            pend = _app.pending_downloads(downloads)
-        except Exception:   # 다운로드 폴더를 못 읽어도 이체 확인은 계속
-            pend = []
-        waiting = sorted(os.path.basename(p) for p, t in pend
-                         if ("분개장" in os.path.basename(p) or "자금계획" in os.path.basename(p))
-                         and t > when + dt.timedelta(seconds=60))
-        if waiting:
-            out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(waiting[:3]) + (" 외 %d개" % (len(waiting) - 3) if len(waiting) > 3 else "")))
+    if when is not None:   # ③④: 보고와 같은 판단 (gate.unconverted). 보고 쪽에서 이미 막은 줄은 다시 적지 않는다
+        for msg in gate.unconverted(input_dir, collect_dir, downloads, "이미 낸 지급이 다시 들어갈 수 있음"):
+            if not any(msg.split(" — ")[0] == o.split(" — ")[0] for o in out):
+                out.append(msg)
+        # 2차 전수조사 P19: 인트라넷 새 자료도 같은 확인에 (예전엔 분개장·자금계획 이름만 봤다)
+        root = os.path.dirname(os.path.abspath(collect_dir)) if collect_dir else None
+        out.extend(gate.unconverted_intranet(input_dir, root))
     return out
 
 
@@ -652,6 +634,17 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
     for vendor, amount, why in blocked:
         say("  못 넣음: %s %s — %s" % (vendor, "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    # 2차 전수조사 P20 (2026-11-18): 이체 기간은 기준일 다음 날부터라, 기준일 당일 날짜의 지급 예정(장부에 아직 지급 전표 없음)은
+    # 파일·출금 목록 어디에도 없었다 → 넣지는 않고(이미 보냈을 수 있음) 따로 알린다
+    day0 = R["asof"]
+    if day0 < start:
+        r0, b0, _ = build(R["events"], accounts, day0, day0, splits, None, {})
+        n0 = len(r0) + len(b0)
+        if n0:
+            amt0 = sum(int(r[3]) for r in r0) + sum(a or 0 for _, a, _ in b0)
+            result["same_day"] = (n0, amt0)
+            say("[확인] 기준일 당일(%s) 날짜의 지급 예정 %d건 %s원은 이 파일에 없습니다 (장부에 지급 전표가 아직 없음) — "
+                "아직 보내지 않았으면 기간 시작을 %s 로 바꿔 다시 만드세요" % (day0.isoformat(), n0, "{:,}".format(amt0), day0.isoformat()))
     for vendor, amount, why in info.get("regular") or []:   # 2차 C2·P5-8: 무엇을 뺐는지 이름으로
         say("  정기 지급이라 뺌: %s %s — %s" % (vendor or "(거래처 없음)", "금액 미확인" if amount is None else "{:,}원".format(amount), why))
     for vendor, word in sorted(set(info.get("hints") or [])):

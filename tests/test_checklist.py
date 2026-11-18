@@ -1,4 +1,4 @@
-"""확인할 것 화면·결정 저장·통장 잔액 대조·홈택스 대조·중복 의심 자동 판단·입력 백업 (사용자 2026-11-05)."""
+"""확인할 것 화면·결정 저장·통장 잔액 대조·중복 의심 자동 판단·입력 백업 (사용자 2026-11-05)."""
 import csv
 import datetime as dt
 import json
@@ -12,7 +12,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from ceo_report import app, checklist, hometax, review_checks, transfer  # noqa: E402
+from ceo_report import app, checklist, review_checks, transfer  # noqa: E402
 from ceo_report.render import _each_row  # noqa: E402
 
 D = dt.date
@@ -49,8 +49,11 @@ class TestDuplicates(unittest.TestCase):
         self.assertEqual(review_checks.duplicate_items(J), [])
 
     def test_different_memo_or_settled_each_is_normal(self):
+        # 2차 전수조사 D8 (2026-11-18): 적요만 다른 것은 '다른 거래'로 보지 않는다 (적요 낱말로 판단하지 않음) — 참고로만 붙인다
         J = buy(D(2026, 10, 1), "50001", 1100000, memo="가") + buy(D(2026, 10, 1), "50002", 1100000, memo="나")
-        self.assertTrue(review_checks.classify_duplicates(J)[0][4])
+        cls = review_checks.classify_duplicates(J)
+        self.assertFalse(cls[0][4])
+        self.assertIn("적요는 전표마다 다름 (참고)", cls[0][3])
         J = buy(D(2026, 10, 1), "50001", 1100000) + buy(D(2026, 10, 1), "50002", 1100000)
         J += [ln(D(2026, 10, 20), "00010", "25300", debit=1100000), ln(D(2026, 11, 20), "00011", "25300", debit=1100000)]
         self.assertTrue(review_checks.classify_duplicates(J)[0][4])
@@ -136,34 +139,6 @@ class TestBank(unittest.TestCase):
         self.assertEqual(len(checklist.bank_items(self.tmp)), 1)
         with self.assertRaises(ValueError):
             checklist.save_bank(self.tmp, "11월", "1")
-
-
-class TestHometax(unittest.TestCase):
-    def rows(self, sup_same):
-        head = ["작성일자", "승인번호", "발급일자", "전송일자", "공급자사업자등록번호", "종사업장번호", "상호", "대표자명",
-                "공급받는자사업자등록번호", "종사업장번호", "상호", "대표자명", "합계금액", "공급가액", "세액"]
-        out = [["전자(세금)계산서 목록"], [], head]
-        for i, (day, total, other) in enumerate((("2026-10-01", 1100, "가상갑"), ("2026-10-05", 2200, "가상을"))):
-            us, them = ("111", "우리"), ("2%d" % i, other)
-            sup, bu = (us, them) if sup_same else (them, us)
-            out.append([day, "2026100%d-0001" % i, day, day, sup[0], "", sup[1], "", bu[0], "", bu[1], "", total, total // 11 * 10,
-                        total // 11])
-        return out
-
-    def test_direction_and_match(self):
-        side, rows = hometax.parse_rows(self.rows(True))
-        self.assertEqual(side, "매출")
-        self.assertEqual(rows[0]["vendor"], "가상갑")
-        side, rows = hometax.parse_rows(self.rows(False))
-        self.assertEqual(side, "매입")
-        books = [{"date": D(2026, 10, 3), "no": "1", "total": 1100, "vendor_norm": "가상갑", "vendor": "가상갑"}]
-        only_ht, only_books, ok = hometax._match(rows, books)
-        self.assertEqual((ok, [h["total"] for h in only_ht]), (1, [2200]))
-
-    def test_no_folder_is_quiet(self):
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp, True)
-        self.assertEqual(hometax.compare(tmp, []), {"notes": [], "items": []})
 
 
 class TestTransferMissing(unittest.TestCase):

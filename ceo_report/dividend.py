@@ -376,7 +376,13 @@ def why_html(D, S, esc):
               "한 사람이 1년 동안 받은 이자·배당이 합쳐서 <b>%s원 이하</b>면 세금은 이걸로 끝입니다. "
               "넘으면 넘는 몫은 그 사람의 급여 등 다른 소득과 합쳐서 다시 세금을 계산(금융소득 종합과세)하므로, "
               "소득이 많은 사람일수록 넘는 몫에 15.4%%보다 높은 세율이 붙습니다." % W(FIN_LIMIT))
-    # ③ 사람마다: 근로소득 → 세율 구간
+    # ③ 사람마다: 근로소득 → 세율 구간. 여러 줄이면 ③-1, ③-2 … (1차 C4: 번호 ③이 두 번 나옴)
+    n3 = sum(1 for p in P if not p["minor"]) + (1 if any(p["minor"] for p in P) else 0)
+    k3 = [0]
+
+    def no3():
+        k3[0] += 1
+        return "③" if n3 <= 1 else "③-%d" % k3[0]
     for p in P:
         if p["minor"]:
             continue
@@ -385,13 +391,13 @@ def why_html(D, S, esc):
         rate = bracket(p["other_base"])
         if w:
             src = "%s, %s" % (wi.get("src") or "급여 자료", wi.get("span") or "")
-            t = ("<b>③ %s님(지분 %s)</b> — 근로소득(1년 급여) <b>%s원</b>(%s)에서 근로소득공제 %s원·기본공제를 빼면 세금 매기는 금액이 약 %s원이라 "
+            t = ("<b>%s %s님(지분 %s)</b> — 근로소득(1년 급여) <b>%s원</b>(%s)에서 근로소득공제 %s원·기본공제를 빼면 세금 매기는 금액이 약 %s원이라 "
                  "세율 구간이 <b>%s</b>(지방소득세 포함 %s)입니다. "
-                 % (esc(p["name"]), _pct(p["share"]), W(w), esc(src), W(wage_deduction(w)), W(p["other_base"]),
+                 % (no3(), esc(p["name"]), _pct(p["share"]), W(w), esc(src), W(wage_deduction(w)), W(p["other_base"]),
                     _pct(rate), _pct(rate * (1 + LOCAL))))
         else:
-            t = ("<b>③ %s님(지분 %s)</b> — 근로소득을 급여 자료에서 찾지 못해 0원으로 계산했습니다(%s). "
-                 % (esc(p["name"]), _pct(p["share"]), esc(", ".join(wi.get("looked") or [])) or "자료 없음"))
+            t = ("<b>%s %s님(지분 %s)</b> — 근로소득을 급여 자료에서 찾지 못해 0원으로 계산했습니다(%s). "
+                 % (no3(), esc(p["name"]), _pct(p["share"]), esc(", ".join(wi.get("looked") or [])) or "자료 없음"))
         if rate * (1 + LOCAL) > WITHHOLD * (1 + LOCAL) + 0.0001:
             t += ("그래서 배당이 1년 %s원을 넘으면 넘는 몫에는 15.4%% 대신 약 %s가 붙어 세금이 늘어납니다." % (W(FIN_LIMIT), _pct(rate * (1 + LOCAL))))
         else:
@@ -402,18 +408,26 @@ def why_html(D, S, esc):
         li.append(t)
     minors = [p for p in P if p["minor"]]
     if minors:
-        li.append("<b>③ 미성년 자녀(%s)</b> — 자녀는 금융소득이 1년 2천만 원을 넘지 않게 묶었습니다(넘으면 종합과세 신고·건강보험 피부양자 문제)."
-                  % esc(", ".join("%s %s" % (p["name"], _pct(p["share"])) for p in minors)))
+        li.append("<b>%s 미성년 자녀(%s)</b> — 자녀는 금융소득이 1년 2천만 원을 넘지 않게 묶었습니다(넘으면 종합과세 신고·건강보험 피부양자 문제)."
+                  % (no3(), esc(", ".join("%s %s" % (p["name"], _pct(p["share"])) for p in minors))))
     # ④ 지분율대로 → 누가 먼저 2천만에 닿나
     best = D.get("best") or 0
     if best:
         rows = D.get("best_rows") or []
         hit = [p for p, (d, _) in zip(P, rows) if p["interest"] + d >= FIN_LIMIT - STEP]
-        who = hit[0] if hit else max(P, key=lambda p: p["share"])
+        top = max(P, key=lambda p: p["share"])
+        who = (top if any(h is top for h in hit) else hit[0]) if hit else top
+        # 2차 전수조사 J19: 먼저 닿는 사람이 지분이 가장 큰 사람이 아닐 수 있다 (다른 이자·배당이 이미 있는 사람) → 계산 결과대로 적음
+        if who is top:
+            lead = "지분이 가장 큰 %s님" % esc(who["name"])
+        elif who.get("interest"):
+            lead = "%s님(지분은 %s님보다 작지만 이미 받은 이자·배당 %s원이 있음)" % (esc(who["name"]), esc(top["name"]), W(who["interest"]))
+        else:
+            lead = "%s님" % esc(who["name"])
         li.append("<b>④ 지분율대로 똑같이 나눠야 함</b> — 배당은 지분율대로 나눠야 합니다(다르게 나누면 증여로 볼 수 있음). "
-                  "총액을 늘리면 모두의 몫이 같이 늘어나는데, 지분이 가장 큰 %s님 몫이 먼저 2천만 원에 닿습니다. "
+                  "총액을 늘리면 모두의 몫이 같이 늘어나는데, %s 몫이 먼저 2천만 원에 닿습니다. "
                   "총 <b>%s원</b>이면 %s 받습니다."
-                  % (esc(who["name"]), W(best), ", ".join("%s님 %s원" % (esc(p["name"]), W(d)) for p, (d, _) in zip(P, rows))))
+                  % (lead, W(best), ", ".join("%s님 %s원" % (esc(p["name"]), W(d)) for p, (d, _) in zip(P, rows))))
         more = [t for t in D.get("table") or [] if t["total"] > best]
         t0 = next((t for t in D.get("table") or [] if t["best"]), None)
         txt = ("<b>⑤ 그래서 세금으로 본 권장 금액은 %s원</b> — 이때 주주 세금은 모두 %s원으로 배당의 %s입니다."
@@ -448,7 +462,7 @@ def render(D, esc, S=None):
     else:
         h.append("<div class='say'>지금 조건으로는 15.4%를 넘지 않는 배당 금액이 없습니다 (아래 표 참고).</div>")
     if D["limit"] is not None:
-        h.append("<div class='note'>배당 한도(미처분이익잉여금 ÷ 1.1, 이익준비금 10%% 몫 뺌): %s원 · 실제 배당은 통장 여유 자금(대출 만기·법인세 납부 뒤)도 함께 보고 정하세요.</div>"
+        h.append("<div class='note'>배당 한도(미처분이익잉여금에서 법으로 쌓아야 하는 이익준비금을 뺀 금액 — 배당의 10%%씩, 자본금의 절반까지): %s원 · 실제 배당은 통장 여유 자금(대출 만기·법인세 납부 뒤)도 함께 보고 정하세요.</div>"
                  % W(D["limit"]))
     else:
         h.append("<div class='note'>미처분이익잉여금을 아직 몰라 배당 한도를 확인하지 못함 — 작년 분개장이나 재무상태표가 들어오면 채워집니다.</div>")
@@ -535,6 +549,22 @@ def read_settings(input_dir):
                 if k and v:
                     out[k] = v
     return out
+
+
+def big_outflow(input_dir):
+    """창 '배당' 질문에 넣은 '장부·자금계획에 없는 큰 지출' -> (금액, 날짜 또는 None) 또는 None (없음·못 읽음).
+    2차 전수조사 A6 (2026-11-18): 배당 판단에서만 빼던 값을 자금 보고의 예상 줄에도 넣는다."""
+    try:
+        st = read_settings(input_dir)
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    if st.get("큰지출") != "있음":
+        return None
+    try:
+        amount = int(float(str(st.get("큰지출금액") or "").replace(",", "")))
+    except ValueError:
+        return None
+    return (amount, _d(st.get("큰지출시기"))) if amount > 0 else None
 
 
 TAX_GROUP = "법인세 감면"   # 사용자 2026-11-17: 감면·공제 고르기는 '배당 판단 질문' 창에서 빼 목록에 따로 둔다
@@ -745,7 +775,7 @@ def advise(R, S, D, input_dir=None):
     timing = ("%d년 3월 정기 주주총회 (%d년 이익 처분)" % (asof.year, asof.year - 1)) if asof.month <= 3 else \
         ("%d년 3월 정기 주주총회 (%d년 이익 처분) — 지금은 미리 보기" % (asof.year + 1, asof.year))
     if use.get("중간배당규정") == "있음":
-        timing += " · 정관 42조: 한 해 중간에도 1회 중간배당 가능 (이사 2명 이하면 주총 결의나 대표이사 결정)"
+        timing += " · 정관 42조: 한 해 중간에도 1회 중간배당 가능 (이사 2명 이하면 주총 결의나 대표이사 결정 — 정관 33조②·상법 383조⑥)"
     missing = [q for k, q, v, need, u in CL if need and (u is None or str(u).endswith("아직 입력 안 함"))]
     if missing:
         return {"verdict": "보류", "amount": 0, "timing": timing, "facts": facts, "checklist": CL,

@@ -34,6 +34,7 @@ DEFAULT_CONFIG = collections.OrderedDict([
     ("loan_codes", ("26000", "29300")),   # 단기차입금·장기차입금 (장부채무.csv, 2026-11-04 점검 A2)
     ("deposit_codes", ("10500",)),        # 정기예금 (장부채무.csv: 만기일까지 쓸 수 없는 돈, 사용자 2026-11-04)
     ("vat_codes", ("13500",)),
+    ("prepaid_prefixes", ("131",)),       # 선급금 계정 앞자리 (13100·13101·13102). 2차 전수조사 P10: 코드 안 고정값 → 설정으로
     ("closing_sorts", ("결차", "결대", "결산전표", "잉여금관련전표")),   # 인쇄 분개장 유형: 결산전표(원가 대체·감가상각) · 잉여금관련전표(손익 대체), 2025 분개장 12/31
     ("link_days", 90),
     ("card_words", ("카드",)),
@@ -128,6 +129,7 @@ CONFIG_ITEMS = (
     ("변환_차입금계정", "loan_codes", "숫자목록"),
     ("변환_정기예금계정", "deposit_codes", "숫자목록"),
     ("변환_부가세대급금계정", "vat_codes", "숫자목록"),
+    ("변환_선급금계정앞자리", "prepaid_prefixes", "숫자목록"),
     ("변환_결산구분", "closing_sorts", "낱말목록"),
     ("변환_자동연결일수", "link_days", "일수"),
     ("변환_카드거래처", "card_words", "낱말목록"),
@@ -883,7 +885,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_a
     p = _read_prev_rows(input_dir, annual.FILE, annual.KEYS)
     tables.append(_keep_if_unreadable(annual.build_table(books, cfg, sales, p or []), p))
     from . import cashflow   # 현금흐름표 (사용자 2026-11-12): 경영관리 보고에만
-    tables.append(cashflow.build_table(books, cfg))
+    tables.append(cashflow.build_table(books, cfg, wehago_dir))
     from . import credit   # 기업신용평가 미리보기 (사용자 2026-11-12): 계정별 연월 합 → 재무상태표·손익
     tables.append(credit.build_table(books))
     from . import wehago_raw   # 위하고 인사·연말정산·고정자산 화면 원본 (사용자 2026-11-13, 확장 자동 수집)
@@ -895,7 +897,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_a
     from . import filing   # 신고 일정 (사용자 2026-11-12: 제출기한도 장부를 보고 알려 줌)
     tables.append(filing.build_table(books, cfg, asof, input_dir))
     from . import filehelp   # 신고 도우미 (사용자 2026-11-12)
-    tables.append(filehelp.build_table(books, cfg, asof, input_dir))
+    tables.append(filehelp.build_table(books, cfg, asof, input_dir, wehago_dir))
     from . import reconcile   # 자료 대조 (사용자 2026-11-14): 장부 ↔ 위하고 시산표·재무상태표·차입금현황 등, 차입금.csv·카드사용.csv
     tables.extend(reconcile.build_tables(books, input_dir, wehago_dir, asof, snap))
     return tables, states
@@ -1145,6 +1147,13 @@ def build_fundplan(books, cfg, wehago_dir, asof):
         ", ".join(d.isoformat() for d in stamps), books.book_date.isoformat(),
         " — 그 사이 %d일의 지급·입금은 분개장으로 확인 못함" % gap if gap > 0 else ""))
     notes.append("분개장 대조: " + " · ".join("%s %d" % (k, counts[k]) for k in fundplan.STATES))
+    # 2차 전수조사 V19 (2026-11-18): 장부 여러 건의 합으로 맞춘 '이미 지급·입금'은 우연히 합이 맞았을 수도 있다 → 목록으로 알린다
+    combo = [r for r in res["rows"] if r.get("상태") in ("이미 지급", "이미 입금") and "건 합계로 나눠" in str(r.get("근거") or "")]
+    if combo:
+        notes.append("[확인] 자금계획서 %d줄을 장부 여러 건의 합으로 맞춰 '이미 지급·입금'으로 봄 (금액 합이 우연히 같았을 수도 있음): %s — "
+                     "실제로 나눠 낸(받은) 돈이 아니면 위하고 자금계획에서 그 줄을 확인하세요" % (
+                         len(combo), " / ".join("%s %s %s원 ← %s" % (r["예정일"], r["거래처"], "{:,}".format(int(r["금액"])),
+                                                              str(r["근거"]).split(": ", 1)[-1]) for r in combo[:6])))
     notes.extend(fundplan_opening_checks(res.get("openings") or [], books, cfg))
     for r in res["rows"]:
         if r["상태"] != "예정":
@@ -1316,6 +1325,11 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         return res
     cfg, cfg_notes = read_config(input_dir)
     books = wehago.load_books(wehago_dir, asof, None)  # None: 장부가 오래됐다고 멈추지 않는다
+    try:   # 2차 전수조사 P4: 이름으로 알아본 거래처·계정을 코드와 함께 적어 새로 생기거나 이름이 바뀌면 보이게
+        from . import codes
+        books.notes.extend(codes.judged_lines(books.journal))
+    except Exception:
+        pass
     snap, snap_line = read_latest_snapshot(collect_dir)
     states, cross = {}, []
     if books.state != "ok":
@@ -1390,11 +1404,12 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
                                     if _drop_stale(input_dir, insights.FILE) else "예전 것이 남아 보고가 지난 장부 날짜·회사 이름을 볼 수 있음"))
             dups = review_checks.duplicate_lines(books.journal)
             overlap, checks = overlap_lines(input_dir, tables), input_check_lines(input_dir)
-            from . import checklist, hometax
-            ht = hometax.compare(collect_dir, books.journal)   # 홈택스 전자세금계산서 대조 (사용자 2026-11-05)
-            listings = tidy + overlap + dups + ht["notes"] + checks
-            summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [n for n in ht["notes"] if n.startswith("홈택스 ") and "대조" in n] + [checks[0]]
-            items = (review_checks.duplicate_items(books.journal) + ht["items"]
+            from . import checklist
+            # 홈택스 엑셀 대조(수집\\홈택스)는 뺌 (2차 전수조사 제안 31, 사용자 2026-11-18): 그 폴더에 넣는 자료가 없고,
+            # 홈택스 매출 계산서 ↔ 장부는 위하고에서 받은 자료로 '7. 위하고 대조'가 맞춘다 (reconcile.invoice_rows)
+            listings = tidy + overlap + dups + checks
+            summary = summary + ([tidy[0]] if tidy else []) + [overlap[0], dups[0]] + [checks[0]]
+            items = (review_checks.duplicate_items(books.journal)
                      + [i for t in tables if t.written for i in (t.extra or {}).get("check_items", [])]
                      + checklist.convert_items(tables, cross, [n for t in tables for n in (t.notes or [])]
                                                      + [n for n in getattr(books, "notes", []) or [] if str(n).startswith("[확인]")]
