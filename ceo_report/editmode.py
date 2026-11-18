@@ -103,10 +103,35 @@ def original_path(html_path):
     return base[:-len(SUFFIX)] + ext if base.endswith(SUFFIX) else html_path
 
 
+# 2차 전수조사 J3 (2026-11-18): 손으로 고친 보고는 맨 아래 작은 한 줄로 알린다 — 받는 사람이 계산 값인지 고친 값인지 알게.
+# 고친 곳이 없으면 붙이지 않는다. (결정 카드 2026-11-18 — 답이 '표시 안 함'이면 MARK = False)
+MARK = True
+_MARK_RE = re.compile(r"<div id=\"edit-mark\".*?</div>", re.S)
+
+
+def unmark(page):
+    return _MARK_RE.sub("", page or "")
+
+
+def mark(orig_page, page, today=None):
+    """고친 보고에 '손으로 고친 곳 N곳' 한 줄을 붙인다 (</body> 앞). 고친 곳이 없거나 MARK 가 꺼져 있으면 표시 없이."""
+    page = unmark(page)
+    if not MARK:
+        return page
+    n = len(changes(orig_page, page, limit=100000))
+    if not n:
+        return page
+    import datetime as _dt
+    line = ("<div id=\"edit-mark\" style=\"margin:10px 0 0;font-size:10.5px;color:#556070;text-align:right\">"
+            "손으로 고친 곳 %d곳 (%s) · 고친 숫자의 합계와 비율은 다시 계산하지 않음</div>" % (n, (today or _dt.date.today()).isoformat()))
+    i = page.lower().rfind("</body>")
+    return page + line if i < 0 else page[:i] + line + page[i:]
+
+
 def _texts(page):
     """보이는 글 조각들 (style·script 빼고, 공백 하나로)."""
     import html as _h
-    page = strip(page or "")
+    page = unmark(strip(page or ""))
     page = re.sub(r"<(style|script)[^>]*>.*?</\1>", "", page, flags=re.S | re.I)
     page = page.split("<body", 1)[-1]
     out = []
@@ -265,6 +290,11 @@ class Session(object):
                    "— 이 창을 닫고 수정 모드를 다시 여세요")
             self.on_saved(None, msg)
             return False, msg, None
+        try:
+            with open(self.orig, encoding="utf-8") as f:
+                page = mark(f.read(), page)
+        except (OSError, ValueError):
+            page = unmark(page)   # 원본을 못 읽으면 고친 곳을 셀 수 없어 표시 없이 (저장은 그대로)
         with self.lock:
             tmp = self.dst + ".tmp"
             try:
