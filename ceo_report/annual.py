@@ -383,6 +383,20 @@ def compute(input_dir, year, settings=None, D=None, asof=None):
     return A
 
 
+def _fold_dep(P):
+    """보여 주기용 사본: 결산 전 감가상각비 예상(dep_pending)을 장부 감가상각비 줄에 합친다 (판관비·영업이익도 같이).
+    세전 이익·법인세는 이미 예상을 뺀 값이라 그대로. 원본(P)은 달별 표·분기 합계가 쓰므로 바꾸지 않는다."""
+    if not P:
+        return P
+    V = dict(P)
+    p = P.get("dep_pending") or 0
+    if p:
+        V["dep_book"], V["dep"] = P["dep"], P["dep"] + p
+        V["common"], V["op"] = P["common"] + p, P["op"] - p
+        V["dep_pending"], V["dep_folded"] = None, True
+    return V
+
+
 def apply_monthly(A, M, pack):
     """월간 보고와 같은 계산으로 맞춘다 (사용자 2026-11-17: 연간 보고에 넣어야 할 항목 전부, 법인세는 월간과 같은 계산).
     M = 끝난 달 말일 기준 월간 계산(R), pack = render.annual_pack(M). 결산 법인세가 장부에 들어왔으면(tax_fixed) 그대로 둔다.
@@ -815,30 +829,34 @@ def render(A, mode):
     h.append("<div class='four top'>")
     h.append(_card("%d년%s 매출" % (year, ym), W(Yp["rev"]), ("작년 %s · %s" % (W(Lp["rev"]), chg(Yp["rev"], Lp["rev"])) if Lp else "")
                    + ("<br>연 목표 %s의 %s%s" % (W(goal_all), pct(Yp["rev"], goal_all), " (기간 %d/12)" % cut if mid else "") if goal_all else "")))
-    h.append(_card("영업이익", W(Yp["op"]), "영업이익률 %s%s" % (pct(Yp["op"], Yp["rev"]), " · 작년 %s" % W(Lp["op"]) if Lp else "")))
+    # 사용자 2026-11-18 '감가상각비가 2번': 장부 감가상각비와 결산 전 예상을 한 줄로 (결산 때처럼 판관비 안에서 영업이익에 반영)
+    V, VL = _fold_dep(Yp), _fold_dep(Lp)
+    h.append(_card("영업이익", W(V["op"]), "영업이익률 %s%s" % (pct(V["op"], V["rev"]), " · 작년 %s" % W(VL["op"]) if VL else "")
+                   + ("<br>결산 전 감가상각비 예상 포함" if V.get("dep_folded") else "")))
     h.append(_card("세전 이익", W(Yp["pre"]), "작년 %s · %s" % (W(Lp["pre"]), chg(Yp["pre"], Lp["pre"])) if Lp else ""))
     h.append(_card(bal_lab, W(A["bal_end"]), "연초 %s · %s" % (W(A["bal0"]), sgn(A["bal_end"] - A["bal0"]))
                    if A["bal0"] is not None and A["bal_end"] is not None else ""))
     h.append("</div>")
     if Lp:
         h.append("<div class='yl'><b>작년 대비</b> 매출 %s, 영업이익 %s, 세전 이익 %s, 영업이익률 %s → %s%s</div>"
-                 % (chg(Yp["rev"], Lp["rev"]), chg(Yp["op"], Lp["op"]), chg(Yp["pre"], Lp["pre"]), pct(Lp["op"], Lp["rev"]),
-                    pct(Yp["op"], Yp["rev"]), " (작년 같은 1~%d월)" % cut if mid else (" (작년은 %d개월)" % len(Lp["months"]) if not Lp["full"] else "")))
+                 % (chg(Yp["rev"], Lp["rev"]), chg(V["op"], VL["op"]), chg(Yp["pre"], Lp["pre"]), pct(VL["op"], VL["rev"]),
+                    pct(V["op"], V["rev"]), " (작년 같은 1~%d월)" % cut if mid else (" (작년은 %d개월)" % len(Lp["months"]) if not Lp["full"] else "")))
     h.append("<div class='sec'>" + _q("1. %d년%s 손익 (%s)" % (year, ym, "결산 확정" if A["closed"] and A["tax_fixed"] else "결산 전"), "근거 1-1~1-2"))
     rows = [("매출", "rev", ""), ("− 매출원가", "cogs", ""), ("매출총이익", "gp", "hq"), ("− 판매비와관리비", "common", ""),
-            ("급여", "sal", "ind"), ("감가상각비", "dep", "ind"), ("그 밖의 판관비", "other", "ind"), ("영업이익", "op", "tot"),
+            ("급여", "sal", "ind"),
+            ("감가상각비" + (" (결산 전 예상 포함)" if V.get("dep_folded") or (VL and VL.get("dep_folded")) else ""), "dep", "ind"),
+            ("그 밖의 판관비", "other", "ind"), ("영업이익", "op", "tot"),
             ("+ 영업외 수익", "nin", ""), ("− 영업외 비용", "nout", "")]
-    if Yp.get("dep_pending") or (Lp and Lp.get("dep_pending")):
-        rows.append(("− 감가상각비 예상 (결산 전)", "dep_pending", ""))
     if Yp.get("bad_pending"):   # 계산-08 (사용자 2026-11-17): 대손충당금 예상도 먼저 뺌 (월간과 같게)
         rows.append(("− 대손충당금 예상 (결산 전)", "bad_pending", ""))
     rows += [("세전 이익", "pre", "tot"), ("− 법인세 등 (지방소득세 포함)", "tax", ""), ("당기순이익", "net", "tot")]
     Yp["tax"] = A["tax"]
     t = ["<div class='card'><table class='pt pl'><thead><tr><th>구분</th><th>%d년%s</th><th>매출 대비</th>%s</tr></thead><tbody>"
          % (year, ym, "<th>%d년 %s</th><th>증감</th><th>증감률</th>" % (year - 1, lm) if Lp else "")]
+    V["tax"] = A["tax"]
     for lab, k, cls in rows:
-        a = Yp.get(k)
-        b = Lp.get(k) if Lp else None
+        a = V.get(k)
+        b = VL.get(k) if VL else None
         t.append("<tr class='%s'><td>%s</td><td>%s</td><td>%s</td>%s</tr>" % (
             cls, lab, W(a), pct(a, Yp["rev"]) if a is not None else "",
             "<td>%s</td><td>%s</td><td>%s</td>" % (W(b), sgn(a - b) if a is not None and b is not None else "—", chg(a, b)) if Lp else ""))
@@ -849,8 +867,8 @@ def render(A, mode):
             fix.append("· 감가상각비 확정 <b>%s</b> — 연중 예상 %s(%s)보다 %s" % (W(Yp["dep"]), W(A["dep_est"]), A["dep_src"], sgn(Yp["dep"] - A["dep_est"])))
     else:
         if Yp.get("dep_note"):   # 월간과 같은 계산 (apply_monthly)
-            fix.append("· %s 감가상각비 예상 %s를 먼저 뺐습니다 (%s · 월간 보고와 같은 계산)" % (
-                "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(Yp.get("dep_pending") or 0), esc(Yp["dep_note"])))
+            fix.append("· %s 감가상각비 = 장부 %s + 결산 전 예상 %s (%s · 월간 보고와 같은 계산) — 한 줄로 합쳐 판관비·영업이익에 넣었습니다" % (
+                "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(Yp["dep"]), W(Yp.get("dep_pending") or 0), esc(Yp["dep_note"])))
         else:
             fix.append("· %s 감가상각비는 한 해 예상 %s(%s)%s를 먼저 뺐습니다 (월간 보고와 같은 방식)" % (
                 "연중 보고라 결산 전 —" if mid else "12월 결산 전표가 아직 없어", W(A["dep_est"]), A["dep_src"],

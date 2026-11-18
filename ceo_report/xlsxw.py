@@ -2,7 +2,7 @@
 
 - 칸에 값 또는 수식을 넣는다. 수식은 엑셀 문법 그대로 쓰고, 여기서 직접 계산한 값을 함께 저장한다
   (엑셀은 열 때 다시 계산하고(fullCalcOnLoad), 계산하지 않는 미리보기에서도 숫자가 보이게).
-- 계산할 수 있는 수식: + − × ÷, 괄호, 비교(= <> < > <= >=), 칸·범위, SUM · SUMIF · ROUND · IF · MAX · MIN · ABS.
+- 계산할 수 있는 수식: + − × ÷, 괄호, 비교(= <> < > <= >=), 칸·범위, SUM · SUMIF · ROUND · INT · IF · MAX · MIN · ABS.
 - 꾸밈: 굵게·글자색·바탕색·테두리·숫자 모양·줄바꿈·가운데, 열 너비, 칸 합치기, 목록 고르기(예/아니오).
 """
 import datetime as dt
@@ -186,6 +186,9 @@ def _call(name, args):
         return max(list(_flat(args)) or [0])
     if name == "MIN":
         return min(list(_flat(args)) or [0])
+    if name == "INT":
+        import math
+        return math.floor(_n(args[0]) + 1e-9)
     if name == "ABS":
         return abs(_n(args[0]))
     if name == "ROUND":
