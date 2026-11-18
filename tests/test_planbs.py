@@ -285,7 +285,9 @@ class TestClosingCosts(unittest.TestCase):
         got = dict((c["key"], (c["amount"], c["in_base"])) for c in self.C["costs"])
         self.assertEqual(got, {"dep": (10_000_000, True), "bad": (4_000_000, False), "card": (1_000_000, False),
                                "ins": (2_750_000, False), "ret": (10_000_000, False), "bonus": (0, False)})
-        self.assertEqual(self.C["tax_in"]["base_c"], 60_000_000 - 17_750_000)   # 감가상각은 법인세 예상에 이미 빠짐
+        # 감가상각은 법인세 예상에 이미 빠짐. 퇴직급여 쌓는 몫 1천만은 이익에서만 빼고 세금 계산에서는 안 뺌 (2차 전수조사 V1)
+        self.assertEqual(self.C["tax_in"]["base_c"], 60_000_000 - 7_750_000)
+        self.assertTrue([c for c in self.C["costs"] if c["key"] == "ret"][0]["no_deduct"])
 
     def test_sheet_balances(self):
         bk = planbs.build(self.C)
@@ -294,7 +296,8 @@ class TestClosingCosts(unittest.TestCase):
         for a in cells["check"]:
             self.assertEqual(bk.value(a), 0)
         tc, te = (bk.value(a) for a in cells["tax"])
-        self.assertEqual(tc, planbs.tax_total(60_000_000 - 17_750_000, 2026, self.d))
+        self.assertEqual(tc, planbs.tax_total(60_000_000 - 7_750_000, 2026, self.d))
+        self.assertTrue(self.C["tax_in"]["same"])
         cn, en = (bk.value(a) for a in cells["net"])
         self.assertEqual(cn - en, 6_000_000 - (tc - te))   # 결산 비용은 양쪽 모두 → 차이는 영업외수익과 세금뿐
         set_all(bk, "inc", "아니오")

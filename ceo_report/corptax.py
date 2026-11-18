@@ -362,9 +362,10 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
         basis += " · 선납세금 중 지방소득세로 가른 줄 %d건 %s원 (거래처·적요에 '지방'·구청 등 — 한 줄에 국세·지방세를 함께 넣었으면 확인)" % (
             len(local_lines), "{:,}".format(local_prepaid))
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
-                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"])),
+                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"]),
+                 감가상각=str(dep["extra"] or 0)),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
-                      "법인세 산출세액 %s × 10%%%s" % ("{:,}".format(corp), (" = %s − 원천징수된 지방소득세 %s" % ("{:,}".format(local_tax), "{:,}".format(local_prepaid))) if local_prepaid else "")), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
+                      "법인세 산출세액 %s × 10%%%s" % ("{:,}".format(corp), (" = %s − 원천징수된 지방소득세 %s" % ("{:,}".format(local_tax), "{:,}".format(local_prepaid))) if local_prepaid else "")), 과세표준="", 산출세액=str(local_tax), 기납부=str(local_prepaid), 대손충당금="", 세무조정="")]
     rest = None if unknown else rest_rows(by_month, ym, dep, base, nat, corp, year, input_dir, prepaid, local_prepaid)
     if rest:
         rows += rest
@@ -404,7 +405,8 @@ def rest_rows(by_month, ym, dep, base, nat, corp, year, input_dir, prepaid=0, lo
               "{:,}".format(base + extra), "{:,}".format(nat2)))
     out = []
     if more_nat > 0:
-        out.append(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), more_nat, "예상", why))
+        # 과세표준 칸은 비워 둔다 (본 줄과 섞이지 않게). 연말과세표준 칸 = 연말 예상 과세표준 (예산의 올해분 법인세가 이 값을 그대로 씀 — 2차 전수조사 제안 3: 한 군데서만 계산)
+        out.append(dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), more_nat, "예상", why), 연말과세표준=str(base + extra)))
     if more_local > 0:
         out.append(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), more_local, "예상",
                         "남은 달 이익으로 늘어나는 법인세 산출세액 %s × 10%%" % "{:,}".format(corp2 - corp)))

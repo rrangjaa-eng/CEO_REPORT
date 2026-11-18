@@ -369,7 +369,10 @@ def load(folder):
                               "bad_debt": num(r.get("대손충당금"), iss, r, "대손충당금") if (r.get("대손충당금") or "").strip() else None,
                               "adj": num(r.get("세무조정"), iss, r, "세무조정") if (r.get("세무조정") or "").strip() else None,
                               # A4 (2026-11-17): 분납할 몫 (회사 선택, 법인세 줄만). 금액 칸은 전체, 자금 일정만 둘로 나눈다
-                              "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None})
+                              "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None,
+                              # 2차 전수조사 P3 (2026-11-18): 감가상각비 예상도 숫자 칸으로 (근거 글에서 뽑지 않음)
+                              "dep": num(r.get("감가상각"), iss, r, "감가상각") if (r.get("감가상각") or "").strip() else None,
+                              "base_ye": num(r.get("연말과세표준"), iss, r, "연말과세표준") if (r.get("연말과세표준") or "").strip() else None})
 
     # 장부 채무 (변환.py 장부채무.csv, 2026-11-04 점검 A1·A2): 없으면 None
     from .debts import load as load_debts

@@ -2098,8 +2098,11 @@ def _corp_est(R, Y, ym):
     row, upto = _corp_row_mid(R, ym)
     lrow = _corp_row_mid(R, ym, "법인지방소득세")[0]
     if row is not None and upto:   # 월 중간: 이 표의 세전 이익(감가상각 뺀 값) + 지난달까지 장부로 낸 세무조정 예상
-        m = re.search(r"세무조정 예상 (-?[\d,]+)", row.get("basis") or "")
-        base = Y["nonop"]["pretax"] + (int(m.group(1).replace(",", "")) if m else 0)
+        adj = row.get("adj")   # 숫자 칸 먼저 (2차 전수조사 P3), 옛 파일만 근거 글에서
+        if adj is None:
+            m = re.search(r"세무조정 예상 (-?[\d,]+)", row.get("basis") or "")
+            adj = int(m.group(1).replace(",", "")) if m else 0
+        base = Y["nonop"]["pretax"] + adj
     else:
         base = row["base"] if row and row.get("base") is not None else Y["nonop"]["pretax"]
         hint = re.search(BAD_DEBT_HINT_RE, (row or {}).get("basis") or "") if row and row.get("base") is not None else None
@@ -2114,8 +2117,10 @@ def _corp_est(R, Y, ym):
     prepaid = yr.get("prepaid") if yr else None
     nxt = int(ym[:4]) + 1
     # 원천징수된 지방소득세(이자에서 떼인 것)는 4/30 에 낼 지방소득세에서 뺀다 — 자금 일정 줄과 같게 (2026-11-17 실제 자료 23,630)
-    lm = re.search(r"원천징수된 지방소득세 ([\d,]+)", (lrow or {}).get("basis") or "")
-    local_paid = int(lm.group(1).replace(",", "")) if lm else 0
+    local_paid = (lrow or {}).get("prepaid")   # 숫자 칸 먼저 (P3), 옛 파일만 근거 글에서
+    if local_paid is None:
+        lm = re.search(r"원천징수된 지방소득세 ([\d,]+)", (lrow or {}).get("basis") or "")
+        local_paid = int(lm.group(1).replace(",", "")) if lm else 0
     local = int(corp * LOCAL_RATE)
     return {"base": base, "same": bool(row and (upto or row.get("base") is not None)), "upto": upto, "nat": nat, "corp": corp, "C": C,
             "local": local, "local_paid": local_paid, "local_pay": max(local - local_paid, 0),
@@ -2164,8 +2169,10 @@ def _bad_into(R, T, ym):
     from .corptax import BAD_DEBT_HINT_RE
     row = _corp_row_mid(R, ym)[0]
     basis = (row or {}).get("basis") or ""   # 세금예상.csv 근거 글 (calc·data 는 그대로 둠)
-    m = re.search(r"− 대손충당금 예상 ([\d,]+)", basis) or re.search(BAD_DEBT_HINT_RE, basis)
-    amount = int(m.group(1).replace(",", "")) if m else None
+    amount = (row or {}).get("bad_debt")   # 숫자 칸 먼저 (P3), 옛 파일만 근거 글에서
+    if amount is None:
+        m = re.search(r"− 대손충당금 예상 ([\d,]+)", basis) or re.search(BAD_DEBT_HINT_RE, basis)
+        amount = int(m.group(1).replace(",", "")) if m else None
     if not amount or T["nonop"].get("pretax") is None:
         return
     N = T["nonop"]
@@ -2250,7 +2257,10 @@ def _corptax_line(R, Y, ym):
         nat = "%s %s (기납부 미확인, %s)" % (lab, won(E["nat"]), d2s(E["due"]))
     else:
         nat = "%s %s − 중간예납 등 기납부 %s = %s (%s)" % (lab, won(E["nat"]), won(E["prepaid"]), won(E["pay"]), d2s(E["due"]))
-    return "<div class='note'>%s</div>" % esc(head + nat + " · 지방소득세 %s (%s)" % (won(E["local_pay"]), d2s(E["local_due"])))
+    # V12 (2차 전수조사): 위 줄(법인세 + 지방소득세 전체)과 합이 맞게, 이자에서 이미 떼인 지방소득세를 줄에 적는다
+    loc = "지방소득세 %s − 이자에서 이미 떼인 %s = %s" % (won(E["local"]), won(E["local_paid"]), won(E["local_pay"])) if E["local_paid"] \
+        else "지방소득세 %s" % won(E["local_pay"])
+    return "<div class='note'>%s</div>" % esc(head + nat + " · %s (%s)" % (loc, d2s(E["local_due"])))
 
 
 def _person_table(R, src, dept, ym, basis):

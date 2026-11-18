@@ -393,8 +393,17 @@ def _tax_book(taxrows, base):
     local_prepaid = 0
     if main.get("calc") is not None and local and local.get("amount") is not None:
         local_prepaid = max(int(main["calc"] * LOCAL) - local["amount"], 0)
+    if local and local.get("prepaid") is not None:   # 숫자 칸이 있으면 그 값 (2차 전수조사 P3)
+        local_prepaid = int(local["prepaid"])
+    # 2차 전수조사 제안 3: 올해 연말 예상 과세표준은 변환이 한 번 계산한 값 (지금까지 + 남은 달 예상, 주간·월간 자금 일정과 같은 값)
+    rest = next((t for t in taxrows if t.get("kind") == "법인세" and str(t.get("period") or "").startswith("%d년 " % base)
+                 and t.get("base_ye") is not None), None)
+    # 남은 달 예상 줄이 없으면(12월이거나 남은 달 이익이 0 이하) 지금까지 과세표준이 곧 연말 예상.
+    # 옛 파일(감가상각 숫자 칸이 없는 파일)은 연말 값이 없으므로 예전처럼 예산이 계산한다
+    new_file = main.get("dep") is not None
+    base_ye = None if not new_file else (int(rest["base_ye"]) if rest else (int(main["base"]) if main.get("base") is not None else None))
     return {"m": int(m.group(1)) if m else 12, "adj": main.get("adj") or 0, "bad_debt": main.get("bad_debt") or 0,
-            "prepaid": main.get("prepaid"), "local_prepaid": local_prepaid}
+            "prepaid": main.get("prepaid"), "local_prepaid": local_prepaid, "base_ye": base_ye}
 
 
 def _tax_calc(pre, year, input_dir, adj=0, bad_debt=0):
@@ -651,6 +660,11 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     L["op"] = None if None in (sal_base, base_dep) else L["gp"] - L["sal"] - L["dep"] - L["sga"]
     L["pre"] = None if L["op"] is None else L["op"] + L["nin"] - L["nout"]
     LT = _tax_calc(L["pre"], base, input_dir, adj_y, TB["bad_debt"] if TB else 0)
+    if TB and TB.get("base_ye") is not None:
+        # 제안 3 (2026-11-18): 올해분 법인세는 예산이 따로 계산하지 않고 변환의 '연말 예상 과세표준' 하나로 (주간·월간 자금 일정의
+        # 법인세 줄 합계와 같은 금액). 예전: 예산이 1년 환산 이익으로 따로 계산해 같은 날 보고와 달랐음 (16,452,031 vs 13,676,883)
+        LT = _tax_calc(TB["base_ye"], base, input_dir, 0, 0)
+        LT["shared"] = True
     L["tax"] = None if LT is None else LT["total"]
 
     # ───── 자금 ─────
@@ -706,7 +720,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         inst = _ct.installable(corp_pay) if input_dir and choices.installment(input_dir) else 0
         add_tax(3, "3/31", "법인세 (%d년분)" % base, corp_pay - inst,
                 "%d년 연말 예상 과세표준 %s → 낼 법인세 %s%s%s%s" % (base, format(LT["base"], ","), format(LT["nat"], ","),
-                                                     " (감면·공제 뒤, 월간과 같은 계산)" if LT["credits"] else " (월간과 같은 계산)",
+                                                     (" (감면·공제 뒤, " if LT["credits"] else " (") + ("자금 일정의 법인세 예상과 같은 값)" if LT.get("shared") else "월간과 같은 계산)"),
                                                      " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)",
                                                      " − 분납 %s (5/31)" % format(inst, ",") if inst else ""),
                 "예산 계산 (예상)")
@@ -837,7 +851,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     return {
         "year": year, "base": base, "asof": asof, "teams": teams, "T": T, "last_m": last_m, "src": src,
         "rev": rev, "gp": gp, "cogs": cogs, "sal": sal, "sga": sga_m, "dep": dep_m, "nin": nin_m, "nout": nout_m, "op": op_m,
-        "Y": Y, "L": L, "got": got, "seas": seas, "seas_src": seas_src, "SGA": SGA, "dep_src": D["source"],
+        "tax_shared": bool(LT and LT.get("shared")), "Y": Y, "L": L, "got": got, "seas": seas, "seas_src": seas_src, "SGA": SGA, "dep_src": D["source"],
         "sal_src": sal_src, "heads0": heads0, "hires": hires, "heads": heads, "havg": havg, "per": per, "sal_last": sal_last, "last_ym": last_ym,
         "raise": raise_, "infl": infl, "cost_rate": cost_rate,
         "cash": {"bal0": bal0, "bal_date": bal_date, "restricted": restricted, "roll": roll, "roll_n": roll_n, "start": start, "cin": cin, "cpay": cpay, "sga_pay": sga_pay,
