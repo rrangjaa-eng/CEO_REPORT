@@ -203,7 +203,8 @@ def team_section(I, R, team, start_no=7):
             body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>매출 기준</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
                     "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         if miss:
-            body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
+            # 제안 28 (1차 C1, 2026-11-18): 팀장 보고에는 개수(사실)만 — 안내 꼬리('인트라넷에 사전견적을 넣으면 나옵니다')는 경영관리에만
+            body += "<p class='note'><b>%s</b></p>" % esc((insights.MISSING_CONTRACT % miss).split(" — ")[0] + ".")
         sec("프로젝트 이익 흐름 (견적 때 → 지금)", body)
         no += 1
     # 4 경보 (그 팀 프로젝트)

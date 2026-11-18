@@ -2938,13 +2938,13 @@ def _first_screen(R, mode, per):
                   # 2쪽에 ⑤가 다 안 들어가면 ⑤가 통째로 3쪽, ⑥이 4쪽으로 밀리던 것 (2026-11-16 실제 자료 4쪽). 목록은 줄이지 않는다
                   + [("%s 실적 (이번 달)" % ymt, _results(R, cum=False, mode=mode) + over + _team_table(R, mode=mode)
                       + _month_chart(R, H=120 if R.get("_issue_compact") else (150 if mode == "ceo" else 250))),
-                     ("올해 누적 실적 (1월~%s) · 목표 대비" % (_ym_text(_closed(R)[0]) if _closed(R)[0] else ymt), _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
+                     ("올해 누적 실적 (1월~%s) · 목표 대비" % (_ym_text(_closed(R)[0]) if _closed(R)[0] else ymt), _team_table(R, "ytd", mode=mode) + _issue_card(R, I, mode) + _contract_line(R, mode))]   # 미발행 발행 기한은 '앞으로 들어올 매출' 옆 (월간 3쪽 안)
                   + [_acct_year_block(R, mode)])
     else:
         wo = week_outflows(R)
         # 1쪽 = 이번 주 지급(출금 목록·다음 주 예정), 2쪽 = 자금 현황 → 실적 (사용자 2026-11-05: 맥락에 맞게, 빈 곳 최소)
         blocks = ([("%s 출금 목록" % _day(wo["fri"]), _week_out_table(R, mode))] + funds
-                  + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True, mode=mode), mode) + _issue_card(R, I, mode) + over + _contract_line(R))])
+                  + [("%s 실적" % ymt, _month_foot(R, I, _results(R, cum=True, mode=mode), mode) + _issue_card(R, I, mode) + over + _contract_line(R, mode))])
     h = ["<div class='page fs%s'>" % (" mon" if monthly else "")]
     h.append(_mg(mode, _fresh_warn(R) + _decide_lines(R)))
     h.append(_recon_line(R))
@@ -2991,11 +2991,15 @@ def _first_screen(R, mode, per):
     return "".join(h)
 
 
-def _contract_line(R):
-    """계약금액이 없어 예상 이익을 못 낸 프로젝트 수 한 줄 (사용자 결정 c, 2026-11-15: 대표·팀장 모두). 없으면 빈 글."""
+def _contract_line(R, mode="mgmt"):
+    """계약금액이 없어 예상 이익을 못 낸 프로젝트 수 한 줄 (사용자 결정 c, 2026-11-15: 대표·팀장 모두). 없으면 빈 글.
+    2차 전수조사 제안 28 (1차 C1, 2026-11-18): 대표·팀장 보고에는 개수(사실)만 — '인트라넷에 사전견적을 넣으면 나옵니다' 안내는 경영관리에만."""
     from .insights import MISSING_CONTRACT, missing_contracts
     n = missing_contracts(R)
-    return "<div class='note'>%s</div>" % esc(MISSING_CONTRACT % n) if n else ""
+    text = MISSING_CONTRACT % n
+    if mode != "mgmt":
+        text = text.split(" — ")[0] + "."
+    return "<div class='note'>%s</div>" % esc(text) if n else ""
 
 
 def _avail_foot(mode, extra, tax):

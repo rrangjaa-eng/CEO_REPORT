@@ -170,7 +170,10 @@ def render_budget(B, mode="ceo", company="", confirmed=None):
         below = [i + 1 for i in range(12) if c["bal"][i] < c["min_cash"]]
         # 월말 잔액 12개만 보므로 '매달 말 잔액 기준'으로 한정한다 (2026-11-14 오후 점검 G6: 월 중간에 급여·세금이 먼저 나가면
         # 그사이엔 모자랄 수 있고, 새로 받아야 할 매출도 들어온다고 본 숫자)
-        cash_line = ("계획한 매출이 들어오면 매달 말 잔액 기준으로 통장이 최소 보유현금 위에 있습니다." if not below else
+        # 2차 전수조사 제안 28 (1차 B7, 2026-11-18): '…최소 보유현금 위에 있습니다'는 안심시키는 판단 문장이고 월말 잔액만 봐서
+        # 달 중간 부족을 가린다 → 대표용에서는 뺀다 (모자라는 달이 있다는 사실 줄은 그대로). 경영관리용에는 남긴다
+        cash_line = (("계획한 매출이 들어오면 매달 말 잔액 기준으로 통장이 최소 보유현금 위에 있습니다 (달 중간 잔액은 주간·월간 보고의 자금 일정으로 확인)." if mg else "")
+                     if not below else
                      "<b style='color:#c00000'>매달 말 잔액 기준 %s 통장이 최소 보유현금 아래로 내려갑니다.</b>" % ", ".join("%d월" % m for m in below))
     h.append("<div class='yl'>매출 예산 중 <b>%s (%s)</b>는 이미 받은 일입니다. 나머지 <b>%s</b>를 새로 받아야 합니다. %s</div>"
              % (won(gt), _pct(gt, Y["rev"]), won(Y["rev"] - gt), cash_line))

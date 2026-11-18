@@ -161,5 +161,25 @@ class TestIntranetUnconverted(unittest.TestCase):
             self.assertEqual(gate.unconverted_intranet(inp), [])
 
 
+class TestNoGuidanceInCeoReports(unittest.TestCase):
+    """제안 28 (1차 C1·B7): 대표·팀장 보고에는 사실만, 안내 문장은 경영관리에만."""
+
+    def test_missing_contract_line_drops_guidance_outside_mgmt(self):
+        from ceo_report import insights, render
+        real = insights.missing_contracts
+        insights.missing_contracts = lambda R: 4
+        self.addCleanup(setattr, insights, "missing_contracts", real)
+        ceo, mg = render._contract_line({}, "ceo"), render._contract_line({}, "mgmt")
+        self.assertIn("못 낸 프로젝트 4개.", ceo)
+        self.assertNotIn("넣으면", ceo)
+        self.assertIn("인트라넷에 사전견적을 넣으면 나옵니다", mg)
+
+    def test_budget_ceo_page_has_no_reassuring_sentence(self):
+        import inspect
+        from ceo_report import budget_render
+        src = inspect.getsource(budget_render)
+        self.assertIn('최소 보유현금 위에 있습니다 (달 중간 잔액은 주간·월간 보고의 자금 일정으로 확인)." if mg else ""', src)
+
+
 if __name__ == "__main__":
     unittest.main()
