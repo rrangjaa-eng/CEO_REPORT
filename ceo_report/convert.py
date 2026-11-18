@@ -895,7 +895,7 @@ def _build_tables(books, cfg, snap, input_dir, wehago_dir, asof, now, res, ran_a
     from . import filing   # 신고 일정 (사용자 2026-11-12: 제출기한도 장부를 보고 알려 줌)
     tables.append(filing.build_table(books, cfg, asof, input_dir))
     from . import filehelp   # 신고 도우미 (사용자 2026-11-12)
-    tables.append(filehelp.build_table(books, cfg, asof, input_dir))
+    tables.append(filehelp.build_table(books, cfg, asof, input_dir, wehago_dir))
     from . import reconcile   # 자료 대조 (사용자 2026-11-14): 장부 ↔ 위하고 시산표·재무상태표·차입금현황 등, 차입금.csv·카드사용.csv
     tables.extend(reconcile.build_tables(books, input_dir, wehago_dir, asof, snap))
     return tables, states

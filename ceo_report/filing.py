@@ -8,7 +8,7 @@
   · 원천세: 반기 납부(1·7월에만 냈으면) 7/10·1/10, 아니면 매달 10일
   · 부가세: 법인 1·2기 예정(4/25·10/25)·확정(7/25·1/25)
   · 법인세 3/31, 지방소득세 4/30, 중간예납 8/31 (설립 첫해 다음 해부터)
-기한이 토·일이면 월요일. 공휴일은 따지지 않음(홈택스 안내 확인). 신고를 했는지는 장부에 납부 전표가 있는 것만 알 수 있다.
+기한이 토·일·공휴일이면 다음 영업일(공휴일 표에 없는 해는 주말만). 신고를 했는지는 장부에 납부 전표가 있는 것만 알 수 있다.
 """
 import collections
 import datetime as dt
@@ -35,9 +35,10 @@ def _sq(t):
 
 
 def _workday(d):
-    while d.weekday() >= 5:
-        d += dt.timedelta(days=1)
-    return d
+    """기한이 토·일·공휴일이면 다음 영업일 (국세기본법 5조). 2차 전수조사 V11: 예전엔 토·일만 미뤄 2027-02-28(일) 기한이
+    3/1(삼일절)로 나왔음 → 급여·카드에 쓰는 공휴일 표(tax.KR_HOLIDAYS)를 같이 쓴다. 표에 없는 해는 주말만 본다."""
+    from .tax import _after
+    return _after(d)
 
 
 def _month_end(y, m):
@@ -192,7 +193,53 @@ def load(input_dir):
     if not os.path.exists(path):
         return None
     with _open_text(path) as f:
-        return list(csv.DictReader(f)) or None
+        rows = list(csv.DictReader(f)) or None
+    return apply_done(rows, input_dir)
+
+
+CHECK_KIND = "신고 기한"
+DONE_CHOICES = ("처리함", "안 해도 됨 (이유를 메모에)")
+
+
+def item_id(r):
+    return "신고|%s|%s|%s" % (r.get("기한", ""), r.get("신고", ""), r.get("대상", ""))
+
+
+def apply_done(rows, input_dir):
+    """2차 전수조사 J16 (2026-11-18): 기한이 지난 신고가 40일 동안 '지남 — 했는지 확인'으로 남았음 ('냄' 판정은 원천세만 됨).
+    확인할 것 화면에서 '처리함'·'안 해도 됨'을 고른 줄은 상태를 바꿔 지금 현황 맨 위에서 빠지게 한다."""
+    if not rows:
+        return rows
+    try:
+        from .checklist import read_decisions
+        dec = read_decisions(input_dir)
+    except Exception:
+        return rows
+    for r in rows:
+        d = dec.get(item_id(r)) or {}
+        ch = (d.get("결정") or "").strip()
+        if (r.get("상태") or "").startswith("지남") and ch in DONE_CHOICES:
+            r["상태"] = ("했음" if ch == "처리함" else "안 해도 됨") + " (확인할 것에서 %s 결정)" % (d.get("결정일") or "")[:10]
+    return rows
+
+
+def check_items(input_dir):
+    """확인할 것 화면: 기한이 지났는데 했는지 모르는 신고 -> 항목 목록 (결정하면 load 가 상태를 바꾼다)."""
+    import csv
+    import os
+    path = os.path.join(input_dir, FILE)
+    if not os.path.exists(path):
+        return []
+    try:
+        with _open_text(path) as f:
+            rows = list(csv.DictReader(f))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return []
+    return [{"id": item_id(r), "kind": CHECK_KIND, "date": r.get("기한", ""), "amount": None, "vendor": "",
+             "title": "%s (%s) 기한 %s 지남 — 했는지 확인" % (r.get("신고", ""), r.get("대상", ""), r.get("기한", "")),
+             "detail": "%s · %s" % (r.get("장부 근거", ""), r.get("어디서", "")),
+             "choices": ["처리함", "진행 중 — 확인 필요", "안 해도 됨 (이유를 메모에)"]}
+            for r in rows if (r.get("상태") or "").startswith("지남")]
 
 
 def render(rows, esc, asof=None, limit=None):
@@ -204,7 +251,7 @@ def render(rows, esc, asof=None, limit=None):
                    % (esc(r["기한"]), esc(r["신고"]), esc(r["대상"]),
                       ("<b style='color:#c62828'>%s</b>" % esc(r["상태"])) if r["상태"].startswith("지남") or r["상태"] == "이번 주" else esc(r["상태"]),
                       esc(r["장부 근거"]), esc(r["어디서"])) for r in show),
-         "<div class='note'>장부에서 생긴 일(급여·사업소득·기타소득 원천징수, 원천세 납부 날)로 만든 일정입니다. 토·일이면 월요일로 미룸, 공휴일은 따지지 않음. "
+         "<div class='note'>장부에서 생긴 일(급여·사업소득·기타소득 원천징수, 원천세 납부 날)로 만든 일정입니다. 토·일·공휴일이면 다음 영업일로 미룸. '지남'은 확인할 것 화면에서 '처리함'을 고르면 '했음'으로 바뀜. "
          "제출 주기는 세법 기준표에서 읽으며 홈택스 메뉴 이름은 바뀔 수 있습니다.</div>"]
     return "".join(h)
 
@@ -216,7 +263,7 @@ def live_lines(rows, asof):
     out = []
     for r in rows:
         d = dt.date.fromisoformat(r["기한"])
-        if r["상태"].startswith("냄"):
+        if r["상태"].startswith(("냄", "했음", "안 해도 됨")):
             continue
         if d < asof or (d - asof).days <= 14:
             out.append("%s %s (%s) — %s" % (r["기한"], r["신고"], r["대상"], r["상태"]))

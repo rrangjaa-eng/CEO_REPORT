@@ -111,7 +111,7 @@ def window_count(G):
         text += " · 할 일 기록 %d건" % (c["todo"] + c["todo_fix"])
     return "%d건" % c["open"], text
 ORDER = ("중복 의심 전표", "미지급금 예정 > 장부", "두 출처 출금", "통장 잔액 대조", "자료 대조", "홈택스 대조", "계좌 없는 이체 거래처",
-         "변환 대조", "전표 프로젝트 번호", "카드 전표", "정합성 점검", "입력 자료")
+         "신고 기한", "변환 대조", "전표 프로젝트 번호", "카드 전표", "정합성 점검", "입력 자료")
 
 
 def _h(text):
@@ -484,6 +484,11 @@ def gather(app_dir, input_dir, asof):
     items = conv + _report_items(input_dir, asof) + bank_items(input_dir) + _integrity_items(app_dir)
     from . import reconcile   # 자료 대조 '다름' 줄 (사용자 2026-11-14)
     items += reconcile.check_items(input_dir)
+    try:   # 2차 전수조사 J16: 기한이 지났는데 했는지 모르는 신고 — '처리함'을 고르면 지금 현황·신고 일정에서 '했음'
+        from . import filing
+        items += filing.check_items(input_dir)
+    except Exception:
+        pass
     try:   # 경영관리 보고 할 일 (사용자 2026-11-14 주제별 묶기): 결정·메모가 다음 보고 할 일 표에 붙는다
         from . import mgmt_topics
         items += mgmt_topics.check_items(os.path.join(app_dir, "출력"))

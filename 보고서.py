@@ -334,7 +334,7 @@ def _annual_monthly(a, D, year, A):
         R["taxadj"] = taxadj.load(a.입력)
         R["taxret_dir"] = a.입력 if taxreturn.load(a.입력) else None
         R["filing"] = filing.load(a.입력)
-        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc, asof)
         R["payroll"] = payroll.for_report(a.입력, asof)
         return R, RD.annual_pack(R)
     except Exception as e:   # 이 계산 때문에 연간 보고를 못 만들면 안 된다
@@ -604,7 +604,7 @@ def main(argv=None):
         R["filing"] = filing.load(a.입력)   # 신고 일정 (장부 기준, 사용자 2026-11-12)
         from ceo_report import filehelp
         from ceo_report.util import esc as _esc
-        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc)
+        R["filing_help"] = filehelp.render(filehelp.load(a.입력), _esc, asof)
         from ceo_report import payroll   # 급여 점검·연말정산 예상 (사용자 2026-11-12) — 위하고 인사·급여 자료가 있을 때만
         R["payroll"] = payroll.for_report(a.입력, asof)
     # 자동 분석 (사용자 2026-11-12): 변환이 남긴 장부 분석, 계산서 입금 기록, 지난 보고 때 일정
