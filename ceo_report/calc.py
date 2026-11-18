@@ -1537,4 +1537,9 @@ def risks(R):
             add("높음", "자료", "대조 불일치: %s (%s / %s)." % (c[0], won(c[1]), won(c[2])), "입력 자료를 다시 확인.")
     order = {"높음": 0, "중간": 1}
     out.sort(key=lambda r: order.get(r["level"], 2))
+    try:   # 해가 바뀔 때 손볼 것 (12월~3월, 2차 전수조사 P9·P10·D5) — 경영관리 할 일로
+        from . import yearly
+        out.extend(yearly.items(R))
+    except Exception:
+        pass
     return out

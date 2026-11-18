@@ -445,6 +445,7 @@ def _wehago_rows(books, costs, cfg):
     for i in range(len(books.journal)):
         slips.setdefault(_slip_of(keys, i), []).append(i)
     words = tuple(cfg["card_words"])
+    prepaid = tuple(cfg.get("prepaid_prefixes") or (PREPAID_PREFIX,))   # 설정 '변환_선급금계정앞자리' (P10)
     mixed = 0
     for g in groups.values():
         slip = (g["day"].isoformat() if g["day"] else "", g["no"])
@@ -465,7 +466,7 @@ def _wehago_rows(books, costs, cfg):
         if not pay_idx:
             # 미리 준 돈(선급금)에서 원가로 옮긴 전표: 돈은 선급금을 줄 때 이미 나갔다 (사용자 결정 2026-11-17 '고치기' —
             # 실제 자료: 기타소득 상금·강연료 등 약 5,000만이 '아직 안 줌'으로 보였는데 장부 미지급 잔액은 0원)
-            if any(_squash(books.journal[i].get("account_code")).startswith(PREPAID_PREFIX)
+            if any(_squash(books.journal[i].get("account_code")).startswith(prepaid)
                    and (books.journal[i].get("credit") or 0) > 0 for i in idxs):
                 g["state"], g["paid_day"], g["firm"] = "지급완료", g["day"], True
                 g["basis"] = base + " · 미리 준 돈(선급금)에서 옮김"
