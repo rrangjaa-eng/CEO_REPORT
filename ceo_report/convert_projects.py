@@ -12,7 +12,7 @@ import re
 from . import data, linking
 from .convert import Check, Table, cell_amount, cell_date
 from .old_intranet import OLD_LAST_DAY, OLD_STATE
-from .wehago import journal_from_start, norm_vendor
+from .wehago import journal_from_start, norm_vendor, rq_vendor
 from .util import date as parse_date
 from .util import is_blank, num, won
 from .screen_values import is_new_ceo_value
@@ -430,6 +430,9 @@ def _row_order(g):
     return (g["day"] or dt.date.max, (0, int(no), "") if no.isdigit() else (1, 0, no), _first_line(g)["vendor"])
 
 
+PREPAID_PREFIX = "131"   # 선급금 계정 (실제 장부: 13100 선급금 · 13101 선급금_기타소득 · 13102 선급금_계약금)
+
+
 def _wehago_rows(books, costs, cfg):
     """원가 묶음마다 줄 하나. 돌려주는 값: (정렬된 묶음 목록, 대조 목록, 알림 목록)."""
     keys = linking.line_keys(books.journal)
@@ -460,6 +463,13 @@ def _wehago_rows(books, costs, cfg):
             g["state"], g["paid_day"], g["firm"] = "지급완료", g["day"], True
             continue
         if not pay_idx:
+            # 미리 준 돈(선급금)에서 원가로 옮긴 전표: 돈은 선급금을 줄 때 이미 나갔다 (사용자 결정 2026-11-17 '고치기' —
+            # 실제 자료: 기타소득 상금·강연료 등 약 5,000만이 '아직 안 줌'으로 보였는데 장부 미지급 잔액은 0원)
+            if any(_squash(books.journal[i].get("account_code")).startswith(PREPAID_PREFIX)
+                   and (books.journal[i].get("credit") or 0) > 0 for i in idxs):
+                g["state"], g["paid_day"], g["firm"] = "지급완료", g["day"], True
+                g["basis"] = base + " · 미리 준 돈(선급금)에서 옮김"
+                continue
             g["state"] = "요청미지급"
             g["basis"] = base + " · 지급 여부 확인 불가 (현금·미지급 대변 없음)"
             continue
@@ -487,6 +497,8 @@ def _wehago_rows(books, costs, cfg):
     for g in groups.values():
         if g.get("prior"):
             g["basis"] += " · " + data.PRIOR_TAG + (" [%s]" % g["old_code"] if g["old_code"] else "")
+        if any(ln.get("sga") for ln in g["lines"]):   # 사용자 결정 2026-11-17: 프로젝트 번호 달린 판관비도 프로젝트 원가
+            g["basis"] += " · 판관비 계정"
     if mixed:
         notes.append("현금·미지급 대변이 함께 있는 전표의 원가 줄 %d건 → 지급 전(요청미지급)으로 둠 (일부 현금 지급일 수 있음)" % mixed)
     for day, no, vendor_norm, amount in unplaced:
@@ -631,7 +643,7 @@ def _requests_part(groups, requests, match):
             found = mine
             via_link[rq["번호"]] = True
         elif m["status"] in ("계산서 있음", "금액 차이") and rq["amount"] is not None and m.get("invoice_total") is not None:
-            found = [g for g in groups if g["vendor_norm"] == norm_vendor(rq["vendor"]) and g["project"] == (rq["code"] or "")
+            found = [g for g in groups if g["vendor_norm"] == rq_vendor(rq) and g["project"] == (rq["code"] or "")
                      and _group_total(g) == m["invoice_total"]]
         candidates[rq["번호"]] = found
         for g in found:
@@ -745,8 +757,8 @@ def _requests_part(groups, requests, match):
             notes.append("지급요청 %s: 계산서 있음이나 원가 줄을 하나로 정하지 못함 → 요청으로 넣음 (중복 가능)" % no)
         elif linked.get(no):
             notes.append("지급요청 %s: 자동 연결된 원가 줄을 하나로 정하지 못하거나 합계를 몰라 요청으로 넣음 (중복 가능)" % no)
-        elif unpaid_by_vendor.get(norm_vendor(rq["vendor"])):
-            notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[norm_vendor(rq["vendor"])]))
+        elif unpaid_by_vendor.get(rq_vendor(rq)):
+            notes.append("중복 가능: 지급요청 %s — 같은 거래처의 미지급 원가 줄 %d건" % (no, unpaid_by_vendor[rq_vendor(rq)]))
     if paired:
         kinds = collections.Counter("지급 끝난 줄" if g["state"] in ("지급완료", "카드결제완료") else "미지급 줄" for g in paired.values())
         notes.append("장부 원가 줄과 프로젝트·금액으로 짝지은 지급요청 %d건 → 요청 줄 넣지 않음 (%s, 원가 줄 근거에 번호 표시)"
@@ -806,7 +818,7 @@ def _pair_with_books(to_add, groups, taken, linked):
             elif g["state"] not in ("요청미지급", "카드사용미결제"):
                 continue
             day = g.get("paid_day") or g.get("day") or dt.date.max
-            cands.append((g["vendor_norm"] != norm_vendor(rq["vendor"]), abs((day - reg).days) if reg and day != dt.date.max else 0,
+            cands.append((g["vendor_norm"] != rq_vendor(rq), abs((day - reg).days) if reg and day != dt.date.max else 0,
                           _row_order(g), g))
         if cands:
             g = min(cands, key=lambda c: c[:3])[3]
@@ -1044,4 +1056,5 @@ def build_execs(books, costs, requests, match, prev_rows, cfg, projects=None):
             cv[0] += g["vat"]
             cv[1] += 1
     return Table("프로젝트집행.csv", data.SCHEMA["프로젝트집행.csv"], rows, checks, notes,
-                 extra={"cost_portions": portions, "card_vat": card_vat})
+                 extra={"cost_portions": portions, "card_vat": card_vat,
+                        "sga_total": (costs.get("sga") or {}).get("total", 0)})

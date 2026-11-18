@@ -36,8 +36,37 @@ WATCH = [
     (("국민연금요율",), "국민연금법", 88, 0),
     (("장기요양비율",), "노인장기요양보험법 시행령", 4, 0),
     (("고용보험요율",), "고용보험 및 산업재해보상보험의 보험료징수 등에 관한 법률 시행령", 12, 0),
-    (("식대비과세",), "소득세법 시행령", 17, 2),
-    (("최저시급",), "최저임금 고시", 0, 0),   # 행정규칙(고시): 이름이 해마다 바뀌어 '최저임금'으로 찾아 가장 최근 것
+    (("식대비과세",), "소득세법", 12, 0),   # 2026-11-17: 시행령 17조의2는 이제 출산지원금 → 법 12조 3호 러목 '월 20만원 이하의 식사대'
+    (("최저시급",), "최저임금 고시", 0, 0),
+    # 연말정산 간이 계산 (E2, 2026-11-17)
+    (("인적공제",), "소득세법", 50, 0),
+    (("자녀공제_1명", "자녀공제_2명", "자녀공제_추가", "출산공제_첫째", "자녀공제_나이"), "소득세법", 59, 2),
+    (("표준세액공제",), "소득세법", 59, 4),
+    (("종합소득세율",), "소득세법", 55, 0),
+    (("근로소득공제",), "소득세법", 47, 0),
+    (("근로세액공제",), "소득세법", 59, 0),
+    # 법인세 감면·공제 전체 검토 (사용자 2026-11-17): 값 비교 없이 조문이 있는지·바뀌었는지·법 기한만 본다 (taxbreak.LAWS)
+    ((), "조세특례제한법", 7, 0),
+    ((), "조세특례제한법", 7, 4),
+    ((), "조세특례제한법", 8, 3),
+    ((), "조세특례제한법", 10, 0),
+    ((), "조세특례제한법", 19, 0),
+    ((), "조세특례제한법", 24, 0),
+    ((), "조세특례제한법", 25, 6),
+    ((), "조세특례제한법", 29, 4),
+    ((), "조세특례제한법", 29, 7),
+    ((), "조세특례제한법", 30, 3),
+    ((), "조세특례제한법", 30, 4),
+    ((), "조세특례제한법", 104, 8),
+    ((), "법인세법", 57, 0),
+    ((), "법인세법", 58, 0),
+    # 11/17 사용자 '더 가져올 법령?': 법인세 계산에 쓰는 나머지 조문 (농특세·지방세율은 값도 맞춰 봄)
+    (("농특세율",), "농어촌특별세법", 5, 0),
+    ((), "농어촌특별세법", 4, 0),          # 비과세 (중소기업 특별세액감면·창업감면 등)
+    (("지방소득세율",), "지방세법", 103, 20),
+    ((), "조세특례제한법", 144, 0),        # 못 쓴 세액공제 10년 이월
+    ((), "법인세법", 64, 0),               # 분납 (A4, 2026-11-17: 1천만 넘으면 중소기업 2개월)
+    ((), "법인세법", 34, 0),               # 대손충당금 (결산 때 장부에 넣어야 비용)   # 행정규칙(고시): 이름이 해마다 바뀌어 '최저임금'으로 찾아 가장 최근 것
 ]
 ADMRUL = {"최저임금 고시": "최저임금"}   # 법령이 아니라 고시(행정규칙)로 찾는 것
 
@@ -68,25 +97,25 @@ def kor_amount(text):
 
 
 def _small(t):
-    """'1천450' → 1450, '800' → 800, '3천' → 3000."""
+    """'1천450' → 1450, '800' → 800, '3천' → 3000, '1천5백' → 1500 (2026-11-17: 시행령 50조의2 '1천5백만원')."""
     if not t:
         return 1
-    v = 0
-    m = re.match(r"^(\d*)천(\d*)$", t)
-    if m:
-        return int(m.group(1) or 1) * 1000 + int(m.group(2) or 0)
-    m = re.match(r"^(\d*)백(\d*)$", t)
-    if m:
-        return int(m.group(1) or 1) * 100 + int(m.group(2) or 0)
-    try:
-        v = int(t)
-    except ValueError:
+    m = re.match(r"^(?:(\d*)천)?(?:(\d*)백)?(?:(\d*)십)?(\d*)$", t)
+    if not m:
         return 0
-    return v
+    v = 0
+    for g, unit, mark in ((m.group(1), 1000, "천"), (m.group(2), 100, "백"), (m.group(3), 10, "십")):
+        if g is not None and (g or mark in t):
+            v += int(g or 1) * unit
+    return v + int(m.group(4) or 0)
 
 
 def numbers(text):
     """조문 글 → {'원': [금액...], '비율': [비율...]}."""
+    # 11/17: 표(상자 글자) 안의 '× 1,700   │ │만원'처럼 줄이 나뉜 금액도 읽게 상자 글자·빈칸을 먼저 걷어 냄
+    text = re.sub(r"[│┌┐└┘├┤┬┴┼─]+", " ", text or "")
+    text = re.sub(r"(\d)\s+(?=[조억만천백원,\d])", r"\1", text)
+    text = re.sub(r"([조억만천백])\s+(?=[원\d])", r"\1", text)
     amounts = [kor_amount(m) for m in re.findall(r"[\d,]*(?:\d+[조억만천백]|[조억만천백]\d)[\d조억만천백,]*원", text)]
     amounts += [int(m.replace(",", "")) for m in re.findall(r"(\d{1,3}(?:,\d{3})+)원", text)]
     ratios = []
@@ -98,10 +127,31 @@ def numbers(text):
 
 
 # ───────────── 받기 ─────────────
+# 2026-11-17: 브라우저와 같은 머리글로 묻는다 (기본 'Python-urllib' 은 사이트가 막는 일이 있음)
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+           "Accept": "application/json, text/plain, */*", "Referer": "https://www.law.go.kr/"}
+
+
 def _get(url, opener=None, timeout=20):
-    opener = opener or urllib.request.urlopen
-    with opener(url, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    """JSON 응답 -> dict. 사이트가 JSON 대신 안내 화면(HTML)을 주면 그 글 앞부분을 넣어 오류로 알린다 (2026-11-17)."""
+    if opener is None:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+    else:
+        with opener(url, timeout=timeout) as r:
+            raw = r.read()
+    text = raw.decode("utf-8", "replace").lstrip("\ufeff").strip()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))[:150]
+        raise ValueError("JSON이 아닌 응답: %s" % plain)
+    # 2026-11-17 PC 확인: Referer 가 없으면 HTTP 200 에 {"result": "사용자 정보 검증에 실패하였습니다.", "msg": …} 를 준다.
+    # 예전엔 이걸 '법령 이름으로 찾지 못함'으로 넘겨 원인이 안 보였음 → 실패로 알린다
+    if isinstance(data, dict) and isinstance(data.get("result"), str) and "실패" in data["result"]:
+        raise ValueError("법령 사이트가 거절: %s %s" % (data["result"], data.get("msg") or ""))
+    return data
 
 
 def _walk(o):
@@ -115,13 +165,22 @@ def _walk(o):
             yield from _walk(v)
 
 
+def _flat(v):
+    """목내용처럼 글 목록 안에 목록이 든 것 → 글 목록 (2026-11-17 PC: 조특법 6조·29조의8, 소득세법 129조가 TypeError 로 실패)."""
+    for x in v:
+        if isinstance(x, list):
+            yield from _flat(x)
+        elif isinstance(x, str):
+            yield x
+
+
 def _texts(o):
     """'…내용' 키의 글을 모두 이어 붙임 (조문내용·항내용·호내용·목내용)."""
     out = []
     for d in _walk(o):
         for k, v in d.items():
             if "내용" in k and isinstance(v, (str, list)):
-                out.append(" ".join(v) if isinstance(v, list) else v)
+                out.append(" ".join(_flat(v)) if isinstance(v, list) else v)
     return "\n".join(x.strip() for x in out if x and x.strip())
 
 
@@ -147,7 +206,12 @@ def find_admrul(oc, query, opener=None, ref=None):
         rid = d.get("행정규칙일련번호") or d.get("행정규칙ID") or d.get("ID")
         if query in nm and rid:
             day = str(d.get("시행일자") or d.get("발령일자") or "")
-            cands.append({"mst": str(rid), "시행일자": day, "공포일자": str(d.get("발령일자") or ""), "kind": "admrul"})
+            cands.append({"mst": str(rid), "시행일자": day, "공포일자": str(d.get("발령일자") or ""), "kind": "admrul", "name": nm})
+    # 2026-11-17 PC: '최저임금'으로 찾으면 통계 고시 등도 걸림 → 'YYYY년 적용 최저임금 고시'(안 고시 제외)를 그해 것으로
+    year = (ref or dt.date.today().strftime("%Y%m%d"))[:4]
+    exact = [c for c in cands if re.search(r"%s년\s*적용\s*%s\s*고시$" % (year, re.escape(query)), c.get("name", ""))]
+    if exact:
+        return exact[0]
     if ref:
         return _in_force(cands, ref)
     return max(cands, key=lambda c: c["시행일자"]) if cands else None
@@ -173,7 +237,18 @@ def find_law(oc, name, opener=None, ref=None):
 def fetch_article(oc, mst, n, sub, opener=None, kind="law"):
     if kind == "admrul":
         q = urllib.parse.urlencode({"OC": oc, "target": "admrul", "type": "JSON", "ID": mst})
-        return _texts(_get(BASE + "lawService.do?" + q, opener))
+        data = _get(BASE + "lawService.do?" + q, opener)
+        text = _texts(data)
+        if not text:   # 11/17: 최저임금 고시처럼 본문이 첨부 파일(PDF)에만 있는 고시는 이름·첨부 이름으로 받음 (실패로 세지 않음)
+            names = []
+            for d in _walk(data):
+                if d.get("행정규칙명"):
+                    names.append(str(d["행정규칙명"]))
+                if d.get("첨부파일명"):
+                    names += [str(x) for x in _flat(d["첨부파일명"])]
+            if names:
+                text = "(본문은 첨부 파일에만 있음) " + " · ".join(dict.fromkeys(names))
+        return text
     q = urllib.parse.urlencode({"OC": oc, "target": "law", "type": "JSON", "MST": mst, "JO": _jo(n, sub)})
     return _texts(_get(BASE + "lawService.do?" + q, opener))
 
@@ -244,10 +319,15 @@ def check(input_dir, year, today=None, opener=None):
                 pool = nums["원"] if taxlaw.UNIT[k] == "원" else nums["비율"]
                 if not any(abs(p - v) < 1e-6 * max(1, abs(v)) for p in pool):
                     miss.append(taxlaw.LABEL[k])
-        note = ("지금 값이 조문에 안 보임: %s · 조문 숫자 %s" % (", ".join(miss), _short(nums))) if miss else "지금 값이 조문에 있음"
+        note = ("지금 값이 조문에 안 보임: %s · 조문 숫자 %s" % (", ".join(miss), _short(nums))) if miss else \
+            ("지금 값이 조문에 있음" if keys else "감면·공제 검토용 (조문·법 기한만 봄)")
         got[tag] = {"hash": h, "text": text[:4000], "시행일자": info["시행일자"], "공포일자": info["공포일자"],
                     "keys": list(keys), "seen": today.isoformat() if state != "같음" else (old or {}).get("seen", today.isoformat()),
-                    "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("flag"))}
+                    # 11/17: 예전엔 한 번 켜지면 계속 켜져 있었음 → 지금 값이 조문에 안 보이거나 개정된 적이 있을 때만
+                    "flag": bool(miss) or state == "개정됨" or bool((old or {}).get("changed")),
+                    # 2026-11-17: '값이 조문에 안 보임'(표기 차이·부칙에 있는 값)과 실제 개정을 나눔. 확인한 값은 개정됐을 때만 다시 확인
+                    "changed": today.isoformat() if state == "개정됨" else (old or {}).get("changed", ""),
+                    "miss": miss}
         out.append((keys, tag, state, info["시행일자"], note))
     with _LOCK:   # P1-23: 받는 동안 바꾼 아이디를 되돌리지 않게, 저장 직전에 다시 읽어 받은 조문만 넣는다
         cur = load(input_dir)
@@ -278,15 +358,63 @@ def flags(input_dir):
     for tag, it in S.get("items", {}).items():
         if it.get("flag"):
             for k in it.get("keys", []):
-                out[k] = (tag, it.get("시행일자", ""), it.get("seen", ""))
+                out[k] = (tag, it.get("시행일자", ""), it.get("seen", ""), it.get("changed", ""))
     return out
 
 
+FRESH_DAYS = 7   # 사용자 2026-11-17: 법령 관련 항목은 최신 법령을 먼저 확인하고 만든다 → 7일 안에 받은 적 없으면 보고 만들 때 먼저 받음
+
+
+def _last(S):
+    try:
+        return dt.date.fromisoformat(str(S.get("last") or "")[:10])
+    except ValueError:
+        return None
+
+
 def due(input_dir, today=None):
-    """자동 확인할 때인가: 1월·7월이고 이번 달에 아직 안 받았으면 True (OC 있을 때만)."""
+    """먼저 받아야 하나: 아이디(OC)가 있고 마지막으로 다 받은 날이 7일보다 오래됐거나 없으면 True.
+    (예전: 1월·7월에만 — 사용자 2026-11-17 규칙으로 바꿈)"""
     today = today or dt.date.today()
     try:
         S = load(input_dir)
     except (OSError, ValueError):
         return False
-    return bool(S.get("oc")) and today.month in (1, 7) and not str(S.get("last", "")).startswith(today.strftime("%Y-%m"))
+    last = _last(S)
+    return bool(S.get("oc")) and (last is None or (today - last).days >= FRESH_DAYS)
+
+
+def state(input_dir, today=None):
+    """법령 최신 확인 상태 -> {ok, last, days, msg}. 보고서 법령 관련 표 위에 그대로 적는다."""
+    today = today or dt.date.today()
+    try:
+        S = load(input_dir)
+    except (OSError, ValueError):
+        S = {}
+    last = _last(S)
+    tr = S.get("last_try") or {}
+    if last is None:
+        why = ("아이디(OC)가 없어 받지 못함" if not S.get("oc") else
+               "받기 실패: " + "; ".join(tr.get("실패") or [])[:150] if tr else "아직 한 번도 받지 않음")
+        return {"ok": False, "last": None, "days": None,
+                "msg": "최신 법령 확인 못 함 — %s. 아래 법령 관련 판단은 프로그램에 넣어 둔 기준(확인 안 된 최신 여부)으로 만든 것입니다" % why}
+    days = (today - last).days
+    fail = tr.get("날") == today.isoformat() and tr.get("실패")
+    if days < FRESH_DAYS and not fail:
+        return {"ok": True, "last": last, "days": days,
+                "msg": "최신 법령 확인함: %s%s 국가법령정보에서 조문 %s개 받음" % (last.isoformat(), " (오늘)" if days == 0 else " (%d일 전)" % days,
+                                                                tr.get("받음", "?"))}
+    return {"ok": False, "last": last, "days": days,
+            "msg": "최신 법령 확인 못 함 — 마지막 확인 %s (%d일 전)%s. 그 뒤 바뀐 법령은 반영되지 않았을 수 있습니다"
+                   % (last.isoformat(), days, ", 오늘 받기 실패: " + "; ".join(fail)[:150] if fail else "")}
+
+
+def ensure(input_dir, year, today=None, opener=None):
+    """보고 만들기 전에: 받을 때가 됐으면 먼저 받아 본다 (실패해도 멈추지 않음). -> state()."""
+    today = today or dt.date.today()
+    if due(input_dir, today):
+        try:
+            check(input_dir, year, today, opener)
+        except Exception:   # 아이디 없음·통신 실패 — 상태 글로 알림
+            pass
+    return state(input_dir, today)

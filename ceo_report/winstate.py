@@ -367,7 +367,7 @@ def gate_line(G):
 
 
 def reports_for(output_dir, asof):
-    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순).
+    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순, 연간 보고를 만든 적이 있으면 연간 대표·연간 팀장용·연간 경영관리도).
     state: '만듦' · '막힘'(자료 확인에서 막혀 만들지 않음) · 'PDF 못 만듦'(HTML 만 새로 생김) · '없음'.
     막힌 보고는 예전 PDF 를 넣지 않고 '만들지 않음' 안내를 가리킨다 (path)."""
     from . import gate, pdfname
@@ -395,20 +395,30 @@ def reports_for(output_dir, asof):
     out.append(one("주간 대표", os.path.join(output_dir, "%s_주간_대표보고" % day)))
     out.append(one("월간 대표", os.path.join(output_dir, "%s_월간_대표보고" % day)))
     folder = os.path.join(output_dir, "팀장용")
-    pages = sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day)))
-    team = {"label": "팀장용 (월간)", "state": "없음", "at": None, "path": None, "why": ""}
-    if pages:
-        ones = [one("", p[:-5]) for p in pages]
-        at = max(r["at"] for r in ones if r["at"] is not None)
-        if any(r["state"] == "막힘" for r in ones):
-            team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
-        elif all(r["state"] == "만듦" for r in ones):
-            team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
-        else:
-            team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+    def teams(label, pages):
+        team = {"label": label, "state": "없음", "at": None, "path": None, "why": ""}
+        if pages:
+            ones = [one("", p[:-5]) for p in pages]
+            at = max(r["at"] for r in ones if r["at"] is not None)
+            if any(r["state"] == "막힘" for r in ones):
+                team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
+            elif all(r["state"] == "만듦" for r in ones):
+                team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
+            else:
+                team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+        return team
+    team = teams("팀장용 (월간)", sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day))))
     out.append(team)
     out.append(one("주간 경영관리", os.path.join(output_dir, "%s_주간_경영관리보고" % day), want_pdf=False))
     out.append(one("월간 경영관리", os.path.join(output_dir, "%s_월간_경영관리보고" % day), want_pdf=False))
+    # 연간 보고도 대표용·경영관리용 두 가지 (사용자 2026-11-17 "연간보고는 왜 경영관리용과 대표용이 없어": 만들고 있었지만 이 목록에 안 보였다).
+    # 만든 해가 있을 때만, 가장 최근 해 것
+    years = sorted(set(os.path.basename(f)[:4] for f in glob.glob(os.path.join(output_dir, "[0-9][0-9][0-9][0-9]_연간_*보고.html"))))
+    if years:
+        y = years[-1]
+        out.append(one("%s년 연간 대표" % y, os.path.join(output_dir, "%s_연간_대표보고" % y)))
+        out.append(teams("%s년 연간 팀장용" % y, sorted(glob.glob(os.path.join(folder, "%s_연간_팀장_*.html" % y)))))
+        out.append(one("%s년 연간 경영관리" % y, os.path.join(output_dir, "%s_연간_경영관리보고" % y), want_pdf=False))
     return out
 
 
@@ -696,7 +706,7 @@ def rc_message(task, rc, locked=False):
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
                "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다",
-               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
+               "예산": "대표용 PDF를 열었습니다", "기획본부": "기획본부 재무상태표(엑셀)를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
                "자동": "새 자료로 지금 현황·주간·월간 보고를 다시 만들었습니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
     if locked:
@@ -731,13 +741,15 @@ def auto_line(state, failed="", running=False):
         return "자동 반영: 실패 — %s" % failed, "bad", True
     st = state or {"state": "none", "text": "새 자료 없음"}
     kind = {"none": "idle", "collecting": "wait", "wait": "wait", "ready": "now"}.get(st.get("state"), "idle")
+    if st.get("fail"):   # '위하고에서 받기'가 못 받음 (2026-11-17)
+        kind = "bad"
     return "자동 반영: %s" % st.get("text", ""), kind, False
 
 
 LIVE_INPUTS = ("자금일정.csv", "통장잔액.csv", "카드결제일.csv")   # 창에서 넣는 값 중 지금 현황의 숫자를 바꾸는 것
 
 
-def live_stale(paths):
+def live_stale(paths, asof=None):
     """'지금 현황' 화면을 새로 만들어야 하는가: 없거나, 못 만듦 안내이거나, 마지막 변환·창에서 넣은 값보다 오래됐을 때.
     편의성 33 (2026-11-16): 예전엔 변환 시각만 봐서, 지급·입금 예정을 넣은 뒤에도 예전 화면을 열었다."""
     from . import live
@@ -745,7 +757,23 @@ def live_stale(paths):
     made = _mtime(path)
     if made is None or live.is_failed_page(path):
         return True
+    if asof and live.page_asof(path) not in (None, str(asof)):   # 편의성 36: 창 기준일을 바꿨으면 그 날짜로 새로
+        return True
     conv = convert_time(paths.input)
     if conv is not None and made < conv:
         return True
     return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))
+
+
+def caret_after_money(old, new, at):
+    """쉼표를 다시 붙인 뒤 커서 자리 (편의성 45): 커서 왼쪽 숫자 개수가 같은 자리."""
+    k = sum(1 for ch in old[:at] if ch.isdigit())
+    if k == 0:
+        return 0 if at == 0 else len(new) - len(new.lstrip("-"))
+    seen = 0
+    for i, ch in enumerate(new):
+        if ch.isdigit():
+            seen += 1
+            if seen == k:
+                return i + 1
+    return len(new)

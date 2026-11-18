@@ -202,5 +202,49 @@ class TestPriorFixItems(unittest.TestCase):
         self.assertIn("전표 프로젝트 번호", checklist.ORDER)
 
 
+class TestPriorCheck1117(unittest.TestCase):
+    """11/17 점검: 상태가 '완료(예전 인트라넷)'가 아닌 작년 프로젝트와 예전 인트라넷에서 빠진 프로젝트."""
+
+    def test_prior_link_used_even_if_state_differs(self):
+        X = {"projects": [xp("53", 0, 7_000_000, lines=0)], "revenue": [xr("53", 0, 0)],
+             "prior_link": {"53": {"원가": (7_500_000, 12), "매출": (10_000_000, 1)}}}
+        R = {"asof": ASOF, "s3": {"projects": [P("53", 10_000_000, event="2025-05-01", state="진행")]}}
+        r = dict((x["key"], x) for x in render._profit_rows(X, R))["53"]
+        self.assertTrue(r["linked_prior"])
+        self.assertEqual((r["brev"], r["bcost"], r["diff"]), (10_000_000, 7_500_000, -500_000))
+        self.assertNotIn("before", r["parts"])
+
+    def test_old_duplicate_and_codeless_projects_are_reported(self):
+        from ceo_report import linking, convert_xchk
+
+        class S(object):
+            projects = [{"행사명": "[26029] 지금 행사", "번호": "1", "견적금액": "100", "실행가": "50"}]
+            old = None
+
+        class O(object):
+            payments = []
+            projects = [{"행사명": "[129] 첫 행사", "번호": "", "견적금액": "533,850", "실행가": "241,770"},
+                        {"행사명": "[129] 둘째 행사", "번호": "", "견적금액": "11,000,000", "실행가": "10,000,000"},
+                        {"행사명": "[26029] 예전 행사", "번호": "", "견적금액": "3,600,000", "실행가": "1"},
+                        {"행사명": "코드 없는 리저브", "번호": "", "견적금액": "21,840,000", "실행가": ""}]
+            notes = []
+        projects = linking.projects_of(S(), O())
+        why = sorted(d["why"][:12] for d in projects.dropped)
+        self.assertEqual(len(projects.dropped), 3, projects.dropped)
+        self.assertTrue(any("예전 인트라넷 다른 프로젝트" in d["why"] for d in projects.dropped))
+        self.assertTrue(any("지금 인트라넷" in d["why"] for d in projects.dropped))
+        self.assertTrue(any(d["key"] == "" for d in projects.dropped))
+
+        class B(object):
+            journal = []
+        items = convert_xchk.prior_fix_items(B(), projects, {"lines": []}, {"lines": []})
+        ids = [i["id"] for i in items if i["id"].startswith("예전빠짐|")]
+        self.assertEqual(len(ids), 3)
+        from ceo_report import checklist
+        for i in items:
+            for c in i["choices"]:
+                self.assertIn(c, checklist.CHOICE_STATE)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -117,6 +117,10 @@ class Detail(unittest.TestCase):
         self.assertIn("고정자산대장", why)
         D = corptax.depreciation([], {}, "2026-10", ledger=corptax.read_ledger(d))
         self.assertEqual((D["annual"], D["source"]), (10_000_000, "고정자산대장"))
+        # 사용자 2026-11-17 (카드): 감가상각비 예상처럼 지난 달 수만큼 — 10월까지면 200만 × 10/12
+        n, v, on, why = taxadj._car_dep(d, 2026, (8_000_000, True, ""), months=10)
+        self.assertEqual(v, 1_666_667)
+        self.assertIn("× 10/12", why)
 
     def test_taxbreak_rows(self):
         from ceo_report import taxbreak
@@ -129,3 +133,37 @@ class Detail(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickedCredits1117(unittest.TestCase):
+    """사용자 2026-11-17 첫 번째 안: '받음'인 공제만 계산, 최저한세로 못 쓴 세액공제는 10년 이월 (조특법 144조). 숫자는 가짜."""
+
+    def test_order_floor_and_carry(self):
+        d = detail_folder()
+        base_C = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        ex = [{"name": "통합고용세액공제", "amount": 5_000_000, "mt": True, "nong": True},
+              {"name": "인력개발비(교육훈련비) 세액공제", "amount": 100_000, "mt": False, "nong": False}]
+        C = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=ex)
+        hire, edu = C["extra"]
+        # 넘어온 공제를 먼저 쓰고, 남은 최저한세 여유만큼만 새 고용 공제
+        self.assertEqual(hire["used"], base_C["room"] - base_C["used"] if base_C["room"] > base_C["used"] else 0)
+        self.assertEqual(hire["used"] + hire["carry"], 5_000_000)
+        # 최저한세 밖 공제는 최저한세 밑으로도 줄임
+        self.assertEqual(edu["used"], 100_000)
+        self.assertEqual(C["final"], base_C["final"] - hire["used"] - 100_000)
+        # 이월: 연도·기한(10년)
+        self.assertTrue(any(c["from"] == 2026 and c["until"] == 2036 and c["amount"] == hire["carry"] for c in C["carries"]) or hire["carry"] == 0)
+        # 농특세: 교육훈련(연구·인력개발비)은 비과세
+        self.assertEqual(C["nong"], int((C["used"] + hire["used"]) * 0.2) // 10 * 10)
+
+
+class LastYearSwitch1117(unittest.TestCase):
+    def test_last_year_items_default_in_and_can_be_turned_off(self):
+        d = detail_folder()
+        on = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        self.assertTrue(on["take_sp"] and on["take_carry"])
+        with open(os.path.join(d, "배당설정.csv"), "w", encoding="utf-8-sig") as f:
+            f.write("항목,값\n반영_특별감면,안 받음\n반영_이월공제,안 받음\n")
+        off = tr.credits(d, 2026, 150_000_000, 15_000_000, extra=[])
+        self.assertEqual((off["sp"], off["used"], off["final"]), (0, 0, 15_000_000))
+        self.assertEqual(off["carry_next"], off["avail"])

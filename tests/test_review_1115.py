@@ -47,12 +47,12 @@ class TestMidMonthCorpTax(unittest.TestCase):
         R = copy.deepcopy(self.M)
         return _text(render(R, mode))
 
-    def test_bad_debt_hint_in_both_and_not_subtracted(self):
-        # 예전(11/12~11/15): '− 대손충당금 (예상…)' 줄로 세전 이익에서 뺐음. 계산-08: 빼지 않고 두 판 모두 한 줄로 알림
+    def test_bad_debt_subtracted_in_both(self):
+        # 11/15~11/17 판 파일('빼지 않음' 글)을 읽어도 사용자 2026-11-17대로 세전 이익에서 뺀다 (계산-08)
         for mode in ("ceo", "mgmt"):
             t = self._render(mode)
-            self.assertIn("대손충당금 예상 5,000,000원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −550,000원)", t, mode)
-            self.assertNotIn("− 대손충당금", t, mode)
+            self.assertIn("− 대손충당금 (예상", t, mode)
+            self.assertNotIn("세무사 확인 전이라 빼지 않음", t, mode)
 
     def test_mgmt_uses_tax_adjustment_and_says_basis_month(self):
         t = self._render("mgmt")

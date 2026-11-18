@@ -17,7 +17,7 @@ from . import old_intranet, data, linking, snapshot, util, wehago
 from .util import won
 
 # 변환이 만드는 파일. 이 이름들만 입력 폴더에 쓸 수 있다.
-GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "자금계획받은달.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
+GENERATED = ("손익.csv", "계산서.csv", "프로젝트.csv", "프로젝트집행.csv", "위하고대조.csv", "자금계획.csv", "자금계획받은달.csv", "부서비용.csv", "사원급여.csv", "부서계정비용.csv", "세금예상.csv", "계정별비용.csv", "증빙월별.csv", "장부잔액.csv", "장부입출금.csv", "장부채무.csv", "연간자료.csv", "현금흐름.csv", "잉여금.csv", "세무조정.csv", "신고일정.csv", "신고도우미.csv", "사원.csv", "급여명세.csv", "근로소득.csv", "연말정산.csv", "고정자산.csv", "계정잔액.csv", "장부알림.csv", "자료대조.csv", "차입금.csv", "카드사용.csv", "변환결과.txt", "확인할것.json", "자동분석.json")
 # 사람이 직접 관리하는 파일: 만들지도, 쓰지도, 옮기지도 않는다.
 MANUAL = ("계좌잔액.csv", "설정.csv", "지급계획.csv", "변경내역.csv", "자료기준일.csv", "프로젝트연결.csv")
 
@@ -448,8 +448,12 @@ def build_links(books, cfg, snap, input_dir, asof, now):
     if old is not None:
         notes = list(notes) + old.notes
     # 예전 인트라넷 지급요청은 원가 줄 연결에만 (requests 에는 넣지 않음: 요청미지급·요청 누계는 지금 인트라넷만)
-    costs = linking.link_costs(books, requests + linking.old_requests(old, asof, now), projects, overrides, cfg["link_days"],
-                               cfg["direct_prefixes"], cfg["direct_mark"], cfg["vat_codes"])
+    # 11/17 전수 점검: 요청 거래처 이름('한진기획 주식회사 (메이)'·'레지스토_김정운')을 장부 이름에 맞춤 — 연결·대조·짝짓기 모두 같은 이름
+    old_rq = wehago.resolve_request_vendors(books, linking.old_requests(old, asof, now))
+    wehago.resolve_request_vendors(books, requests)
+    costs = linking.link_costs(books, requests + old_rq, projects, overrides, cfg["link_days"],
+                               cfg["direct_prefixes"], cfg["direct_mark"], cfg["vat_codes"],
+                               cfg["common_prefixes"], cfg["common_mark"])
     revenue = linking.link_revenue(books, projects, overrides, cfg["revenue_codes"])
     unused = linking.unused_links(books, overrides, costs["used"] | revenue["used"])
     return {"costs": costs, "revenue": revenue, "projects": projects, "snapshot": snap is not None,
@@ -486,6 +490,14 @@ def link_lines(links):
     out = ["[연결] 프로젝트 연결",
            "  원가 줄: " + _basis_text(links["costs"]["summary"]),
            "  매출 줄: " + _basis_text(links["revenue"]["summary"])]
+    off = links["costs"].get("offset") or []
+    if off:   # 2026-11-17: 임시 전표와 되돌림 전표는 서로 지워지므로 프로젝트 원가에서 뺀다
+        out.append("  임시 전표와 되돌림 전표 %d줄은 원가 줄에서 뺌 (임시로 넣은 금액 %s, 서로 지워짐)"
+                   % (len(off), won(sum(x["amount"] for x in off if x["amount"] > 0))))
+    sga = links["costs"].get("sga") or {}
+    if sga.get("count"):   # 2026-11-17 사용자 결정: 프로젝트 번호 달린 판관비도 프로젝트 원가에
+        out.append("  판관비 계정인데 프로젝트 번호가 달린 %d줄 %s은 그 프로젝트 원가에 넣음 (회사·팀 손익의 원가·판관비 구분은 그대로)"
+                   % (sga["count"], won(sga["total"])))
     listed = 0
     for kind, result in (("원가", links["costs"]), ("매출", links["revenue"])):
         for ln in sorted((x for x in result["lines"] if x["basis"] == "미연결" and not x.get("prior")), key=_list_order):
@@ -535,6 +547,10 @@ def _kind_rows(table, kind, item=None):
     return [r for r in table.rows if r["구분"] == kind and (item is None or r["항목"] == item)]
 
 
+def _plus(total, extra):
+    return total if total is None else total + (extra or 0)
+
+
 def cross_checks(tables):
     """[파일 사이 대조]: 쓴 파일끼리의 합계. 두 파일이 모두 만들어졌을 때만 한다. 원본 쪽 = 손익.csv, CSV 쪽 = 다른 파일."""
     from . import convert_pl
@@ -548,7 +564,9 @@ def cross_checks(tables):
                 and r.get("대상") == convert_pl.UNLINKED_PROJECT]
     pl_unlinked = _sum_known(util.num(r.get("직접비")) for r in unlinked)
     if execs is not None and projects is not None:
-        out.append(Check("손익 직접비 = 프로젝트집행 원가 줄 합계", pl_direct, _first_csv(execs, "원가 줄 합계")))
+        # 프로젝트집행·위하고대조의 원가에는 프로젝트 번호 달린 판관비도 들어 있다 (사용자 결정 2026-11-17) → 그만큼 더해 맞춘다
+        out.append(Check("손익 직접비 = 프로젝트집행 원가 줄 합계", _plus(pl_direct, execs.extra.get("sga_total")),
+                         _first_csv(execs, "원가 줄 합계")))
         keys = set((r.get("프로젝트번호") or "").strip() for r in projects.rows)
         portions = execs.extra.get("cost_portions", [])
         # WEHAGO 원가 줄 = 근거가 'WEHAGO ' 로 시작하는 줄 (요청 줄은 '지급요청', 옮겨 온 줄은 상태가 집행계획미요청)
@@ -561,7 +579,8 @@ def cross_checks(tables):
         sales_cells = _kind_rows(xchk, "매출계약", "WEHAGO 매출")
         unlinked_sales = _kind_rows(xchk, "매출미연결")[:1]
         cell = lambda rows: _sum_known(util.num(r["금액"]) for r in rows) if rows else None
-        out.append(Check("손익 직접비 = 위하고대조 (도) 원가", pl_direct, cell(cost_cells + unlinked_cost) if unlinked_cost else None))
+        out.append(Check("손익 직접비 = 위하고대조 (도) 원가", _plus(pl_direct, xchk.extra.get("sga_total")),
+                         cell(cost_cells + unlinked_cost) if unlinked_cost else None))
         out.append(Check("손익 매출 = 위하고대조 매출", pl_revenue, cell(sales_cells + unlinked_sales) if unlinked_sales else None))
         out.append(Check("손익 프로젝트 미연결 직접비 = 위하고대조 미연결원가", pl_unlinked, cell(unlinked_cost)))
     return out
@@ -950,7 +969,15 @@ def build_bank(books, cfg):
         k = (ln["date"], ln.get("no"))
         slips[k][0] |= bool(ln["debit"])
         slips[k][1] |= bool(ln["credit"])
-    acct = lambda ln: (ln.get("vendor") or "").strip() or "보통예금 (거래처 없음)"
+    # 통장은 거래처코드로 묶는다 (사용자 결정 2026-11-17 '고치기', 2026-11-14 '낱말 대신 거래처코드'): 같은 코드의 이름이
+    # 중간에 바뀌어도 한 통장으로 보고, 가장 최근 전표의 이름으로 부른다. 코드가 없는 줄만 이름으로 묶는다
+    latest = {}
+    for ln in lines:   # 날짜순
+        vc = wehago.norm_code(ln.get("vendor_code"))
+        if vc and (ln.get("vendor") or "").strip():
+            latest[vc] = (ln.get("vendor") or "").strip()
+    acct = lambda ln: (latest.get(wehago.norm_code(ln.get("vendor_code"))) or (ln.get("vendor") or "").strip()
+                       or "보통예금 (거래처 없음)")
     others = collections.defaultdict(list)   # 전표별 보통예금 아닌 줄 (상대 거래처)
     for o in books.journal:
         if o.get("date") is not None and wehago._squash(o.get("account_code")) not in cash:
@@ -1006,17 +1033,21 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     from . import screen_tax, wehago_raw   # 위하고 급여·원천징수 화면과 대조 (제안 3, 2026-11-14)
     scr_notes, scr = screen_tax.compare(books.journal, wehago_raw.files(wehago_dir), asof, cfg["withholding_codes"],
                                         cfg["withholding_vendors"], cfg["insurance_vendors"]) if wehago_dir else ([], {})
+    gap = screen_tax.wage_gap(wehago_raw.files(wehago_dir), asof) if wehago_dir else {}
     card_real, card_upto = screen_tax.card_usage(wehago_dir) if wehago_dir else ({}, None)
+    card_stale = []
     rows = tax.vat(books.journal, asof, cfg["vat_payable_codes"], cfg["vat_codes"]) + \
-        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr) + \
+        tax.withholding(books.journal, asof, cfg["withholding_codes"], cfg["withholding_vendors"], mode, screen=scr, wage_gap=gap) + \
         tax.social(books.journal, asof, cfg["withholding_codes"], cfg["insurance_vendors"]) + \
         tax.salary(books.journal, asof, cfg["salary_codes"], pay_day=cfg["salary_pay_day"]) + \
-        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto) + tax.deposits(books.journal, asof)
+        tax.cards(books.journal, asof, card_days, actual=card_real, actual_upto=card_upto, stale=card_stale) + tax.deposits(books.journal, asof)
     from . import corptax   # 법인세 예상 (사용자 2026-11-04): 지급 예상에 넣고 중간예납 등 선납세금은 뺀다
     manual = corptax.read(input_dir) if input_dir else {}
     ct_rows, ct_note = corptax.from_journal(books.journal, cfg, asof, manual, input_dir, wehago_dir)
     rows += ct_rows
     rows += corptax.carry_rows(books.journal, cfg, asof, manual, input_dir, wehago_dir)   # 작년분 4/30까지·8/31 중간예납 (2026-11-14 F5)
+    from . import choices   # A4 (2026-11-17): 회사가 '법인세 분납'을 고르면 2달 뒤로 나눌 몫을 적는다 (금액 칸은 전체 그대로)
+    rows = corptax.installment(rows, choices.installment(input_dir) if input_dir else False)
     # 결정 g (2026-11-15): 매달 같은 금액으로 통장에서 바로 나가는 지출 (대출 이자·할부·공제부금). 다른 줄이 쓰는 거래처는 빼고 찾는다
     rows += tax.fixed_costs(books.journal, asof, skip_codes=[c for r in rows for c in (r.get("거래처코드") or "").split()])
     rows.sort(key=lambda r: r["납부예정일"] or "9999")
@@ -1030,6 +1061,8 @@ def build_tax(books, cfg, asof, input_dir=None, wehago_dir=None):
     if thin:   # 사용자 2026-11-04: 카드 전표 입력 전이면 진행 상황에 경고
         notes.append("[확인] 카드 전표 입력 전으로 보임: %s — 전표가 덜 들어간 카드는 최근 3달 평균을 예상으로 더 잡음. 카드 비용은 전표를 넣기 전까지 프로젝트 원가·수익률에 빠져 있음"
                      % ", ".join(r["대상기간"].replace(" (전표 입력 전 추정)", "") for r in thin))
+    if card_stale:   # 결정 카드 2026-11-17: 지난 결제분에 남은 카드 끝전은 출금에서 빼고 확인할 것으로
+        notes.append(tax.card_stale_note(card_stale))
     notes.append(ct_note)
     notes.append("확정된 세금·4대보험이 자금계획서·자금일정에 있으면 보고서는 계산값 대신 그 금액을 씀. 이미 통장에서 낸 것은 넣지 않음")
     return Table(tax.FILE, tax.COLUMNS, rows, notes=notes)
@@ -1415,7 +1448,7 @@ def _run(input_dir, collect_dir, wehago_dir, asof, now, stamp=None, ran_at=None)
         try:
             added = transfer.register_vendors(input_dir, transfer.paid_vendors(books.journal))
             if added:
-                out.append("거래처 계좌 목록에 새 거래처 %d곳 등록 (코드·이름만 — 계좌는 창 ⑦에서)" % added)
+                out.append("거래처 계좌 목록에 새 거래처 %d곳 등록 (코드·이름만 — 계좌는 창 ‘가끔 넣는 값 › 거래처 계좌’에서)" % added)
         except (OSError, ValueError) as e:
             out.append("거래처 계좌 목록을 고치지 못함: %s" % (e if isinstance(e, ValueError) else type(e).__name__))
     if books.state != "ok":

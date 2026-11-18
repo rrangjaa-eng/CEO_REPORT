@@ -141,7 +141,7 @@ def _invoices(rows):
     out = []
     for i, r in enumerate(rows):
         supply, vat = r.get("supply"), r.get("vat")
-        out.append({"idx": i, "date": r.get("date"), "vendor": mask_rrn(r.get("vendor")),
+        out.append({"idx": i, "date": r.get("date"), "vendor": mask_rrn(r.get("vendor")), "vendor_code": r.get("vendor_code") or "",
                     "vendor_norm": r.get("vendor_norm") or norm_vendor(r.get("vendor")), "item": mask_rrn(r.get("item")),
                     "supply": supply, "vat": vat, "source_total": r.get("total"),
                     "total": None if supply is None or vat is None else supply + vat,
@@ -369,7 +369,7 @@ def _carry(rows, prev_rows, notes):
 
 def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     """sales(wehago.load_sales) + 분개장 입금 -> Table('계산서.csv'). 매출 원천이 없거나 틀리면 written=False (0으로 채우지 않음)."""
-    columns = data.SCHEMA["계산서.csv"]
+    columns = data.SCHEMA["계산서.csv"] + data.INVOICE_OPTIONAL
     if sales["state"] != "ok":
         return Table("계산서.csv", columns, [], written=False, reason=sales.get("reason") or _NONE_REASON)
     notes = list(sales["notes"])
@@ -428,7 +428,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                          "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
                          "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                         "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else ""})
+                         "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else "", "거래처코드": inv["vendor_code"]})
             bases.append(inv["basis"])
             continue
         # 여러 프로젝트로 나뉜 계산서: 프로젝트마다 한 줄. 부가세·입금액은 공급가액 비율로 (합은 계산서 한 장과 같다)
@@ -439,14 +439,17 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         for (pid, amount), v, got in zip(parts, vats, gots):
             mine_old = split_prev.get((inv["vendor_norm"], inv["date"], amount))
             d2, f2 = due, firm
-            if old is None and mine_old is not None:   # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다
+            if old is None and mine_old is not None and cell_date(parse_date(mine_old.get("입금예정일"))):
+                # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다. 지난번 줄이 빈칸이면 옮기지 않는다 — 빈칸을 옮기면
+                # 작성일 + 60일로 채운 날짜가 지워져 나눈 계산서가 언제까지나 '날짜 없는 입금'으로 남았다 (실제 자료 2026-11-17:
+                # 구글클라우드 [26226]·[26257] 1억 3,975만, 사용자 결정 '고치기')
                 d2 = cell_date(parse_date(mine_old.get("입금예정일")))
                 f2 = (mine_old.get("예정일확정") or "").strip()
                 f2 = f2 if f2 in _FIRM else ""
             rows.append({"프로젝트번호": pid, "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                          "구분": inv["kind"], "공급가액": cell_amount(amount), "부가세": cell_amount(v),
                          "입금예정일": d2, "예정일확정": f2, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                         "입금액": cell_amount(got) if paid else ""})
+                         "입금액": cell_amount(got) if paid else "", "거래처코드": inv["vendor_code"]})
             bases.append("분개장 매출 줄" if pid else ("참고" if inv["basis"] == "참고" else "미연결"))
             split_rows += 1
 

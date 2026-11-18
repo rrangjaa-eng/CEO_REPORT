@@ -17,7 +17,7 @@ from .convert import Check, Table, cell_amount
 from .convert_pl import _classify, _net
 from .convert_projects import out_of_period, period_text
 from .util import is_blank, mask_rrn, num, won
-from .wehago import STATUSES, norm_vendor, vendor_payables
+from .wehago import STATUSES, norm_vendor, rq_vendor, vendor_payables
 
 XCHK_FILE = "위하고대조.csv"
 XCHK_COLUMNS = ["구분", "대상", "이름", "항목", "금액", "건수", "비고"]
@@ -209,7 +209,7 @@ def _vendor_rows(books, requests, match):
     rows = []
     for v in vp["rows"]:
         key = norm_vendor(v["vendor"])
-        asked = [r for r in requests if r["status"] in ("pending", "approved") and norm_vendor(r["vendor"]) == key
+        asked = [r for r in requests if r["status"] in ("pending", "approved") and rq_vendor(r) == key
                  and match["rows"].get(r["번호"], {}).get("status") != "이미 지급"]
         rows.append(_row("거래처미지급", "", v["vendor"], "WEHAGO 미지급", v["payable"], None, v["reason"]))
         rows.append(_row("거래처미지급", "", v["vendor"], "인트라넷 요청", None if v["requested_unknown"] else v["requested"],
@@ -489,6 +489,14 @@ def prior_fix_items(books, projects, costs, revenue):
                 "detail": "합계 %s원%s. 금액이 작아 묶었습니다. 고치려면 위하고 분개장에서 프로젝트 칸을 넣으세요."
                           % (_won(total), (" (금액 모르는 줄 %d)" % unknown) if unknown else ""),
                 "choices": ["그대로 둠 (괜찮음)", "고칠 것"]})
+    for d in getattr(projects, "dropped", None) or []:
+        items.append({
+            "id": "예전빠짐|%s|%s" % (d["key"], d["name"]), "kind": PRIOR_FIX_KIND, "date": d["event"], "amount": d["quote"],
+            "vendor": "", "title": "예전 인트라넷 프로젝트가 비교에서 빠짐: %s%s" % (("[%s] " % d["key"]) if d["key"] else "", d["name"]),
+            "detail": "%s. 견적 %s원 · 실행가 %s원. 프로그램은 번호 하나에 프로젝트 하나만 두어서 이 프로젝트는 이익 비교에 들어가지 "
+                      "않습니다. 예전 인트라넷 자료(수집\\예전인트라넷)의 번호를 겹치지 않게 고치거나, 같은 행사면 그대로 두세요."
+                      % (d["why"], _won(d["quote"]), _won(d["budget"])),
+            "choices": ["인트라넷 자료에서 고칠 것", "같은 행사 — 그대로 둠", "확인함"]})
     # 원가 줄이 있는지는 연결 여부·해와 상관없이 본다 (2026-11-17 실제 자료: 2026년 1~3월 행사 [26037] 등은 올해 장부에 이어진
     # 원가 줄이 수백 줄인데, 작년·안 이어진 줄만 보아 '장부 원가 0원'으로 잘못 나왔다)
     has_cost = set()
@@ -534,7 +542,11 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
     checks = []
     wehago_cells = _period_cells(cost_rows, "WEHAGO 원가")
     total_row = [r for r in unlinked_rows if r["구분"] == "미연결원가"][0]
-    checks.append(Check("(도) 원가 = 프로젝트원가 + 미연결원가", _source_total(books, cfg, "direct"),
+    # 프로젝트원가에는 프로젝트 번호 달린 판관비도 들어 있다 (사용자 결정 2026-11-17) → 장부 (도) 원가에 그만큼 더해 맞춘다
+    direct_total, sga = _source_total(books, cfg, "direct"), costs.get("sga") or {}
+    if direct_total is not None:
+        direct_total = None if sga.get("unknown") else direct_total + sga.get("total", 0)
+    checks.append(Check("(도) 원가 = 프로젝트원가 + 미연결원가", direct_total,
                         _sum_cells(wehago_cells + [total_row])))
     sales = _period_cells(revenue_rows, "WEHAGO 매출")
     sales_total = [r for r in unlinked_revenue if r["구분"] == "매출미연결"][0]
@@ -553,7 +565,8 @@ def build_xchk(books, costs, revenue, projects, requests, match, project_rows, m
         notes.append("기간 밖 이력이 있는 프로젝트 %d건: WEHAGO 원가·매출 누계 판단 불가 (분개장 기간 합계는 따로 한 줄): %s"
                      % (len(history), "; ".join("%s (%s)" % (k, v) for k, v in history.items())))
     return Table(XCHK_FILE, XCHK_COLUMNS, rows, checks, notes,
-                 extra={"check_items": prior_fix_items(books, projects, costs, revenue)})
+                 extra={"check_items": prior_fix_items(books, projects, costs, revenue),
+                        "sga_total": (costs.get("sga") or {}).get("total", 0)})
 
 
 # ───────────── load_xchk ─────────────

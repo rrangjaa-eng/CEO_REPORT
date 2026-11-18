@@ -51,6 +51,19 @@ def is_failed_page(path):
             return FAIL_MARK in f.read(2000)
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def page_asof(path):
+    """만든 화면의 기준일 (머리 '지금 현황 · YYYY-MM-DD 기준') -> 'YYYY-MM-DD' 또는 None. 편의성 36."""
+    import re
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r"지금 현황 · (\d{4}-\d{2}-\d{2}) 기준", f.read(20000))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return m.group(1) if m else None
+
+
 KEEP = 30
 REFRESH_SEC = 60
 TAX_DAYS = 120   # 이 날수 안에 낼 세금·카드·4대보험·급여만 보인다
@@ -218,9 +231,9 @@ def render(R, now_snap, diff, meta, auto_html=""):
         for p in per:
             f, a = p["firm"], p["spend"]
             h.append("<tr><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n%s'><b>%s</b></td>"
-                     "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f["in"]), _won(f["out"]),
+                     "<td class='n est'>%s</td></tr>" % (_e(p["label"]), _e(p["end"]), _won(f.get("pin", f["in"])), _won(f.get("pout", f["out"])),
                                                        " neg" if f["avail"] is not None and f["avail"] < 0 else "", _won(f["avail"]), _won(a["avail"])))
-        h.append("</table></section>")
+        h.append("</table><p class='muted'>들어올 돈·나갈 돈 = 그 기간에 생기는 것만 (대표 주간 보고와 같음). 여유 자금 = 오늘부터 그 기간 끝까지 가장 적을 때 잔액 − 최소 보유현금</p></section>")
     # 세금 등
     taxes = sorted([t for t in (R.get("tax") or []) if t.get("due") and asof < t["due"] <= asof + dt.timedelta(days=TAX_DAYS)],
                    key=lambda t: t["due"])
@@ -243,14 +256,14 @@ def render(R, now_snap, diff, meta, auto_html=""):
         h.append("<table><tr><th>프로젝트</th><th>팀</th><th>행사일</th><th class='n'>계약(매출)</th><th class='n'>쓴 돈</th>"
                  "<th class='n'>예상 총비용</th><th class='n'>예상 이익</th><th class='n'>이익률</th></tr>")
         for p in sorted(projects, key=lambda p: (p.get("event_date") or "9999", p.get("id") or "")):
-            sales, profit = p.get("contract"), p.get("profit_end")
+            sales, profit = p.get("profit_basis", p.get("contract")), p.get("profit_end")   # F2: 계약금액이 비면 사전견적·장부 매출
             rate = "–" if not sales or profit is None else "%.0f%%" % (100.0 * profit / sales)
             h.append("<tr><td>[%s] %s</td><td>%s</td><td>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td>"
                      "<td class='n%s'>%s</td><td class='n'>%s</td></tr>"
                      % (_e(p.get("id")), _e(p.get("name")), _e(p.get("team")), _e(p.get("event_date") or ""), _won(sales),
-                        _won(p.get("paid_total")), _won(p.get("expected")), " neg" if (profit or 0) < 0 else "",
+                        _won(p.get("paid_total")), _won(p.get("cost_end")), " neg" if (profit or 0) < 0 else "",
                         _won(profit), rate))
-        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 쓴 돈 + 요청·카드 미결제·집행 계획·남은 예산. 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액)</p>")
+        h.append("</table><p class='muted'>쓴 돈 = 이미 지급·카드 결제. 예상 총비용 = 등록 지출(쓴 돈 + 요청·카드 미결제·집행 계획)과 추정 예산 중 큰 쪽 (끝난 프로젝트는 등록 지출). 예상 이익 = 계약 − 예상 총비용 (부가세 뺀 금액, 경영관리 보고와 같은 식). 계약이 비면 사전견적·장부 매출로 계산</p>")
     else:
         h.append("<p class='muted'>프로젝트 자료가 없습니다 (인트라넷 자료를 가져온 뒤 변환하면 보입니다).</p>")
     h.append("</section>")

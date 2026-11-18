@@ -1,7 +1,7 @@
 """신한은행 대량이체 파일 (사용자 2026-11-03: 정기적으로 나가는 돈 말고 거래처 지급은 양식에 맞춰 계좌·은행·예금주까지).
 
 양식은 ERP_PLANT8_260917 저장소의 신한 대량이체 양식과 같다: 시트 '입력정보', 머리글 9칸, 칸마다 CP949 바이트 한도, 은행은 3자리 코드.
-계좌 정보는 입력/거래처계좌.csv (대표보고 창 ⑦에서 넣는다. 외장하드 입력 폴더에만 두고 저장소에는 올리지 않는다).
+계좌 정보는 입력/거래처계좌.csv (대표보고 창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣는다. 외장하드 입력 폴더에만 두고 저장소에는 올리지 않는다).
 거래처는 위하고 거래처코드로 구분한다 (사용자 2026-11-04). 자금계획서 줄의 코드로 계좌를 찾고, 코드가 없는 줄(손으로 넣은 일정)은
 이름이 계좌 목록의 한 곳과만 맞을 때 쓴다.
 은행 이름을 코드로 못 풀거나 계좌·예금주가 없으면 그 줄은 파일에 넣지 않고 이유를 알린다 (짐작해서 넣으면 돈이 엉뚱한 데로 간다).
@@ -138,7 +138,7 @@ def read_accounts(input_dir):
     if problem:
         return {}, [problem]
     if not rows and not os.path.exists(os.path.join(input_dir, ACCOUNT_FILE)):
-        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ⑦ 거래처 계좌에서 넣으세요)" % ACCOUNT_FILE]
+        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)" % ACCOUNT_FILE]
     out = {}
     for r in rows:
         c = code_key(r["거래처코드"])
@@ -233,7 +233,7 @@ def paid_vendors(journal):
 
 
 def register_vendors(input_dir, vendors):
-    """계좌 목록에 없는 거래처코드를 코드·이름만으로 더한다 (계좌는 창 ⑦에서). -> 더한 수. 있던 줄은 건드리지 않는다."""
+    """계좌 목록에 없는 거래처코드를 코드·이름만으로 더한다 (계좌는 창 ‘가끔 넣는 값 › 거래처 계좌’에서). -> 더한 수. 있던 줄은 건드리지 않는다."""
     rows, problem = _read_rows(input_dir)
     if problem:
         raise ValueError(problem)
@@ -254,14 +254,14 @@ def find_account(accounts, ln):
             return None, "계좌 %d개 (%s) — 사람별 금액 필요, 은행 화면에서 나눠 넣으세요" % (
                 len(found), ", ".join(r["예금주"] for r in found))
         if not found[0]["계좌번호"]:
-            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ⑦에서 넣으세요)"
+            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)"
         return found[0], None
     acc = accounts.get(vendor_key(ln["vendor"]))
     if acc is AMBIGUOUS:
         return None, "같은 이름 거래처가 여럿 (거래처코드로 넣으세요)"
     if acc is not None and c and code_key(acc.get("거래처코드")) != c:
         # 안전-01 (P5-3, 2026-11-15): 코드가 있는 지급은 같은 코드 계좌만. 코드 없는 옛 줄을 이름으로 고르지 않는다
-        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ⑦에서 코드와 함께 넣으세요)" % (
+        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ‘가끔 넣는 값 › 거래처 계좌’에서 코드와 함께 넣으세요)" % (
             ln["code"], "코드 없는" if not code_key(acc.get("거래처코드")) else "다른 코드")
     if acc is None:
         return None, "계좌 정보 없음" + (" (거래처코드 %s)" % ln["code"] if c else "")
@@ -692,7 +692,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
 
 
 def account_choices(input_dir):
-    """창 ⑦ 거래처 고르기 목록 -> [(보이는 글, 코드, 이름, [계좌 줄...])]. 코드마다 한 줄, 이름 순."""
+    """창 ‘가끔 넣는 값 › 거래처 계좌’ 거래처 고르기 목록 -> [(보이는 글, 코드, 이름, [계좌 줄...])]. 코드마다 한 줄, 이름 순."""
     rows, problem = _read_rows(input_dir)
     if problem:
         return []

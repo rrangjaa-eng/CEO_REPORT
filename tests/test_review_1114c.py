@@ -202,6 +202,11 @@ class T1ProfitFlow(Base):
     def test_over_budget_alert_uses_committed(self):
         R = self.R()
         al = [t for lv, t in insights.alerts(R) if t.startswith("[P26201]")]
+        # 사용자 2026-11-17: 120% 넘는 것만 알림 — 예시 A사(약 113%)는 알리지 않고, 예산을 줄여 120%를 넘기면 등록 지출 기준으로 알림
+        self.assertFalse(any("추정 예산" in t and "넘음" in t for t in al), al)
+        p = [x for x in R["s3"]["projects"] if x["id"] == "P26201"][0]
+        p["budget"] = int(p["committed"] / 1.3)
+        al = [t for lv, t in insights.alerts(R) if t.startswith("[P26201]")]
         self.assertTrue(any("추정 예산" in t and "넘음" in t for t in al), al)
 
     def test_in_progress_never_shows_improvement(self):
@@ -396,10 +401,10 @@ class MidYearAnnual(unittest.TestCase):
         # 통장: 기준일(11/14)까지의 마지막 잔액 = 10/28, 11월 뒤 칸은 비움
         self.assertEqual(A["bal_end"], A["bal_m"][9])
         self.assertTrue(all(v is None for v in A["bal_m"][10:]))
-        # 결산 확정치(한 해 것)는 쓰지 않고 예상, 감가상각비는 월간처럼 한 해 예상을 먼저 뺌 — 작년 같은 기간도 같은 방식
+        # 결산 확정치(한 해 것)는 쓰지 않고 예상, 감가상각비는 월간처럼 지난 달 수만큼(결정 M5, 2026-11-17 연간도 같게) — 작년 같은 기간도 같은 방식
         self.assertFalse(A["tax_fixed"])
-        self.assertEqual(Y["dep_pending"], A["dep_est"])
-        self.assertEqual(L["dep_pending"], A["Lfull"]["dep"])
+        self.assertEqual(Y["dep_pending"], A["dep_est"] * 10 // 12)
+        self.assertEqual(L["dep_pending"], A["Lfull"]["dep"] * 10 // 12)
         self.assertEqual(A["tax"], A["tax_est"])   # 1~10월 세전 이익 기준 예상
 
     def test_nov14_render_labels(self):

@@ -142,10 +142,10 @@ class TestFinalExecutionTable(unittest.TestCase):
     def test_card_vat_explains_the_whole_gap_when_the_intranet_holds_it_all(self):
         # 장부 원가 900만(부가세 제외) · 카드 부가세 100만 · 실행가 1,000만 → 차이 −100만은 모두 카드 부가세
         html = final_table([xproject("A", 9000000, 10000000, card_vat=1000000)], {"A": "대표이사"})
-        self.assertIn("인트라넷 실행가에 법인카드 사용분 부가세 1,000,000 포함 (2건 전부)", html)
+        self.assertIn("인트라넷 실행가에 법인카드 사용분 부가세 1,000,000 포함으로 추정 (2건 전부)", html)
         self.assertIn("카드 부가세를 빼면 일치", html)
         self.assertIn("90.0%", html)   # 실행가 대비 = 장부 원가(부가세 제외) ÷ 실행가
-        self.assertIn("카드 부가세로 설명되는 프로젝트 1건", html)
+        self.assertIn("카드 부가세 차이로 추정되는 프로젝트 1건", html)
 
     def test_difference_rows_carry_an_explanation(self):
         html = final_table([xproject("A", 12000000, 10000000), xproject("B", 6000000, 10000000, requested=9000000),
@@ -156,7 +156,7 @@ class TestFinalExecutionTable(unittest.TestCase):
 
     def test_only_part_of_the_card_vat_is_used_when_the_gap_is_smaller(self):
         html = final_table([xproject("A", 9000000, 9400000, card_vat=1000000)], {"A": "대표이사"})
-        self.assertIn("400,000은 카드 부가세로 설명됨 (카드 부가세 모두 1,000,000 중 일부만", html)
+        self.assertIn("400,000은 카드 부가세 차이로 추정 (카드 부가세 모두 1,000,000 중 일부만", html)
         self.assertIn("카드 부가세를 빼면 일치", html)
         self.assertNotIn("실행가에 없는 지출", html)
 
@@ -174,7 +174,7 @@ class TestFinalExecutionTable(unittest.TestCase):
                            {"A": "팀장", "B": "팀장", "C": "팀장", "D": "팀장"})
         self.assertNotIn("<th>차이 설명</th>", html)
         verdicts = re.findall(r"<span class='xv (\w+)'>(.*?)</span>", html)
-        self.assertEqual(verdicts, [("hi", "장부 원가 많음"), ("ok", "카드 부가세로 설명"), ("ok", "일치"), ("lo", "장부 원가 적음")])
+        self.assertEqual(verdicts, [("hi", "장부 원가 많음"), ("ok", "카드 부가세 차이로 추정"), ("ok", "일치"), ("lo", "장부 원가 적음")])
         subs = re.findall(r"<tr class='xsub'><td></td><td colspan='10'>(.*?)</td></tr>", html)
         self.assertEqual(len(subs), 3)   # 일치(C)는 설명 줄 없음
         self.assertIn("장부 원가가 실행가보다 2,000,000 많음", subs[0])

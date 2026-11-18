@@ -707,6 +707,9 @@ def _done_window(ev_day, done_day):
     return -DONE_DAYS <= gap <= DONE_AHEAD_DAYS
 
 
+SPLIT_MAX = 12   # 같은 날 같은 거래처 계산서 줄이 이보다 많으면 합이 맞는 묶음을 찾지 않는다 (경우의 수가 너무 많음)
+
+
 def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
     """자금계획서 줄로 일정을 바꾼다 (D-55 '자금계획서 기준'). -> (새 일정 목록, 설명 dict 또는 None).
 
@@ -782,8 +785,17 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
                 continue
             groups.setdefault(ev["inv_key"], []).append(i)
         for k, idx in groups.items():
-            if len(idx) < 2 or sum(events[i]["amount"] for i in idx) != p["amount"]:
+            if len(idx) < 2:
                 continue
+            if sum(events[i]["amount"] for i in idx) != p["amount"]:
+                # 같은 날 같은 거래처에 계산서가 여러 장이면(나눈 계산서 + 다른 계산서) 그중 합이 맞는 줄 묶음을 찾는다.
+                # 묶음이 정확히 하나일 때만 (실제 자료 2026-11-17: 구글클라우드 10/22 계산서 5장 가운데 나눈 두 줄
+                # 1억 3,975만이 자금계획서 한 줄과 안 맞아 일정에 두 번 잡힐 뻔함)
+                subs = [c for n in range(2, len(idx) + 1) for c in itertools.combinations(idx, n)
+                        if sum(events[i]["amount"] for i in c) == p["amount"]] if len(idx) <= SPLIT_MAX else []
+                if len(subs) != 1:
+                    continue
+                idx = list(subs[0])
             first = events[idx[0]]
             same = bool(key) and norm_vendor(first.get("desc") or "") == key
             near = first["date"] is not None and abs((first["date"] - p["date"]).days) <= MATCH_DAYS

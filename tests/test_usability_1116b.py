@@ -173,7 +173,7 @@ class TestItem31FilingHelp(unittest.TestCase):
         self.assertIn("f", P)
         self.assertNotIn("q", P)
         keys = [k for k, _, _ in render._periodic(R, P)]
-        self.assertEqual(keys, ["c2"])
+        self.assertEqual(keys, ["c2", "c6"])   # C-6 감면·공제 검토는 매달 (2026-11-17)
         body = render._periodic(R, P)[0][2]
         self.assertIn("신고 도우미", body)
         self.assertIn("칸별 값", body)

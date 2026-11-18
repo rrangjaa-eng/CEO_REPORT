@@ -48,6 +48,7 @@ CHOICE_STATE = {
     "카드·현금 매출이라 정상": "done", "발급 누락 — 계산서 발급할 것": "fix", "장부 잘못 — 고칠 것": "fix",
     "처리함": "done", "진행 중 — 확인 필요": "fix", "안 해도 됨 (이유를 메모에)": "done",
     "일부러 둠 (리저브 등)": "done", "원가 없는 게 맞음": "done",   # 전표 프로젝트 번호 (2026-11-16)
+    "인트라넷 자료에서 고칠 것": "fix", "같은 행사 — 그대로 둠": "done",   # 예전 인트라넷 빠진 프로젝트 (2026-11-17)
 }
 TODO_KIND = "보고 할 일"          # 경영관리 보고에서 넘어온 할 일 — '할 일 기록'으로 따로 센다 (운영-04, 결정 카드 ③)
 TRACK_AMOUNT = ("자료 대조",)     # 항목 이름에 금액이 없는 종류: 결정할 때 금액을 같이 적고 달라지면 다시 묻는다 (편의성 20)
@@ -148,6 +149,10 @@ def convert_items(tables, cross, notes):
             out.append({"id": "카드|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
                         "title": "카드 전표를 아직 넣지 않은 달이 있음 (빠진 카드는 최근 3달 평균으로 예상)",
                         "detail": n.replace("[확인] ", ""), "choices": ["명세서 오면 확정 금액 넣음", "확인함"]})
+        if n.startswith("[확인] 카드 장부 끝전"):   # 결정 카드 2026-11-17
+            out.append({"id": "카드끝전|%s" % _h(n), "kind": "카드 전표", "date": "", "amount": None, "vendor": "",
+                        "title": "카드별로 장부에 오래 남은 끝전이 있음 (출금에는 안 넣음)",
+                        "detail": n.replace("[확인] ", ""), "choices": ["전표 고침", "확인함"]})
         if n.startswith("[확인] 원천세 장부·위하고") or n.startswith("[확인] 4대보험 직원분 장부·위하고"):   # 제안 3 (2026-11-14)
             out.append({"id": "원천대조|%s" % _h(n), "kind": "세금 대조", "date": "", "amount": None, "vendor": "",
                         "title": "장부 %s가 위하고 화면과 다름" % ("원천세" if "원천세" in n[:12] else "4대보험 직원분"),
@@ -169,7 +174,7 @@ def convert_items(tables, cross, notes):
 
 
 _HANDLED = ("[확인] 카드 전표 입력 전", "[확인] 원천세 장부·위하고", "[확인] 4대보험 직원분 장부·위하고", "[확인] 지급요청 짝짓기",
-            "[확인] 통장 줄만 있는 전표")
+            "[확인] 통장 줄만 있는 전표", "[확인] 카드 장부 끝전")
 
 
 def save_convert_items(input_dir, items, now=None, trace=None):
@@ -411,7 +416,7 @@ def _report_items(input_dir, asof):
                         "date": "", "amount": sum(m["amount"] for m in miss), "vendor": "",
                         "title": "다음 7일 지급할 거래처 %d곳에 계좌가 없음 (이체 파일에 못 넣음)" % len(miss),
                         "detail": " · ".join("%s %s원" % (vendor_label(m["vendor"], m["code"]), won(m["amount"])) for m in miss)
-                                  + " — ⑥ 이체 파일 만들기를 누르면 뜨는 창에서 바로 넣을 수 있음",
+                                  + " — 4단계 ‘보내기’의 ‘이체 파일 만들기’를 누르면 뜨는 창에서 바로 넣을 수 있음",
                         "choices": ["계좌 넣음", "이번엔 은행에서 직접 이체"]})
     except Exception:
         pass
@@ -493,7 +498,7 @@ def gather(app_dir, input_dir, asof):
     counts = apply_decisions(uniq, read_decisions(input_dir))
     rank = {k: i for i, k in enumerate(ORDER)}
     uniq.sort(key=lambda it: (it["kind"] == TODO_KIND, rank.get(it["kind"], 99), -(abs(it["amount"] or 0)), it["date"] or ""))
-    return {"items": uniq, "convert_at": when, "counts": counts}
+    return {"items": uniq, "convert_at": when, "counts": counts, "asof": asof}
 
 
 def summary_line(G):
@@ -503,28 +508,46 @@ def summary_line(G):
 
 
 # ───────────── 화면 ─────────────
+# 2026-11-17 보는 사람 기준 디자인 (사용자가 고른 시안): 어두운 머리 + 진행 줄, 왼쪽 상태·종류 고르기, 건마다 흰 칸, 아래 고정 줄
 CSS = """
-*{box-sizing:border-box}body{margin:0;font:14px/1.5 'Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1d2433;background:#f4f6f9}
-header{position:sticky;top:0;z-index:5;background:#1f4e8c;color:#fff;padding:12px 20px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
-header h1{font-size:18px;margin:0}header .c{display:flex;gap:8px}header .c span{background:#ffffff22;border-radius:12px;padding:2px 10px;font-size:13px}
-header .c b{font-size:15px}header label{font-size:13px;cursor:pointer}header .sp{flex:1}
-header button{font:13px 'Malgun Gothic',sans-serif;padding:5px 12px;border:1px solid #fff;border-radius:4px;background:transparent;color:#fff;cursor:pointer}
-main{max-width:980px;margin:0 auto;padding:14px 16px 60px}.meta{color:#5b6475;font-size:12px;margin:0 0 10px}
-h2{font-size:15px;margin:22px 0 8px;padding-left:8px;border-left:4px solid #1f4e8c}h2 small{font-weight:400;color:#5b6475}
-.it{background:#fff;border:1px solid #dde2ea;border-radius:8px;padding:10px 14px;margin:8px 0}
-.it.fix{border-left:5px solid #c0392b}.it.done{opacity:.75;border-left:5px solid #2f7d5b}.it.open{border-left:5px solid #e0a100}
-.top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.top .t{font-weight:700;flex:1;min-width:240px}
-.top .a{font-weight:800;font-size:15px;white-space:nowrap}.v{color:#1f4e8c;font-weight:700}.d{color:#5b6475;font-size:13px;margin:2px 0 6px}
-.ch{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.ch label{border:1px solid #c9d1de;border-radius:16px;padding:3px 10px;font-size:13px;cursor:pointer;background:#f7f8fa}
-.ch input[type=radio]{margin:0 4px 0 0}.ch label.on{background:#1f4e8c;color:#fff;border-color:#1f4e8c}
-.ch input.memo{flex:1;min-width:180px;font:13px 'Malgun Gothic',sans-serif;padding:4px 8px;border:1px solid #c9d1de;border-radius:4px}
-.ch button{font:13px 'Malgun Gothic',sans-serif;padding:4px 12px;border:0;border-radius:4px;background:#1f4e8c;color:#fff;cursor:pointer}
-.ch button.clr{background:#eef1f5;color:#1d2433}.st{font-size:12px;color:#2f7d5b;margin-left:4px}.dec{font-size:12px;color:#5b6475;margin-top:4px}
-.empty{color:#5b6475;padding:20px;text-align:center;background:#fff;border-radius:8px}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 'IBM Plex Sans KR','Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#141B26;background:#F5F3EF}
+header{position:sticky;top:0;z-index:5;background:#0F1B2D;color:#fff;padding:14px max(20px,calc(50vw - 562px));display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+header .ttl small{display:block;font-size:12px;color:#9FB0C6}header h1{font-size:24px;margin:0;line-height:1.3}
+header .pg{flex:1;min-width:260px;max-width:420px}header .c{display:flex;gap:6px;flex-wrap:wrap;font-size:14px;font-weight:700}
+header .c span+span::before{content:"· ";font-weight:400;color:#9FB0C6}header .c .sm{font-weight:400;color:#C9D4E3;font-size:12.5px}
+header .bar{height:7px;border-radius:4px;background:#33435A;margin-top:7px;overflow:hidden}header .bar i{display:block;height:100%;width:0;background:#7C9BFF;border-radius:4px}
+header .sp{flex:1}
+header button{font:600 14px 'IBM Plex Sans KR','Malgun Gothic',sans-serif;padding:9px 16px;border:1px solid #5B6B82;border-radius:8px;background:transparent;color:#fff;cursor:pointer}
+.lay{max-width:1124px;margin:0 auto;padding:22px 20px 110px;display:grid;grid-template-columns:232px minmax(0,1fr);gap:22px;align-items:start}
+nav{position:sticky;top:100px;background:#fff;border-radius:14px;padding:14px 12px;box-shadow:0 1px 3px #141B2614}
+nav h3{font-size:12px;font-weight:500;color:#5B6475;margin:6px 12px 4px}nav hr{border:0;border-top:1px solid #E7E4DD;margin:10px 0}
+nav a{display:flex;justify-content:space-between;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:14px}
+nav a.on{background:#E6ECFF;color:#1F3FBF;font-weight:700}nav a b{font-weight:500}nav a.on b{font-weight:800}
+nav label{display:block;font-size:12.5px;color:#3A4452;margin:8px 12px 0;cursor:pointer}nav p{font-size:12px;color:#5B6475;margin:10px 12px 2px}
+main{min-width:0}.meta{color:#5B6475;font-size:12px;margin:0 0 10px}
+h2{font-size:17px;margin:20px 0 8px}h2 small{font-weight:400;color:#5B6475;font-size:13px}
+.it{background:#fff;border-radius:14px;padding:16px 20px;margin:10px 0;box-shadow:0 1px 3px #141B2614;border-left:5px solid transparent}
+.it.fix{border-left-color:#C0392B}.it.done{opacity:.8;border-left-color:#2F7D5B}
+.top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.top .k{font-size:11.5px;font-weight:700;background:#FFF1D6;color:#8A4B00;border-radius:10px;padding:1px 9px;white-space:nowrap}
+.top .t{font-weight:700;font-size:15px;flex:1;min-width:240px}
+.top .a{font-weight:800;font-size:16px;white-space:nowrap;color:#8A4B00}.v{color:#1F3FBF;font-weight:700}.d{color:#5B6475;font-size:13px;margin:4px 0 10px}
+.ch{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.ch label{border:1px solid #C9CED8;border-radius:8px;padding:7px 13px;font-size:14px;cursor:pointer;background:#fff}
+.ch input[type=radio]{margin:0 7px 0 0;vertical-align:-1px}.ch label.on{background:#E6ECFF;color:#1F3FBF;border-color:#2952E3;font-weight:700}
+.ch input.memo{flex:1;min-width:180px;font:14px 'IBM Plex Sans KR','Malgun Gothic',sans-serif;padding:8px 10px;border:1px solid #C9CED8;border-radius:8px}
+.ch button{font:13px 'IBM Plex Sans KR','Malgun Gothic',sans-serif;padding:7px 12px;border:1px solid #C9CED8;border-radius:8px;background:#fff;color:#141B26;cursor:pointer}
+.ch button.clr{color:#5B6475}.st{font-size:12px;color:#2F7D5B;margin-left:4px;flex-basis:100%}.st:empty{display:none}.dec{font-size:12px;color:#5B6475;margin-top:6px}
+.empty{color:#5B6475;padding:24px;text-align:center;background:#fff;border-radius:14px}
 body:not(.all) .it.done{display:none}body:not(.all) .it.done.just{display:block}
-.grp{font-size:17px;margin:26px 0 2px;padding:6px 10px;background:#e8eef7;border-radius:6px}.grp small{font-weight:400;color:#5b6475;font-size:12px}
-.chg{color:#c0392b;font-weight:700;font-size:13px;margin:2px 0}.st a{color:#1f4e8c;cursor:pointer;text-decoration:underline;margin-left:6px}
-@media (max-width:640px){header{padding:10px 12px}main{padding:10px 10px 40px}}
+body[data-f=open] .it:not(.open),body[data-f=fix] .it:not(.fix),body[data-f=done] .it:not(.done){display:none!important}
+body[data-f=done] .it.done{display:block!important}
+section.kd.off,.grp.off{display:none}
+.grp{font-size:13px;margin:18px 0 0;color:#5B6475;font-weight:700}.grp small{font-weight:400;font-size:12px}
+.chg{color:#C0392B;font-weight:700;font-size:13px;margin:2px 0}.st a{color:#1F3FBF;cursor:pointer;text-decoration:underline;margin-left:6px}
+footer{position:fixed;left:0;right:0;bottom:0;z-index:6;pointer-events:none;padding:0 20px 14px}
+footer div{pointer-events:auto;max-width:860px;margin:0 auto;background:#fff;border-radius:14px;box-shadow:0 6px 24px #141B2630;padding:12px 20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+footer span{flex:1;min-width:200px;color:#3A4452}
+footer button{font:700 15px 'IBM Plex Sans KR','Malgun Gothic',sans-serif;padding:12px 22px;border:0;border-radius:10px;background:#2952E3;color:#fff;cursor:pointer}
+@media (max-width:820px){.lay{grid-template-columns:1fr;padding:12px 10px 120px}nav{position:static}header{padding:10px 12px;gap:10px}}
 """
 
 JS = """
@@ -532,7 +555,23 @@ JS = """
   var KEY=%(key)s;
   document.getElementById('all').onchange=function(){document.body.classList.toggle('all',this.checked);};
   document.querySelectorAll('.ch input[type=radio]').forEach(function(r){r.onchange=function(){
-    var box=r.closest('.ch'); box.querySelectorAll('label').forEach(function(l){l.classList.toggle('on',l.contains(r)&&r.checked);});};});
+    var box=r.closest('.ch'); box.querySelectorAll('label').forEach(function(l){l.classList.toggle('on',l.contains(r)&&r.checked);});
+    if(r.checked) send(r.closest('.it'),r.value);};});   // 고르면 바로 저장 (메모는 '메모 저장')
+  function bar(){var o=+document.getElementById('n_open').textContent,d=+document.getElementById('n_done').textContent,
+    f=+document.getElementById('n_fix').textContent,t=o+d+f; document.getElementById('bar').style.width=(t?Math.round((d+f)*100/t):100)+'%%';
+    ['open','fix','done'].forEach(function(k){var el=document.getElementById('s_'+k); if(el) el.textContent=document.getElementById('n_'+k).textContent;});}
+  document.querySelectorAll('nav a[data-f]').forEach(function(a){a.onclick=function(){
+    var on=a.classList.contains('on'); document.querySelectorAll('nav a[data-f]').forEach(function(x){x.classList.remove('on');});
+    if(on){document.body.removeAttribute('data-f');}else{a.classList.add('on');document.body.setAttribute('data-f',a.dataset.f);}};});
+  document.querySelectorAll('nav a[data-k]').forEach(function(a){a.onclick=function(){
+    var on=a.classList.contains('on'); document.querySelectorAll('nav a[data-k]').forEach(function(x){x.classList.remove('on');});
+    if(!on) a.classList.add('on');
+    document.querySelectorAll('section.kd').forEach(function(s){s.classList.toggle('off',!on&&s.dataset.k!==a.dataset.k);});
+    document.querySelectorAll('.grp').forEach(function(g){g.classList.toggle('off',!on);});};});
+  document.getElementById('seen').onclick=function(){var b=this,x=new XMLHttpRequest(); x.open('POST','/seen?k='+KEY);
+    x.onloadend=function(){document.getElementById('seenmsg').textContent='프로그램 창으로 돌아가 보고를 만드세요. 이 화면은 닫아도 됩니다.'; window.close();};
+    x.send('{}');};
+  bar();
   function send(it,choice){
     var memo=it.querySelector('input.memo').value, st=it.querySelector('.st');
     st.textContent='저장 중…';
@@ -546,11 +585,11 @@ JS = """
           if(r.state==='done'){it.classList.add('just'); it._t=setTimeout(function(){it.classList.remove('just');},8000);}}
         else st.textContent='결정 지움';}
       else st.textContent='저장 못함: '+(r.msg||'프로그램 창이 닫혔는지 확인');};
-    x.onerror=function(){st.textContent='저장 못함: 프로그램 창이 닫혔는지 확인';};
+    x.onerror=function(){st.textContent='저장 못함: 이 화면은 닫힌 예전 화면입니다'; gone();};
     x.send(JSON.stringify({id:it.dataset.id,choice:choice,memo:memo,content:it.dataset.c}));
   }
   function counts(c){ if(!c) return;
-    ['open','fix','done','todo','todo_done'].forEach(function(k){var el=document.getElementById('n_'+k); if(el) el.textContent=c[k];}); }
+    ['open','fix','done','todo','todo_done'].forEach(function(k){var el=document.getElementById('n_'+k); if(el) el.textContent=c[k];}); bar(); }
   function undo(it){it.querySelectorAll('input[type=radio]').forEach(function(r){r.checked=false;});
     it.querySelectorAll('label').forEach(function(l){l.classList.remove('on');}); send(it,'');}
   document.querySelectorAll('.it').forEach(function(it){
@@ -559,6 +598,23 @@ JS = """
     it.querySelector('button.clr').onclick=function(){undo(it);};
   });
   document.getElementById('reload').onclick=function(){location.href='/'+KEY+'?fresh=1';};
+  // 편의성 21 (2026-11-17): 새 화면을 열었거나 창이 닫혔으면 이 탭에, 열어 둔 사이 새 자료가 오면 위에 알린다
+  function note(html,color){var d=document.getElementById('stale-note');
+    if(!d){d=document.createElement('div'); d.id='stale-note';
+      d.style.cssText='position:sticky;top:0;z-index:999;padding:10px 16px;font-weight:700;border-radius:6px;margin:0 0 8px';
+      document.body.insertBefore(d,document.body.firstChild);}
+    d.style.background=color; d.innerHTML=html;}
+  var dead=false;
+  function gone(){ if(dead) return; dead=true;
+    note('새 확인할 것 화면이 열렸거나 프로그램 창이 닫혔습니다 — 이 탭은 닫으세요 (여기서 고른 결정은 저장되지 않음)','#fde2e2');
+    document.querySelectorAll('button.ok,button.clr').forEach(function(b){b.disabled=true;});}
+  setInterval(function(){ if(dead) return;
+    var x=new XMLHttpRequest(); x.open('GET','/state?k='+KEY);
+    x.onload=function(){ if(x.status!==200){gone();return;}
+      try{ if(JSON.parse(x.responseText).changed)
+        note('새 자료가 들어왔습니다 — <a href="/'+KEY+'?fresh=1">다시 모으기</a>','#fff4d6'); }catch(e){} };
+    x.onerror=gone; x.send();
+  },15000);
 })();
 """
 
@@ -580,19 +636,28 @@ def render(G, key="", mask=False):
          "<title>확인할 것</title><style>%s</style></head><body>" % CSS]
     # 운영-04 (결정 카드 ③ 2026-11-16): '보고 전에 볼 것'(자료 점검)과 '할 일 기록'(경영관리 보고 할 일)을 따로 센다.
     # 저장하면 위 숫자를 바로 다시 센다 (편의성 18: id='n_…' 를 저장 응답의 counts 로 바꿈)
-    h.append("<header><h1>확인할 것</h1><div class='c'><span>보고 전에 볼 것 <b id='n_open'>%d</b></span>"
-             "<span>고치기 기다림 <b id='n_fix'>%d</b></span><span>결정함 <b id='n_done'>%d</b></span>"
-             "<span>할 일 기록 <b id='n_todo'>%d</b> · 끝냄 <b id='n_todo_done'>%d</b></span></div><span class='sp'></span>"
-             "<label><input type='checkbox' id='all'> 결정한 것도 보기</label>"
-             "<button id='reload'>다시 모으기</button></header><main>"
-             % (c["open"], c["fix"], c["done"], c.get("todo", 0) + c.get("todo_fix", 0), c.get("todo_done", 0)))
-    h.append("<p class='meta'>마지막 자료 변환 %s · 결정은 입력\\%s 에 저장되어 다음 변환 뒤에도 그대로 붙습니다. "
-             "할 일이 남은 결정(고칠 것·넣을 것 등)은 자료에서 풀려 사라질 때까지 빨간 줄로 남습니다. "
-             "저장한 뒤 잠깐 보이는 '되돌리기'로 바로 물릴 수 있습니다.</p>" % (e(G["convert_at"] or "기록 없음"), STORE))
+    todo_n = c.get("todo", 0) + c.get("todo_fix", 0)
+    h.append("<header><div class='ttl'><small>대표 보고%s</small><h1>확인할 것</h1></div>"
+             "<div class='pg'><div class='c'><span>보고 전에 볼 것 <b id='n_open'>%d</b>건</span><span>결정함 <b id='n_done'>%d</b>건</span>"
+             "<span class='sm'>고치기 기다림 <b id='n_fix'>%d</b></span><span class='sm'>할 일 기록 <b id='n_todo'>%d</b> · 끝냄 <b id='n_todo_done'>%d</b></span></div>"
+             "<div class='bar'><i id='bar'></i></div></div><span class='sp'></span>"
+             "<button id='reload'>다시 모으기</button></header><div class='lay'>"
+             % (e(" · 기준일 %s" % G["asof"]) if G.get("asof") else "", c["open"], c["done"], c["fix"], todo_n, c.get("todo_done", 0)))
     kinds = []
     for it in G["items"]:
         if it["kind"] not in kinds:
             kinds.append(it["kind"])
+    # 왼쪽: 상태·종류 고르기 (누르면 그것만, 다시 누르면 전체)
+    nav = ["<nav><h3>상태</h3><a data-f='open'>결정할 것 <b id='s_open'>%d</b></a><a data-f='fix'>고치기 기다림 <b id='s_fix'>%d</b></a>"
+           "<a data-f='done'>결정함 <b id='s_done'>%d</b></a><hr><h3>종류</h3>" % (c["open"], c["fix"], c["done"])]
+    for i, k in enumerate(kinds):
+        nav.append("<a data-k='%d'>%s <b>%d</b></a>" % (i, e(k), sum(1 for it in G["items"] if it["kind"] == k)))
+    nav.append("<hr><label><input type='checkbox' id='all'> 결정한 것도 보기</label>"
+               "<p>결정은 다음 변환 때 같은 항목에 그대로 붙습니다. '고칠 것'을 고르면 자료에서 사라질 때까지 남습니다.</p></nav>")
+    h.append("".join(nav) + "<main>")
+    h.append("<p class='meta'>마지막 자료 변환 %s · 결정은 입력\\%s 에 저장되어 다음 변환 뒤에도 그대로 붙습니다. "
+             "할 일이 남은 결정(고칠 것·넣을 것 등)은 자료에서 풀려 사라질 때까지 빨간 줄로 남습니다. "
+             "저장한 뒤 잠깐 보이는 '되돌리기'로 바로 물릴 수 있습니다.</p>" % (e(G["convert_at"] or "기록 없음"), STORE))
     if not G["items"]:
         h.append("<div class='empty'>확인할 것이 없습니다.</div>")
     shown_grp = set()
@@ -605,7 +670,7 @@ def render(G, key="", mask=False):
             h.append("<div class='grp'>%s</div>" % ("할 일 기록 <small>경영관리 보고에서 넘어온 할 일입니다 — 보고를 막지 않고, 결정·메모는 다음 보고의 할 일 표에 붙습니다</small>"
                                                    if grp == "todo" else
                                                    "보고 전에 볼 것 <small>자료가 맞는지 보는 것입니다 — 보고를 만들기 전에 결정하세요</small>"))
-        h.append("<h2>%s <small>%d건 · 결정할 것 %d건</small></h2>" % (e(k), len(its), n_open))
+        h.append("<section class='kd' data-k='%d'><h2>%s <small>%d건 · 결정할 것 %d건</small></h2>" % (kinds.index(k), e(k), len(its), n_open))
         for it in its:
             dec = it.get("decision") or {}
             vend = it.get("vendor") or ""
@@ -618,19 +683,22 @@ def render(G, key="", mask=False):
                 on = dec.get("결정") == choice
                 ch.append("<label class='%s'><input type='radio' name='r%s' value='%s'%s>%s</label>"
                           % ("on" if on else "", _h(it["id"]), e(choice, True), " checked" if on else "", e(choice)))
-            h.append("<div class='it %s' data-id='%s' data-c='%s'><div class='top'><span class='t'>%s</span>%s<span class='a'>%s</span></div>"
-                     % (it["state"], e(it["id"], True), e("%s %s %s" % (it["title"], vend, amt), True), e(it["title"]),
+            h.append("<div class='it %s' data-id='%s' data-c='%s'><div class='top'><span class='k'>%s</span><span class='t'>%s</span>%s<span class='a'>%s</span></div>"
+                     % (it["state"], e(it["id"], True), e("%s %s %s" % (it["title"], vend, amt), True), e(k), e(it["title"]),
                         ("<span class='v'>%s</span>" % e(vend)) if vend else "", e(amt)))
             if it.get("changed"):
                 h.append("<div class='chg'>%s</div>" % e(it["changed"]))
             h.append("<div class='d'>%s%s</div>" % ((e(it["date"]) + " · ") if it.get("date") else "", e(it.get("detail") or "")))
-            h.append("<div class='ch'>%s<input class='memo' placeholder='메모 (선택)' value='%s'><button class='ok'>저장</button>"
+            h.append("<div class='ch'>%s<input class='memo' placeholder='메모 (선택)' value='%s'><button class='ok'>메모 저장</button>"
                      "<button class='clr'>결정 지우기</button><span class='st'></span></div>" % ("".join(ch), e(dec.get("메모", ""), True)))
             if dec:
                 h.append("<div class='dec'>%s 결정: %s%s</div>" % (e(dec.get("결정일", "")), e(dec.get("결정", "")),
                                                                 ("  · 메모: " + e(dec["메모"])) if dec.get("메모") else ""))
             h.append("</div>")
-    h.append("</main><script>%s</script></body></html>" % (JS % {"key": json.dumps(key)}))
+        h.append("</section>")
+    h.append("</main></div><footer><div><span id='seenmsg'>고른 결정은 바로 저장됩니다. 이 화면은 이 컴퓨터 안에서만 열립니다.</span>"
+             "<button id='seen'>다 봤음 · 보고 만들러 가기 →</button></div></footer>"
+             "<script>%s</script></body></html>" % (JS % {"key": json.dumps(key)}))
     return "".join(h)
 
 
@@ -659,10 +727,11 @@ def _sources_sig(app_dir, input_dir):
 class Session(object):
     """확인할 것 화면 한 번. start() -> 주소. 결정을 저장할 때마다 on_saved(글)."""
 
-    def __init__(self, app_dir, input_dir, asof, on_saved=None, on_counts=None):
+    def __init__(self, app_dir, input_dir, asof, on_saved=None, on_counts=None, on_seen=None):
         self.app_dir, self.input_dir, self.asof = app_dir, input_dir, asof
         self.on_saved = on_saved or (lambda text: None)
         self.on_counts = on_counts or (lambda counts: None)   # 편의성 18: 저장할 때마다 새 건수 (창이 바로 다시 보이게)
+        self.on_seen = on_seen or (lambda: None)   # '다 봤음 · 보고 만들러 가기' (2026-11-17): 창이 보고 만들기 단계로 넘어가게
         self.key = secrets.token_urlsafe(16)
         self.server = None
         self.lock = threading.Lock()
@@ -682,6 +751,10 @@ class Session(object):
             else:   # 결정만 다시 붙인다 (계산은 다시 안 함)
                 self.G["counts"] = apply_decisions(self.G["items"], read_decisions(self.input_dir))
             return render(self.G, self.key)
+
+    def changed(self):
+        """화면을 모은 뒤 자료(변환 결과 등)가 바뀌었는가."""
+        return self.G_sig is not None and _sources_sig(self.app_dir, self.input_dir) != self.G_sig
 
     def counts(self):
         """지금 결정으로 다시 센 건수 (계산은 다시 안 함)."""
@@ -724,6 +797,11 @@ class Session(object):
 
             def do_GET(self):
                 u = urlparse(self.path)
+                if u.path == "/state":   # 편의성 21: 열어 둔 화면이 새 자료가 왔는지 묻는다
+                    q = dict(p.split("=", 1) for p in u.query.split("&") if "=" in p)
+                    if not secrets.compare_digest(q.get("k", ""), sess.key):
+                        return self._send(403, "{}")
+                    return self._send(200, json.dumps({"changed": sess.changed()}))
                 if u.path != "/" + sess.key:
                     return self._send(404, "{}")
                 return self._send(200, sess.page(fresh="fresh=1" in u.query), "text/html; charset=utf-8")
@@ -731,6 +809,12 @@ class Session(object):
             def do_POST(self):
                 u = urlparse(self.path)
                 q = dict(p.split("=", 1) for p in u.query.split("&") if "=" in p)
+                if u.path == "/seen" and secrets.compare_digest(q.get("k", ""), sess.key):
+                    try:
+                        sess.on_seen()
+                    except Exception:   # 창에 알리지 못해도 화면은 그대로
+                        pass
+                    return self._send(200, json.dumps({"ok": True}))
                 if u.path != "/decide" or not secrets.compare_digest(q.get("k", ""), sess.key):
                     return self._send(403, json.dumps({"ok": False, "msg": "열쇠가 맞지 않음"}, ensure_ascii=False))
                 n = int(self.headers.get("Content-Length") or 0)

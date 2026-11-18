@@ -45,7 +45,7 @@ class TestMonthly(unittest.TestCase):
     def test_without_targets_says_how(self):
         R = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
         R["targets"] = {}
-        self.assertIn("'⑧ 팀 목표'", render(R, "ceo"))
+        self.assertIn("‘가끔 넣는 값 › 팀 목표’", render(R, "ceo"))
 
 
 if __name__ == "__main__":

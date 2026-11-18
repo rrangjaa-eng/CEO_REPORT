@@ -4,6 +4,7 @@
 팀장 보고: 그 팀 것만 — 8 이익 흐름 · 4 예산 80%·100%·적자 · 7 계산서 짝 · 6 미수금 나이 · 11 목표 달성률.
 경영관리 보고: 13가지 모두.
 """
+import datetime as dt
 import html
 
 from . import insights
@@ -122,9 +123,20 @@ def ceo_issue(D, top=3, compact=False):
         return ("<div class='ins-line'>%s: 잔액·지급 자료가 없어 발행이 늦을 때 자금이 모자라는지 판단 못 함 "
                 "<b class='ins-neg'>(확인 필요)</b>.</div>" % what)
     if not D["short"]:
-        return ("<div class='ins-line'>%s: 예상 입금·지급까지 넣은 지금 일정으로는 %s(%s)까지 잔액이 늘 남겨 둘 돈 아래로 "
-                "내려가지 않습니다 (자금만 본 것 · 세금계산서 발행 기한은 따로 · 작성일 뒤 %d일 입금 기준).</div>"
+        line = ("%s: 예상 입금·지급까지 넣은 지금 일정으로는 %s(%s)까지 잔액이 늘 남겨 둘 돈 아래로 "
+                "내려가지 않습니다 (자금만 본 것 · 세금계산서 발행 기한은 따로 · 작성일 뒤 %d일 입금 기준)."
                 % (what, D["horizon"].strftime("%Y-%m-%d"), "자금계획서 끝" if D.get("horizon_plan") else "일정 끝", D["days"]))
+        fs = D.get("firm_short")
+        if fs:   # N3 (2026-11-17 밤): 예상 입금이 안 들어오면(확정된 돈과 급여·세금 예상만) 모자라는 날 — 1장 '최저 계산 잔액'과 같은 기준
+            fday, fgap, fwday, fwgap = fs
+            dl = fday - dt.timedelta(days=D["days"])
+            pay = D.get("pay_if_today")
+            late = pay is not None and dl < pay - dt.timedelta(days=D["days"])
+            line += (" <b class='ins-neg'>다만 예상 입금이 늦으면</b>(확정된 돈과 급여·세금 같은 정기 지출만 보면) %s에 %s원 모자랍니다%s — %s"
+                     % (_md(fday), W(fgap), "" if fwday == fday else " (가장 모자란 날 %s %s원)" % (_md(fwday), W(fwgap)),
+                        ("이 계산서는 %s까지 발행했어야 그 전에 들어옵니다 · 오늘 발행해도 %s 입금." % (_md(dl), _md(pay))) if late
+                        else "이 계산서를 %s까지 발행해야 그 전에 들어옵니다." % _md(dl)))
+        return "<div class='ins-line'>%s</div>" % line
     day, gap, wday, wgap = D["short"]
     head = ("예상 입금·지급까지 넣으면 <b>%s</b>에 잔액이 늘 남겨 둘 돈보다 %s원 모자랍니다%s. 작성일 뒤 %d일 입금이라 "
             % (_md(day), W(gap), "" if wday == day else " (가장 모자란 날 %s %s원)" % (_md(wday), W(wgap)), D["days"]))
@@ -152,8 +164,8 @@ def ceo_issue(D, top=3, compact=False):
 
 # ───────────── 팀장 보고 조각 ─────────────
 # 이익 흐름 표 설명 (calc profit_now 와 같은 식): 끝난 프로젝트도 요청·계획까지 뺀다 (2026-11-14 통합 때 팀장 보고 글을 바로잡음)
-FLOW_NOTE = ("※ 견적 때 이익 = 계약 − 추정 예산. 지금 예상 이익: 끝남 = 계약 − (쓴 돈 + 요청 + 계획), "
-             "진행 중 = 계약 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산).")
+FLOW_NOTE = ("※ 매출 기준 = 계약금액, 없으면 끝난 행사는 장부 매출·진행 중은 사전견적(이미 잡힌 매출이 더 크면 그것). 견적 때 이익 = 매출 기준 − 추정 예산. "
+             "지금 예상 이익: 끝남 = 매출 기준 − (쓴 돈 + 요청 + 계획), 진행 중 = 매출 기준 − (쓴 돈 + 요청 + 계획, 추정 예산보다 적으면 추정 예산).")
 
 
 def _team_projects(R, team):
@@ -173,14 +185,15 @@ def team_section(I, R, team, start_no=7):
     # 8 이익 흐름
     # 끝난 프로젝트는 모두, 진행 중은 추정 예산을 넘은 것만 (2026-11-14 오후 점검 T1·7절: 진행 중 '차이'는 넘은 만큼만 뜻이 있음)
     fl = [f for f in I["flow"] if f["name"] in names and (f.get("closed") or f["diff"] < 0)]
-    miss = sum(1 for p in mine.values() if not p.get("contract"))   # 결정 c (2026-11-15): 빠진 줄 모르지 않게 수를 한 줄로
+    miss = sum(1 for p in mine.values() if not (p.get("profit_basis") if "profit_basis" in p else p.get("contract")))   # F2   # 결정 c (2026-11-15): 빠진 줄 모르지 않게 수를 한 줄로
     if fl or miss:
         body = ""
         if fl:
-            rows = "".join("<tr><td class='l'>%s</td><td class='c'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'><b>%s</b></td></tr>"
-                           % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]), T(f["diff"]))
+            rows = "".join("<tr><td class='l'><b>%s</b></td><td class='l'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n'>%s</td><td class='n %s'><b>%s</b></td></tr>"
+                           % (esc(f["name"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
+                              "hl neg" if f["diff"] < 0 else "up", T(f["diff"]))
                            for f in sorted(fl, key=lambda f: (not f.get("closed"), f["diff"])))
-            body = ("<table class='g'><thead><tr><th>프로젝트</th><th>구분</th><th>계약</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
+            body = ("<table class='g'><thead><tr><th>프로젝트</th><th class='l'>구분</th><th>매출 기준</th><th>견적 때 이익</th><th>지금 예상 이익</th><th>차이</th></tr></thead>"
                     "<tbody>%s</tbody></table><p class='note'>%s 진행 중은 추정 예산을 넘은 프로젝트만 싣습니다.</p>" % (rows, esc(FLOW_NOTE)))
         if miss:
             body += "<p class='note'><b>%s</b></p>" % esc(insights.MISSING_CONTRACT % miss)
@@ -189,8 +202,11 @@ def team_section(I, R, team, start_no=7):
     # 4 경보 (그 팀 프로젝트)
     al = [(lv, t) for lv, t in I["alerts"] if any(t.startswith(n) for n in names)]
     if al:
-        sec("주의할 프로젝트", "<table class='g'><tbody>%s</tbody></table>" % "".join(
-            "<tr><td class='c'>%s</td><td class='l'>%s</td></tr>" % (esc(lv), esc(t)) for lv, t in al))
+        def _al(lv, t):   # 등급 딱지 + 프로젝트 이름(굵게) + 내용
+            nm = max((n for n in names if t.startswith(n)), key=len)
+            return ("<div class='al%s'><span class='lv'>%s</span><div><b>%s</b><br>%s</div></div>"
+                    % (" hi" if lv == "높음" else "", esc(lv), esc(nm), esc(t[len(nm):].strip())))
+        sec("주의할 프로젝트", "".join(_al(lv, t) for lv, t in al))
         no += 1
     # 7 계산서 짝
     pr = [(n, t) for n, t in I["pairs"] if n in names]
@@ -356,7 +372,7 @@ def mgmt_section(I, R):
     # 끝남/진행 중 '구분' 칸 (2026-11-14 통합, 팀장 보고 표와 같은 모양): 진행 중은 남은 추정 예산까지 나갈 돈으로 봐 뜻이 다르다
     fl = I["flow"]
     sub(12, "프로젝트 이익 흐름 (견적 때 → 지금, 줄어든 순)",
-        _tbl(["프로젝트", "팀", "구분", "계약", "견적 때 이익", "지금 예상 이익", "차이"],
+        _tbl(["프로젝트", "팀", "구분", "매출 기준", "견적 때 이익", "지금 예상 이익", "차이"],
              [[esc(f["name"]), esc(f["team"]), "끝남" if f.get("closed") else "진행 중", W(f["contract"]), W(f["quote"]), W(f["now"]),
                S(f["diff"])] for f in fl], nums=(3, 4, 5, 6)) + _none(FLOW_NOTE + " 그래서 진행 중의 차이는 추정 예산을 넘은 만큼만 나옵니다.")
         if fl else _none("계약·추정 예산이 있는 프로젝트 없음"))
@@ -412,4 +428,7 @@ def mgmt_section(I, R):
                  "출금 + 는 더 나감. 대출·예금처럼 일정에 없던 돈도 실제에 들어감. 영업이익 '지금 장부'는 늦게 들어온 전표에 따라 바뀜.</p>"
                  % (K["last_txn"].isoformat() if K.get("last_txn") else "-"))
     sub(15, "지난 예상 대비 실제 오차 (보고 기록 ↔ 나중 장부)", body)
+    if I.get("more") is not None:   # 16~23 (2026-11-17 제안 M3·A1~A8)
+        from . import insights_more
+        insights_more.render(I["more"], R, sub)
     return "".join(h)

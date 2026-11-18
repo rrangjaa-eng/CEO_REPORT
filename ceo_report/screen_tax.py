@@ -61,6 +61,18 @@ def income_tax(F):
     return out
 
 
+def wage_gap(F, asof):
+    """기준일 달부터 위하고 화면에 근로(급여) 원천세가 아직 없는 달 -> {(연, 월): 가장 최근 근로 원천세}.
+    11/18: 급여 전 달의 화면 값(사업·기타소득만)을 그 달 전체로 봐 원천세를 작게 셈하던 것 — 근로 몫만 최근 달로 채운다."""
+    tax = income_tax(F)
+    cur = (asof.year, asof.month)
+    paid = sorted(k for k, v in tax.items() if v.get("근로") and k <= cur)
+    if not paid:
+        return {}
+    last = tax[paid[-1]]["근로"]
+    return dict((k, last) for k, v in tax.items() if k >= cur and not v.get("근로"))
+
+
 def employee_insurance(F, wage_tax):
     """-> {(연, 월): 4대보험 직원분 추정} = 사원 공제합계 합 − 그 달 근로 소득세·지방소득세."""
     ded = {}

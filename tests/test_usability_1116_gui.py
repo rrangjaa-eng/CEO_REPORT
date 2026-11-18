@@ -219,8 +219,64 @@ class TestItem7To9(GuiCase):
 
 class TestTransferOnFirstTab(GuiCase):
     def test_transfer_lives_in_step3(self):
-        """10: 이체 파일 만들기는 첫 탭 3단계 '만든 뒤'에 있다."""
-        self.assertTrue(str(self.w.t_btn).startswith(str(self.w.s3)))
+        """10: 이체 파일 만들기는 첫 탭에 있다 — 사용자 2026-11-17 디자인부터는 보고를 만든 뒤인 4단계 '보내기'에."""
+        self.assertTrue(str(self.w.t_btn).startswith(str(self.w.s4)))
+        self.assertTrue(str(self.w.send_list).startswith(str(self.w.s4)))
+
+
+class TestReaderDesignWindow(GuiCase):
+    """사용자 2026-11-17: 왼쪽 띠에 네 단계, 가운데엔 지금 단계 하나만, 가끔 넣는 값은 왼쪽 목록에서 고른 것 하나만."""
+
+    def test_one_step_at_a_time_and_size_stays(self):
+        w = self.w
+        self.assertEqual([r["title"].cget("text") for r in w.nav_rows], ["자료 모으기", "변환하고 확인", "보고 만들기", "보내기"])
+        size = None
+        for i in (1, 2, 3, 4):
+            w.show_step(i)
+            self.root.update()
+            self.assertEqual([k for k, p in enumerate(w.step_pages, start=1) if p.winfo_ismapped()], [i])
+            now = (self.root.winfo_reqwidth(), self.root.winfo_reqheight())
+            self.assertEqual(size or now, now)
+            size = now
+
+    def test_left_line_shows_the_same_state_as_the_step(self):
+        w = self.w
+        w.refresh_state()
+        for page, row in zip(w.step_pages, w.nav_rows):
+            self.assertTrue(page.chip.cget("text"))
+            self.assertEqual(row["sub"].cget("text"), page.chip.cget("text"))
+        now = w.state["now"]
+        self.assertEqual([r["state"] for r in w.nav_rows][:now], ["done"] * (now - 1) + ["now"])
+        self.assertEqual(w.step_shown, now)   # 지금 할 차례인 단계가 열려 있다
+
+    def test_tabs_are_two_buttons_and_left_list_follows(self):
+        w = self.w
+        w.seg[1].event_generate("<Button-1>")
+        self.root.update()
+        self.assertEqual(w.nb.index("current"), 1)
+        self.assertEqual(w.seg[1].cget("background"), self.gui.C["card"])
+        names = [n for _, ns in self.gui.ITEM_GROUPS for n in ns]
+        self.assertEqual(sorted(w.item_rows), sorted(names))
+        for name in names:
+            w.pick_item(name)
+            self.root.update()
+            shown = [p for p in set(w.item_pages.values()) if p.winfo_ismapped()]
+            self.assertEqual(shown, [w.item_pages[name]], name)
+        w.pick_item("대출 만기")
+        self.assertEqual(w.rare_now, "대출 만기")
+        w.show_step(2)   # 단계를 누르면 '이번 주 할 일'로 돌아온다
+        self.root.update()
+        self.assertEqual(w.nb.index("current"), 0)
+
+    def test_checklist_done_button_opens_step3(self):
+        """확인할 것 화면의 '다 봤음 · 보고 만들러 가기' → 창이 3단계를 보인다."""
+        w = self.w
+        with mock.patch.object(self.gui.webbrowser, "open"), mock.patch.object(self.gui.checklist.Session, "start", return_value="http://x"):
+            w.open_checklist()
+        w.show_step(1)
+        w.check.on_seen()
+        self.pump()
+        self.assertEqual(w.step_shown, 3)
 
     def test_dates_follow_payday_until_really_changed(self):
         """12: 지급일 칸은 날짜가 실제로 바뀔 때만 '직접 지정'. 키만 누르고 지나가면 출금일을 계속 따라간다."""
@@ -428,7 +484,8 @@ class TestRuleOps05RareList(GuiCase):
     def test_rare_cards_are_a_list_and_only_chosen_opens(self):
         """운영-05 (25): 주주·배당·세법·신용평가·내년 예산(+대출 만기)은 이름 목록으로 두고 고른 것만 입력이 열린다."""
         w = self.w
-        self.assertEqual(tuple(w.rare_names), ("주주", "배당 판단 질문", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기"))
+        self.assertEqual(tuple(w.rare_names), ("주주", "배당 판단 질문", "법인세 감면·공제", "세법 기준 확인", "신용평가 체크리스트", "내년 예산", "대출 만기",
+                                                 "이렇게 하면?", "자금 선택"))   # 2026-11-17 제안 A6·A4·A5
         self.assertEqual([w.rare_list.get(i).split(" · ")[0] for i in range(w.rare_list.size())], list(w.rare_names))
         w.nb.select(1)
         self.root.update()

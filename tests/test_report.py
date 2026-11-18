@@ -47,6 +47,9 @@ def numbers_of(html):
     html = re.sub(r"작성 \d{4}-\d{2}-\d{2} \d{2}:\d{2}", "", html)
     html = re.sub(r"<table class='sign'>.*?</table>", "", html, flags=re.S)   # 결재란은 대표용 주간에만
     html = re.sub(r"<div class='mgonly'>.*?<!-- /mgonly -->", "", html, flags=re.S)   # 근거 묶음은 경영관리용에만 (2026-11-03)
+    # 그림의 자리·크기(좌표)는 보고 숫자가 아니다 — 그림 속 글자(막대 금액 등)만 견준다
+    # (2026-11-17 보는 사람 기준 양식: 대표용 그림 높이가 경영관리용과 달라짐)
+    html = re.sub(r"<(svg|line|rect|path|polyline|circle|text)\b[^>]*>", r"<\1>", html)
     return re.findall(r"−?\d[\d,.]*", html)
 
 
@@ -76,6 +79,9 @@ def first_screen(html):
 
 def section(html, n):
     """상세자료 n번 묶음 HTML (7번은 문서 끝까지)."""
+    if "<!--o:" in html:   # 긴 표는 부록으로 옮겨져 있다(2026-11-17) → 예전 순서로 이은 문서에서 본다
+        from ceo_report import areas
+        html = areas.old_view(html)
     start = html.index("<h2 id='s%d'>" % n)
     nxt = "<h2 id='s%d'>" % (n + 1)
     end = html.index(nxt, start) if nxt in html[start:] else len(html)
@@ -975,7 +981,8 @@ class TestUserRulesLocked(Base):
     def test_receivable_amounts_and_overdue_days(self):
         s5 = self.R["s5"]
         self.assertEqual((s5["contract"], s5["issued"], s5["unissued"], s5["ar"]),
-                         (828_000_000, 358_000_000, 470_000_000, 220_000_000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
+                         (828_000_000, 358_000_000, 490_000_000, 220_000_000))  # 검토 3: P26204 D사 취소 −11,000,000이 수정 8,800,000 미수를 상계
+        # 11/18: 계약금액이 빈 P26208은 사전견적 2천만으로 미발행을 셈 (예전엔 '판단 불가'로 합계에서 빠짐)
         self.assertEqual([(v["project"], v["overdue_days"], v["outstanding"]) for v in s5["overdue"]],
                          [("P26202", 33, 110_000_000)])
 
@@ -1022,7 +1029,7 @@ class TestUserRulesLocked(Base):
         s5 = R["s5"]
         self.assertEqual((s5["ar"], s5["ar_unknown_n"]), (132_000_000, 2))
         self.assertEqual((s5["issued"], s5["issued_unknown_n"]), (350_000_000, 1))
-        self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (428_000_000, 2))
+        self.assertEqual((s5["unissued"], s5["unissued_unknown_n"]), (448_000_000, 1))   # 11/18: P26208 사전견적 기준 2천만
         html = render(R, "mgmt")
         sec5 = section(html, 5)
         row_a = re.findall(r"<tr[^>]*><td>P26203</td>.*?</tr>", sec5, re.S)[0]
@@ -1032,7 +1039,7 @@ class TestUserRulesLocked(Base):
         self.assertIn("외 미확인 1건", row_b)
         self.assertIn("판단 불가", row_b)
         tot = re.findall(r'<tr class="tot">.*?</tr>', sec5, re.S)[0]
-        for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 2건"):
+        for needle in ("132,000,000", "외 미확인 2건", "350,000,000", "외 미확인 1건", "외 판단 불가 1건"):
             self.assertIn(needle, tot, needle)
         self.assertNotIn("미수금 (세금계산서 발행 후)", first_screen(html))   # 주간엔 미수금 칸 없음 (사용자 2026-11-03)
         RM = compute(load(probe_folder(self, "계산서.csv", mutate)), "monthly", ASOF)
@@ -1041,7 +1048,7 @@ class TestUserRulesLocked(Base):
         self.assertIn("미확인 2건", value)
         check_editions(self, R)
         self.assertEqual((self.R["s5"]["ar_unknown_n"], self.R["s5"]["issued_unknown_n"],
-                          self.R["s5"]["unissued_unknown_n"]), (0, 0, 1))
+                          self.R["s5"]["unissued_unknown_n"]), (0, 0, 0))   # 11/18: 계약금액 빈 P26208도 사전견적 기준으로 셈
 
     def test_blank_plan_amount_not_zero(self):
         def mutate(rows):
@@ -1296,8 +1303,9 @@ class TestAllUnknownTotals(unittest.TestCase):
         s5, s4 = R["s5"], R["s4"]
         self.assertIsNone(s5["contract"])
         self.assertEqual(s5["contract_missing"], 8)
-        self.assertIsNone(s5["unissued"])
-        self.assertEqual(s5["unissued_unknown_n"], 8)
+        # 11/18: 계약금액이 모두 비어도 미발행은 사전견적 기준으로 셈 (견적보다 더 발행한 건 0, 사전견적 없는 P26204만 판단 불가)
+        self.assertEqual(s5["unissued"], 345_000_000)
+        self.assertEqual(s5["unissued_unknown_n"], 1)
         self.assertIsNone(s4["unrecognized"])
         self.assertEqual(s4["unrecognized_missing"], 8)
         # 첫 화면은 2026-11-03부터 계약금액 대신 '행사 후 세금계산서 미발행'(사전견적 기준)을 보인다. 계약금액 칸은 상세 4·5번에.

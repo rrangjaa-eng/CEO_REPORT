@@ -32,7 +32,9 @@ RISK_TOPIC = {"자금": "cash", "프로젝트": "proj", "수금": "ar", "자료"
 # 자동 분석 15가지 (경영관리 '자동 분석' 영역의 번호) → (주제, 층). 1 경보는 줄마다 해당 주제 ④
 AUTO_PLACE = {2: ("cash", 3), 15: ("cash", 3), 3: ("cash", 4), 5: ("cash", 4), 6: ("cash", 4),
               4: ("pl", 4), 13: ("pl", 4), 12: ("proj", 4), 7: ("ar", 4), 10: ("ar", 4), 11: ("ar", 4), 14: ("ar", 4),
-              8: ("other", 4), 9: ("data", 4)}
+              8: ("other", 4), 9: ("data", 4),
+              # 2026-11-17 제안 M3·A1~A8: 16 입금 걸린 날·19 고객사별 이익 → 수금·매출, 17·18·23 → 손익, 20·21·22 → 자금
+              16: ("ar", 4), 17: ("pl", 4), 18: ("pl", 4), 19: ("ar", 4), 20: ("cash", 4), 21: ("cash", 4), 22: ("cash", 4), 23: ("pl", 4)}
 WEEKLY_OPEN = ("cash", "other", "data")   # 주간 경영관리: 자금·프로젝트 밖 지급·자료 관리 위주로 펼침 (구성안 5)
 RECORD_DIR = "자동분석기록"
 LAYERS = ("결론", "할 일", "지난 보고 뒤 바뀐 것", "자동 분석 · 위험", "상세 표", "근거")
@@ -42,8 +44,13 @@ RANK = {"ok": 0, "wa": 1, "bad": 2}
 
 
 # ─────────── 옮긴 조각 표시 (예전 순서 번호) ───────────
+def _fnum(n):
+    return "%03d" % n if n == int(n) else "%06.2f" % n
+
+
 def frag(n, body):
-    return "<!--o:%03d-->%s<!--/o:%03d-->" % (n, body, n)
+    """n 은 예전 순서 번호. 한 장을 여러 조각으로 나눠 옮길 때는 소수 둘째 자리까지 (42.03 = 2장의 셋째 조각)."""
+    return "<!--o:%s-->%s<!--/o:%s-->" % (_fnum(n), body, _fnum(n))
 
 
 def hidden(n, body):
@@ -51,7 +58,7 @@ def hidden(n, body):
     return "<!--o:%03d:%s-->" % (n, base64.b64encode(body.encode("utf-8")).decode("ascii"))
 
 
-FRAG_RE = re.compile(r"<!--o:(\d{3})-->(.*?)<!--/o:\1-->|<!--o:(\d{3}):([A-Za-z0-9+/=]*)-->", re.S)
+FRAG_RE = re.compile(r"<!--o:(\d{3}(?:\.\d\d)?)-->(.*?)<!--/o:\1-->|<!--o:(\d{3}):([A-Za-z0-9+/=]*)-->", re.S)
 
 
 def restore(page, toc=False):
@@ -60,7 +67,7 @@ def restore(page, toc=False):
     parts = []
     for m in FRAG_RE.finditer(page):
         if m.group(1):
-            parts.append((int(m.group(1)), m.group(2)))
+            parts.append((float(m.group(1)), m.group(2)))
         else:
             parts.append((int(m.group(3)), base64.b64decode(m.group(4)).decode("utf-8")))
     parts.sort(key=lambda x: x[0])
@@ -425,53 +432,74 @@ def _delta(c, prev):
 
 # ─────────── 그리기 ───────────
 CSS = """
-.tp-band{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid #e3c9c4;background:#fdf6f4;border-radius:10px;padding:8px 12px;margin:6px 0 12px}
-.tp-band.v-ok{border-color:#cfe0d6;background:#f6fbf8}
+.tp-band{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border:1px solid #e0a04a;background:#fff9ee;border-radius:6px;padding:7px 12px;margin:6px 0 10px}
+.tp-band.v-ok{border-color:#d9dde3;background:#f4f5f7}
 .tp-band b{font-size:12.5px;margin-right:4px}
-.tq-chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;border-radius:12px;padding:2px 10px;border:1px solid #cfd6df;background:#fff;white-space:nowrap}
-.tq-chip.v-ok{border-color:#9fcfb3;color:#246b4a}.tq-chip.v-old{border-color:#e6c77a;color:#8a5d00;background:#fffaf0}
-.tq-chip.v-bad{border-color:#d98d80;color:#a3301f;background:#fdeeeb;font-weight:700}
-.tp-h{display:flex;align-items:baseline;gap:8px;margin:16px 0 6px;font-size:15px;font-weight:800;border-left:4px solid var(--ink);padding-left:8px}
-.tp-h small{font-size:12px;font-weight:400;color:var(--sub)}
+.tq-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;border-radius:4px;padding:1px 8px;border:1px solid #d9dde3;background:#fff;white-space:nowrap}
+.tq-chip.v-ok{color:#1b6b45}.tq-chip.v-old{border-color:#e0a04a;color:#8a4b00;background:#fff9ee}
+.tq-chip.v-bad{border-color:#e3a596;color:#9c1f18;background:#fbe3e1;font-weight:700}
+.tp-h{display:flex;align-items:baseline;gap:8px;margin:14px 0 6px;font-size:14.5px;font-weight:700;color:#17202b;border:0;padding:0}
+.tp-h small{font-size:11px;font-weight:400;color:#556070}
 .tp-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.tp-cards a,.tp-sig a{text-decoration:none;color:inherit}
-.tp-card{display:block;border:1px solid var(--line);border-radius:10px;padding:9px 12px;break-inside:avoid}
-.tp-card .tq-cl{font-size:12px;color:var(--sub);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.tp-card .tq-cv{font-size:19px;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums}
-.tp-card .tq-cf{font-size:11px;color:var(--sub)}
-.tq-tag{font-size:10.5px;border:1px solid var(--ink);border-radius:4px;padding:0 4px;color:var(--ink);white-space:nowrap}
-.tq-cd{font-size:11.5px;color:var(--sub);margin-top:2px}.tq-cd.v-up{color:#246b4a}.tq-cd.v-dn{color:#b3261e}
-.tp-sig{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.tq-sg{display:block;border:1.5px solid var(--line);border-radius:10px;padding:8px 11px;break-inside:avoid;background:#fff}
-.tq-sg .tq-sn{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--sub)}
-.tq-sg .tq-st{font-size:13.5px;font-weight:700;margin:4px 0 2px;line-height:1.35}
-.tq-sg .tq-sv{font-size:11.5px;color:var(--sub)}
-.tq-sg .tq-sf{font-size:11.5px;margin-top:3px;color:var(--sub)}
-.tq-sg.v-bad{border-color:#e3a596;background:#fffaf8}.tq-sg.v-wa{border-color:#ecd08a;background:#fffcf3}.tq-sg.v-ok{border-color:#b9dcc9}
-.tq-sg.v-nod{border-color:#d5d9df;background:#f5f6f8}.tq-sg.v-nod .tq-st{color:#555}
-.tq-sg .tq-sf .v-dn{color:#b3261e;font-weight:700}.tq-sg .tq-sf .v-up{color:#246b4a;font-weight:700}
-.tq-lv{font-size:10.5px;font-weight:700;border-radius:8px;padding:0 7px;white-space:nowrap}
-.tq-lv.v-ok{background:#e7f3ec;color:#2f7d5b}.tq-lv.v-wa{background:#fff3d6;color:#a86b00}.tq-lv.v-bad{background:#fbe9e7;color:#b5523b}.tq-lv.v-nod{background:#e6e9ee;color:#555}
+.tp-cards a,a.tq-sg{text-decoration:none;color:inherit}
+.tp-card{display:block;border:1px solid #d9dde3;border-radius:6px;padding:9px 10px;break-inside:avoid}
+.tp-card .tq-cl{font-size:11px;color:#556070;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tp-card .tq-cv{font-size:18px;font-weight:700;margin:3px 0 2px;font-variant-numeric:tabular-nums}
+.tp-card .tq-cf{font-size:10.5px;color:#556070}
+.tp-card .tq-cs{font-size:10.5px;color:#1e4b91;margin-top:3px}
+.tq-tag{font-size:10px;border:1px solid #c9d1dc;border-radius:3px;padding:0 4px;color:#3a4452;white-space:nowrap}
+.tq-cd{font-size:11px;color:#556070;margin-top:2px}.tq-cd.v-up{color:#1b6b45}.tq-cd.v-dn{color:#b3261e}
+.v-dn{color:#b3261e}.v-up{color:#1b6b45}
+table.tp-st td{padding-top:6px;padding-bottom:6px}
+table.tp-st small{color:#556070}
+table.tp-st th.r,table.tp-st td.r{text-align:right!important}
+table.tp-st tr.v-nod td{color:#556070}
+a.tq-sg{font-weight:700;color:#17202b}a.tq-sg.v-nod{color:#556070}
+a.tq-sg:hover{color:#1e4b91;text-decoration:underline}
+span.tq-lv{font-size:11px;font-weight:700;border-radius:3px;padding:1px 7px;white-space:nowrap}
+span.tq-lv.v-ok{background:#e3f3ea;color:#1b6b45}span.tq-lv.v-wa{background:#fdf0d9;color:#8a4b00}
+span.tq-lv.v-bad{background:#fbe3e1;color:#9c1f18}span.tq-lv.v-nod{background:#eceef1;color:#3a4452}
 table.pt.td td,table.pt.td th{text-align:left!important;white-space:normal!important;vertical-align:top}
 table.pt.td td.n{white-space:nowrap!important}
-.tq-stt{font-size:11px;border-radius:8px;padding:0 7px;white-space:nowrap;font-weight:600}
-.tq-stt.v-new{background:#e8eefb;color:#2b4f9e}.tq-stt.v-carry{background:#fff3d6;color:#8a5d00}.tq-stt.v-dec{background:#eef1f4;color:#2b3a4e}
-.tq-stt.v-done{background:#e7f3ec;color:#2f7d5b}.tq-stt.v-na{background:#fdecea;color:#a3271b}
+table.pt.td thead th{background:#f4f5f7;color:#3a4452;font-weight:500}
+table.pt.td small{color:#556070}
+.tq-stt{font-size:11px;border-radius:3px;padding:0 6px;white-space:nowrap;font-weight:600}
+.tq-stt.v-new{background:#e8eefb;color:#1e4b91}.tq-stt.v-carry{background:#fdf0d9;color:#8a4b00}.tq-stt.v-dec{background:#eceef1;color:#3a4452}
+.tq-stt.v-done{background:#e3f3ea;color:#1b6b45}.tq-stt.v-na{background:#fbe3e1;color:#9c1f18}
 tr.tdone td{color:#8a93a0}
-.tp-note{font-size:11.5px;color:var(--sub);margin:4px 0}
-h1.tp{font-size:20px;margin:6px 0 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;break-after:avoid}
-h1.tp small{font-size:11.5px;font-weight:400;color:#7a8391}
-.tq-ly{border:1px solid var(--line);border-radius:10px;margin:10px 0;break-inside:auto}
-.tq-ly>.tq-lh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);
-background:#f7f8fa;border-radius:10px 10px 0 0;font-weight:700;font-size:13.5px;break-after:avoid}
-.tq-ly>.tq-lh small{font-weight:400;color:var(--sub);font-size:11.5px}
-.tq-ly>.tq-lb{padding:8px 12px}
-.tq-ly.l1{border:1.5px solid var(--line)}.tq-ly.l1.v-bad{border-color:#e3a596;background:#fffaf8}.tq-ly.l1.v-wa{border-color:#ecd08a;background:#fffcf3}
-.tq-ly.l1.v-ok{border-color:#b9dcc9}.tq-ly.l1.v-nod{background:#f5f6f8}
-.tq-ly.l1 .tq-lb .tq-hl{font-size:15px;font-weight:700;margin:2px 0 4px}
+.tp-note{font-size:11.5px;color:#556070;margin:4px 0}
+h1.tp{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#17202b;color:#fff;border-radius:6px;padding:9px 14px;font-size:17px;
+margin:4px 0 10px;break-after:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1.tp small{margin-left:auto;font-size:11px;font-weight:400;color:#c9d1dc!important}
+.tq-ly{margin:14px 0 10px;break-inside:auto}
+.tq-ly>.tq-lh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:0 0 4px;border-bottom:1px solid #d9dde3;
+font-weight:700;font-size:13.5px;break-after:avoid;margin-bottom:6px}
+.tq-ly>.tq-lh small{font-weight:400;color:#8a93a0;font-size:10.5px}
+.tq-ly.l1{margin-top:8px}
+.tq-ly.l1>.tq-lh{border:0;padding:0;margin:0;font-size:11px;font-weight:500;color:#556070}
+.tq-ly.l1 .tq-lb .tq-hl{font-size:15.5px;font-weight:700;line-height:1.5;margin:2px 0 4px}
 .tq-ly.l1 .tq-lb ul{margin:4px 0;padding-left:18px}
-.onum{display:none}small.oldl{font-size:11px;font-weight:400;color:#8a93a0;margin-left:6px}
-.ynone .yn{color:var(--sub);font-size:12px}
+.tq-tiles{display:flex;gap:8px;margin:8px 0 0}
+.tq-tile{flex:1 1 0;min-width:0;border:1px solid #d9dde3;border-radius:6px;padding:8px 10px;break-inside:avoid}
+.tq-tile.v-wa{border-color:#e0a04a;background:#fff9ee}.tq-tile.v-bad{border-color:#e3a596;background:#fff6f4}
+.tq-tile .tq-tl{font-size:11px;color:#556070}
+.tq-tile .tq-tv{font-size:16px;font-weight:700;margin:2px 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tq-tile .tq-tf{font-size:11px;color:#556070}
+.tq-two{display:flex;gap:14px;align-items:flex-start;break-inside:avoid}
+.tq-two>.tq-ly{flex:1 1 0;min-width:0;margin-top:10px}.tq-two>.tq-ly.l2{flex:1.6 1 0}
+.tq-box{border:1px solid #d9dde3;border-radius:6px;padding:8px 10px}
+.tq-kv{display:flex;justify-content:space-between;gap:12px;padding:1px 0}.tq-kv b{text-align:right}
+.tq-mv{border:1px solid #d9dde3;border-radius:4px;padding:5px 10px;margin:8px 0;background:#f4f5f7;font-size:12px;break-inside:avoid}
+.tq-mv a{font-weight:700;color:#1e4b91}.tq-mv small{color:#556070;margin-left:6px}
+.tb{margin:16px 0 20px}
+.tb-h{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid #17202b;padding-bottom:5px;margin-bottom:2px;break-after:avoid}
+.tb-h small{color:#556070;font-size:11px}.tb-h b{font-size:14.5px}.tb-h a{margin-left:auto;font-size:11px;color:#1e4b91}
+.tb h3{margin:6px 0 4px}.tb table td:first-child{white-space:nowrap}
+.tb table thead th{background:#f4f5f7;color:#3a4452}
+.tb table tbody tr:nth-child(even) td{background:#fafbfc}
+tr.wsub td{background:#eef2f8!important;font-weight:700;border-top:1px solid #c9d1dc;border-bottom:1px solid #c9d1dc}
+.onum{display:none}small.oldl{font-size:10.5px;font-weight:400;color:#8a93a0;margin-left:6px}
+.ynone .yn{color:#556070;font-size:12px}
 .tpfold-btn,.ynone-btn{display:none}
 @media screen{
 body.js-areas section.tfold .tq-ly.lx{display:none}
@@ -489,12 +517,13 @@ table.tsort thead th[data-s=asc]:after{content:' ▲';color:var(--ink)}
 table.tsort thead th[data-s=desc]:after{content:' ▼';color:var(--ink)}
 table.afilt tr.afx{display:table-row}
 table tr.fno,table.afilt tr.fno{display:none}
+table.afilt tr.wsub,table.tsd tr.wsub,table.afold:not(.aopen) tr.wsub{display:none}
 .anav .ai a .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px;background:#b9c1cc}
 .anav .ai a .dot.bad{background:#c0392b}.anav .ai a .dot.wa{background:#d29a12}.anav .ai a .dot.ok{background:#2f7d5b}
 .anav .abg.wa{background:#d29a12}.anav .abg.nod{background:#e6e9ee;color:#555;font-weight:600}
 }
-@media print{.ttool{display:none}}
-@media screen and (max-width:900px){.tp-cards,.tp-sig{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{.ttool{display:none}.tq-mv a,.tb-h a,.tp-card .tq-cs{color:#1e4b91!important}}
+@media screen and (max-width:900px){.tp-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.tq-tiles{flex-wrap:wrap}.tq-tile{flex-basis:40%}.tq-two{display:block}}
 """
 
 JS = r"""
@@ -540,7 +569,7 @@ JS = r"""
     q.addEventListener('input',apply);sels.forEach(function(s){s.addEventListener('change',apply);});
     t.classList.add('tsort');
     heads.forEach(function(h,i){h.setAttribute('data-s','');h.addEventListener('click',function(){
-      var dir=h.getAttribute('data-s')==='asc'?'desc':'asc';heads.forEach(function(o){o.setAttribute('data-s','');});h.setAttribute('data-s',dir);
+      var dir=h.getAttribute('data-s')==='asc'?'desc':'asc';t.classList.add('tsd');heads.forEach(function(o){o.setAttribute('data-s','');});h.setAttribute('data-s',dir);
       var pairs=rows.map(function(r){var x=r.nextElementSibling;return [r,x&&x.classList.contains('xsub')?x:null];});
       pairs.sort(function(a,b){var p=txt(a[0].cells[i]||a[0]),q2=txt(b[0].cells[i]||b[0]);var u=num(p),v=num(q2);
         var c=(u!==null&&v!==null)?u-v:p.localeCompare(q2,'ko');return dir==='asc'?c:-c;});
@@ -563,7 +592,9 @@ def _lv_badge(lv):
 
 
 def _is_na(x):
-    return x["num"] in ("자료 없음", "판단 불가") or (x["key"] == "xchk" and x["num"] != "대조함")
+    # 11/17 전수 점검 F9: 대조는 했는데 차이가 있으면 num 이 '차이 n건' — 그것까지 '자료 없음'(회색)으로 보이던 것
+    return x["num"] in ("자료 없음", "판단 불가") or (x["key"] == "xchk" and x["num"] != "대조함"
+                                                    and not str(x["num"]).startswith("차이 "))
 
 
 def _short(t, n=46):
@@ -583,16 +614,17 @@ def _change(x):
 
 
 def _todo_table(items, done, with_topic, num_of):
+    """기한 · 할 일(근거 숫자) · [주제] · 담당 · 상태 · 메모. 처리한 것은 아래에 흐리게."""
     if not items and not done:
         return "<div class='tp-note'>걸린 할 일 없음</div>"
-    head = ["#", "할 일"] + (["주제"] if with_topic else []) + ["담당", "기한", "상태", "메모"]
+    head = ["기한", "할 일"] + (["주제"] if with_topic else []) + ["담당", "상태", "메모"]
     rows = []
-    for i, it in enumerate(items, 1):
-        cells = ["<td class='n'>%d</td>" % i,
-                 "<td>%s<br><small>%s</small></td>" % (esc(it["text"]), esc(it.get("fact") or ""))]
+    for it in items:
+        cells = ["<td class='n'><b>%s</b></td>" % esc(it["due"]),
+                 "<td><b>%s</b><br><small>%s</small></td>" % (esc(it["text"]), esc(it.get("fact") or ""))]
         if with_topic:
             cells.append("<td class='n'><a href='#a-%s'>%d. %s</a></td>" % (it["topic"], num_of[it["topic"]], esc(TOPIC_NAME[it["topic"]])))
-        cells += ["<td class='n'>%s</td>" % esc(it["owner"]), "<td class='n'>%s</td>" % esc(it["due"]),
+        cells += ["<td class='n'>%s</td>" % esc(it["owner"]),
                   "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % (it["st"], esc(it["state"])), "<td>%s</td>" % esc(it.get("memo") or "")]
         rows.append("<tr>%s</tr>" % "".join(cells))
     for it in done:
@@ -600,7 +632,7 @@ def _todo_table(items, done, with_topic, num_of):
         if with_topic:
             cells.append("<td class='n'>%s</td>" % ("%d. %s" % (num_of[it["topic"]], esc(TOPIC_NAME[it["topic"]])) if it["topic"] in num_of else ""))
         na = it.get("st") == "na"
-        cells += ["<td class='n'>%s</td>" % esc(it["owner"]), "<td class='n'></td>",
+        cells += ["<td class='n'>%s</td>" % esc(it["owner"]),
                   "<td class='n'><span class='tq-stt v-%s'>%s</span></td>" % ("na" if na else "done", "판단 못 함" if na else "처리"),
                   "<td>%s</td>" % esc(it["memo"])]
         rows.append("<tr class='%s'>%s</tr>" % ("" if na else "tdone", "".join(cells)))
@@ -677,36 +709,58 @@ def build(R, mode_css_mon, parts):
     auto = split_auto(parts["auto"]) if parts.get("auto") else {}
     alerts = (I or {}).get("alerts") or []
 
-    # ── 첫 화면 ──
-    h = ["<style>%s</style><div class='tpw'>" % CSS]
-    h.append("<span id='a-one'></span><h2 id='home' class='tp-h' style='border:0;padding:0;font-size:18px'>첫 화면 · 요약과 할 일</h2>")
+    # ── 첫 쪽 (사용자 2026-11-17 '목업대로 반영'): 대표에게 나간 숫자 · 주제별 상태 표(목차 겸) · 할 일 한 표 ──
+    tbls = []   # 부록으로 옮긴 긴 표 [(번호, 주제 키, 제목, 조각 html, 돌아갈 곳 id)]
+    h = ["<style>%s%s</style><div class='tpw'>" % (CSS, _page_css(R, L, num_of))]
+    h.append("<span id='a-one'></span><h2 id='home' class='tp-h' style='font-size:18px'>첫 화면 · 요약과 할 일</h2>")
     h.append(parts["guide"]("one"))
     h.append(_band(R))
     if cards:
-        h.append("<div class='tp-h'>대표에게 나간 숫자 <small>대표 보고 첫 줄과 같은 값 · 누르면 그 주제로</small></div><div class='tp-cards'>")
+        h.append("<div class='tp-h'>대표에게 나간 숫자 <small>대표 보고 첫 줄에 나간 값 그대로 · 아래 줄을 누르면 근거가 있는 주제로</small></div><div class='tp-cards'>")
         for c in cards:
             h.append("<a class='tp-card' href='#a-%s'><div class='tq-cl'>%s <span class='tq-tag'>대표 보고</span></div><div class='tq-cv'>%s</div>"
-                     "<div class='tq-cf'>%s</div>%s</a>" % (c["topic"], esc(c["label"]), c["big"], c["foot"], _delta(c, prev)))
+                     "<div class='tq-cf'>%s</div>%s<div class='tq-cs'>근거 → %d. %s</div></a>"
+                     % (c["topic"], esc(c["label"]), c["big"], c["foot"], _delta(c, prev), num_of.get(c["topic"], 0),
+                        esc(TOPIC_NAME[c["topic"]])))
         h.append("</div>")
-    h.append("<div class='tp-h'>주제별 신호 <small>판단 한 줄 · 숫자 · 지난번 대비 · 노랑은 할 일이 있는 것만 · ‘자료 없음’은 회색</small></div><div class='tp-sig'>")
+        cks = (R.get("s7") or {}).get("checks") or []
+        if cks and "data" in num_of:
+            ng = sum(1 for c in cks if not c[3])
+            h.append("<div class='tp-note'>보고 대조 (요약과 상세 합계): %d개 가운데 %s → <a href='#a-data'>%d. %s ⑤</a></div>"
+                     % (len(cks), "<b class='v-dn'>%d개 불일치</b>" % ng if ng else "모두 일치", num_of["data"], esc(TOPIC_NAME["data"])))
+    h.append("<div class='tp-h'>주제별 상태 <small>목차를 겸함 · 주제 이름을 누르면 그 주제로 · 노랑은 할 일이 있는 것만 · ‘자료 없음’은 회색</small></div>")
+    rows, nas = [], []
     for x in L:
         na = _is_na(x)
         nt = len(by_topic.get(x["key"]) or [])
         cls = "nod" if na else ("bad" if x["lv"] == "bad" else ("wa" if x["lv"] == "wa" and nt else ("ok" if x["lv"] == "ok" else "")))
         head = x["facts"][0] if x["facts"] and not na else (x["sub"] if not na else (x["facts"] or [x["sub"]])[0])
         ch, cc = _change(x)
-        tail = ("→ 6. 자료 할 일에 1줄" if na else ("할 일 %d" % nt if nt else "할 일 없음"))
-        h.append("<a class='tq-sg v-%s' href='#a-%s'><div class='tq-sn'><span>%d. %s</span>%s</div><div class='tq-st'>%s</div>"
-                 "<div class='tq-sv'>%s · %s</div><div class='tq-sf'><span class='%s'>%s</span> · %s</div></a>"
-                 % (cls, x["key"], num_of[x["key"]], esc(x["name"]), _lv_badge("nod" if na else x["lv"]), esc(_short(head)),
-                    esc(x["num"]), esc(x["sub"]), cc, esc(ch), esc(tail)))
-    h.append("</div>")
+        link = "<a class='tq-sg v-%s' href='#a-%s'>%d. %s</a>" % (cls, x["key"], num_of[x["key"]], esc(x["name"]))
+        if na:
+            nas.append((link, x, head, ch))
+            continue
+        rows.append("<tr class='v-%s'><td class='n'>%s</td><td class='n'>%s</td><td><b>%s</b><br><small>%s · %s</small></td>"
+                    "<td class='n'><span class='%s'>%s</span></td><td class='n r'>%s</td></tr>"
+                    % (cls, link, _lv_badge(x["lv"]), esc(_short(head, 110)), esc(x["num"]), esc(x["sub"]), cc, esc(ch), nt or "없음"))
+    if nas:   # 자료가 없어 못 만든 주제는 한 줄로
+        rows.append("<tr class='v-nod'><td class='n'>%s</td><td class='n'>%s</td><td>%s<br><small>%s</small></td>"
+                    "<td class='n'>%s</td><td class='n r'>%s</td></tr>"
+                    % ("<br>".join(l for l, _, _, _ in nas), _lv_badge("nod"),
+                       " · ".join(esc(_short(hd, 70)) for _, x, hd, _ in nas),
+                       " · ".join("%s %s · %s" % (esc(x["name"]), esc(x["num"]), esc(x["sub"])) for _, x, _, _ in nas)
+                       + (" → 받을 자료는 <a href='#a-data'>%d. %s</a> 할 일에" % (num_of["data"], esc(TOPIC_NAME["data"])) if "data" in num_of else ""),
+                       esc(nas[0][3]) if len(set(c for _, _, _, c in nas)) == 1 else "<br>".join(esc(c) for _, _, _, c in nas),
+                       sum(len(by_topic.get(x["key"]) or []) for _, x, _, _ in nas) or "없음"))
+    # 11/18: 주제마다 첫 줄은 금액 큰 순이 아니라 급한 순(계산서·수금은 가장 오래 밀린 것)이라 '가장 큰 것'이 아니라 '먼저 볼 것'
+    h.append("<div class='tw'><table class='pt td nofold tp-st'><thead><tr><th>주제</th><th>상태</th><th>먼저 볼 것 하나</th><th>지난번 대비</th>"
+             "<th class='r'>할 일</th></tr></thead><tbody>%s</tbody></table></div>" % "".join(rows))
     np_ = (R.get("todo_prev") or {}).get("items") or {}
     carried = sum(1 for it in items if it["id"] in np_)
-    h.append("<div class='tp-h'>할 일 <small>%s</small></div>" % esc(
+    h.append("<div class='tp-h'>할 일 %d건 <small>한 표에 전부 (주제 쪽에는 그 주제 것만 다시) · %s</small></div>" % (len(items), esc(
         ("지난번 할 일 %d건 중 %d건 처리 · %d건 이월%s" % (len(np_), sum(1 for d in done if d.get("st") != "na"), carried,
                                                  " · %d건 판단 못 함" % sum(1 for d in done if d.get("st") == "na")
-                                                 if any(d.get("st") == "na" for d in done) else "")) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)"))
+                                                 if any(d.get("st") == "na" for d in done) else "")) if prev else "지난 기록 없음 (다음 보고부터 이월·처리 표시)")))
     h.append(_todo_table(items, done, True, num_of))
     h.append("<div class='tp-note'>할 일 = 위험 분석의 해결방안(높음 먼저) + 위험 분석에 없는 자동 분석 경보 ‘높음’ + 자료 없는 주제의 채울 일. "
              "담당 = 프로젝트 팀(프로젝트 일이면), 아니면 경영관리. 기한 = 다음 보고 날. 상태·메모는 창의 ‘확인할 것’ 화면(보고 할 일)에서 "
@@ -716,11 +770,11 @@ def build(R, mode_css_mon, parts):
     K = (I or {}).get("track") or {}
     tl = digest._track_line(K)
     h.append("<div class='tp-note'>지난 예상 대비 실제 오차(매번): %s → <a href='#auto15'>1. 자금 ③</a></div>"
-             % esc(tl or ("지난 보고 기록이 아직 없어 견줄 수 없음" if not K.get("months") else "기준 안")))
+             % esc(tl or ("지난 보고 기록이 아직 없어 견줄 수 없음" if not (K.get("months") or K.get("weeks")) else "예측 금액이 0이라 비율을 낼 수 없음")))
     h.append("</div>")
     home = "".join(h)
 
-    # ── 주제 장 ──
+    # ── 주제 쪽: 띠 머리 · ① 결론과 숫자 칸 · ② 할 일 | ③ 바뀐 것 · ④ 자동 분석·위험 · ⑤ 표(긴 표는 부록) · ⑥ 근거 ──
     topics = []
     for x in L:
         k = x["key"]
@@ -728,33 +782,48 @@ def build(R, mode_css_mon, parts):
         lv = "nod" if na else x["lv"]
         olds = [OLD_NAMES[c] for c in CHAPTERS[k] if c in parts["chap"]]
         t = []
-        t.append("<h1 class='tp' id='t-%s'>%d. %s %s <small>예전 %s</small></h1>" % (k, num_of[k], esc(x["name"]), _lv_badge(lv),
-                                                                                 esc("·".join(olds) + (" · A-3·A-4 일부" if k in ("cash", "proj", "pl", "ar", "other", "data") else ""))))
+        t.append("<h1 class='tp' id='t-%s'><span>%d. %s</span> %s <small>지난 보고와 맞춰 볼 때: 예전 %s</small></h1>"
+                 % (k, num_of[k], esc(x["name"]), _lv_badge(lv),
+                    esc(" · ".join(olds) + (" · A-3·A-4 일부" if k in ("cash", "proj", "pl", "ar", "other", "data") else ""))))
         # ① 결론
         ch, cc = _change(x)
         mine = [c for c in cards if c["topic"] == k]
         body = "<div class='tq-hl'>%s</div>" % esc((x["facts"] or [x["sub"]])[0] if x["facts"] else "%s %s" % (x["sub"], x["num"]))
-        body += "<div><b>%s</b> · %s · %s</div>" % (esc(x["num"]), esc(x["sub"]), esc(ch))
         if len(x["facts"]) > 1:
             body += "<ul>%s</ul>" % "".join("<li>%s</li>" % esc(f) for f in x["facts"][1:6])
             if len(x["facts"]) > 6:
                 body += "<div class='tp-note'>그 밖 %d건은 ④ 위험 표에</div>" % (len(x["facts"]) - 6)
-        if mine:
-            body += "<div class='tp-note'>대표 보고 숫자: %s</div>" % " · ".join(
-                "%s <b>%s</b>" % (esc(c["label"]), re.sub(r"<[^>]+>", "", c["big"])) for c in mine)
+        if na:
+            body += "<div class='tp-note'><b>%s</b> · %s · %s</div>" % (esc(x["num"]), esc(x["sub"]), esc(ch))
+        else:
+            tiles = ["<div class='tq-tile v-%s'><div class='tq-tl'>%s</div><div class='tq-tv'>%s</div><div class='tq-tf'><span class='%s'>%s</span></div></div>"
+                     % (lv if lv in ("wa", "bad") else "", esc(x["sub"]), esc(x["num"]), cc, esc(ch))]
+            tiles += ["<div class='tq-tile'><div class='tq-tl'>%s</div><div class='tq-tv'>%s</div><div class='tq-tf'>대표 보고에 나간 값</div></div>"
+                      % (esc(c["label"]), c["big"]) for c in mine]
+            body += "<div class='tq-tiles'>%s</div>" % "".join(tiles)
         t.append(_layer(1, body, "신호 기준은 11/12 그대로", extra=" v-" + lv))
         # ② 할 일
-        t.append(_layer(2, _todo_table(by_topic[k], done_by[k], False, num_of), "결정·메모는 첫 화면과 같은 칸"))
-        if not x["open2"]:
-            t.append("<button type='button' class='tpfold-btn' data-c='③~⑥ 펼치기 (지난번과 같고 할 일 없어 접어 둠)'>"
-                     "③~⑥ 펼치기 (지난번과 같고 할 일 없어 접어 둠)</button>")
+        nt_ = len(by_topic[k])
+        l2 = (_layer(2, _todo_table(by_topic[k], done_by[k], False, num_of), "%s · 결정·메모는 첫 화면과 같은 칸" % ("%d건" % nt_ if nt_ else "없음"))
+              if (by_topic[k] or done_by[k] or not na) else "")
+        fold = ("<button type='button' class='tpfold-btn' data-c='③~⑥ 펼치기 (지난번과 같고 할 일 없어 접어 둠)'>"
+                "③~⑥ 펼치기 (지난번과 같고 할 일 없어 접어 둠)</button>") if not x["open2"] else ""
         # ③ 바뀐 것
-        body = "<div>신호: %s</div>" % esc(ch)
+        body, extra3 = "<div class='tq-box'><div class='tq-kv'><span>신호</span><b>%s</b></div>" % esc(ch), ""
+        if k == "cash":
+            body += "<div class='tq-kv'><span>지난 예상 대비 실제 오차</span><b>%s</b></div>" % esc(
+                tl or ("지난 보고 기록 없음" if not (K.get("months") or K.get("weeks")) else "예측 금액이 0이라 비율을 낼 수 없음"))
+        body += "</div>"
         for n_ in sorted(i for i, (tk, ly) in AUTO_PLACE.items() if tk == k and ly == 3):
             if n_ in auto:
-                body += ("<span id='auto15'></span>" if n_ == 15 else "") + relabel_auto(auto.pop(n_))
+                extra3 += ("<span id='auto15'></span>" if n_ == 15 else "") + relabel_auto(auto.pop(n_))
         note3 = "예전 자동 분석 2·15번 (예측 오차는 늘 펼침)" if k == "cash" else ""
-        t.append(_layer(3, body, note3, lx=True))
+        wide3 = "<table" in extra3 or "<svg" in extra3
+        l3 = _layer(3, body + extra3, note3, lx=True) if (extra3 or not na) else ""
+        if l2 and l3 and not wide3 and nt_ + len(done_by[k]) <= 6:   # 짧으면 나란히 (목업), 길면 위아래로
+            t.append("<div class='tq-two'>%s%s</div>%s" % (l2, l3, fold))
+        else:
+            t.append(l2 + fold + l3)
         # ④ 자동 분석 · 위험
         rs = [r for r in R.get("risks") or [] if RISK_TOPIC.get(r["area"], "data") == k]
         body = ""
@@ -778,28 +847,48 @@ def build(R, mode_css_mon, parts):
                                for n_, p in empty)
             body += ("<div class='ynone'><span class='yn'>걸린 것 없음: %s</span><button type='button' class='ynone-btn'>펼치기</button>"
                      "<div class='ypiece'>%s</div></div>" % (esc(names), "".join(relabel_auto(p) for _, p in empty)))
-        if not body:
-            body = "<div class='tp-note'>이 주제에 걸린 위험·자동 분석 없음</div>"
         nums = sorted(i for i, (tk, ly) in AUTO_PLACE.items() if tk == k and ly == 4)
-        t.append(_layer(4, body, "예전 A-3 위험 분석%s" % ((" · A-4 자동 분석 " + "·".join(map(str, nums)) + "번") if nums else ""), lx=True))
-        # ⑤ 상세 표
+        if body or not na:
+            t.append(_layer(4, body or "<div class='tp-note'>이 주제에 걸린 위험·자동 분석 없음</div>",
+                            "예전 A-3 위험 분석%s" % ((" · A-4 자동 분석 " + "·".join(map(str, nums)) + "번") if nums else ""), lx=True))
+        # ⑤ 상세 표: 짧은 표는 여기, 긴 표(LONG_ROWS 줄 넘음)는 부록 '긴 표'로 옮기고 여기엔 가는 곳 한 줄
         body = ""
         if k == "proj":
             body += "".join(fs % p for p in place["proj5"])
+        moved = 0
         for c in CHAPTERS[k]:
             if c in parts["chap"]:
                 n_ = parts["order"][c]
-                body += "<span id='a-%s'></span>%s%s" % (c, parts["guide"](c), frag(n_, label_chapter(parts["chap"][c], OLD_NAMES[c])) if n_ else parts["chap"][c])
-        t.append(_layer(5, body, "예전 %s — 표는 지금 그대로" % "·".join(olds), lx=True, cls=" ly5"))
+                body += "<span id='a-%s'></span>%s" % (c, parts["guide"](c))
+                if not n_:
+                    body += parts["chap"][c]
+                    continue
+                ps = split_long(label_chapter(parts["chap"][c], OLD_NAMES[c]))
+                if not any(lg for _, _, lg in ps):
+                    body += frag(n_, "".join(p for p, _, _ in ps))
+                    continue
+                for i, (p, title, lg) in enumerate(ps):
+                    f = frag(n_ + i / 100.0, p)
+                    if lg:
+                        no = len(tbls) + 1
+                        tbls.append((no, k, title, f, c))
+                        moved += 1
+                        body += ("<div class='tq-mv'><a href='#tb-%d'>부록 표 %d</a> · %s <small>긴 표라 부록 ‘긴 표’에 (주마다·줄마다 그대로)</small></div>"
+                                 % (no, no, esc(title)))
+                    else:
+                        body += f
+        t.append(_layer(5, body, "예전 %s — 표는 지금 그대로%s" % ("·".join(olds), " · 긴 표 %d개는 부록" % moved if moved else ""),
+                        lx=not na, cls=" ly5"))
         # ⑥ 근거
         body = _evidence_links(R, k)
         if k == "cash":
             body += "".join(fs % p for p in place["cash6"])
-        t.append(_layer(6, body or "<div class='tp-note'>이 주제를 가리키는 근거 번호 없음 (표가 근거)</div>",
-                        "대표가 물어볼 때 낼 자료", lx=True))
+        if body or not na:
+            t.append(_layer(6, body or "<div class='tp-note'>이 주제를 가리키는 근거 번호 없음 (표가 근거)</div>",
+                            "대표가 물어볼 때 낼 자료", lx=True))
         nt = len(by_topic[k]) + (parts.get("recon_diff") or 0 if k == "data" else 0)   # 자료 대조 '다름' 줄 수도 목록 숫자에 (예전 B-7-1 목록 숫자)
         badge, bkind = (("자료 없음", "nod") if na else ((nt, "wa" if x["lv"] != "bad" else "") if nt else (None, "")))
-        topics.append((k, "%d. %s" % (num_of[k], x["name"]), "주제 (신호등 순서)", "".join(t), badge, bkind, lv, not x["open2"]))
+        topics.append((k, "%d. %s" % (num_of[k], x["name"]), "주제 (신호등 순서)", "".join(t), badge, bkind, lv, not x["open2"] and not na))
     # 자동 분석 중 남은 것 (번호 표에 없는 새 분석 — 빠지지 않게 자금 ④ 뒤 대신 전체 표 모음에)
     left_auto = "".join(auto[n_] for n_ in sorted(auto))
 
@@ -807,15 +896,59 @@ def build(R, mode_css_mon, parts):
     per = [(k_, lab, "정기 (해당 달에만)", parts["guide"](k_) + b, None, "", None, False) for k_, lab, b in parts["periodic"]]
 
     # ── 부록 ──
+    a0 = ("<h2 id='tbl'>부록 · 긴 표</h2>" + parts["guide"]("tbl") + "<div class='tp-note'>주제 쪽에 두기에 긴 표(%d줄 넘음)를 모았습니다. 주제 ⑤의 ‘부록 표 n’이 여기로 옵니다. "
+          "표는 한 줄도 빼지 않았고, 쪽이 넘어가면 머리 줄이 다시 나옵니다.</div>" % LONG_ROWS
+          + "".join("<div class='tb ly5'><div class='tb-h' id='tb-%d'><small>부록 · %d. %s</small><b>표 %d</b>"
+                    "<a href='#a-%s'>← %d. %s ⑤</a></div>%s</div>"
+                    % (no, num_of[k], esc(TOPIC_NAME[k]), no, c, num_of[k], esc(TOPIC_NAME[k]), f) for no, k, _, f, c in tbls))
     a1 = (parts["guide"]("sum") + frag(10, parts["summ"]) + "<span id='a-ev'></span>"
           + "".join(fs % p for p in place["appx"]))
     a3 = ("<h2 id='allt'>전체 표 모음</h2>" + parts["guide"]("risk") + "".join(place["all"])
           + "<span id='a-risk'></span>" + frag(30, parts["risk"]) + "<span id='a-auto'></span>" + _old_index(parts, keys, num_of) + left_auto)
-    appx = [("sum", "대표가 본 화면", "부록 (지금 내용 빠짐없이)", a1, None, "", None, False),
-            ("docs", "요청 자료 전부", "부록 (지금 내용 빠짐없이)", parts["docs"], None, "", None, False),
-            ("all", "전체 표 모음", "부록 (지금 내용 빠짐없이)", a3, None, "", None, False)]
+    grp = "부록 (지금 내용 빠짐없이)"
+    appx = ([("tbl", "긴 표 (%d개)" % len(tbls), grp, a0, None, "", None, False)] if tbls else []) + [
+        ("sum", "대표가 본 화면", grp, a1, None, "", None, False),
+        ("docs", "요청 자료 전부", grp, parts["docs"], None, "", None, False),
+        ("all", "전체 표 모음", grp, a3, None, "", None, False)]
     first = [("home", "요약 · 할 일", "첫 화면", home, len(items) or None, "wa" if items else "", None, False)]
     return first + topics + per + appx, "".join(hide)
+
+
+LONG_ROWS = 15   # 표 본문이 이 줄 수를 넘으면 부록 '긴 표'로
+
+
+def split_long(body):
+    """상세 장 본문을 <h3> 조각으로 나눔 -> [(html, 제목 또는 None, 긴 표인가)]. 조각마다 div 짝이 맞을 때만 나눈다."""
+    ps = re.split(r"(?=<h3[ >])", body)
+    if len(ps) < 2 or len(ps) > 99 or any(p.count("<div") != p.count("</div>") for p in ps):
+        return [(body, None, False)]
+    out = []
+    for p in ps:
+        m = re.match(r"<h3[^>]*>(.*?)</h3>", p, re.S)
+        rows = max([t.count("<tr") for t in re.findall(r"<tbody>(.*?)</tbody>", p, re.S)] or [0])
+        out.append((p, re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else None, bool(m) and rows > LONG_ROWS))
+    return out
+
+
+def _page_css(R, L, num_of):
+    """인쇄 쪽 아래 글: 보고 이름 · 기준일 · (주제) / 쪽 번호. 주제마다 새 쪽에서 시작, 자료 없는 주제끼리는 이어 붙임.
+    쪽 아래 글을 모르는 브라우저는 그냥 안 찍는다 (본문은 그대로)."""
+    name = "%s 경영관리 보고 · 기준일 %s" % ("주간" if R.get("kind") == "weekly" else "월간", R["asof"].strftime("%Y-%m-%d"))
+    font = "font-size:8pt;color:#556070;font-family:'Noto Sans KR','Malgun Gothic',sans-serif"
+
+    def page(pn, tail):
+        txt = re.sub(r'["\\\n]', " ", name + (" · " + tail if tail else ""))
+        return ('@page %s{size:A4 portrait;margin:13mm 12mm 15mm;@bottom-left{content:"%s";%s}'
+                '@bottom-right{content:counter(page) " / " counter(pages);%s}}' % (pn, txt, font, font))
+    out = [page("mg", ""), page("mgna", "자료가 없어 못 만든 주제"), page("mgtbl", "부록 긴 표")]
+    sel = ["body>.wrap{page:mg}", "#a-tbl{page:mgtbl}"]
+    for x in L:
+        if _is_na(x):
+            sel.append("#a-%s{page:mgna}" % x["key"])
+        else:
+            out.append(page("mg%s" % x["key"], "%d. %s" % (num_of[x["key"]], x["name"])))
+            sel.append("#a-%s{page:mg%s}" % (x["key"], x["key"]))
+    return "@media print{%s}%s" % ("".join(sel), "".join(out))
 
 
 def _layer(i, body, note="", lx=False, cls="", extra=""):
