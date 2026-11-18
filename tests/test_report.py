@@ -1048,7 +1048,7 @@ class TestUserRulesLocked(Base):
         self.assertIn("미확인 2건", value)
         check_editions(self, R)
         self.assertEqual((self.R["s5"]["ar_unknown_n"], self.R["s5"]["issued_unknown_n"],
-                          self.R["s5"]["unissued_unknown_n"]), (0, 0, 1))
+                          self.R["s5"]["unissued_unknown_n"]), (0, 0, 0))   # 11/18: 계약금액 빈 P26208도 사전견적 기준으로 셈
 
     def test_blank_plan_amount_not_zero(self):
         def mutate(rows):
