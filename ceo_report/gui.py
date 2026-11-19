@@ -2276,7 +2276,9 @@ class Window(object):
             webbrowser.open(self.edit.url)
             self.say("수정 모드가 이미 열려 있습니다 — 브라우저 창을 다시 엽니다")
             return
-        kind = winstate.latest_reports(self.paths.output).get("kind") or "주간"
+        kind = self._edit_kind()
+        if kind is None:
+            return
         orig, src = editmode.latest_report(self.paths.output, kind)
         if not orig:
             self.set_busy(False, "고칠 대표 보고가 없습니다. 먼저 주간 또는 월간 보고를 만드세요", ok=False)
@@ -2295,6 +2297,19 @@ class Window(object):
         self.say("──── 수정 모드: %s ────" % os.path.basename(src))
         self.say("브라우저에서 고친 뒤 위쪽 '저장하고 PDF 만들기'를 누르세요 → %s" % os.path.basename(
             os.path.splitext(editmode.edited_path(orig))[0] + ".pdf"))
+
+    def _edit_kind(self):
+        """고칠 대표 보고 고르기 (사용자 2026-11-19 "주간보고는 수정 모드가 안 뜬다"): 예전엔 주간·월간 중 나중에 만든 것만 열어
+        주간 뒤 월간을 만들면 주간을 고칠 수 없었다. 둘 다 있으면 묻는다 (예 = 주간, 아니오 = 월간, 취소 = 안 엶)."""
+        have = [k for k in ("주간", "월간") if editmode.latest_report(self.paths.output, k)[0]]
+        if len(have) < 2:
+            return have[0] if have else "주간"
+        last = winstate.latest_reports(self.paths.output).get("kind") or "주간"
+        ans = messagebox.askyesnocancel("수정 모드", "어느 대표 보고를 고칠까요?\n\n예 = 주간 대표 보고\n아니오 = 월간 대표 보고\n\n"
+                                        "(가장 최근에 만든 것: %s)" % last, parent=self.root)
+        if ans is None:
+            return None
+        return "주간" if ans else "월간"
 
     def wehago_collect(self):
         """'위하고에서 받기' (사용자 2026-11-17): 크롬 확장에 '모두 받기'를 시킨다. 진행은 자동 반영 줄에 보인다."""
