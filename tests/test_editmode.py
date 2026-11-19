@@ -168,3 +168,16 @@ class TestServer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBarScriptSyntax(unittest.TestCase):
+    """사용자 2026-11-19 "수정 모드를 눌러도 수정이 안 된다": 띠 스크립트의 '\\n' 이 파이썬 글에서 진짜 줄바꿈이 되어 JS 문법 오류
+    → 화면 전체가 고쳐지지 않았음 (11/17 편의성 48 부터). 따옴표 글 안에 줄바꿈이 없어야 한다."""
+
+    def test_no_newline_inside_js_string(self):
+        import re
+        script = editmode._BAR.split("<script>", 1)[1].split("</script>", 1)[0]
+        for line in script.split("\n"):
+            # 한 줄 안에서 홑따옴표가 짝수여야 한다 (줄바꿈으로 끊긴 글자열이 없음)
+            self.assertEqual(line.count("'") % 2, 0, line)
+        self.assertIsNone(re.search(r"\('\n", editmode._BAR))

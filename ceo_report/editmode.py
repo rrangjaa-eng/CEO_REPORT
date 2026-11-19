@@ -33,7 +33,7 @@ align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#ff
 <script>
 (function(){
   var KEY=%(key)s, dirty=false, stale=false;
-  var first=document.body.innerText.split('\n');
+  var first=document.body.innerText.split('\\n');
   document.body.setAttribute('contenteditable','true');
   document.body.setAttribute('spellcheck','false');
   document.body.addEventListener('input',function(){dirty=true;msg('고친 내용이 아직 저장되지 않았습니다');});
@@ -52,11 +52,11 @@ align-items:center;flex-wrap:wrap;padding:10px 16px;background:#1f4e8c;color:#ff
   // 편의성 48 (2026-11-17): 원본이 바뀌면 저장할 때가 아니라 바로 알리고, 고친 곳 목록을 보여 새 보고로 옮기기 쉽게
   function edited(){
     var seen={}; first.forEach(function(t){seen[t]=1;});
-    return document.body.innerText.split('\n').filter(function(t){t=t.trim(); return t && !seen[t] && t.indexOf('수정 모드')<0;}).slice(0,40);
+    return document.body.innerText.split('\\n').filter(function(t){t=t.trim(); return t && !seen[t] && t.indexOf('수정 모드')<0;}).slice(0,40);
   }
   function showStale(){
     stale=true; var box=document.getElementById('edit-stale'); box.style.display='block';
-    var l=edited(); document.getElementById('edit-list').textContent=l.length?l.join('\n'):'(아직 고친 곳 없음)';
+    var l=edited(); document.getElementById('edit-list').textContent=l.length?l.join('\\n'):'(아직 고친 곳 없음)';
     document.getElementById('edit-save').disabled=true;
   }
   document.getElementById('edit-copy').onclick=function(){
