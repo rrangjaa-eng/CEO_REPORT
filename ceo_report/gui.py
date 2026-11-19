@@ -3292,32 +3292,43 @@ class Window(object):
         ttk.Label(frm, text="이체 파일에 넣지 못한 거래처입니다. 아는 곳만 넣고 '저장하고 다시 만들기'를 누르세요. "
                             "비운 줄은 그대로 둡니다 (은행에서 직접 이체).", style="S.TLabel", wraplength=640).grid(
             row=0, column=0, columnspan=6, sticky="w", pady=(0, 6))
-        for c, t in enumerate(("거래처", "금액", "거래처코드", "은행", "계좌번호", "예금주")):
-            ttk.Label(frm, text=t).grid(row=1, column=c, sticky="w", padx=3)
         banks = ("신한", "국민", "기업", "우리", "하나", "농협", "SC제일", "한국씨티", "수협", "신협", "새마을금고", "우체국",
                  "아이엠뱅크", "부산", "경남", "광주", "전북", "제주", "KDB산업", "카카오뱅크", "케이뱅크", "토스뱅크")
         rows = []
         box = ttk.Frame(frm)
         box.grid(row=2, column=0, columnspan=6, sticky="nsew")
-        canvas = tk.Canvas(box, height=min(32 * len(missing), 360), width=700, highlightthickness=0)
+        canvas = tk.Canvas(box, highlightthickness=0)
         bar = ttk.Scrollbar(box, command=canvas.yview)
         inner = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=inner, anchor="nw")
+        # 머리글도 같은 표 안에 둔다 (칸 너비가 줄과 맞게, 2026-11-19)
+        for c, t in enumerate(("거래처", "금액", "거래처코드", "은행", "계좌번호", "예금주")):
+            ttk.Label(inner, text=t).grid(row=0, column=c, sticky="w", padx=3)
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
         bar.pack(side="right", fill="y")
         for i, m in enumerate(missing):
             v = {k: tk.StringVar() for k in ("code", "bank", "no", "holder")}
             v["code"].set(m.get("code") or "")
-            ttk.Label(inner, text=(m["vendor"] or "-")[:18], width=18).grid(row=i, column=0, sticky="w", padx=3, pady=2)
-            ttk.Label(inner, text="{:,}".format(m["amount"]), width=11, anchor="e").grid(row=i, column=1, padx=3)
-            ttk.Entry(inner, textvariable=v["code"], width=8).grid(row=i, column=2, padx=3)
-            ttk.Combobox(inner, textvariable=v["bank"], values=banks, width=8).grid(row=i, column=3, padx=3)
-            ttk.Entry(inner, textvariable=v["no"], width=16).grid(row=i, column=4, padx=3)
-            ttk.Entry(inner, textvariable=v["holder"], width=10).grid(row=i, column=5, padx=3)
+            ttk.Label(inner, text=(m["vendor"] or "-")[:18], width=18).grid(row=i + 1, column=0, sticky="w", padx=3, pady=2)
+            ttk.Label(inner, text="{:,}".format(m["amount"]), width=11, anchor="e").grid(row=i + 1, column=1, padx=3)
+            ttk.Entry(inner, textvariable=v["code"], width=8).grid(row=i + 1, column=2, padx=3)
+            ttk.Combobox(inner, textvariable=v["bank"], values=banks, width=8).grid(row=i + 1, column=3, padx=3)
+            ttk.Entry(inner, textvariable=v["no"], width=16).grid(row=i + 1, column=4, padx=3)
+            ttk.Entry(inner, textvariable=v["holder"], width=10).grid(row=i + 1, column=5, padx=3)
             rows.append((m, v))
         inner.update_idletasks()
         canvas.configure(scrollregion=canvas.bbox("all"))
+        # 사용자 2026-11-19 "계좌 없는 거래처 화면이 작아서 입력란이 안 보인다": 그림판 너비를 700으로 못 박아 화면 배율(125%·150%)에서
+        # 계좌번호·예금주 칸이 잘렸다 → 칸이 실제로 차지하는 너비·높이에 맞추고(높이는 화면의 절반까지, 넘치면 세로 막대), 창을 늘릴 수 있게
+        need_w, need_h = inner.winfo_reqwidth(), inner.winfo_reqheight()
+        canvas.configure(width=need_w, height=min(need_h, int(top.winfo_screenheight() * 0.5)))
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+        inner.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+        box.columnconfigure(0, weight=1)
+        frm.rowconfigure(2, weight=1)
+        frm.columnconfigure(0, weight=1)
+        top.resizable(True, True)
 
         acc_err = tk.StringVar(value="")
 
@@ -3344,6 +3355,8 @@ class Window(object):
         ttk.Button(r, text="저장하고 다시 만들기", command=save_all, style="Big.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(r, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
         ttk.Label(r, textvariable=acc_err, foreground=C["red"], wraplength=420).pack(side="left", padx=(8, 0))
+        top.update_idletasks()
+        top.minsize(min(top.winfo_reqwidth(), top.winfo_screenwidth() - 40), min(top.winfo_reqheight(), top.winfo_screenheight() - 80))
 
     def open_dir(self, path):
         if not open_path(path):
