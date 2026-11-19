@@ -103,6 +103,24 @@ class TestCashForm(unittest.TestCase):
         fundplan.settle(rows, books, dt.date(2026, 11, 5))
         self.assertEqual(rows[0]["상태"], "이미 지급")
 
+    def test_past_auto_rows_still_match_book_before_file_date(self):
+        # 2026-11-19 실제: 자동수집 자금계획서(지난 3달)에 남은 8/7 직접입력 줄 — 8/7에 통장으로 이미 냄 → '이미 지급'
+        rows = [{"예정일": "2026-08-07", "입출금": "지급", "분류": "일반경비", "거래처": "롯데_1842", "거래처코드": "0000000962",
+                 "금액": 6655040, "자료일": "2026-11-19", "파일": "261119 자금계획 자동수집.json", "상태": "", "근거": ""}]
+        pay = {"date": dt.date(2026, 8, 7), "account_code": "26200", "debit": 6655040, "credit": None,
+               "vendor": "롯데_1842", "vendor_code": "00962", "no": "00016", "account": "미지급비용"}
+        bank = {"date": dt.date(2026, 8, 7), "account_code": "10301", "debit": None, "credit": 6655040,
+                "vendor": "신한은행", "vendor_code": "", "no": "00016", "account": "보통예금"}
+        books = SimpleNamespace(state="ok", journal=[pay, bank], book_date=dt.date(2026, 11, 19))
+        fundplan.settle(rows, books, dt.date(2026, 11, 19))
+        self.assertEqual(rows[0]["상태"], "이미 지급")
+        # 예정일이 받은 날 뒤인 줄은 예전처럼 받은 날 앞 전표를 보지 않는다
+        rows[0].update(예정일="2026-11-20", 상태="", 근거="")
+        pay2 = dict(pay, date=dt.date(2026, 11, 10), no="00030")
+        books = SimpleNamespace(state="ok", journal=[pay2], book_date=dt.date(2026, 11, 19))
+        fundplan.settle(rows, books, dt.date(2026, 11, 19))
+        self.assertEqual(rows[0]["상태"], "예정")
+
     def test_opening_check(self):
         cfg = {"cash_codes": ("10300",)}
         j = [{"date": dt.date(2025, 2, 1), "account_code": "10300", "debit": 350000000, "credit": None},

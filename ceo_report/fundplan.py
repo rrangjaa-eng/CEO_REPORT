@@ -452,10 +452,14 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     def window(r):
         due = dt.date(*[int(x) for x in r["예정일"].split("-")])
         lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
-        if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and r.get("자료일"):
+        stamp = dt.date(*[int(x) for x in r["자료일"].split("-")]) if r.get("자료일") else None
+        if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and stamp is not None and due >= stamp:
             # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
             # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
-            lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+            # 예정일이 받은 날보다 앞선 줄은 자르지 않는다 (사용자 2026-11-19 결정 카드 '지난 줄도 장부와 대조'): 위하고가 반제하지 않는
+            # 직접입력 줄은 이미 낸 뒤에도 남는다 — 실제 8/7 롯데_1842 사무실임대료 6,655,040을 8/7에 냈는데, 지난 3달을 받기
+            # 시작한 11/19 수집에서 받은 날 뒤 전표만 보다가 '안 나간 돈'으로 11/20 출금에 다시 올라갔음
+            lo = max(lo, stamp)
         od = _origin_day(r)
         if od is not None:
             # 이 돈을 만든 원전표(계산서·비용 전표) 날짜 전의 지급·입금은 이 줄의 것이 아니다 (비고의 원전표 일자, ②)
