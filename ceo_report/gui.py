@@ -772,6 +772,9 @@ class Window(object):
         self.t_result_lab.wrap = W
         self.t_result_lab.pack(fill="x", pady=(4, 0))
         self.hints.append(self.t_result_lab)
+        # 2026-11-20: 못 넣은 지급까지 적으면 150% 배율에서 칸(560 고정 폭)을 넘쳐 윗줄이 잘렸다 → 칸의 실제 너비까지 펼쳐 쓴다
+        self.t_result_lab.bind("<Configure>", lambda e: e.widget.configure(wraplength=max(int(e.widget.wrap), e.width - 4))
+                               if abs(int(float(str(e.widget.cget("wraplength")))) - max(int(e.widget.wrap), e.width - 4)) > 2 else None)
         self.step_pages = [s1, s2, s3, s4]
         self.step_now = None
         self.merge_changed(save=False)
@@ -3149,7 +3152,8 @@ class Window(object):
         self.dep_now.set(self.dep_text())
         self._flash(self.f_dep, "지움", lambda: "법인세 예상에 쓰임")
 
-    def make_transfer(self, override=None):
+    def make_transfer(self, override=None, again=False):
+        """again: 계좌·예금주별 금액 창에서 이어서 다시 만들 때 True (단추로 새로 만들 때는 False → 이어 가던 기록을 비움)."""
         from . import transfer
         if self.busy:   # P5-10: 열어 둔 보조창에서도 작업 중엔 만들지 않는다 (반쯤 바뀐 자료로 이체 파일이 나가지 않게)
             self.say("작업이 끝난 뒤 이체 파일을 만드세요")
@@ -3162,6 +3166,9 @@ class Window(object):
             self.say("지급일 끝이 시작보다 앞섭니다")
             return
         self.say("──── 이체 파일 ────")
+        if not again:
+            # 사용자 2026-11-20: 계좌 없는 거래처 창에서 비워 둔 곳(은행에서 직접 보냄)과 이 흐름에서 만든 파일은 이번 흐름에서만 기억한다
+            self._left_blank, self._chain_files = set(), []
         missing, multi = [], []
         splits = getattr(self, "_splits", None) or {}
         result = {}
@@ -3173,7 +3180,8 @@ class Window(object):
             pass
         try:
             path = transfer.make_file(self.paths.input, self.paths.output, start, end, self.say, asof=asof, missing=missing,
-                                      splits=splits, multi=multi, collect_dir=self.paths.wehago, override=override, result=result)
+                                      splits=splits, multi=multi, collect_dir=self.paths.wehago, override=override, result=result,
+                                      replaced=[os.path.basename(f) for f in (getattr(self, "_chain_files", None) or [])])
         except Exception as e:   # 트레이스백 대신 글로
             self.say("이체 파일을 만들지 못함 (%s): %s" % (type(e).__name__, str(e)[:200]))
             self.show_transfer_result("만들지 못함 (%s) — 진행 상황 참고" % type(e).__name__, True)
@@ -3193,16 +3201,26 @@ class Window(object):
                 "급하게 보내야 하면 이유를 적으세요 (이체기록.csv 에 남습니다). 아니면 취소하고 자료를 받아 변환한 뒤 다시 만드세요."
                 % "\n".join("· " + p for p in result["blocked"][:4]), parent=self.root)
             if why and why.strip():
-                self.make_transfer(override=why.strip())
+                self.make_transfer(override=why.strip(), again=again)
             return
         if path:
             self._splits = {}   # P5-2: 예금주별 나눔은 이번 파일에만 (다음 지급에 다시 쓰지 않고 그때 다시 묻는다)
+            self._chain_files = (getattr(self, "_chain_files", None) or []) + [path]
+        # 사용자 2026-11-20 (사업소득 1,066,700원이 빠짐): 예전엔 계좌 없는 거래처가 하나라도 남으면 그 창만 다시 뜨고
+        # 예금주별 금액 창은 한 번도 뜨지 않았다 → 이번 흐름에서 비워 둔 거래처는 다시 묻지 않고, 두 창을 차례로 띄운다
+        left = getattr(self, "_left_blank", None) or set()
+        missing = [m for m in missing if self._missing_key(m) not in left]
         if missing:
-            self.ask_accounts(missing)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
+            self.ask_accounts(missing, multi)   # 계좌 없는 거래처는 그 자리에서 넣고 다시 만든다 (사용자 2026-11-05)
         elif multi:
             self.ask_splits(multi)       # 예금주가 다른 계좌가 여럿: 사람별 금액을 받고 다시 만든다 (사용자 2026-11-05)
         elif path:
             self.open_dir(self.paths.output)
+
+    @staticmethod
+    def _missing_key(m):
+        from . import transfer
+        return transfer.code_key(m.get("code")) or transfer.vendor_key(m.get("vendor"))
 
     def show_transfer_result(self, text, bad):
         self.t_result.set(text)
@@ -3241,6 +3259,11 @@ class Window(object):
             ttk.Label(frm, text="%s [%s] · 지급 %s원" % (m["vendor"] or "-", m["code"], "{:,}".format(m["amount"])),
                       style="H.TLabel").grid(row=r, column=0, columnspan=3, sticky="w", pady=(6, 2))
             r += 1
+            if len(m.get("parts") or []) > 1:   # 사용자 2026-11-20: 합친 지급이 원래 어떤 금액들이었는지 (자금계획서엔 받는 사람 이름이 없음)
+                ttk.Label(frm, text="자금계획서 지급 %d건: %s원 — 누구 몫인지 확인해 넣으세요" % (
+                    len(m["parts"]), " · ".join("{:,}".format(v) for v in m["parts"])), style="S.TLabel", wraplength=560).grid(
+                    row=r, column=0, columnspan=3, sticky="w", padx=(12, 0), pady=(0, 2))
+                r += 1
             for h in m["holders"]:
                 v = tk.StringVar()
                 ttk.Label(frm, text=h, width=14).grid(row=r, column=0, sticky="w", padx=(12, 3))
@@ -3272,7 +3295,7 @@ class Window(object):
                     return
             self._splits = dict(getattr(self, "_splits", None) or {}, **plan)
             top.destroy()
-            self.make_transfer()
+            self.make_transfer(again=True)
 
         b = ttk.Frame(frm)
         b.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
@@ -3280,8 +3303,9 @@ class Window(object):
         ttk.Button(b, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
         ttk.Label(b, textvariable=sp_err, foreground=C["red"], wraplength=360).pack(side="left", padx=(8, 0))
 
-    def ask_accounts(self, missing):
-        """계좌 없는 거래처 창: 줄마다 거래처코드·은행·계좌번호·예금주 → 저장하고 이체 파일 다시 만들기."""
+    def ask_accounts(self, missing, multi=None):
+        """계좌 없는 거래처 창: 줄마다 거래처코드·은행·계좌번호·예금주 → 저장하고 이체 파일 다시 만들기.
+        multi(예금주별 금액이 필요한 거래처)가 있으면 이 창을 닫을 때 예금주별 금액 창을 이어서 띄운다 (사용자 2026-11-20)."""
         from . import transfer
         top = tk.Toplevel(self.root)
         top.title("계좌 없는 거래처 %d곳" % len(missing))
@@ -3290,7 +3314,9 @@ class Window(object):
         frm = ttk.Frame(top, padding=10)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="이체 파일에 넣지 못한 거래처입니다. 아는 곳만 넣고 '저장하고 다시 만들기'를 누르세요. "
-                            "비운 줄은 그대로 둡니다 (은행에서 직접 이체).", style="S.TLabel", wraplength=640).grid(
+                            "비운 줄은 그대로 둡니다 (은행에서 직접 이체)."
+                            + (" 이 창 다음에 예금주별 금액 창이 이어서 뜹니다 (%s)." % ", ".join(m["vendor"] or "-" for m in multi)
+                               if multi else ""), style="S.TLabel", wraplength=640).grid(
             row=0, column=0, columnspan=6, sticky="w", pady=(0, 6))
         banks = ("신한", "국민", "기업", "우리", "하나", "농협", "SC제일", "한국씨티", "수협", "신협", "새마을금고", "우체국",
                  "아이엠뱅크", "부산", "경남", "광주", "전북", "제주", "KDB산업", "카카오뱅크", "케이뱅크", "토스뱅크")
@@ -3346,14 +3372,25 @@ class Window(object):
                     self.say(acc_err.get())   # 편의성 34: 이 창 안에도 빨강으로
                     return
             self.say("계좌 %d곳 저장 — 이체 파일을 다시 만듭니다" % n)
+            # 비워 둔 줄은 이번 흐름에서 다시 묻지 않는다 (예전엔 같은 창만 계속 떠서 예금주별 금액 창으로 못 넘어갔다)
+            self._left_blank = (getattr(self, "_left_blank", None) or set()) | set(
+                self._missing_key(m) for m, v in rows if not (v["bank"].get().strip() or v["no"].get().strip()))
             top.destroy()
             self.refresh_accounts()
-            self.make_transfer()
+            self.make_transfer(again=True)
+
+        def close_as_is():
+            self._left_blank = (getattr(self, "_left_blank", None) or set()) | set(self._missing_key(m) for m, _ in rows)
+            top.destroy()
+            if multi:
+                self.ask_splits(multi)   # 사용자 2026-11-20: 계좌 창을 닫아도 예금주별 금액 창은 이어서 뜬다
+            else:
+                self.open_dir(self.paths.output)
 
         r = ttk.Frame(frm)
         r.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
         ttk.Button(r, text="저장하고 다시 만들기", command=save_all, style="Big.TButton").pack(side="left", padx=(0, 8))
-        ttk.Button(r, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
+        ttk.Button(r, text="닫기 (이대로 둠)" if not multi else "닫고 예금주별 금액으로", command=close_as_is).pack(side="left")
         ttk.Label(r, textvariable=acc_err, foreground=C["red"], wraplength=420).pack(side="left", padx=(8, 0))
         top.update_idletasks()
         top.minsize(min(top.winfo_reqwidth(), top.winfo_screenwidth() - 40), min(top.winfo_reqheight(), top.winfo_screenheight() - 80))
