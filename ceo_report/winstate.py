@@ -633,14 +633,27 @@ def transfer_summary(result):
             return "만들지 않음 — %s" % str(result["blocked"][0])[:60], True
         return "만들지 않음 — 넣을 지급 0건 (진행 상황 참고)", True
     parts = ["넣음 %d건 %s원" % (s["n"], "{:,}".format(s["total"]))]
-    if s.get("blocked"):
-        parts.append("못 넣음 %d건 (%s)" % (len(s["blocked"]), ", ".join(str(b[0] or "-") for b in s["blocked"][:3])
-                                         + (" 외" if len(s["blocked"]) > 3 else "")))
+    blocked = s.get("blocked") or []
+    if blocked:
+        # 사용자 2026-11-20 (사업소득이 빠진 걸 몰랐다): 못 넣은 지급은 합계·거래처·까닭을 빨강으로 — 은행에서 직접 보내야 하는 돈.
+        # 이체 칸은 세 줄 남짓이라(150% 배율에서 넘치면 윗줄이 잘림) 거래처는 둘까지, 금액은 합계만 (자세한 건 진행 상황에 줄마다)
+        parts.append("못 넣음 %d건 %s원: %s" % (
+            len(blocked), "{:,}".format(sum(b[1] or 0 for b in blocked)),
+            ", ".join("%s(%s)" % (b[0] or "-", _short_why(b[2])) for b in blocked[:2]) + (" 외" if len(blocked) > 2 else "")))
     rep = s.get("repeats") or []
     if rep:
-        parts.append("중복 의심 %d건 — %s: 전에 만든 파일에 같은 계좌·금액, 두 번 보내지 않게 확인"
-                     % (len(rep), ", ".join("%s %s원" % (h, "{:,}".format(a)) for h, a, _, _ in rep[:3]) + (" 외" if len(rep) > 3 else "")))
-    return " · ".join(parts), bool(rep)
+        # 이름은 하나만 (나머지는 진행 상황에 줄마다) — 이체 칸이 넘치지 않게 (2026-11-20)
+        parts.append("중복 의심 %d건(%s %s원%s) — 전에 만든 파일에 있음, 두 번 보내지 않게 확인"
+                     % (len(rep), rep[0][0], "{:,}".format(rep[0][1]), " 외" if len(rep) > 1 else ""))
+    return " · ".join(parts), bool(rep) or bool(blocked)
+
+
+def _short_why(why):
+    """못 넣은 까닭을 결과 칸에 맞게 앞부분만: '계좌 3개 (…) — 예금주별 금액 필요 (…)' -> '예금주별 금액 필요'."""
+    t = str(why or "")
+    if "예금주별 금액" in t:
+        return "예금주별 금액 필요"
+    return re.split(r" \(| —", t, maxsplit=1)[0].strip() or "-"
 
 
 # ───────────── 종료 코드를 말로 ─────────────

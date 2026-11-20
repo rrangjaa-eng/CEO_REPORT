@@ -314,11 +314,12 @@ def pick(events, start, end, info=None):
         code = str(e.get("vendor_code") or "").strip()
         k = code_key(code) or vendor_key(name) or "?%d" % len(lines)
         ln = lines.setdefault(k, {"vendor": name, "code": code, "amount": 0, "unknown": False, "projects": [], "dates": [],
-                                  "firm": True})
+                                  "firm": True, "parts": []})
         if e["amount"] is None:
             ln["unknown"] = True
         else:
             ln["amount"] += e["amount"]
+            ln["parts"].append(e["amount"])   # 합치기 전 한 줄씩 (예금주별 금액 창에 보여 줌, 사용자 2026-11-20)
         if e.get("project") and e["project"] not in ln["projects"]:
             ln["projects"].append(e["project"])
         ln["dates"].append(e["date"])
@@ -386,7 +387,7 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None):
             if sum(v for _, v in parts) != ln["amount"] or any(v < 0 for _, v in parts):
                 if multi is not None:
                     multi.append({"vendor": ln["vendor"], "code": ln.get("code") or "", "amount": ln["amount"],
-                                  "holders": [a["예금주"] for a in many]})
+                                  "holders": [a["예금주"] for a in many], "parts": list(ln.get("parts") or [])})
                 blocked.append((ln["vendor"], ln["amount"], "계좌 %d개 (%s) — 예금주별 금액 필요 (합계 %s원)" % (
                     len(many), ", ".join(a["예금주"] for a in many), "{:,}".format(ln["amount"]))))
                 continue
@@ -565,11 +566,16 @@ def _log(input_dir, when, start, end, rows, path, gate_text, reason):
                         os.path.basename(path), gate_text, reason or ""])
 
 
-def repeats(log_rows, rows, now, days=REPEAT_DAYS):
-    """이번 줄 중 최근 days 안에 만든 이체 파일에 같은 계좌·금액으로 이미 담긴 것 -> [(줄, 예전 만든시각, 예전 파일)]."""
+def repeats(log_rows, rows, now, days=REPEAT_DAYS, replaced=()):
+    """이번 줄 중 최근 days 안에 만든 이체 파일에 같은 계좌·금액으로 이미 담긴 것 -> [(줄, 예전 만든시각, 예전 파일)].
+    replaced: 이번 흐름(계좌·예금주별 금액 창에서 이어서 다시 만들기)에서 방금 만들어 이번 파일로 바꾸는 파일 이름 — 세지 않는다
+    (사용자 2026-11-20: 창에서 다시 만들 때마다 앞 파일의 모든 줄이 '중복 의심'으로 빨갛게 떴다)."""
     out = []
+    replaced = set(replaced or ())
     for r in rows:
         for x in log_rows:
+            if (x.get("파일") or "") in replaced:
+                continue
             try:
                 t = dt.datetime.strptime(x.get("만든시각") or "", "%Y-%m-%d %H:%M:%S")
             except ValueError:
@@ -591,7 +597,7 @@ def _log_writable(input_dir):
 
 
 def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, splits=None, multi=None,
-              collect_dir=None, override=None, result=None, now=None, downloads=None):
+              collect_dir=None, override=None, result=None, now=None, downloads=None, replaced=None):
     """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None.
     missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게).
     splits·multi: 예금주가 다른 계좌가 여럿인 거래처의 사람별 금액 (build 참고).
@@ -659,7 +665,9 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         result["log_failed"] = True
         say("이체 파일을 만들지 않음 — 입력\\%s 에 기록을 남기지 못함 (%s). 그 파일을 엑셀 등에서 닫고 다시 만드세요" % (LOG_FILE, why))
         return None
-    again = repeats(read_log(input_dir), rows, now)
+    # replaced: 이번 흐름에서 방금 만든 같은 기간 파일 (아래 _put_away 로 지난이체파일에 옮겨지는 것만)
+    current = set(_period_files(output_dir, start, end))
+    again = repeats(read_log(input_dir), rows, now, replaced=[f for f in (replaced or ()) if f in current])
     for r, when, fname in again:
         say("[주의] %s %s원 — %s에 만든 이체 파일(%s)에 같은 계좌·금액이 이미 있습니다. 두 번 보내지 않게 확인하세요"
             % (r[2], "{:,}".format(int(r[3])), when, fname))
