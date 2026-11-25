@@ -11,6 +11,7 @@ from collections import OrderedDict
 from .util import won, man, pct, d2s, esc, ssum, ssum_or_none, date as parse_date
 from .calc import _event_date, _month_end, counts_in, unissued_due
 from . import areas
+from .fundplan import old_note
 
 CSS = """
 :root{--ink:#1d2433;--sub:#5b6475;--line:#d9dde5;--soft:#f3f5f8;--accent:#1f4e8c;--in:#2f7d5b;--out:#b5523b;
@@ -1002,8 +1003,8 @@ def _plan_basis(R):
         return "자금 일정 기준: 자금계획서 없음 → 손으로 넣은 자금일정과 장부·인트라넷 자료"
     if not F.get("used"):
         return "자금 일정 기준: 자금계획서 안 씀 (%s)" % (F.get("reason") or "-")
-    return "자금 일정 기준: WEHAGO 자금계획서 (자료일 %s · %s) + 손으로 넣은 자금일정" % (
-        d2s(F["stamp"]), ", ".join("%d월" % int(m[5:]) for m in F["months"]))
+    return "자금 일정 기준: WEHAGO 자금계획서 (자료일 %s%s · %s) + 손으로 넣은 자금일정" % (
+        d2s(F["stamp"]), old_note(F, " · ", ""), ", ".join("%d월" % int(m[5:]) for m in F["months"]))
 
 
 def _avail_rows(periods, s2=None):
@@ -3496,7 +3497,7 @@ def _fundplan_notes(F):
         "일정 기준: WEHAGO 자금계획서 (자료일 %s, %s). 기존 일정과 같은 건 %d건은 자금계획서 날짜·금액으로 바꿈, "
         "새로 넣은 줄 %d건, 이미 지급·입금되어 뺀 줄 %d건, 예정일 지난 미지급 %d건은 다음 금요일로 옮김, "
         "입금 지연 %d건은 이번 주 예상 입금으로 (확정 잔액엔 안 넣음). 자금계획서가 없는 달은 기존 일정으로 계산."
-        % (d2s(F["stamp"]), ", ".join(F["months"]), len(F["matched"]), len(F["added"]), len(F["done"]),
+        % (d2s(F["stamp"]) + old_note(F, ", ", ""), ", ".join(F["months"]), len(F["matched"]), len(F["added"]), len(F["done"]),
            len(F["moved"]), len(F["late_in"])))]
     if F["missing"]:
         out.append("<h3>자금계획서에 없는 기존 일정 (%d건, 그대로 반영 · 확인 필요)</h3>" % len(F["missing"]))

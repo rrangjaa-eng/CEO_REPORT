@@ -689,7 +689,8 @@ def _band(R):
                                                            " ✓" if bd and (R["asof"] - bd).days <= days else ""))
     fp = R.get("fundplan")
     if fp and fp.get("used"):
-        chips.append("<span class='tq-chip v-ok'>자금계획서 %s ✓</span>" % fp["stamp"].strftime("%m/%d"))
+        from .fundplan import old_note
+        chips.append("<span class='tq-chip v-ok'>자금계획서 %s ✓%s</span>" % (fp["stamp"].strftime("%m/%d"), esc(old_note(fp))))
     elif not bad:
         chips.append("<span class='tq-chip v-bad'>자금계획서 미반영</span>")
     for a in (R.get("s7") or {}).get("asof") or []:
