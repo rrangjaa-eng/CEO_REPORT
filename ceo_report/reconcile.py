@@ -170,16 +170,64 @@ def journal_files(wehago_dir):
         if not isinstance(d, dict) or d.get("종류") != "분개장" or not isinstance(d.get("줄"), list):
             continue
         y = str((d.get("기간") or {}).get("start_date") or "")[:4]
-        f = _JFile((_stamp(d.get("수집시각")) or dt.datetime.min, int(y) if y.isdigit() else 0, d.get("열") or [], d["줄"]))
-        f.period = (_day((d.get("기간") or {}).get("start_date")), _day((d.get("기간") or {}).get("end_date")))
+        stamp = _stamp(d.get("수집시각")) or dt.datetime.min
+        cols = d.get("열") or []
+        ps, pe = _day((d.get("기간") or {}).get("start_date")), _day((d.get("기간") or {}).get("end_date"))
+        # 2026-11-25 (사용자 카드 '분개장을 연말까지 받기'): 받은 날 뒤 날짜로 미리 넣은 전표는 보고 장부(변환)처럼 여기서도 따로 둔다.
+        # 지난 수집 비교·입력 시각은 받은 날까지만 보고, 미리 넣은 전표는 올해 재무상태표·손익계산서 대조에만 쓴다 (future)
+        lines, future = d["줄"], []
+        cut = stamp.date() if stamp != dt.datetime.min else None
+        di = cols.index("da_date") if "da_date" in cols else None
+        if cut and di is not None:
+            keep = []
+            for r in lines:
+                day = _day(r[di]) if isinstance(r, list) and len(r) > di else None
+                (future if day and day > cut else keep).append(r)
+            lines = keep
+        f = _JFile((stamp, int(y) if y.isdigit() else 0, cols, lines))
+        f.full_end = pe
+        f.period = (ps, min(pe, cut) if (pe and cut) else pe)
+        f.future = future
         out.append(f)
     out.sort(key=lambda t: t[0], reverse=True)
     return out
 
 
 class _JFile(tuple):
-    """(수집시각, 연도, 열, 줄) + period(조회 시작일, 끝일) — 1차 D13: 지난 수집 비교를 두 파일의 공통 조회 기간 안에서만 한다."""
+    """(수집시각, 연도, 열, 줄) + period(조회 시작일, 끝일) — 1차 D13: 지난 수집 비교를 두 파일의 공통 조회 기간 안에서만 한다.
+    줄·period 는 받은 날까지. full_end: 위하고에서 조회한 기간 끝 그대로, future: 받은 날 뒤 날짜 줄 (2026-11-25)."""
     period = (None, None)
+    full_end = None
+    future = ()
+
+
+def future_journal(jfile):
+    """분개장 원본의 받은 날 뒤 날짜 줄 -> 장부 줄 모양 [{date, account_code, debit, credit}] (재무상태표·손익계산서 대조용)."""
+    if not jfile or not jfile.future:
+        return []
+    ix = {c: i for i, c in enumerate(jfile[2])}
+    if not all(k in ix for k in ("da_date", "cd_acctit", "mn_bungae1", "mn_bungae2")):
+        return []
+    side = ix.get("nm_gubun_bungae")
+    out = []
+    for r in jfile.future:
+        sd = str(r[side]).strip() if side is not None and len(r) > side else ""
+        out.append({"date": _day(r[ix["da_date"]]), "account_code": str(r[ix["cd_acctit"]] or ""),
+                    "debit": 0 if sd == "대변" else _num(r[ix["mn_bungae1"]]),
+                    "credit": 0 if sd == "차변" else _num(r[ix["mn_bungae2"]])})
+    return out
+
+
+def year_end_view(jfile, year):
+    """올해 위하고 재무상태표·손익계산서(12월 31일까지 미리 넣은 전표 포함)와 맞출 수 있는가:
+    -> (미리 넣은 전표 줄, None) 또는 ([], 맞추지 못하는 까닭)."""
+    if not jfile or not jfile[0] or jfile[0] == dt.datetime.min:
+        return [], "분개장 받은 때를 몰라"
+    end = jfile.full_end
+    if jfile[1] != year or not end or end < dt.date(year, 12, 31):
+        return [], ("분개장을 %s 까지만 받아 그 뒤 날짜로 미리 넣은 전표를 모름 — 위하고 재무상태표·손익계산서는 12월 31일까지 담김. "
+                    "새 확장(0.9.13)으로 '모두 받기' 하면 정확히 비교됩니다." % (end.isoformat() if end else "모르는 날"))
+    return future_journal(jfile), None
 
 
 # ───────────── 장부 잔액 ─────────────
@@ -241,7 +289,8 @@ def bs_balances(d):
     return bal
 
 
-def _compare_balances(rows, src, other, book, same_time, basis):
+def _compare_balances(rows, src, other, book, same_time, basis, note=None):
+    """note: 같은 때가 아닌 까닭을 알 때(분개장을 12월 31일까지 받지 않음 등) '참고' 줄의 할 일 글."""
     keys = sorted(set(k for k in other if _is_bs(k)) | set(k for k in CEO_WHAT))
     n_same = n_diff = 0
     for g in keys:
@@ -258,7 +307,7 @@ def _compare_balances(rows, src, other, book, same_time, basis):
         if same_time:
             verdict, todo = "다름", "위하고 %s 와 장부 %s 잔액이 다릅니다. 분개장을 다시 받아 같은 때 비교하고, 그래도 다르면 빠진·겹친 전표를 찾으세요." % (src, name)
         else:
-            verdict, todo = "참고", "받은 시각이 달라 그 사이 들어간 전표 때문일 수 있습니다. '모두 받기'로 함께 다시 받으면 정확히 비교됩니다."
+            verdict, todo = "참고", note or "받은 시각이 달라 그 사이 들어간 전표 때문일 수 있습니다. '모두 받기'로 함께 다시 받으면 정확히 비교됩니다."
         rows.append(_row("잔액", name, src, o * s, b * s, basis, verdict, todo,
                          "예" if (same_time and big and g in CEO_WHAT) else ""))
     rows.append(_row("잔액", "계정 잔액 요약", src, None, None, basis,
@@ -271,12 +320,17 @@ def _insert_times(jfile):
     """분개장 원본 한 파일 -> 전표 입력 시각(dt_insert) 목록."""
     if not jfile:
         return []
-    cols, lines = jfile[2], jfile[3]
+    cols, lines = jfile[2], list(jfile[3]) + list(getattr(jfile, "future", ()) or ())   # 미리 넣은 전표도 입력 시각은 본다
     ix = {c: i for i, c in enumerate(cols)}
     if "dt_insert" not in ix:
         return []
     k = ix["dt_insert"]
     return [t for t in (_stamp(r[k]) for r in lines if len(r) > k) if t]
+
+
+def _near(when, jstamp):
+    """분개장과 30분 안에 받았는가 (그 사이 전표 입력은 보지 않음) — 미리 넣은 전표까지 맞출 대상인지 고를 때 씀."""
+    return bool(jstamp and when and when != dt.datetime.min and abs((when - jstamp).total_seconds()) <= SAME_TIME_MIN * 60)
 
 
 def _same_time(when, jstamp, ins=()):
@@ -290,7 +344,12 @@ def _same_time(when, jstamp, ins=()):
     return not any(lo < t <= hi for t in ins or ())
 
 
-def balances_rows(journal, raw, jstamp, ins=()):
+def _this_year_file(jfiles, year):
+    """jfiles(늦게 받은 것 먼저) 중 그 해 분개장 원본 하나 (1~3월엔 지난해 분개장도 함께 받아 맨 앞이 지난해일 수 있음)."""
+    return next((f for f in jfiles or [] if f[1] == year), None)
+
+
+def balances_rows(journal, raw, jstamp, ins=(), jfiles=None):
     rows = []
     tb = (raw.get("SACL0104") or [None])[0]
     if tb:
@@ -309,9 +368,21 @@ def balances_rows(journal, raw, jstamp, ins=()):
             continue
         this_year = year >= (jstamp.year if jstamp else dt.date.today().year)
         same = (not this_year) or _same_time(when, jstamp, ins)
-        upto = dt.date(year, 12, 31) if not this_year else (when.date() if when != dt.datetime.min else None)
+        # 2026-11-25 (실제: 재무상태표 미지급금이 분개장보다 1,080만 큼 = 오늘 뒤 날짜로 미리 넣은 전표): 위하고 재무상태표는
+        # 그 해 12월 31일까지 담는다 → 올해도 12월 31일까지 장부(+ 분개장 원본의 미리 넣은 전표)와 맞춘다.
+        # 분개장을 12월 31일까지 받지 않았으면 미리 넣은 전표를 몰라 '참고'로만 둔다 (대표 경고 없음)
+        upto, book_j, note = dt.date(year, 12, 31), journal, None
+        if this_year and not _near(when, jstamp):
+            # 분개장과 따로 받은 지난 재무상태표: 그때 미리 넣은 전표를 알 수 없어 예전처럼 받은 날까지 장부와 견주고 '참고'로만 둔다
+            upto = when.date() if when != dt.datetime.min else None
+        elif this_year:
+            fut, note = year_end_view(_this_year_file(jfiles, year), year)
+            if note:
+                same = False
+            else:
+                book_j = list(journal or []) + fut
         basis = ("%d년 말 (결산 끝난 해)" % year) if not this_year else ("재무상태표 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp)))
-        _compare_balances(rows, "재무상태표 %d" % year, other, book_balances(journal, upto), same, basis)
+        _compare_balances(rows, "재무상태표 %d" % year, other, book_balances(book_j, upto), same, basis, note)
     # 1차 D13 (2026-11-15): 손익계산서는 받은 해가 아니라 자료의 회계연도로 장부와 맞춘다 (해마다 가장 늦게 받은 것 하나씩)
     seen_years = set()
     for when, year, d in raw.get("SACL0106") or []:
@@ -319,7 +390,7 @@ def balances_rows(journal, raw, jstamp, ins=()):
         if y in seen_years:
             continue
         seen_years.add(y)
-        rows.extend(pl_rows(journal, d, when, jstamp, year=y, ins=ins))
+        rows.extend(pl_rows(journal, d, when, jstamp, year=y, ins=ins, jfiles=jfiles))
     return rows
 
 
@@ -330,7 +401,7 @@ def _hm(t):
 PL_GROUPS = {"61000": ("매출액", "4"), "65000": ("판매비와 관리비", "8")}
 
 
-def pl_rows(journal, d, when, jstamp, year=None, ins=()):
+def pl_rows(journal, d, when, jstamp, year=None, ins=(), jfiles=None):
     """위하고 손익계산서(당기 mn_total2) ↔ 장부 같은 해 매출(4…)·판관비(8…).
     year: 자료의 회계연도(없으면 받은 해). 지난 해(결산 끝난 해)는 그해 12월 31일까지 장부와 맞추고 받은 시각을 따지지 않는다."""
     rows = []
@@ -343,8 +414,18 @@ def pl_rows(journal, d, when, jstamp, year=None, ins=()):
         return rows
     year = year or when.year
     this_year = year >= (jstamp.year if jstamp else when.year)
-    upto = when.date() if this_year else dt.date(year, 12, 31)
+    # 2026-11-25: 위하고 손익계산서도 그 해 12월 31일까지 담는다 (실제: 판관비 4,522만 차이 = 미리 넣은 전표) → 재무상태표와 같게
+    upto = dt.date(year, 12, 31)
     same = (not this_year) or _same_time(when, jstamp, ins)
+    note = None
+    if this_year and not _near(when, jstamp):
+        upto = when.date()   # 분개장과 따로 받은 지난 손익계산서: 예전처럼 받은 날까지 ('참고'로만)
+    elif this_year:
+        fut, note = year_end_view(_this_year_file(jfiles, year), year)
+        if note:
+            same = False
+        else:
+            journal = list(journal or []) + fut
     if not any(j.get("date") is not None and j["date"].year == year for j in journal or []):
         return [_row("손익", "%d년 손익계산서" % year, "손익계산서", None, None, "손익계산서 %s 받음" % _hm(when), "참고",
                      "읽은 장부에 %d년 전표가 없어 맞춰 보지 않았습니다." % year)]
@@ -363,12 +444,32 @@ def pl_rows(journal, d, when, jstamp, year=None, ins=()):
             book += (int(j.get("credit") or 0) - int(j.get("debit") or 0)) * (1 if first == "4" else -1)
         small = abs(other - book) < 100_000   # 2026-11-15 실제: 위하고 손익계산서 판관비가 같은 때 시산표 합보다 1,200원 큼(끝전)
         verdict = "같음" if other == book else ("다름" if same and not small else "참고")
+        late_note = note and verdict == "참고" and not small
         rows.append(_row("손익", "%d년 %s" % (year, name), "손익계산서", other, book,
                          ("손익계산서 %s · 분개장 %s 받음" % (_hm(when), _hm(jstamp))) if this_year else "%d년 말 (결산 끝난 해)" % year,
                          verdict,
                          "" if verdict == "같음" else ("10만 원 안쪽 끝전 차이입니다 (위하고 손익계산서 표시 차이)." if small
+                                                      else note if late_note
                                                       else "결산 대체 전표(매출원가 대체 등)나 받은 시각 차이일 수 있습니다.")))
     return rows
+
+
+def future_rows(jfiles, asof):
+    """경영관리 '자료 대조'에 미리 넣은 전표(받은 날 뒤 날짜) 수를 남긴다 — 보고 숫자에는 쓰지 않는다 (2026-11-25)."""
+    f = _this_year_file(jfiles, asof.year if asof else (jfiles[0][1] if jfiles else 0))
+    if not f:
+        return []
+    cut = f[0].date() if f[0] != dt.datetime.min else None
+    if not cut or not f.full_end or f.full_end <= cut:
+        return []
+    fut = future_journal(f)
+    n = len(f.future)
+    days = sorted(set(x["date"] for x in fut if x["date"]))
+    span = ("%s ~ %s" % (days[0].isoformat(), days[-1].isoformat())) if days else ""
+    return [_row("장부 입력", "미리 넣은 전표 (받은 날 뒤 날짜)", "분개장", None, None,
+                 "분개장 %s~%s 조회 · %s 받음" % (f.period[0].isoformat() if f.period[0] else "", f.full_end.isoformat(), _hm(f[0])),
+                 "참고", ("받은 날 뒤 날짜 전표 %d줄%s — 보고 숫자(자금·손익)에는 쓰지 않고 위하고 재무상태표·손익계산서 대조에만 씁니다."
+                         % (n, (" (%s)" % span) if span else "")) if n else "받은 날 뒤 날짜로 미리 넣은 전표 없음")]
 
 
 # ───────────── 제안 4·5 분개장 입력 시각·지난 수집 비교 ─────────────
@@ -846,7 +947,8 @@ def build_tables(books, input_dir, wehago_dir, asof, snap=None):
     if not os.path.exists(os.path.join(input_dir or "", MATURITY_FILE)):
         notes.append("대출만기.csv 없음 — 기본값(신한 기술보증기금 2건 매년 연장, 2억은 새 만기 2027-04-17, 2026-11-14 사용자)으로 계산")
     if journal:
-        rows += balances_rows(journal, raw, jstamp, _insert_times(jfiles[0] if jfiles else None))
+        rows += balances_rows(journal, raw, jstamp, _insert_times(jfiles[0] if jfiles else None), jfiles)
+        rows += future_rows(jfiles, asof)
         rows += journal_rows(jfiles, asof)
         rows += intranet_rows(journal, getattr(snap, "projects", None))
         rows += asset_rows(journal, raw)

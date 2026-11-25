@@ -3044,7 +3044,7 @@ flush(false).then((r) => console.log(JSON.stringify({r, left: store.pendingSaves
 
     def test_manifest_version(self):
         with open(os.path.join(ROOT, "chrome_extension", "manifest.json"), encoding="utf-8") as f:
-            self.assertIn('"version": "0.9.12"', f.read())   # 2차 전수조사 제안 24
+            self.assertIn('"version": "0.9.13"', f.read())   # 2차 전수조사 제안 24
 
 
 # ───────────── 1차 E11: 지금 현황을 새로 못 만들면 예전 화면이 최신처럼 열리지 않음 ─────────────

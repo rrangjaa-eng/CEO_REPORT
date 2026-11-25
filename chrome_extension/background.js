@@ -287,7 +287,10 @@ async function collectJournal(lastYear = false) {   // lastYear: 지난해 분�
   if (pending || planRun) return {error: "이미 받는 중입니다"};
   const src = await sourceTab();
   const year = new Date().getFullYear() - (lastYear ? 1 : 0);
-  const url = lastYear ? screenUrl(src.url, SCREEN["분개장"], year) : screenUrl(src.url, SCREEN["분개장"]);
+  // 2026-11-25 (사용자 카드 '분개장을 연말까지 받기'): 올해 것도 그 해 1월 1일~12월 31일로 연다. 위하고 재무상태표·손익계산서는
+  // 오늘 뒤 날짜로 미리 넣은 전표까지 담아, 오늘까지만 받은 분개장과 거짓 '다름'이 났다 (프로그램은 보고 계산에 받은 날까지만 씀)
+  // (기수를 주소에서 못 찾으면 예전처럼 화면 기본 기간으로 연다 — 프로그램은 그때 재무상태표 대조를 '참고'로만 둔다)
+  const url = screenUrl(src.url, SCREEN["분개장"], year) || (lastYear ? null : screenUrl(src.url, SCREEN["분개장"]));
   if (!url) return {error: "SmartA 회계 화면(분개장·자금계획서 등)을 한 번 열어 두세요."};
   const tab = await chrome.tabs.create({url, active: false});
   await waitLoaded(tab.id, 30000);
