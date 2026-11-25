@@ -448,6 +448,13 @@ def read_journal_json(path):
         out.taken = dt.date.fromisoformat(str(doc.get("수집시각") or "")[:10])
     except ValueError:
         out.taken = None
+    # 2026-11-25 (사용자 카드 '분개장을 연말까지 받기'): 확장이 올해 분개장을 12월 31일까지 받는다 (위하고 재무상태표·손익계산서가
+    # 오늘 뒤 날짜로 미리 넣은 전표까지 담아 장부와 거짓 '다름'이 났음). 보고 계산은 예전처럼 받은 날까지만 쓴다:
+    # 받은 날 뒤 날짜 줄은 읽지 않고(자료 대조는 reconcile 이 원본에서 따로 읽음), 조회 기간 끝도 받은 날로 본다.
+    out.future_lines = 0
+    future_cut = out.taken.strftime("%Y%m%d") if out.taken else None
+    if future_cut and out.period and out.period[1] > out.taken:
+        out.period = (out.period[0], out.taken) if out.taken >= out.period[0] else None
     # 안전-08 (N3, 2026-11-15): 위하고가 알려 준 전표 수(조회 응답 tot)·줄 수와 받은 것이 다르면 일부만 받은 것 — 쓰지 않고 막는다 (P1-2)
     tot, n_lines = doc.get("전표수"), doc.get("줄수")
     if isinstance(n_lines, int) and not isinstance(n_lines, bool) and n_lines != len(doc["줄"]):
@@ -465,6 +472,9 @@ def read_journal_json(path):
                           % (name, bad, len(doc["줄"])))
     for r in doc["줄"]:
         g = lambda c: r[ix[c]]
+        if future_cut and re.sub(r"\D", "", str(g("da_date") or ""))[:8] > future_cut:
+            out.future_lines += 1   # 받은 날 뒤 날짜로 미리 넣은 전표 줄: 보고 계산에 쓰지 않음
+            continue
         side = str(r[gb]).strip() if gb is not None else ""
         # 화면 자료는 반대쪽 금액을 0으로 준다. 인쇄 파일처럼 빈칸으로 둔다 (차변/대변 구분이 있을 때만)
         debit = "" if side == "대변" else num(g("mn_bungae1"))
