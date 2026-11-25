@@ -1,7 +1,7 @@
 """창(gui.py)이 보여 줄 상태를 계산하는 곳 (사용자 2026-11-05: 창을 쓰기 편하게 다시 꾸미기).
 
 tkinter 없이 시험할 수 있게 계산만 여기 둔다.
-- 자료가 얼마나 최신인가 (freshness): 분개장·자금계획서·인트라넷·홈택스·통장 잔액이 기준일에서 며칠 지났는지
+- 자료가 얼마나 최신인가 (freshness): 분개장·자금계획서·인트라넷·통장 잔액이 기준일에서 며칠 지났는지
 - 단계 상태 (steps): 1 자료 모으기 → 2 변환하고 확인 → 3 보고 만들기, 변환 뒤 새 자료가 들어왔는지
 - 창 입력값 기억 (load/save): 출금일·가용자금 볼 날짜·마지막 작업 시각 → 입력\\창상태.json
 - 합칠 거래처 후보 (merge_candidates): 그 출금일 목록에서 2건 이상 나가는 거래처
@@ -188,7 +188,7 @@ def intranet_time(collect_dir):
 
 def sources(paths):
     """[(이름, 시각 또는 날짜, 설명)] — 받은 시각은 파일을 받은(저장한) 때."""
-    from . import checklist, fundplan, hometax, wehago
+    from . import checklist, fundplan, wehago
     wf = _files(paths.wehago)
     journal = [p for p in wf if wehago._kind_of(os.path.basename(p))[0] == "분개장"]
     plans = [p for p in wf if fundplan.is_fundplan_name(p) or fundplan.is_auto_plan_name(p)]   # 크롬 자동수집 json 도 (2026-11-10)
@@ -197,7 +197,6 @@ def sources(paths):
         ("분개장", _newest(journal), "수집\\위하고 에 받은 때"),
         ("자금계획서", _newest(plans), "수집\\위하고 에 받은 때"),
         ("인트라넷 (지급요청·견적)", intranet_time(paths.collect), "인트라넷 자료 가져오기"),
-        ("홈택스 세금계산서", _newest(_files(os.path.join(paths.collect, hometax.FOLDER))), "수집\\홈택스 에 받은 때"),
         ("통장 잔액", max(bank) if bank else None, "가끔 넣는 값 › 통장 잔액 대조"),
     ]
 
@@ -367,7 +366,7 @@ def gate_line(G):
 
 
 def reports_for(output_dir, asof):
-    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순).
+    """이번 기준일의 '보낼 파일' -> [{label, state, at, path, why}] (주간 대표·월간 대표·팀장용·주간/월간 경영관리 순, 연간 보고를 만든 적이 있으면 연간 대표·연간 팀장용·연간 경영관리도).
     state: '만듦' · '막힘'(자료 확인에서 막혀 만들지 않음) · 'PDF 못 만듦'(HTML 만 새로 생김) · '없음'.
     막힌 보고는 예전 PDF 를 넣지 않고 '만들지 않음' 안내를 가리킨다 (path)."""
     from . import gate, pdfname
@@ -395,20 +394,30 @@ def reports_for(output_dir, asof):
     out.append(one("주간 대표", os.path.join(output_dir, "%s_주간_대표보고" % day)))
     out.append(one("월간 대표", os.path.join(output_dir, "%s_월간_대표보고" % day)))
     folder = os.path.join(output_dir, "팀장용")
-    pages = sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day)))
-    team = {"label": "팀장용 (월간)", "state": "없음", "at": None, "path": None, "why": ""}
-    if pages:
-        ones = [one("", p[:-5]) for p in pages]
-        at = max(r["at"] for r in ones if r["at"] is not None)
-        if any(r["state"] == "막힘" for r in ones):
-            team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
-        elif all(r["state"] == "만듦" for r in ones):
-            team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
-        else:
-            team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+    def teams(label, pages):
+        team = {"label": label, "state": "없음", "at": None, "path": None, "why": ""}
+        if pages:
+            ones = [one("", p[:-5]) for p in pages]
+            at = max(r["at"] for r in ones if r["at"] is not None)
+            if any(r["state"] == "막힘" for r in ones):
+                team.update(state="막힘", at=at, path=pages[0], why=next(r["why"] for r in ones if r["state"] == "막힘"))
+            elif all(r["state"] == "만듦" for r in ones):
+                team.update(state="만듦", at=at, path=folder, why="%d팀" % len(ones))
+            else:
+                team.update(state="PDF 못 만듦", at=at, path=folder, why="%d팀 중 %d팀" % (len(ones), sum(1 for r in ones if r["state"] != "만듦")))
+        return team
+    team = teams("팀장용 (월간)", sorted(glob.glob(os.path.join(folder, "%s_월간_팀장_*.html" % day))))
     out.append(team)
     out.append(one("주간 경영관리", os.path.join(output_dir, "%s_주간_경영관리보고" % day), want_pdf=False))
     out.append(one("월간 경영관리", os.path.join(output_dir, "%s_월간_경영관리보고" % day), want_pdf=False))
+    # 연간 보고도 대표용·경영관리용 두 가지 (사용자 2026-11-17 "연간보고는 왜 경영관리용과 대표용이 없어": 만들고 있었지만 이 목록에 안 보였다).
+    # 만든 해가 있을 때만, 가장 최근 해 것
+    years = sorted(set(os.path.basename(f)[:4] for f in glob.glob(os.path.join(output_dir, "[0-9][0-9][0-9][0-9]_연간_*보고.html"))))
+    if years:
+        y = years[-1]
+        out.append(one("%s년 연간 대표" % y, os.path.join(output_dir, "%s_연간_대표보고" % y)))
+        out.append(teams("%s년 연간 팀장용" % y, sorted(glob.glob(os.path.join(folder, "%s_연간_팀장_*.html" % y)))))
+        out.append(one("%s년 연간 경영관리" % y, os.path.join(output_dir, "%s_연간_경영관리보고" % y), want_pdf=False))
     return out
 
 
@@ -530,7 +539,7 @@ def steps(paths, dirs=None):
     'now': 지금 할 차례 단계 번호 (1~3)}. dirs: 크롬 다운로드 폴더 (시험용, 없으면 이 PC 크롬에서 찾음)."""
     from . import app as _app   # 2차 P1-11: 다운로드 폴더에 받아만 둔 자동수집 파일도 (변환 때 가져온다)
     pend = [w for _, w in _app.pending_downloads(dirs)]
-    src = sources(paths)[:4] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
+    src = sources(paths)[:3] + [(OTHER_WEHAGO, other_wehago_time(paths), ""), (PENDING, max(pend) if pend else None, "")]
     collected = [w for n, w, _ in src if isinstance(w, dt.datetime)]
     last_collect = max(collected) if collected else None
     conv = convert_time(paths.input)
@@ -624,14 +633,27 @@ def transfer_summary(result):
             return "만들지 않음 — %s" % str(result["blocked"][0])[:60], True
         return "만들지 않음 — 넣을 지급 0건 (진행 상황 참고)", True
     parts = ["넣음 %d건 %s원" % (s["n"], "{:,}".format(s["total"]))]
-    if s.get("blocked"):
-        parts.append("못 넣음 %d건 (%s)" % (len(s["blocked"]), ", ".join(str(b[0] or "-") for b in s["blocked"][:3])
-                                         + (" 외" if len(s["blocked"]) > 3 else "")))
+    blocked = s.get("blocked") or []
+    if blocked:
+        # 사용자 2026-11-20 (사업소득이 빠진 걸 몰랐다): 못 넣은 지급은 합계·거래처·까닭을 빨강으로 — 은행에서 직접 보내야 하는 돈.
+        # 이체 칸은 세 줄 남짓이라(150% 배율에서 넘치면 윗줄이 잘림) 거래처는 둘까지, 금액은 합계만 (자세한 건 진행 상황에 줄마다)
+        parts.append("못 넣음 %d건 %s원: %s" % (
+            len(blocked), "{:,}".format(sum(b[1] or 0 for b in blocked)),
+            ", ".join("%s(%s)" % (b[0] or "-", _short_why(b[2])) for b in blocked[:2]) + (" 외" if len(blocked) > 2 else "")))
     rep = s.get("repeats") or []
     if rep:
-        parts.append("중복 의심 %d건 — %s: 전에 만든 파일에 같은 계좌·금액, 두 번 보내지 않게 확인"
-                     % (len(rep), ", ".join("%s %s원" % (h, "{:,}".format(a)) for h, a, _, _ in rep[:3]) + (" 외" if len(rep) > 3 else "")))
-    return " · ".join(parts), bool(rep)
+        # 이름은 하나만 (나머지는 진행 상황에 줄마다) — 이체 칸이 넘치지 않게 (2026-11-20)
+        parts.append("중복 의심 %d건(%s %s원%s) — 전에 만든 파일에 있음, 두 번 보내지 않게 확인"
+                     % (len(rep), rep[0][0], "{:,}".format(rep[0][1]), " 외" if len(rep) > 1 else ""))
+    return " · ".join(parts), bool(rep) or bool(blocked)
+
+
+def _short_why(why):
+    """못 넣은 까닭을 결과 칸에 맞게 앞부분만: '계좌 3개 (…) — 예금주별 금액 필요 (…)' -> '예금주별 금액 필요'."""
+    t = str(why or "")
+    if "예금주별 금액" in t:
+        return "예금주별 금액 필요"
+    return re.split(r" \(| —", t, maxsplit=1)[0].strip() or "-"
 
 
 # ───────────── 종료 코드를 말로 ─────────────
@@ -696,7 +718,7 @@ def rc_message(task, rc, locked=False):
     if rc == 0:
         nxt = {"인트라넷": "다음: 2단계 자료 변환", "변환": "다음: 확인할 것을 보고 3단계 보고 만들기",
                "주간": "PDF를 열었습니다", "월간": "PDF를 열었습니다", "연간": "PDF를 열었습니다", "정합성": "확인할 것 화면을 엽니다",
-               "예산": "대표용 PDF를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
+               "예산": "대표용 PDF를 열었습니다", "기획본부": "기획본부 재무상태표(엑셀)를 열었습니다", "예산확정": "다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다",
                "자동": "새 자료로 지금 현황·주간·월간 보고를 다시 만들었습니다"}
         return True, ("%s 완료. %s" % (task, nxt.get(task, ""))).strip()
     if locked:
@@ -712,6 +734,8 @@ def rc_message(task, rc, locked=False):
         why = "위하고 장부를 읽지 못했습니다. 수집\\위하고 폴더에 분개장 파일이 있는지 확인하세요"
     elif rc == 3 and task == "정합성":
         return True, "정합성 점검 끝. 맞지 않는 곳이 있어 확인할 것 화면을 엽니다"
+    elif rc == 4 and task == "정합성":   # 2차 전수조사 P17: 입력 파일 ↔ 새 변환 결과가 다름 — 정상으로 보이지 않게
+        return False, "정합성 점검 끝 — 입력 폴더의 파일이 지금 자료로 새로 변환한 결과와 다릅니다. '자료 변환'을 다시 하거나 손으로 고친 파일을 확인하세요"
     elif rc == 6:
         why = "예상하지 못한 오류입니다. 설정.csv 값과 입력 파일을 확인하세요"
     elif rc == 7:
@@ -731,13 +755,15 @@ def auto_line(state, failed="", running=False):
         return "자동 반영: 실패 — %s" % failed, "bad", True
     st = state or {"state": "none", "text": "새 자료 없음"}
     kind = {"none": "idle", "collecting": "wait", "wait": "wait", "ready": "now"}.get(st.get("state"), "idle")
+    if st.get("fail"):   # '위하고에서 받기'가 못 받음 (2026-11-17)
+        kind = "bad"
     return "자동 반영: %s" % st.get("text", ""), kind, False
 
 
 LIVE_INPUTS = ("자금일정.csv", "통장잔액.csv", "카드결제일.csv")   # 창에서 넣는 값 중 지금 현황의 숫자를 바꾸는 것
 
 
-def live_stale(paths):
+def live_stale(paths, asof=None):
     """'지금 현황' 화면을 새로 만들어야 하는가: 없거나, 못 만듦 안내이거나, 마지막 변환·창에서 넣은 값보다 오래됐을 때.
     편의성 33 (2026-11-16): 예전엔 변환 시각만 봐서, 지급·입금 예정을 넣은 뒤에도 예전 화면을 열었다."""
     from . import live
@@ -745,7 +771,30 @@ def live_stale(paths):
     made = _mtime(path)
     if made is None or live.is_failed_page(path):
         return True
+    if asof and live.page_asof(path) not in (None, str(asof)):   # 편의성 36: 창 기준일을 바꿨으면 그 날짜로 새로
+        return True
     conv = convert_time(paths.input)
     if conv is not None and made < conv:
         return True
-    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS))
+    if any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in LIVE_INPUTS)):
+        return True
+    # 2차 전수조사 P21 (2026-11-18): 예전엔 위 3개 파일만 봐서 설정.csv 등 다른 입력을 바꿔도 예전 화면이 열렸다 → 입력 폴더의 표 파일 전부
+    try:
+        names = [n for n in os.listdir(paths.input) if n.lower().endswith(".csv")]
+    except OSError:
+        names = []
+    return any(w is not None and w > made for w in (_mtime(os.path.join(paths.input, n)) for n in names))
+
+
+def caret_after_money(old, new, at):
+    """쉼표를 다시 붙인 뒤 커서 자리 (편의성 45): 커서 왼쪽 숫자 개수가 같은 자리."""
+    k = sum(1 for ch in old[:at] if ch.isdigit())
+    if k == 0:
+        return 0 if at == 0 else len(new) - len(new.lstrip("-"))
+    seen = 0
+    for i, ch in enumerate(new):
+        if ch.isdigit():
+            seen += 1
+            if seen == k:
+                return i + 1
+    return len(new)

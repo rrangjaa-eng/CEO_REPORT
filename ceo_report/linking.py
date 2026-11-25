@@ -14,11 +14,11 @@ import os
 import re
 from collections import OrderedDict
 
-from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code
+from .approval import _expected_date, _masked, _status, norm_project, parse_registered, project_code, request_day
 from .screen_values import PROJECT_STAGE_ALL_DONE, PROJECT_STAGE_DONE
 from .util import Issues, mask_rrn, num, read_csv
 from .util import date as parse_date
-from .wehago import norm_code, norm_vendor
+from .wehago import norm_code, norm_vendor, rq_vendor
 
 LINK_FILE = "프로젝트연결.csv"
 LINK_COLUMNS = ["전표일자", "전표번호", "줄", "프로젝트번호"]
@@ -40,8 +40,9 @@ def requests_of(snap, asof, now):
         rq = {"id": "r%d" % k, "번호": row.get("번호", ""), "name": row.get("행사명", ""), "vendor": row.get("파트너", ""),
               "code": project_code(row.get("행사명", "")), "registered": parse_registered(row.get("등록일", "")),
               "status": _status(row.get("사장님승인", "")), "amount": num(row.get("금액")),
-              "request_date": parse_date(row.get("지급요청일")), "date": None, "rule": "",
+              "request_date": None, "date": None, "rule": "",
               "status_text": (row.get("사장님승인") or "").strip()}   # 읽은 그대로 (D-52 '상태 확인 필요 (<값>)')
+        rq["request_date"], rq["date_suspect"] = request_day(row, rq["registered"])   # 2차 전수조사 A7
         rq["date"], rq["rule"] = _expected_date(rq, asof, now)
         out.append(rq)
     return out
@@ -63,6 +64,7 @@ def projects_of(snap, old=None):
 
     old: 예전 인트라넷(old_intranet.load). 지금 인트라넷에 없는 번호만 뒤에 더하고 old=True (사용자 2026-11-05)."""
     out = OrderedDict()
+    out.dropped = []   # 예전 인트라넷에서 읽고도 빠진 프로젝트 (번호 없음·번호 겹침) — '확인할 것'에 (사용자 2026-11-17)
     if old is None:
         old = getattr(snap, "old", None)
     if snap is not None:
@@ -107,15 +109,26 @@ def approval_words(rows):
     return " · ".join(out)
 
 
+def _dropped(p, key, why):
+    return {"key": key, "name": re.sub(r"^\s*\[\d+\]\s*", "", p.get("행사명", "")), "why": why,
+            "quote": num(p.get("견적금액")), "budget": num(p.get("실행가")), "event": (p.get("행사일") or "").strip()}
+
+
 def _add_projects(out, rows, is_old):
     for p in rows:
         title = p.get("행사명", "")
         key = project_code(title) or norm_project(p.get("번호", ""))
+        dropped = getattr(out, "dropped", None)
         if not key:
+            if is_old and dropped is not None:
+                dropped.append(_dropped(p, "", "행사명·번호에 프로젝트 번호가 없음"))
             continue
         if key in out:
-            if is_old:
-                continue   # 지금 인트라넷(또는 앞 해 예전 목록)에 있는 번호: 그쪽이 맞음
+            if is_old:   # 지금 인트라넷(또는 앞 해 예전 목록)에 있는 번호: 그쪽이 맞음 — 빠진 쪽은 알린다
+                if dropped is not None:
+                    dropped.append(_dropped(p, key, "번호 [%s]가 %s '%s'에도 쓰임" % (
+                        key, "예전 인트라넷 다른 프로젝트" if out[key]["old"] else "지금 인트라넷", out[key]["name"])))
+                continue
             out[key]["dup"] = True
             continue
         out[key] = {"key": key, "old": is_old, "name": re.sub(r"^\s*\[\d+\]\s*", "", title), "team": p.get("팀", ""),
@@ -391,13 +404,17 @@ def _window_end(start, days):
 
 
 def link_costs(books, requests, projects, overrides, link_days=90, direct_prefixes=("6",), direct_mark="(도)",
-               vat_codes=("13500",)):
+               vat_codes=("13500",), sga_prefixes=("8",), sga_mark="(판)"):
     """(도) 원가 줄을 프로젝트에 잇는다 -> {"lines": [...], "summary": {기준: {count, sum, unknown}}, "used": {수동 열쇠}}.
 
     자동 연결 후보 요청: 금액·등록일을 읽을 수 있고, 행사명 코드가 프로젝트 목록에 있고, 파트너(norm_vendor)가 줄의
     거래처와 같고, 줄 날짜가 등록일부터 link_days 일 안(양끝 포함), 금액이 줄 금액 A 또는 부가세를 더한 T 와 같다.
     T = A + 같은 전표·같은 거래처 부가세대급금 차변 합 (그 전표에 그 거래처 원가 줄이 하나일 때만).
     후보가 정확히 하나이고 그 요청이 다른 어떤 줄의 후보도 아닐 때만 연결한다 (요청 상태는 가리지 않는다).
+
+    판관비 계정(sga_prefixes·sga_mark) 줄도 프로젝트 번호가 달려 있고 그 번호가 프로젝트 목록에 있으면 그 프로젝트 원가 줄로
+    넣는다 (사용자 결정 2026-11-17 '프로젝트 원가에 넣기', 줄에 sga=True). 번호가 없거나 목록에 없는 판관비 줄은 넣지 않는다 —
+    회사·팀 손익(위하고 양식)의 원가·판관비 구분은 바뀌지 않고 프로젝트별 원가만 커진다. 결과의 "sga" = {합계, 달별 합계}.
     """
     journal = books.journal
     keys = line_keys(journal)
@@ -413,6 +430,21 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
         d, c = row.get("debit"), row.get("credit")
         lines.append(_line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
                            row.get("line_project") or slips.get(keys[i][:2])))
+    sga_pre, sga_mark_ = tuple(str(p) for p in sga_prefixes or ()), _squash(sga_mark)
+    if sga_pre and projects:
+        for i, row in enumerate(journal):
+            code = _squash(row.get("account_code"))
+            if not (re.match(r"^\d{5}$", code) and code.startswith(sga_pre) and sga_mark_ in _squash(row.get("account"))):
+                continue
+            d, c = row.get("debit"), row.get("credit")
+            ln = _line(i, keys[i], row, None if d is None and c is None else (d or 0) - (c or 0),
+                       row.get("line_project") or slips.get(keys[i][:2]))
+            want = overrides.get(ln["key"]) or ln["slip_code"] or ln["code"]
+            if want in projects and (ln["key"] in overrides or not _prior(ln)):
+                ln["sga"] = True
+                lines.append(ln)
+        lines.sort(key=lambda ln: ln["index"])
+    lines, offset = _drop_offsets(lines, overrides)
     used = set()
     pending = []
     for ln in lines:
@@ -438,7 +470,7 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
     eligible = {}
     if projects:
         for rq in requests:
-            vn = norm_vendor(rq["vendor"])
+            vn = rq_vendor(rq)
             if rq["amount"] is not None and rq["registered"] is not None and rq["code"] in projects and vn:
                 eligible.setdefault(vn, []).append(rq)
     cand = {}
@@ -480,7 +512,54 @@ def link_costs(books, requests, projects, overrides, link_days=90, direct_prefix
             if ln["date"] is None:
                 ln["reason"] = (ln["reason"] + " · " if ln["reason"] else "") + "날짜 없음"
             _unlinked(ln, "자동 연결 후보 0건")
-    return {"lines": lines, "summary": _summary(lines), "used": used}
+    sga = {"total": 0, "months": {}, "count": 0, "unknown": 0}
+    for ln in lines:
+        if ln.get("sga"):
+            sga["count"] += 1
+            if ln["amount"] is None:
+                sga["unknown"] += 1
+                continue
+            sga["total"] += ln["amount"]
+            ym = ln["date"].strftime("%Y-%m") if ln["date"] else ""
+            sga["months"][ym] = sga["months"].get(ym, 0) + ln["amount"]
+    return {"lines": lines, "summary": _summary(lines), "used": used, "offset": offset, "sga": sga}
+
+
+def _drop_offsets(lines, overrides):
+    """임시 전표와 그 되돌림 전표를 원가 줄에서 뺀다 -> (남은 줄, 뺀 줄).
+
+    카드 한도결제 때 '원가 차변 / 카드 미지급비용 대변'으로 임시 전표를 넣고(프로젝트 번호 있음) 같은 달에 번호 없는
+    전표로 되돌리면, 임시 원가는 프로젝트에 남고 되돌림만 미연결로 빠져 프로젝트 원가가 두 번 잡혔다 (실제 자료
+    2026-10: 6,680만, 사용자 결정 2026-11-17 '고치기'). 장부에서는 두 줄이 서로 지워지므로 둘 다 원가 줄로 세지 않는다.
+
+    짝: 프로젝트 번호가 없는 음수 줄(되돌림)과 계정·거래처·달이 같고 날짜가 같거나 앞선 양수 줄.
+    금액이 같은 줄이 정확히 하나이거나, 같은 날 양수 줄 합이 같은 날이 정확히 하나일 때만 (애매하면 그대로 둔다).
+    수동 지정(프로젝트연결.csv)한 줄은 건드리지 않는다.
+    """
+    def free(ln):
+        return (ln["key"] not in overrides and ln["amount"] is not None and ln["date"] is not None and ln["vendor_norm"]
+                and not _prior(ln))   # 지난해 줄은 참고로만 세므로 그대로 둔다
+
+    taken = set()
+    for neg in lines:
+        if not (free(neg) and neg["amount"] < 0 and neg["slip_code"] is None and neg["code"] is None):
+            continue
+        pool = [p for p in lines if free(p) and p["amount"] > 0 and p["index"] not in taken
+                and p["account_code"] == neg["account_code"] and p["vendor_norm"] == neg["vendor_norm"]
+                and p["date"] <= neg["date"] and (p["date"].year, p["date"].month) == (neg["date"].year, neg["date"].month)]
+        same = [p for p in pool if p["amount"] == -neg["amount"]]
+        if len(same) == 1:
+            pair = same
+        else:
+            days = {}
+            for p in pool:
+                days.setdefault(p["date"], []).append(p)
+            hits = [v for v in days.values() if sum(p["amount"] for p in v) == -neg["amount"]]
+            pair = hits[0] if len(hits) == 1 and not same else []
+        if pair:
+            taken.add(neg["index"])
+            taken.update(p["index"] for p in pair)
+    return [ln for ln in lines if ln["index"] not in taken], [ln for ln in lines if ln["index"] in taken]
 
 
 # ───────────── 매출 줄 연결 ─────────────

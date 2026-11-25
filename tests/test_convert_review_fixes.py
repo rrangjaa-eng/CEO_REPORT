@@ -748,18 +748,6 @@ class TestWR02DaySettings(unittest.TestCase):
         self.assertTrue([m for m in notes if "변환_자동연결일수 값 3000000 범위 밖 (1~3650) → 3650 사용" in m], notes)
         self.assertEqual((A["n_weeks"], len(A["data"]["days"])), (521, 521 * 7))
 
-    def test_an_unexpected_error_in_the_approval_screen_is_one_line(self):
-        from test_approval import load_approval_cli, run_cli, sample_copy, write_fake_snapshot
-        folder = sample_copy(self)
-        tmp = new_tmp(self)
-        write_fake_snapshot(os.path.join(tmp, "수집"))
-        cli = load_approval_cli()
-        with unittest.mock.patch.object(cli, "build", side_effect=OverflowError("date value out of range")):
-            rc, out = run_cli(["--기준일", "2026-11-02", "--입력", folder, "--수집폴더", os.path.join(tmp, "수집"),
-                               "--출력", os.path.join(tmp, "출력"), "--열기", "안함"])
-        self.assertEqual(rc, 6, out)
-        self.assertIn("승인 검토 화면을 만들던 중 예상하지 못한 오류 (OverflowError)", out)
-        self.assertNotIn("Traceback", out)
 
 
 

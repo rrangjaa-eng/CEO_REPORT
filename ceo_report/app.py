@@ -92,6 +92,8 @@ def task_argv(task, paths, asof="", pick="", nums="", payday="", group="", only=
         if y and not (y.isdigit() and len(y) == 4):
             raise ValueError("연도 형식 오류: %s (예: 2026)" % y)
         return "보고서", ["연간"] + day + (["--연도", y] if y else []) + ["--입력", paths.input, "--출력", paths.output]
+    if task == "기획본부":   # 기획본부용 재무상태표 엑셀 (사용자 2026-11-17)
+        return "보고서", ["기획본부"] + day + ["--입력", paths.input, "--출력", paths.output]
     if task in ("근거주간", "근거월간"):   # 대표가 요청한 근거만 따로 (사용자 2026-11-03)
         from .evidence import parse_nums
         return "보고서", [task[2:]] + day + ["--근거", ",".join(parse_nums(nums)), "--출력", paths.output]
@@ -441,8 +443,45 @@ def collect_mark(paths, dirs=None):
                 fail = int(d.get("못받음") or 0)
             except (TypeError, ValueError):
                 fail = 0
-            best = {"state": state, "at": at, "fail": fail}
+            best = {"state": state, "at": at, "fail": fail, "error": str(d.get("오류") or "").strip()}
     return best
+
+
+WEHAGO_TRIGGER = "https://smarta.wehago.com/ceo-report-collect"   # 확장 0.9.7 이 이 주소가 열리면 탭을 닫고 '모두 받기' (background.js TRIGGER)
+
+
+def find_chrome(env=None, exists=os.path.exists, which=shutil.which):
+    """크롬 경로 또는 None. 위하고 확장은 크롬에만 깔려 있어 엣지는 찾지 않는다."""
+    env = os.environ if env is None else env
+    cands = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
+    for base in (env.get("LOCALAPPDATA"), env.get("ProgramFiles"), env.get("ProgramFiles(x86)"), env.get("ProgramW6432")):
+        if base:
+            cands.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
+    for p in cands:
+        if exists(p):
+            return p
+    for name in ("chrome", "google-chrome"):
+        p = which(name)
+        if p:
+            return p
+    return None
+
+
+def start_wehago_collect(chrome=None, popen=None):
+    """'위하고에서 받기' 단추 (사용자 2026-11-17 결정 카드 A): 크롬에 표시 주소를 열어 확장이 '모두 받기'를 하게 한다.
+    프로그램은 위하고에 직접 접속하지 않는다. 받은 파일·받기상태.txt 는 지금처럼 자동 반영이 읽는다. -> (성공 여부, 글)."""
+    import subprocess
+    chrome = chrome or find_chrome()
+    if not chrome:
+        return False, "크롬을 찾지 못함 — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요"
+    try:
+        (popen or subprocess.Popen)([chrome, WEHAGO_TRIGGER])
+    except OSError as e:
+        return False, "크롬을 열지 못함 (%s) — 크롬에서 위하고 확장의 '모두 받기'를 직접 누르세요" % (e.strerror or type(e).__name__)
+    return True, ("크롬에 받기 요청을 보냄 — 분개장·대조·자금계획에 이어 결산·인사급여·연말정산까지 받으며 위하고 화면이 앞에 떴다 닫힙니다(3~5분, 그동안 다른 탭으로 옮기지 마세요). 다 받으면 자동 반영이 이어갑니다. "
+                  "위하고에 로그인돼 있지 않으면 크롬에 위하고가 열립니다: 로그인해 회사 [회계]를 연 뒤 다시 누르세요. "
+                  "10분이 지나도 그대로면 크롬 오른쪽 위 확장 그림을 눌러 '저장 허용' 단추가 있는지 보세요")
 
 
 def auto_state(paths, now=None, dirs=None):
@@ -472,6 +511,10 @@ def auto_state(paths, now=None, dirs=None):
         return {"state": "collecting", "sig": None,
                 "text": "위하고 확장이 받는 중 (%s 시작) — 다 받으면 반영" % mark["at"].strftime("%H:%M")}
     if not new:
+        # 2026-11-17: '위하고에서 받기'로 시작했는데 못 받았으면 그 까닭을 보인다 (20분까지)
+        if mark and mark["state"] == "끝" and mark.get("error") and 0 <= (now - mark["at"]).total_seconds() < MARK_FRESH_SEC:
+            return {"state": "none", "sig": None, "fail": True, "text": "새 자료 없음 · 위하고 받기 못 함 (%s) — %s"
+                    % (mark["at"].strftime("%H:%M"), mark["error"])}
         return {"state": "none", "sig": None, "text": "새 자료 없음"}
     latest = [w for w in new.values()] + [w for _, w in pend]
     other = winstate.other_wehago_time(paths)
@@ -573,6 +616,8 @@ def _write_log(log_path, lines, rc):
 
 
 CHECK_ASOF = "2026-10-31"   # 점검 기준일 (샘플 자료일)
+# 주간 다음에 한 번씩 만들어 보는 보고 (P22): (작업, 꼭 생겨야 하는 파일 이름 끝). 못 만들면 종료 코드 11~14
+CHECK_MORE = (("월간", "_월간_대표보고.html"), ("연간", "_연간_대표보고.html"), ("예산", "_예산_대표용.html"), ("기획본부", ".xlsx"))
 
 
 def _check_plan(input_dir, stamp):
@@ -587,7 +632,7 @@ def _check_plan(input_dir, stamp):
 
 
 def self_check(log_path, base=None):
-    """exe 점검: 창 없이 샘플로 주간 보고를 만들어 본다 (빌드 확인용). 0 이면 정상.
+    """exe 점검: 창 없이 샘플로 주간·월간·연간·예산 보고를 한 번씩 만들고 기획본부도 돌려 본다 (빌드 확인용). 0 이면 정상.
     gui 에서 옮김 (2026-11-15, tkinter 없이 시험하려고). base = 입력양식 이 있는 곳 (exe 는 풀린 임시 폴더)."""
     import tempfile
     from . import winstate
@@ -612,6 +657,26 @@ def self_check(log_path, base=None):
         # 2차 P6-13 (2026-11-15): PDF 를 못 만들어도 점검이 통과로만 끝났다 — 결과에 한 줄 남긴다 (CI 처럼 화면 없는 곳에선 못 만들 수 있어 실패로는 보지 않음)
         pdfs = [os.path.basename(f) for f in files if f.lower().endswith(".pdf")]
         lines.append("PDF: %s" % (", ".join(pdfs) if pdfs else "못 만듦 (보고 HTML 은 있음 — 이 PC 에서 PDF 만들기를 확인하세요)"))
+        # 2차 전수조사 P22 (2026-11-18): 예전엔 주간만 만들어 봐서 월간·연간·예산·기획본부가 깨져도 설치 점검은 통과했다
+        for n, (task, tail) in enumerate(CHECK_MORE):
+            if rc:
+                break
+            say = []
+            rc2, more = run_task(task, P, say.append, asof=CHECK_ASOF, year=CHECK_ASOF[:4] if task == "연간" else "")
+            made = [f for f in more if f.endswith(tail)]
+            if task == "기획본부" and rc2 == 2 and not made:
+                # 예시 자료에는 장부(계정잔액.csv)가 없어 엑셀까지는 못 만든다 — 프로그램이 돌아 자료 확인까지 간 것만 본다
+                lines.append("기획본부: 예시 자료에 장부가 없어 엑셀은 건너뜀 (실행만 확인) — %s" % (say[-1] if say else ""))
+                continue
+            if rc2 or not made:
+                lines.extend(say[-8:])
+                lines.append("%s 보고를 만들지 못함 (코드 %s)" % (task, rc2))
+                rc = 11 + n
+            elif tail.endswith(".html") and winstate._is_stop_page(made[0]):
+                lines.append("%s 대표 보고가 '만들지 않음' 안내로 나옴 — 자료 확인에서 막힘" % task)
+                rc = 11 + n
+            else:
+                lines.append("%s: %s" % (task, os.path.basename(made[0])))
     except Exception as e:
         lines.append("점검 오류 (%s): %s" % (type(e).__name__, e))
         rc = 8
@@ -739,8 +804,10 @@ def add_schedule(input_dir, day, io_kind, amount, firm, vendor, cat="", basis=""
             lines[0] = lines[0] + ",거래처코드"
             text_now = nl.join(lines) + nl
             cols = cols + ["거래처코드"]
-            with open(path, "wb") as f:
+            # 2차 전수조사 P5 (2026-11-18): 바로 덮어쓰다 끊기면 일정이 반만 남음 → 임시 파일에 다 쓴 뒤 바꾼다
+            with open(path + ".tmp", "wb") as f:
                 f.write(text_now.encode("utf-8-sig" if enc == "utf-8-sig" else enc))
+            os.replace(path + ".tmp", path)
         buf = io.StringIO()
         csv.writer(buf, lineterminator=nl).writerow([row.get(c, "") for c in cols])
         add = ("" if not text_now or text_now.endswith(("\n", "\r")) else nl) + buf.getvalue()
@@ -904,9 +971,10 @@ def question_text(input_dir):
         CL = dividend.checklist(input_dir)
     except Exception:
         return ""
-    miss = [k for k, q, v, need, u in CL if need and u is None]
-    done = sum(1 for k, q, v, need, u in CL if v and k != "주주")
-    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당·감면 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
+    tax = set(k for k, g in dividend.GROUP_OF.items() if g == dividend.TAX_GROUP)   # 감면·공제는 창 '법인세 감면·공제'에서 (2026-11-17)
+    miss = [k for k, q, v, need, u in CL if need and u is None and k not in tax]
+    done = sum(1 for k, q, v, need, u in CL if v and k != "주주" and k not in tax)
+    return ("★ 꼭 넣을 값 %d개 비어 있음 — 질문 창에서 넣어야 배당 판단을 합니다" % len(miss)) if miss else "판단할 준비 됨 (질문 %d개 답함)" % done
 
 
 def holder_settings(input_dir):
@@ -917,10 +985,38 @@ def holder_settings(input_dir):
         return {}
 
 
-def save_holder_settings(input_dir, values):
-    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12)."""
+def save_holder_settings(input_dir, values, group=None, exclude=None):
+    """창에서 저장: 꼭 넣을 값이 비면 저장하지 않는다 (사용자 2026-11-12). group/exclude = 그 창이 맡은 묶음만 막음."""
     from . import dividend
-    return dividend.save_settings(input_dir, values, strict=True)
+    return dividend.save_settings(input_dir, values, strict=True, group=group, exclude=exclude)
+
+
+def taxbreak_text(input_dir):
+    """창 '법인세 감면·공제' 상태 (사용자 2026-11-17: 공제·감면 '받음' 체크를 목록에 따로) -> 여러 줄 글."""
+    from . import dividend, taxbreak
+    try:
+        a = dividend.read_settings(input_dir)
+        rows = taxbreak.pick_states(a)
+        miss = dividend.missing_required(a, group=dividend.TAX_GROUP)
+    except Exception:
+        return ""
+    on = [n for n, ok, _ in rows if ok]
+    off = [n for n, ok, _ in rows if not ok]
+    out = ["법인세 예상에 넣는 것 %d개: %s" % (len(on), " · ".join(on) if on else "없음"),
+           "안 넣는 것 %d개: %s" % (len(off), " · ".join(off) if off else "없음")]
+    if miss:
+        out.append("★ 꼭 넣을 값 %d개 비어 있음 — 감면 후보를 판단하지 못합니다" % len(miss))
+    return "\n".join(out)
+
+
+def taxbreak_count(input_dir):
+    """목록 옆 짧은 글: '넣는 것 n개'."""
+    from . import dividend, taxbreak
+    try:
+        rows = taxbreak.pick_states(dividend.read_settings(input_dir))
+    except Exception:
+        return ""
+    return "넣는 것 %d개" % sum(1 for _, ok, _ in rows if ok)
 
 
 def holder_text(input_dir):

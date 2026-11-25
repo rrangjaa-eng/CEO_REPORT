@@ -876,13 +876,34 @@ def _bar(sc):
             "<div class='scale'>%s</div>" % (lo, max(hi - lo, 1), mid, lab))
 
 
+def _how(f, E):
+    """계산 칸 글: 매출액증가율을 작년 평가서 매출(연 환산)로 셈한 해는 '작년 같은 기간'이 아니라 그 기준을 적는다 (11/18)."""
+    if f[0] == "growth" and (E or {}).get("growth_src"):
+        return "올해 연 환산 ÷ 작년 평가서 매출(연 환산) − 1"
+    return f[3]
+
+
+def basis_text(C):
+    """등급 칸 아래 기준 글 (2차 전수조사 J5·1차 B14, 2026-11-18): 예전엔 연중에도 '2026년 결산 기준'이라 적어 결산 값으로 읽혔고,
+    프로그램이 만든 점수표인데 실제 신용등급처럼 보였다. 연중이면 감가상각·결산 비용 전 이익이라 좋게 나올 수 있음도 적는다."""
+    if C["annual"] and C["mon"] >= 12:   # 연간 보고라도 연중(1~N월)에 만들면 결산 값이 아니다
+        return "%d년 결산 장부 기준 어림 · 실제 등급과 다를 수 있음" % C["year"]
+    return "%d년 1~%d월 장부 기준 어림 (결산 비용 반영 전이라 좋게 나올 수 있음) · 실제 등급과 다를 수 있음" % (C["year"], C["mon"])
+
+
+def score_range(C):
+    """'모르는 칸에 따라 a~b점' — 폭이 없으면('56~56점') 빈 글 (1차 B14)."""
+    lo, hi = "%.0f" % C["score"][0], "%.0f" % C["score"][2]
+    return "" if lo == hi else "모르는 칸에 따라 %s~%s점" % (lo, hi)
+
+
 def render(C):
     if C is None:
         return CSS + "<div class='crx'><div class='note'>분개장 계정 자료(계정잔액.csv)가 없어 계산하지 못했습니다. '자료 변환'을 다시 하면 생깁니다.</div></div>"
     V, E = C["V"], C["E"]
     spec = dict((f[0], f) for f in FIN)
     h = [CSS, "<div class='crx'>"]
-    when = "%d년 결산 기준 (%d월까지 장부 반영)" % (C["year"], C["mon"]) if not C["annual"] else "%d년 결산 기준" % C["year"]
+    when = basis_text(C)
     h.append("<div class='note'>%s. 평가 회사(NICE·한국기업데이터·이크레더블 등)의 실제 모형은 공개되지 않아 <b>등급은 추정 범위</b>로만 보입니다. "
              "판정 기준은 재무분석에서 널리 쓰이는 값이고, 모든 문구는 정해진 규칙으로 만듭니다.</div>" % when)
     easy = explain(C)
@@ -890,7 +911,7 @@ def render(C):
         h.append("<div class='say'><b>쉬운 설명</b><br>%s</div>" % "<br>".join(esc(x) for x in easy))
     best, worst = C["best"], C["worst"]
     adj = (C.get("last") or {}).get("adj")
-    foot = "점수 %.0f점 (모르는 칸에 따라 %.0f~%.0f점)." % (C["score"][1], C["score"][0], C["score"][2])
+    foot = "점수 %.0f점%s." % (C["score"][1], " (%s)" % score_range(C) if score_range(C) else "")
     if C["age"] is not None and C["age"] < 3:
         foot += " 업력 3년 미만이라 아래쪽을 한 칸 더 봅니다."
     if adj:
@@ -925,7 +946,7 @@ def render(C):
             lv = judge(k, v) if v is not None else ("좋음" if k == "icr" and E.get("icr_none") else None)
             area_td = "<td class='a' rowspan='%d'>%s</td>" % (len(ks), area) if i == 0 else ""
             h.append("<tr>%s<td>%s<span class='sub'>%s</span></td><td class='n'>%s</td><td style='font-size:10.8px'>%s</td><td>%s</td><td>%s</td></tr>"
-                     % (area_td, esc(s[2]), esc(s[3]), val, esc(threshold_text(k)), _tag(lv), esc(s[7])))
+                     % (area_td, esc(s[2]), esc(_how(s, E)), val, esc(threshold_text(k)), _tag(lv), esc(s[7])))
     h.append("</tbody></table>")
     B = E.get("B")
     if E.get("growth_src") and V.get("growth") is not None:

@@ -37,7 +37,140 @@ def problems(R):
         out.append("세금예상.csv 가 없거나 읽지 못함 — 급여·4대보험·원천세·부가세·법인세·카드 예상이 빠져 여유 자금이 크게 보임 "
                    "(자료 변환을 다시 하세요)")
     out.extend(company_problems(R))
+    if R.get("targets_problem"):   # 2차 전수조사 P6: 팀 목표를 못 읽은 채 만든 추정 예산·목표 대비를 내보내지 않는다
+        out.append(R["targets_problem"])
+    if R.get("sched_dropped"):     # 2차 전수조사 P13: 자금일정의 입출금 칸이 틀려 빠진 줄 — 지급이 빠지면 여유 자금이 크게 보인다
+        dr = R["sched_dropped"]
+        known = [a for _, _, a in dr if a is not None]
+        out.append("자금일정.csv %d줄이 '입출금' 칸 값이 틀려 일정에서 빠짐 (줄 %s%s) — '입금' 또는 '지급'으로 고치세요"
+                   % (len(dr), ", ".join(str(l) for l, _, _ in dr[:8]),
+                      " · 금액 합 %s원" % "{:,}".format(int(sum(abs(a) for a in known))) if known else ""))
+    # 2차 전수조사 P1 (사용자 2026-11-18 결정 카드, 권장안 '막음'): 새로 받고 아직 변환하지 않은 분개장·자금계획서가 있으면
+    # 예전 변환 자료로 만든 대표·팀장 보고를 내지 않는다 (이체 파일은 이미 같은 경우를 막고 있었음)
+    out.extend(unconverted(R.get("input_dir")))
+    out.extend(asof_mismatch(R.get("input_dir"), R.get("asof")))
     return out
+
+
+def conv_asof(input_dir):
+    """자료 변환의 기준일과 '지난 기준일로 자른 변환'인지 (변환결과.txt). -> (날짜 또는 None, 자름 여부)."""
+    import re
+    from .wehago import CUT_MARK
+    try:
+        with open(os.path.join(input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError, TypeError):
+        return None, False
+    m = re.match(r"변환 시각 [^·]*· 기준일 (\d{4})-(\d{2})-(\d{2})", text)
+    day = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    return day, CUT_MARK in text
+
+
+def asof_mismatch(input_dir, asof):
+    """2차 전수조사 D1 (2026-11-18): 보고 기준일과 자료 변환 기준일이 어긋나 장부 값이 다른 날 것이 되는 경우 -> 막는 까닭 목록.
+    ① 보고 기준일이 변환 기준일보다 앞: 통장만 그 날로 잘리고 미수금·미지급금·차입금·세금은 변환한 날 장부 값이 들어감
+    ② 변환이 지난 기준일로 잘려 있는데 보고 기준일이 그 뒤: 그 사이 전표가 빠진 숫자가 나감"""
+    if not input_dir or asof is None:
+        return []
+    day, cut = conv_asof(input_dir)
+    if day is None:
+        return []
+    if asof < day:
+        return ["보고 기준일 %s 이 자료 변환 기준일 %s 보다 앞 — 미수금·미지급금·세금 예상이 변환한 날 장부 값으로 들어감 "
+                "(창의 기준일을 %s 로 두고 '자료 변환'을 다시 한 뒤 만드세요)" % (asof.isoformat(), day.isoformat(), asof.isoformat())]
+    if cut and asof > day:
+        return ["자료 변환이 지난 기준일 %s 까지만 자른 장부로 되어 있음 — 그 뒤 전표가 빠진 숫자가 나감 "
+                "(기준일 %s 로 '자료 변환'을 다시 한 뒤 만드세요)" % (day.isoformat(), asof.isoformat())]
+    return []
+
+
+def conv_time(input_dir):
+    """마지막 자료 변환 시각과 실패 여부 (변환결과.txt 첫 줄 '변환 시각 …'). -> (datetime 또는 None, 실패 글 또는 '')."""
+    import re
+    try:
+        with open(os.path.join(input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
+            head = [f.readline() for _ in range(3)]
+    except (OSError, UnicodeDecodeError, TypeError):
+        return None, "자료 변환 기록(변환결과.txt)이 없거나 읽지 못함 — 자료 변환을 먼저 하세요"
+    m = re.match(r"변환 시각 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", head[0].strip())
+    when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S") if m else None
+    failed = next((ln.strip() for ln in head[1:] if ln.startswith("변환 실패")), "")
+    return when, failed
+
+
+NEW_SLACK = 60   # 변환 시각보다 이만큼(초) 넘게 뒤에 받은 파일만 '새 자료'
+
+
+def _is_book_or_plan(name):
+    return "분개장" in name or "자금계획" in name
+
+
+def unconverted(input_dir, collect_dir=None, downloads=None, why="예전 자료로 만든 숫자가 나감"):
+    """변환 뒤에 새로 받은 분개장·자금계획 파일 -> 막는 까닭 목록 (없으면 []).
+    collect_dir: 수집\\위하고 (None 이면 입력 폴더 옆 수집\\위하고). downloads: 크롬 다운로드 폴더 목록 (None 이면 이 PC 크롬에서 찾음).
+    변환 시각을 모르면(변환결과.txt 없음 — 예시 자료) 판단하지 않는다."""
+    if not input_dir:
+        return []
+    when, _ = conv_time(input_dir)
+    if when is None:
+        return []
+    if collect_dir is None:
+        collect_dir = os.path.join(os.path.dirname(os.path.abspath(input_dir)), "수집", "위하고")
+    out = []
+    limit = when + dt.timedelta(seconds=NEW_SLACK)
+
+    def text(names):
+        return ", ".join(names[:3]) + (" 외 %d개" % (len(names) - 3) if len(names) > 3 else "")
+    if os.path.isdir(collect_dir):
+        newer = []
+        for n in sorted(os.listdir(collect_dir)):
+            if _is_book_or_plan(n) and n.lower().endswith((".json", ".xls", ".xlsx")):
+                try:
+                    t = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(collect_dir, n)))
+                except (OSError, ValueError, OverflowError):
+                    continue
+                if t > limit:
+                    newer.append(n)
+        if newer:
+            out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (%s)" % (when.strftime("%m-%d %H:%M"), text(newer), why))
+    try:
+        from . import app as _app
+        pend = _app.pending_downloads(downloads)
+    except Exception:   # 다운로드 폴더를 못 읽어도 확인은 계속
+        pend = []
+    waiting = sorted(os.path.basename(p) for p, t in pend if _is_book_or_plan(os.path.basename(p)) and t > limit)
+    if waiting:
+        out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (%s)"
+                   % (when.strftime("%m-%d %H:%M"), text(waiting), why))
+    return out
+
+
+def unconverted_intranet(input_dir, collect_root=None):
+    """변환 뒤에 새로 받은 인트라넷 자료(수집\\인트라넷_YYYYMMDD_HHMMSS) -> 막는 까닭 목록 (2차 전수조사 P19, 2026-11-18).
+    지급요청 승인 상태가 바뀐 자료를 받고 변환하지 않은 채 이체 파일을 만들면 예전 승인 상태로 담긴다. 변환 시각을 모르면 판단하지 않는다."""
+    import re
+    if not input_dir:
+        return []
+    when, _ = conv_time(input_dir)
+    if when is None:
+        return []
+    root = collect_root or os.path.join(os.path.dirname(os.path.abspath(input_dir)), "수집")
+    try:
+        from . import snapshot
+        path = snapshot.latest_snapshot(root)
+    except Exception:
+        path = None
+    m = re.search(r"(\d{8})_(\d{6})$", os.path.basename(path or ""))
+    if not m:
+        return []
+    try:
+        got = dt.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return []
+    if got <= when + dt.timedelta(seconds=NEW_SLACK):
+        return []
+    return ["자료 변환(%s) 뒤에 새로 받은 인트라넷 자료가 있음: %s — 자료 변환을 먼저 하세요 (지급요청 승인 상태가 예전 것으로 담길 수 있음)"
+            % (when.strftime("%m-%d %H:%M"), os.path.basename(path))]
 
 
 def company_problems(R):
@@ -95,7 +228,7 @@ def blank_funds(R):
     for p in s2.get("periods") or []:
         for mode in ("firm", "spend", "all"):   # spend = '프로젝트 지급 예상 등까지 빼면' (2026-11-14 F7)
             r = p.get(mode) or {}
-            for k in ("bal", "low", "low_date", "avail"):
+            for k in ("bal", "low", "low_date", "avail", "plow", "plow_date", "pavail"):
                 if k in r:
                     r[k] = None
     # 1차 점검 자금-1·E6 (2026-11-15): 구간별 계산 잔액 표·위험표의 '최저 계산 잔액 …원' 줄에도 숫자가 남았다 (예시 5.43억·5,175만)
@@ -150,7 +283,7 @@ def blank_plan_gaps(R):
             p["plan_gap"] = True
             for mode in ("firm", "spend", "all"):
                 r = p.get(mode) or {}
-                for k in ("bal", "low", "low_date", "avail"):
+                for k in ("bal", "low", "low_date", "avail", "plow", "plow_date", "pavail"):
                     if k in r:
                         r[k] = None
     months = sorted(set(m for _, ms in gaps for m in ms))
@@ -235,7 +368,7 @@ def stop_page(title, probs):
     return ("<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>%s — 만들지 않음</title><style>"
             "body{font-family:sans-serif;margin:40px;color:#1d2433}%s</style></head><body><h1>%s</h1>"
             "<div class='gate'>자금계획서·분개장이 반영되지 않아 이 보고를 만들지 않았습니다<ul>%s</ul></div>"
-            "<p>위하고 확장으로 분개장과 자금계획서를 받은 뒤 자료 변환을 다시 하면 만들어집니다.</p></body></html>"
+            "<p>위하고 확장으로 분개장과 자금계획서를 받은 뒤 주간·월간 보고 단추를 누르면(자동 반영을 켜 두었으면 저절로) 만들어집니다.</p></body></html>"
             % (html.escape(title), BANNER_CSS, html.escape(title), "".join("<li>%s</li>" % html.escape(p) for p in probs)))
 
 

@@ -17,8 +17,8 @@ from ceo_report.render import render  # noqa: E402
 from sample_input import SAMPLE, refresh as refresh_sample  # noqa: E402
 
 # 주제별 묶기 (사용자 2026-11-14 '구성안대로 바꾸기'): 첫 화면 · 주제(신호등 순서) · 부록
-WEEK = ["home", "cash", "proj", "pl", "ar", "other", "data", "sum", "docs", "all"]
-MONTH = ["home", "cash", "proj", "pl", "ar", "other", "data", "xchk", "cf", "sum", "docs", "all"]
+WEEK = ["home", "cash", "proj", "pl", "ar", "other", "data", "tbl", "sum", "docs", "all"]
+MONTH = ["home", "cash", "proj", "pl", "ar", "other", "data", "xchk", "cf", "c6", "tbl", "sum", "docs", "all"]   # c6 감면·공제 검토 매달 (2026-11-17)
 
 
 def area_ids(page):

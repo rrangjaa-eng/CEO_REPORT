@@ -452,10 +452,14 @@ def settle(rows, books, asof, payable=PAYABLE_CODES, receivable=RECEIVABLE_CODES
     def window(r):
         due = dt.date(*[int(x) for x in r["예정일"].split("-")])
         lo = due - dt.timedelta(days=EARLY_DAYS[r["입출금"]])
-        if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and r.get("자료일"):
+        stamp = dt.date(*[int(x) for x in r["자료일"].split("-")]) if r.get("자료일") else None
+        if any(k in (r.get("파일") or "") for k in ("현금대비", AUTO_PLAN_SUFFIX)) and stamp is not None and due >= stamp:
             # 현금대비잔액은 위하고가 반제한 건을 이미 0원으로 뺐다: 남은 줄은 받은 날까지 안 나간 것. 그 뒤 전표만 본다
             # (실제 2026-11-05: 10/19 계산서를 10/30에 지급, 11/3 같은 금액 새 계산서(11/13 예정)를 추정 규칙이 '이미 지급'으로 봄)
-            lo = max(lo, dt.date(*[int(x) for x in r["자료일"].split("-")]))
+            # 예정일이 받은 날보다 앞선 줄은 자르지 않는다 (사용자 2026-11-19 결정 카드 '지난 줄도 장부와 대조'): 위하고가 반제하지 않는
+            # 직접입력 줄은 이미 낸 뒤에도 남는다 — 실제 8/7 롯데_1842 사무실임대료 6,655,040을 8/7에 냈는데, 지난 3달을 받기
+            # 시작한 11/19 수집에서 받은 날 뒤 전표만 보다가 '안 나간 돈'으로 11/20 출금에 다시 올라갔음
+            lo = max(lo, stamp)
         od = _origin_day(r)
         if od is not None:
             # 이 돈을 만든 원전표(계산서·비용 전표) 날짜 전의 지급·입금은 이 줄의 것이 아니다 (비고의 원전표 일자, ②)
@@ -707,6 +711,9 @@ def _done_window(ev_day, done_day):
     return -DONE_DAYS <= gap <= DONE_AHEAD_DAYS
 
 
+SPLIT_MAX = 12   # 같은 날 같은 거래처 계산서 줄이 이보다 많으면 합이 맞는 묶음을 찾지 않는다 (경우의 수가 너무 많음)
+
+
 def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
     """자금계획서 줄로 일정을 바꾼다 (D-55 '자금계획서 기준'). -> (새 일정 목록, 설명 dict 또는 None).
 
@@ -782,8 +789,17 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
                 continue
             groups.setdefault(ev["inv_key"], []).append(i)
         for k, idx in groups.items():
-            if len(idx) < 2 or sum(events[i]["amount"] for i in idx) != p["amount"]:
+            if len(idx) < 2:
                 continue
+            if sum(events[i]["amount"] for i in idx) != p["amount"]:
+                # 같은 날 같은 거래처에 계산서가 여러 장이면(나눈 계산서 + 다른 계산서) 그중 합이 맞는 줄 묶음을 찾는다.
+                # 묶음이 정확히 하나일 때만 (실제 자료 2026-11-17: 구글클라우드 10/22 계산서 5장 가운데 나눈 두 줄
+                # 1억 3,975만이 자금계획서 한 줄과 안 맞아 일정에 두 번 잡힐 뻔함)
+                subs = [c for n in range(2, len(idx) + 1) for c in itertools.combinations(idx, n)
+                        if sum(events[i]["amount"] for i in c) == p["amount"]] if len(idx) <= SPLIT_MAX else []
+                if len(subs) != 1:
+                    continue
+                idx = list(subs[0])
             first = events[idx[0]]
             same = bool(key) and norm_vendor(first.get("desc") or "") == key
             near = first["date"] is not None and abs((first["date"] - p["date"]).days) <= MATCH_DAYS

@@ -66,6 +66,26 @@ class TestFiles(unittest.TestCase):
         self.assertEqual(editmode.strip(leftover), PAGE)
 
 
+class TestMark(unittest.TestCase):
+    """2차 전수조사 J3: 손으로 고친 보고는 맨 아래 한 줄로 알린다. 고친 곳이 없으면 붙이지 않고, 다시 저장해도 한 줄만."""
+
+    def test_mark_counts_edits_and_is_not_itself_an_edit(self):
+        import datetime as dt
+        self.assertEqual(editmode.mark(PAGE, PAGE), PAGE)
+        once = editmode.mark(PAGE, PAGE.replace("매출 100원", "매출 120원"), dt.date(2026, 11, 18))
+        self.assertIn("손으로 고친 곳 1곳 (2026-11-18) · 고친 숫자의 합계와 비율은 다시 계산하지 않음", once)
+        twice = editmode.mark(PAGE, once, dt.date(2026, 11, 19))
+        self.assertEqual(twice.count("edit-mark"), 1)
+        self.assertIn("손으로 고친 곳 1곳 (2026-11-19)", twice)
+        self.assertEqual(len(editmode.changes(PAGE, once)), 1)     # 표시 줄은 고친 곳으로 세지 않음
+        self.assertEqual(editmode.mark(PAGE, once.replace("매출 120원", "매출 100원")), PAGE)   # 되돌리면 표시도 없어짐
+
+    def test_switch_off(self):
+        from unittest import mock
+        with mock.patch.object(editmode, "MARK", False):
+            self.assertNotIn("edit-mark", editmode.mark(PAGE, PAGE.replace("매출 100원", "매출 120원")))
+
+
 class TestServer(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -100,6 +120,8 @@ class TestServer(unittest.TestCase):
         self.assertIn("매출 120원", got)
         self.assertNotIn("edit-bar", got)
         self.assertNotIn("contenteditable", got)
+        self.assertIn("손으로 고친 곳 1곳", got)   # 2차 전수조사 J3
+        self.assertLess(got.index("edit-mark"), got.lower().index("</body>"))
         with open(self.src, encoding="utf-8") as f:
             self.assertIn("매출 100원", f.read())      # 원래 보고서는 그대로
         self.assertTrue(os.path.isfile(os.path.splitext(ed)[0] + ".pdf"))
@@ -146,3 +168,16 @@ class TestServer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBarScriptSyntax(unittest.TestCase):
+    """사용자 2026-11-19 "수정 모드를 눌러도 수정이 안 된다": 띠 스크립트의 '\\n' 이 파이썬 글에서 진짜 줄바꿈이 되어 JS 문법 오류
+    → 화면 전체가 고쳐지지 않았음 (11/17 편의성 48 부터). 따옴표 글 안에 줄바꿈이 없어야 한다."""
+
+    def test_no_newline_inside_js_string(self):
+        import re
+        script = editmode._BAR.split("<script>", 1)[1].split("</script>", 1)[0]
+        for line in script.split("\n"):
+            # 한 줄 안에서 홑따옴표가 짝수여야 한다 (줄바꿈으로 끊긴 글자열이 없음)
+            self.assertEqual(line.count("'") % 2, 0, line)
+        self.assertIsNone(re.search(r"\('\n", editmode._BAR))

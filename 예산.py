@@ -61,12 +61,23 @@ def main(argv=None):
     if not B["teams"]:
         _say("%d년 팀 매출 자료(손익.csv 팀 줄)가 없어 예산을 만들 수 없습니다. 먼저 '자료 변환'을 하세요." % B["base"])
         return 2
+    xdiff = 보고서._xcheck(a, asof, "budget", lambda X: X.from_budget(B))   # 보고끼리 숫자 맞춰 보기 (2차 전수조사 제안 8)
     confirmed = None
-    if a.확정 == "함":
+    from ceo_report import gate
+    stop = gate.check_dir(a.입력, asof)   # 예산 대표용도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
+    if a.확정 == "함" and stop:
+        # 2차 전수조사 V2 (2026-11-18): 자료 확인에서 막힌 날은 예산을 확정하지 않는다 (예전: 대표용이 막힌 날에도 예산확정.csv 는
+        # 먼저 저장돼, 오래된 자료로 만든 예산이 월간 '예산 대비'의 기준으로 굳었음)
+        _say("예산을 확정하지 않았습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
+        _say("자료를 받아 '자료 변환'을 한 뒤 다시 확정하세요. 이번에는 초안만 만듭니다 (예전에 확정한 예산은 그대로).")
+    elif a.확정 == "함":
         try:
             n = budget.confirm(a.입력, B, asof)
         except OSError as e:
             _say("예산확정.csv 를 쓰지 못했습니다: %s" % (e.strerror or type(e).__name__))
+            return 7
+        except ValueError as e:   # 2차 전수조사 P5: 못 읽으면 다른 해 확정 예산을 지우지 않고 멈춘다
+            _say(str(e))
             return 7
         confirmed = asof.isoformat()
         _say("%d년 예산 확정: 입력/%s 에 %d줄 저장 — 다음 월간 경영관리 보고부터 '예산 대비'가 붙습니다 (대표 보고에는 싣지 않음)." % (year, budget.CONFIRM_FILE, n))
@@ -77,8 +88,6 @@ def main(argv=None):
     browser = 보고서.find_browser() if a.pdf == "만듦" else None
     made = []
     company = (d.settings.get("회사명") or "").strip()
-    from ceo_report import gate
-    stop = gate.check_dir(a.입력, asof)   # 예산 대표용도 자금계획서·분개장 확인 (2026-11-14 코덱스 검토)
     if stop:
         _say("예산 대표용을 만들지 않습니다 — 자금계획서·분개장 미반영: " + " / ".join(stop))
     for mode, who in (("ceo", "대표용"), ("mgmt", "경영관리용")):
@@ -91,6 +100,9 @@ def main(argv=None):
                 return 7
             continue
         page = render_budget(budget.blank_cash(B) if stop else B, mode, company, confirmed)
+        if mode == "mgmt" and xdiff:
+            from ceo_report import xcheck
+            page = page.replace("<body>", "<body>" + xcheck.banner(xdiff, "budget"), 1)
         if stop:   # 항목은 남기고 자금 전망 숫자만 비운다 (2026-11-14 오후 점검 K7)
             page = page.replace("<body>", "<body>" + gate.banner(stop, "이 예산의 통장 잔액 전망", blanked=True), 1)
         try:
@@ -107,7 +119,7 @@ def main(argv=None):
             else:
                 made.append(pdf)
                 for gone in pdfname.prune(base):
-                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 지움: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
+                    _say("같은 보고 PDF가 %d개 넘게 쌓여 예전 것을 '지난PDF' 폴더로 옮김: %s" % (pdfname.KEEP_FROM - 1, os.path.basename(gone)))
     Y = B["Y"]
     _say("%d년 예산 %s · 매출 %s · 영업이익 %s" % (year, "확정" if confirmed else "초안", "{:,}".format(Y["rev"]),
                                           "미확인" if Y["op"] is None else "{:,}".format(Y["op"])))

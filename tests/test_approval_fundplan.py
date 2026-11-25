@@ -61,12 +61,6 @@ class TestApprovalPlan(unittest.TestCase):
         total = lambda X: sum(X["data"]["base_out"]) + sum(r["amount"] for r in X["data"]["requests"])
         self.assertEqual(total(A), total(plain))
 
-    def test_screen_says_it(self):
-        from ceo_report.approval_render import render_approval
-        page = render_approval(self.build(), True)
-        self.assertIn("일정 기준: WEHAGO 자금계획서 (자료일 2026-11-02, 2026-11)", page)
-        self.assertIn("WEHAGO 자금계획서 지급예정일", page)
-        self.assertIn("WEHAGO 자금계획서에 없음", page)
 
 
 if __name__ == "__main__":

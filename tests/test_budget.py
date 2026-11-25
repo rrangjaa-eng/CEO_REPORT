@@ -124,7 +124,7 @@ class Compute(Base):
         lc = corp_tax(B["L"]["pre"], 2026)
         self.assertIn(("3/31", lc - 4_000_000), names)
         self.assertIn(("4/30", int(lc * 0.1)), names)
-        self.assertIn(("8/31", budget._r4(lc / 2.0)), names)    # 중간예납 = 산출세액 ÷ 2
+        self.assertIn(("8/31", budget._r4(int(lc * 6 / 12))), names)    # 중간예납 = 감면 뒤 법인세 × 6/12 (감면 없는 예시 자료라 산출세액과 같음, N2 11/17 밤)
 
     def test_render_both(self):
         B = self.B()
@@ -201,9 +201,25 @@ class AppTask(Base):
         self.assertTrue(os.path.exists(os.path.join(out, "예산", "2027_예산_대표용.html")))
         self.assertTrue(os.path.exists(os.path.join(out, "예산", "2027_예산_경영관리용.html")))
         self.assertFalse(os.path.exists(os.path.join(self.inp, budget.CONFIRM_FILE)))
-        rc = 예산.main(["--기준일", "2026-11-06", "--입력", self.inp, "--출력", out, "--pdf", "안함", "--확정", "함"])
+        from unittest import mock
+        from ceo_report import gate
+        with mock.patch.dict(os.environ, {gate.TEST_OFF: "1"}):   # 예시 자료에는 자금계획서가 없다 — 자료 확인은 아래 시험에서 따로
+            rc = 예산.main(["--기준일", "2026-11-06", "--입력", self.inp, "--출력", out, "--pdf", "안함", "--확정", "함"])
         self.assertEqual(rc, 0)
         self.assertIn("2027", budget.read_confirmed(self.inp))
+
+    def test_confirm_is_refused_when_data_gate_blocks(self):
+        # 2차 전수조사 V2 (2026-11-18): 자료 확인에서 막힌 날은 예산확정.csv 를 저장하지 않는다
+        import 예산
+        from unittest import mock
+        from ceo_report import gate
+        out = os.path.join(self.tmp, "출력")
+        with mock.patch.object(gate, "check_dir", return_value=["분개장 자료일 2026-10-01 — 기준일보다 36일 전 (허용 7일)"]):
+            rc = 예산.main(["--기준일", "2026-11-06", "--입력", self.inp, "--출력", out, "--pdf", "안함", "--확정", "함"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.inp, budget.CONFIRM_FILE)))
+        with open(os.path.join(out, "예산", "2027_예산_경영관리용.html"), encoding="utf-8") as f:
+            self.assertNotIn("확정 2026-11-06", f.read())
 
 
 if __name__ == "__main__":

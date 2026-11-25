@@ -47,22 +47,25 @@ class TestMidMonthCorpTax(unittest.TestCase):
         R = copy.deepcopy(self.M)
         return _text(render(R, mode))
 
-    def test_bad_debt_hint_in_both_and_not_subtracted(self):
-        # 예전(11/12~11/15): '− 대손충당금 (예상…)' 줄로 세전 이익에서 뺐음. 계산-08: 빼지 않고 두 판 모두 한 줄로 알림
+    def test_bad_debt_subtracted_in_both(self):
+        # 11/15~11/17 판 파일('빼지 않음' 글)을 읽어도 사용자 2026-11-17대로 세전 이익에서 뺀다 (계산-08)
         for mode in ("ceo", "mgmt"):
             t = self._render(mode)
-            self.assertIn("대손충당금 예상 5,000,000원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −550,000원)", t, mode)
-            self.assertNotIn("− 대손충당금", t, mode)
+            self.assertIn("− 대손충당금 (예상", t, mode)
+            self.assertNotIn("세무사 확인 전이라 빼지 않음", t, mode)
 
     def test_mgmt_uses_tax_adjustment_and_says_basis_month(self):
         t = self._render("mgmt")
         self.assertNotIn("세무조정 미반영", t)
-        self.assertIn("세무조정·대손충당금은 10월까지 장부로 계산", t)
+        # 2차 전수조사 A2·A3 (2026-11-18): 달 중간 월간의 누적 손익·세금은 다 끝난 달(10월)까지 — 자금 일정의 법인세 줄과
+        # 같은 과세표준을 그대로 쓴다 (예전엔 11/14까지 세전 이익에 10월까지 세무조정을 더해 보고마다 세금이 달랐음)
+        self.assertNotIn("까지 장부로 계산 (이번 달은 아직 끝나지 않음)", t)
+        self.assertIn("1월~10월", t)
         m = re.search(r"<th>세전 이익</th>.*?<tbody><tr><td>([−\-\d,]+)</td><td>([−\-\d,]+)</td>",
                       __import__("ceo_report.render", fromlist=["render"]).render(copy.deepcopy(self.M), "mgmt"), re.S)
         self.assertIsNotNone(m)
         pretax, base = (int(x.replace(",", "").replace("−", "-")) for x in m.groups())
-        self.assertEqual(base - pretax, 3_000_000)
+        self.assertEqual(base, 138_000_000 - 5_000_000)   # 줄의 과세표준 − 11/15~11/17 판 파일이 안 뺀 대손충당금
 
     def test_month_end_mismatch_still_warns(self):
         """다 끝난 달(10/31) 보고인데 9월 줄이면 예전처럼 '세무조정 미반영' (자료 변환 필요)."""

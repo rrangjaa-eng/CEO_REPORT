@@ -141,13 +141,14 @@ def _invoices(rows):
     out = []
     for i, r in enumerate(rows):
         supply, vat = r.get("supply"), r.get("vat")
-        out.append({"idx": i, "date": r.get("date"), "vendor": mask_rrn(r.get("vendor")),
+        out.append({"idx": i, "date": r.get("date"), "vendor": mask_rrn(r.get("vendor")), "vendor_code": r.get("vendor_code") or "",
                     "vendor_norm": r.get("vendor_norm") or norm_vendor(r.get("vendor")), "item": mask_rrn(r.get("item")),
                     "supply": supply, "vat": vat, "source_total": r.get("total"),
                     "total": None if supply is None or vat is None else supply + vat,
                     "code": r.get("code"), "type": r.get("type") or "", "no": r.get("no") or "",
                     "applied": 0, "paid_date": None, "project": "", "basis": "미연결", "why": "",
                     "deducted": r.get("deducted") or 0,   # 매출 때 바로 차감된 금액 (카드 수수료): 입금액에 넣는다
+                    "due_memo": r.get("due_memo"),   # 분개장 적요 '[수금예정일:…]' (2차 전수조사 P8)
                     "advance": r.get("advance")})   # 분개장 매출전표에 선수금 계정 줄이 있는가 (모르면 None)
     return out
 
@@ -369,7 +370,7 @@ def _carry(rows, prev_rows, notes):
 
 def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     """sales(wehago.load_sales) + 분개장 입금 -> Table('계산서.csv'). 매출 원천이 없거나 틀리면 written=False (0으로 채우지 않음)."""
-    columns = data.SCHEMA["계산서.csv"]
+    columns = data.SCHEMA["계산서.csv"] + data.INVOICE_OPTIONAL
     if sales["state"] != "ok":
         return Table("계산서.csv", columns, [], written=False, reason=sales.get("reason") or _NONE_REASON)
     notes = list(sales["notes"])
@@ -398,6 +399,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     mismatch = []
     split_n = split_rows = 0
     guessed = []   # 입금예정일을 작성일 + 60일로 채운 계산서 (F9)
+    from_memo = []   # 입금예정일을 분개장 적요 '[수금예정일:…]'로 채운 계산서 (P8)
     split_prev = {}   # 이전 계산서.csv 줄 (거래처, 발행일, 공급가액) -> 줄 (하나뿐일 때만)
     seen_prev = collections.Counter((norm_vendor(p.get("거래처", "")), parse_date(p.get("발행일")), num(p.get("공급가액"))) for p in prev_rows)
     for p in prev_rows:
@@ -417,6 +419,16 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
                 mismatch.append("이전 계산서.csv와 입금 기록 다름: %s %s 이전 %s · WEHAGO %s" % (
                     inv["vendor"], _day(inv["date"]), won(prev_paid), won(now_paid)))
         paid = inv["applied"] + inv["deducted"] != 0   # 지난해 수정 계산서(−)를 끝낸 것은 입금액이 − (사용자 2026-11-04)
+        md = inv.get("due_memo")
+        open_ = inv["date"] is not None and inv["total"] is not None and inv["total"] > 0 \
+            and inv["applied"] + inv["deducted"] < inv["total"] and not _prior(inv)
+        was_guess = bool(due) and firm == "N" and inv["date"] is not None \
+            and due == cell_date(inv["date"] + dt.timedelta(days=DUE_GUESS_DAYS))
+        if md is not None and open_ and (not due or was_guess) and due != cell_date(md):
+            # 2차 전수조사 P8 (2026-11-18): 위하고 전표 적요에 '[수금예정일:…]'이 있으면 그 날짜가 먼저 (받은 자료 값 우선).
+            # 손으로 넣은 날짜는 그대로 두고, 빈칸과 지난번에 작성일 + 60일로 채운 날짜만 바꾼다. 확정이 아니라 예상(N)
+            due, firm = cell_date(md), "N"
+            from_memo.append(inv)
         if not due and inv["date"] is not None and inv["total"] is not None and inv["total"] > 0 \
                 and inv["applied"] + inv["deducted"] < inv["total"] and not _prior(inv):
             # F9 (2026-11-14): 입금예정일을 손으로 넣지 않은 계산서도 입금 일정·'입금일 지난 미수금'에 나오게 작성일 + 60일
@@ -428,7 +440,7 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
             rows.append({"프로젝트번호": inv["project"], "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                          "구분": inv["kind"], "공급가액": cell_amount(inv["supply"]), "부가세": cell_amount(inv["vat"]),
                          "입금예정일": due, "예정일확정": firm, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                         "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else ""})
+                         "입금액": cell_amount(inv["applied"] + inv["deducted"]) if paid else "", "거래처코드": inv["vendor_code"]})
             bases.append(inv["basis"])
             continue
         # 여러 프로젝트로 나뉜 계산서: 프로젝트마다 한 줄. 부가세·입금액은 공급가액 비율로 (합은 계산서 한 장과 같다)
@@ -439,14 +451,17 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
         for (pid, amount), v, got in zip(parts, vats, gots):
             mine_old = split_prev.get((inv["vendor_norm"], inv["date"], amount))
             d2, f2 = due, firm
-            if old is None and mine_old is not None:   # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다
+            if old is None and mine_old is not None and cell_date(parse_date(mine_old.get("입금예정일"))):
+                # 지난번에 이미 나눠 적힌 줄: 그 줄의 입금예정일을 옮긴다. 지난번 줄이 빈칸이면 옮기지 않는다 — 빈칸을 옮기면
+                # 작성일 + 60일로 채운 날짜가 지워져 나눈 계산서가 언제까지나 '날짜 없는 입금'으로 남았다 (실제 자료 2026-11-17:
+                # 구글클라우드 [26226]·[26257] 1억 3,975만, 사용자 결정 '고치기')
                 d2 = cell_date(parse_date(mine_old.get("입금예정일")))
                 f2 = (mine_old.get("예정일확정") or "").strip()
                 f2 = f2 if f2 in _FIRM else ""
             rows.append({"프로젝트번호": pid, "거래처": inv["vendor"], "발행일": cell_date(inv["date"]),
                          "구분": inv["kind"], "공급가액": cell_amount(amount), "부가세": cell_amount(v),
                          "입금예정일": d2, "예정일확정": f2, "입금일": cell_date(inv["paid_date"]) if paid else "",
-                         "입금액": cell_amount(got) if paid else ""})
+                         "입금액": cell_amount(got) if paid else "", "거래처코드": inv["vendor_code"]})
             bases.append("분개장 매출 줄" if pid else ("참고" if inv["basis"] == "참고" else "미연결"))
             split_rows += 1
 
@@ -590,6 +605,9 @@ def build_invoices(sales, books, revenue, projects, prev_rows, cfg):
     if differ:
         notes.append("합계가 공급가액+부가세와 다른 계산서 %d건 (공급가액+부가세로 처리)" % differ)
     notes.extend(carry_notes)
+    if from_memo:
+        notes.append("입금예정일을 위하고 전표 적요의 수금예정일로 채운 계산서 %d건 %s (예상, 확정 아님 · 손으로 넣은 날짜는 그대로)"
+                     % (len(from_memo), won(sum(v["total"] - v["applied"] - v["deducted"] for v in from_memo))))
     if guessed:
         notes.append("입금예정일 빈칸 계산서 %d건 %s → 작성일 + %d일로 채움 (예상, 확정 아님). 실제 날짜를 알면 계산서.csv 입금예정일을 고치세요"
                      % (len(guessed), won(sum(v["total"] - v["applied"] - v["deducted"] for v in guessed)), DUE_GUESS_DAYS))

@@ -66,7 +66,7 @@ NEED = {"SACL0105": r"/sacl0105/main$", "SACL0108": r"/sacl0108/plusforw$", "SAA
         "SWET0107": r"/swet0107/other/tab01$", "SWYM0107": r"/emp/income$", "SWYM0102": r"/swym0102$",
         "SACL0104": r"/sacl0104/account$", "SAFM0109": r"/safm0109$", "SAFM0107": r"/safm0107/balance/statement$",
         "SACL0106": r"/sacl0106/0", "SAAC0103": r"/saac0103/jungsang$", "SAFM0108": r"/safm0108/\d+$",
-        "SABM0109": r"/sabm0109/bsflist", "SAAC0110": r"/collectingdata/", "SAVF0119": r"/savf0119/top$",
+        "SABM0109": r"/sabm0109/bsflist", "SAVF0119": r"/savf0119/top$",
         "SWTA0101": r"/swta0101/sglist$"}
 
 
@@ -209,6 +209,25 @@ def pay_rows(F):
     return rows
 
 
+WAGE_FILE = "근로소득.csv"
+WAGE_COLUMNS = ["연월", "사원명", "과세급여", "자료"]
+
+
+def wage_rows(F):
+    """원천징수부 -> 근로소득.csv 줄 (사원별 달별 과세 총급여 = 비과세 식대 등을 뺀 근로소득).
+    사용자 2026-11-17: 배당 권장 표가 대표 근로소득을 못 찾음 → 위하고 원천징수부 값을 먼저 쓴다 (받은 자료 먼저)."""
+    emps, wh = _withholding(F, with_pay=True)
+    names = dict((c, str(e.get("nm_krname") or "").strip()) for c, e in emps.items())
+    for e in (_resp(_pick(F, "인사_사원등록")[0][1], "/condition") or {}).get("emp", []) if _pick(F, "인사_사원등록") else []:
+        names.setdefault(str(e.get("cd_emp") or ""), str(e.get("nm_krname") or "").strip())
+    got = {}
+    for _, code, ym, _i, _l, pay in wh:
+        if names.get(code) and pay:
+            got[(ym, names[code])] = pay   # 같은 달이 두 해 파일에 다 있으면 나중 것 (같은 값)
+    return [{"연월": ym, "사원명": n, "과세급여": str(v), "자료": "위하고 소득자별 근로소득 원천징수부"}
+            for (ym, n), v in sorted(got.items())]
+
+
 def _find(x, key, depth=0):
     """dict/list 안에서 key 를 처음 찾는 값 (응답 감싸기가 조금 달라도 읽게)."""
     if depth > 4:
@@ -228,8 +247,9 @@ def _find(x, key, depth=0):
     return None
 
 
-def _withholding(F):
-    """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)])."""
+def _withholding(F, with_pay=False):
+    """인사_소득자별근로소득원천징수부 (확장 0.8.3) -> ({사번: 사원 dict}, [(연도, 사번, 연월, 소득세, 지방소득세)]).
+    with_pay=True 면 줄 끝에 과세 총급여(am_paytotal, 비과세 뺀 금액 — 2025 합이 연말정산 총급여와 같음 확인)를 붙인다."""
     emps, out = {}, []
     for year, d in _pick(F, "인사_소득자별근로소득원천징수부"):
         seen, coded = set(), set()
@@ -259,7 +279,8 @@ def _withholding(F):
                     ym = re.sub(r"\D", "", str(g.get("ym_rvrs") or g.get("ym_pay") or ""))
                     if len(ym) != 6 or not code:
                         continue
-                    out.append((year, str(code), "%s-%s" % (ym[:4], ym[4:]), _num(g.get("am_income1")), _num(g.get("am_inhabit1"))))
+                    one = (year, str(code), "%s-%s" % (ym[:4], ym[4:]), _num(g.get("am_income1")), _num(g.get("am_inhabit1")))
+                    out.append(one + (_num(g.get("am_paytotal")),) if with_pay else one)
     return emps, out
 
 
@@ -302,7 +323,12 @@ def yearend_rows(F):
 
 def asset_rows(F):
     rows = []
-    for year, d in _pick(F, "결산_고정자산관리대장")[:1]:
+    seen = set()
+    # 2차 전수조사 V21: 예전엔 가장 최근 해 대장 하나만 써서 새해 대장을 받으면 지난해 값이 사라졌음 → 해마다 하나씩 모두
+    for year, d in _pick(F, "결산_고정자산관리대장"):
+        if year in seen:
+            continue
+        seen.add(year)
         for a in _resp(d, "/allfixlist") or []:
             if not a.get("cd_fixast"):
                 continue   # 소계 줄
@@ -373,6 +399,7 @@ def build_tables(wehago_dir):
     out = []
     for name, cols, rows, what in ((EMP_FILE, EMP_COLUMNS, employees(F), "인사_사원등록"),
                                    (PAY_FILE, PAY_COLUMNS, pay_rows(F), "인사_월별급상여수당지급현황"),
+                                   (WAGE_FILE, WAGE_COLUMNS, wage_rows(F), "인사_소득자별근로소득원천징수부"),
                                    (YE_FILE, YE_COLUMNS, yearend_rows(F), "연말정산_연말정산현황"),
                                    (ASSET_FILE, ASSET_COLUMNS, asset_rows(F), "결산_고정자산관리대장")):
         # 2차 P2-6·P1-13 (2026-11-15): 깨진·자료 없는 새 원본, 읽었는데 0줄, 원본 없음을 구별해 알린다 (예전엔 모두 '원본 없음'이거나

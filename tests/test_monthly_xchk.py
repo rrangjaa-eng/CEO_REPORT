@@ -37,7 +37,7 @@ from test_report import FORBIDDEN, load_cli, numbers_of, rep02_probes, section  
 
 # 주간 보고·calc.py·data.py 를 일부러 바꾼 마지막 커밋(결정 카드 ①② 2026-11-16: 대표 주간에서 마감 전 영업이익 빼기,
 # 예정일 지난·당일 입금을 이번 주 예상 입금으로). 그 뒤로는 다시 바뀌지 않는다 (처음 기준은 cbc5497)
-BASELINE = "f0be8ac"
+BASELINE = "c81f828"   # 2026-11-25 대표 보고 자금현황 표 가로 스크롤 없앰 (주간 HTML 표 CSS 일부러 바뀜) · 이전 db83eb7: 2026-11-18 저녁 대표 보고 작은 줄 '예상 입금·지급까지 넣으면' (주간 HTML 일부러 바뀜) · 이전 fcc373b: 2026-11-18 저녁 2차 전수조사 제안 31건 고침 (주간·월간 계산과 문구 여러 곳이 일부러 바뀜) · 이전 a5f241b: 2026-11-18 원래 목적 어긋난 출력 18건 고침 + 기획본부 재무상태표 새 양식 (B-5 미발행·원가 예산 설명·미수 기준 한 줄 일부러 바뀜) · 이전 afc0223: 2026-11-17 밤 최종 검토 N1·N2·N3·N5 (data.py 세금예상 대손충당금·세무조정 칸 읽기) · 이전 7b1a091: 2026-11-17 밤 끝난 프로젝트 남은 예산 지움·120% 알림 (주간 경영관리 HTML 일부러 바뀜) · 이전: 합침: 제안 고침(A4 분납 칸·E3 거래처코드·M2) + 빌드 합치기(69edc07 프로젝트 표 매출 기준 F2) · 전수 점검 F4·F10·F2
 BASE_ASOF = "2026-10-31"
 WEEKLY_ASOF = "2026-11-02"
 MONTHLY_FILES = {"ceo": "%s_월간_대표보고.html", "mgmt": "%s_월간_경영관리보고.html"}
@@ -51,6 +51,10 @@ PROJECT_TEXT = ("258,400,000 (4개 프로젝트 · 실행가 입력 3건 합계 
                 "원가가 실행가보다 큰 프로젝트 0건)")
 REVENUE_TEXT = ("194,000,000 · 프로젝트 연결 175,000,000 · 미연결 2줄 19,000,000 · "
                 "계약금액 (수동 입력) 합계 530,000,000 (미등록 2건)")
+
+
+# 이 파일은 경영관리 보고의 '판단 불가'·'미연결' 낱말로 값을 확인한다 → 파일로 쓸 때의 쉬운 말 바꾸기(plainwords, 2026-11-18)를 끈다
+os.environ["CEO_REPORT_TEST_PLAIN_OFF"] = "1"
 
 
 def setUpModule():
@@ -660,7 +664,7 @@ class TestMonthlyUnknowns(unittest.TestCase):
 
 # ───────────── Task 3: 파일 없음·읽을 수 없음, 오래된 장부 기준일, 콘솔 한 줄, 모든 탐침 입력 ─────────────
 NO_FILE_TEXT = "자료 없음 (위하고대조.csv — 대표보고 창의 '자료 변환'으로 만듦)"
-NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '부록 B-8 WEHAGO 기준 대조'에 들어갑니다."
+NO_FILE_LINE = "위하고 대조 자료 없음 — 대표보고 창에서 '자료 변환'을 먼저 하면 월간 경영관리보고 '7. 위하고 대조'에 들어갑니다."
 
 
 def section8_text(page):
@@ -685,7 +689,7 @@ class TestMonthlyMissing(unittest.TestCase):
                 self.assertNotIn("xchk-summary", page)
                 self.assertNotIn("xchk-detail", page)
         self.assertIn(NO_FILE_LINE, out.splitlines())
-        self.assertEqual(out.count("위하고 대조"), 1)
+        self.assertEqual(out.count("위하고 대조 자료 없음"), 1)
         editions_ok(self, pages["ceo"], pages["mgmt"])
 
     def test_header_only_file_with_other_columns_is_unreadable_and_does_not_stop_the_report(self):

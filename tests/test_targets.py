@@ -36,16 +36,18 @@ class TestSave(unittest.TestCase):
 class TestMonthly(unittest.TestCase):
     def test_target_table_in_ytd(self):
         html = render(compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31)), "ceo")
-        self.assertIn("목표 대비 (진도 기준 10월/12 = 83%)", html)
+        self.assertIn("목표 대비 (막대 세로선 = 10월/12 = 83%)", html)
         self.assertIn("<td>기획1팀</td><td>900,000,000</td><td>742,500,000</td>", html)
         self.assertIn("82.5%", html)
-        self.assertIn("목표 미달", html)   # 82.5% < 83%
-        self.assertIn("목표 이상", html)   # 기획2팀 86.8%
+        # 2차 전수조사 J2: 판정은 누적 + 앞으로 잡힐 매출 (예전: 82.5% < 83% 라서 '목표 미달')
+        self.assertIn("<td>1,092,500,000<br><small>목표의 121.4%</small></td>", html)
+        self.assertIn("올해 예상 달성", html)
+        self.assertNotIn("목표 미달", html)
 
     def test_without_targets_says_how(self):
         R = compute(load(SAMPLE), "monthly", dt.date(2026, 10, 31))
         R["targets"] = {}
-        self.assertIn("'⑧ 팀 목표'", render(R, "ceo"))
+        self.assertIn("‘가끔 넣는 값 › 팀 목표’", render(R, "ceo"))
 
 
 if __name__ == "__main__":

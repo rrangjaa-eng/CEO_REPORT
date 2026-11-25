@@ -12,7 +12,8 @@
 - 매출원가 = 매출 × (1 − 목표 수익률). 급여 = 지금 1달 급여 × (1 + 인상률) + 늘릴 인원 × 1인 평균 × (1 + 인상률) (입사 월부터).
 - 그 밖의 판관비 = 계정별 올해 실적(1년으로 늘림) × 기준(인원·물가·그대로). 감가상각비 = 올해 예상(직접 입력 또는 작년 장부).
 - 영업외 수익 = 이자수익만 (지원금 등은 확정 전이라 넣지 않음). 영업외 비용 = 올해 실적을 1년으로 늘림.
-- 자금: 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
+- 자금: 자금계획서·계산서에 이미 있는 예산 연도 입금·지급은 그 날짜·금액 그대로 (받은 자료 먼저, 사용자 2026-11-17). 아직 장부에 안 잡힌
+  매출·매입만 매출 입금은 계산서 작성일 뒤 60일 (가용자금과 같게, 결정 e), 매입 지급은 행사 달 40%·다음 달 60%. 부가세·법인세 일정 = 세금예상(있으면) + 예산 숫자.
 """
 import collections
 import csv
@@ -23,6 +24,8 @@ from collections import OrderedDict
 
 from .calc import year_revenue_left
 from .corptax import corp_tax, depreciation
+from . import codes as _codes
+from . import corptax as _corptax
 from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 
 VALUES_FILE = "예산값.csv"
@@ -35,7 +38,7 @@ CO_KINDS = ("급여인상률", "물가인상률")
 KINDS = TEAM_KINDS + CO_KINDS
 HEAD_ACCOUNTS = ("복리후생비", "여비교통비", "통신비", "교육훈련비", "도서인쇄비")   # 인원에 비례
 FLAT_ACCOUNTS = ("임차료", "보험료", "리스료")                                     # 계약 금액 그대로
-SALARY_WORDS = ("급여", "상여", "퇴직", "임금", "제수당")
+SALARY_WORDS = _codes.PAY_WORDS + _codes.RETIRE_WORDS   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 AP_SPLIT = (0.4, 0.6)       # 매입 지급: 행사 달, 다음 달
 DEFAULT_COST = 0.70
 COLLECT_DAYS = 60       # 매출 입금: 계산서 작성일 뒤 약 60일 (사용자 2026-11-12)
@@ -279,7 +282,28 @@ def _wehago_pay(input_dir, base, done_ym, asof):
     if new and sum(heads.values()) > new:
         sal += int(round(sal / float(sum(heads.values()) - new))) * new
         notes.append("%s 뒤 입사해 아직 급여가 없는 %d명은 1인 평균 급여로 넣음" % (ym, new))
-    return {"ym": ym, "heads": heads, "sal": sal, "months": dict((m, sum(v.values())) for m, v in pay.items()), "notes": notes}
+    # 2차 전수조사 V13 (2026-11-18): 급여 예산이 '마지막 달 × 12'라 그 달에 상여가 있으면 1년 내내 크고, 없으면 명절·연말 상여가
+    # 빠졌음 → 지금 있는 사람마다 [보통 달 급여(최근 3달의 가운데 값) × 12 + 그 해 보통 달보다 더 받은 금액(상여)의 1년 환산].
+    # 연중에 급여가 오른 사람은 오른 급여가 보통 달이 되고, 달 중간 입사처럼 덜 받은 달은 세지 않는다.
+    annual, annual_exec, n_exec, cur_n = 0, 0, 0, 0
+    for name in pay[ym]:
+        e = emps.get(name)
+        if gone(e):
+            continue
+        vals = [pay[m][name] for m in sorted(pay) if name in pay[m]]
+        reg = sorted(vals[-3:])[len(vals[-3:]) // 2]
+        a = int(round(reg * 12 + sum(max(0, v - reg) for v in vals) * 12.0 / len(vals)))
+        annual += a
+        cur_n += 1
+        if str((e or {}).get("임원") or "").strip() not in ("", "0", "N", "n", "아니오", "False") or str((e or {}).get("직급") or "").strip() == "대표":
+            annual_exec += a
+            n_exec += 1
+    staff_n = cur_n - n_exec
+    per_staff = int(round((annual - annual_exec) / 12.0 / staff_n)) if staff_n > 0 else None   # 임원 뺀 1인 평균 월 급여
+    if new and per_staff:
+        annual += per_staff * 12 * new
+    return {"ym": ym, "heads": heads, "sal": sal, "months": dict((m, sum(v.values())) for m, v in pay.items()), "notes": notes,
+            "annual": annual, "per_staff": per_staff}
 
 
 LOAN_FILE = "차입금.csv"   # 위하고 차입금현황(SAFM0109)을 변환이 만든 것 (H 스레드, 2026-11-14 열 합의)
@@ -379,6 +403,79 @@ def _loan_plan(input_dir, debts, asof, until):
     return pays, notes
 
 
+def _input_vat_rate(input_dir, base, done_ym, cogs_done, sga_done, sga_share):
+    """올해 끝난 달의 매입 부가세 비율 -> {"rate"(없으면 None), "vat", "buy", "sga_share", "why"}.
+    계정잔액.csv 의 부가세대급금(13500) 차변 합 ÷ (프로젝트 원가 + 인원 비용이 아닌 판관비)."""
+    import csv
+    import os
+    out = {"rate": None, "vat": 0, "buy": 0, "sga_share": sga_share, "why": "계정잔액.csv 없음"}
+    if not input_dir:
+        out["why"] = "입력 폴더 모름"
+        return out
+    path = os.path.join(input_dir, "계정잔액.csv")
+    if not os.path.exists(path):
+        return out
+    vat = 0
+    try:
+        from .util import open_text
+        with open_text(path) as f:
+            for r in csv.DictReader(f):
+                ym = (r.get("연월") or "").strip()
+                if ym[:4] == str(base) and ym <= done_ym and (r.get("계정코드") or "").strip() == "13500":
+                    vat += int(float(r.get("차변") or 0))
+    except (OSError, UnicodeDecodeError, ValueError, csv.Error):
+        out["why"] = "계정잔액.csv 읽지 못함"
+        return out
+    buy = int(cogs_done + sga_done)
+    if vat <= 0 or buy <= 0:
+        out["why"] = "부가세대급금 또는 매입 금액 없음"
+        return out
+    rate = vat / float(buy)
+    if not 0.01 <= rate <= VAT:   # 10%를 넘거나 너무 낮으면 자료가 안 맞는 것 → 쓰지 않음
+        out["why"] = "계산한 비율 %.1f%%가 범위(1~10%%) 밖" % (rate * 100)
+        return out
+    out.update(rate=rate, vat=vat, buy=buy, why="")
+    return out
+
+
+def _tax_book(taxrows, base):
+    """N2 (2026-11-17 밤): 세금예상.csv 의 올해 법인세 본 줄('YYYY년 (1월~M월 장부 기준)')에서 월간 법인세 예상과 같은 재료를 꺼낸다.
+    -> {'m': 장부 달 수, 'adj': 세무조정, 'bad_debt': 대손충당금, 'prepaid': 선납 법인세, 'local_prepaid': 원천징수된 지방소득세} 또는 None."""
+    head = "%d년 (1월~" % base
+    main = next((t for t in taxrows if t.get("kind") == "법인세" and str(t.get("period") or "").startswith(head)), None)
+    if not main:
+        return None
+    m = re.search(r"\(1월~(\d+)월", str(main.get("period") or ""))
+    local = next((t for t in taxrows if t.get("kind") == "법인지방소득세" and str(t.get("period") or "").startswith(head)), None)
+    local_prepaid = 0
+    if main.get("calc") is not None and local and local.get("amount") is not None:
+        local_prepaid = max(int(main["calc"] * LOCAL) - local["amount"], 0)
+    if local and local.get("prepaid") is not None:   # 숫자 칸이 있으면 그 값 (2차 전수조사 P3)
+        local_prepaid = int(local["prepaid"])
+    # 2차 전수조사 제안 3: 올해 연말 예상 과세표준은 변환이 한 번 계산한 값 (지금까지 + 남은 달 예상, 주간·월간 자금 일정과 같은 값)
+    rest = next((t for t in taxrows if t.get("kind") == "법인세" and str(t.get("period") or "").startswith("%d년 " % base)
+                 and t.get("base_ye") is not None), None)
+    # 남은 달 예상 줄이 없으면(12월이거나 남은 달 이익이 0 이하) 지금까지 과세표준이 곧 연말 예상.
+    # 옛 파일(감가상각 숫자 칸이 없는 파일)은 연말 값이 없으므로 예전처럼 예산이 계산한다
+    new_file = main.get("dep") is not None
+    base_ye = None if not new_file else (int(rest["base_ye"]) if rest else (int(main["base"]) if main.get("base") is not None else None))
+    return {"m": int(m.group(1)) if m else 12, "adj": main.get("adj") or 0, "bad_debt": main.get("bad_debt") or 0,
+            "prepaid": main.get("prepaid"), "local_prepaid": local_prepaid, "base_ye": base_ye}
+
+
+def _tax_calc(pre, year, input_dir, adj=0, bad_debt=0):
+    """세전 이익 -> 월간 법인세 예상과 같은 계산 (corptax.national: 작년 신고서 감면·'받음' 공제·최저한세·농특세).
+    과세표준 = 세전 이익 − 대손충당금 예상 + 세무조정. -> dict 또는 None.
+    total = 낼 법인세(감면 뒤 + 농특세) + 지방소득세(산출세액 × 10%%), final = 감면 뒤 법인세(농특세 전, 중간예납 기준)."""
+    if pre is None:
+        return None
+    tb = max(int(pre) - int(bad_debt or 0) + int(adj or 0), 0)
+    nat, corp, C = _corptax.national(tb, str(year), input_dir)
+    local = int(corp * LOCAL)
+    return {"base": tb, "corp": corp, "nat": nat, "final": C["final"] if C else corp, "local": local, "total": nat + local,
+            "credits": bool(C), "adj": int(adj or 0), "bad_debt": int(bad_debt or 0)}
+
+
 def compute(d, values, year, asof, settings=None, input_dir=None):
     """-> 예산 dict B. values = read_values(). year = 예산 연도(정수).
     input_dir 가 있으면 급여·인원은 위하고 급여 화면·사원등록 기준 (_wehago_pay), 없으면 장부 부서비용."""
@@ -391,9 +488,16 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     tg = {t: v for (yy, t), v in (getattr(d, "team_targets", None) or {}).items() if yy == y}
     cost_rate = DEFAULT_COST
     try:
-        cost_rate = float(str(S.get("예산_원가율", DEFAULT_COST)).strip() or DEFAULT_COST)
+        raw_cr = str(S.get("예산_원가율", DEFAULT_COST)).strip() or str(DEFAULT_COST)
+        v_cr = float(raw_cr.replace("%", "").replace(",", ""))
+        if "%" in raw_cr:
+            v_cr /= 100.0
+        if 0 < v_cr <= 1:
+            cost_rate = v_cr
+        else:   # 2차 전수조사 P12: '70'을 원가율 70(=7000%)으로 읽어 수익률이 음수가 됐음 → 범위 밖이면 쓰지 않고 알림
+            notes.append("설정 예산_원가율 '%s' 값 오류 (0 초과 1 이하, 예: 0.70 또는 70%%) → 기본값 %.2f 사용" % (raw_cr, DEFAULT_COST))
     except ValueError:
-        pass
+        notes.append("설정 예산_원가율 '%s' 숫자 아님 → 기본값 %.2f 사용" % (S.get("예산_원가율"), DEFAULT_COST))
     # 올해 팀 실적 (손익.csv 팀 줄, WEHAGO 우선)
     srcs = sorted(set(p["source"] for p in d.pl), key=lambda x: (x != "WEHAGO", x))
     src = srcs[0] if srcs else None
@@ -426,6 +530,8 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         rv = [0] * 12
         gp = [0] * 12
         fc = [False] * 12
+        lf = [0] * 12   # 그중 아직 장부에 안 잡힌 매출·그 이익 (자금표: 장부에 잡힌 매출의 입금은 자금계획서·계산서 일정이 잡는다)
+        lg = [0] * 12
         # 장부에 잡힌 매출은 모두 (진행 중인 달에 이미 잡힌 것 포함 — 2026-11-14 오후 점검 G5: 예전엔 진행 중 달 매출을
         # 실적에서도 예상에서도 빼서 줄었음)
         for p in all_rows:
@@ -447,11 +553,13 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
             i = (min(last_m + 1, 12) if x["prior"] else max(x["event"].month, min(last_m + 1, 12))) - 1
             rv[i] += x["left"]
             gp[i] += x["left"] * ((rr / 100.0) if rr is not None else (1 - cost_rate))
+            lf[i] += x["left"]
+            lg[i] += x["left"] * ((rr / 100.0) if rr is not None else (1 - cost_rate))
             fc[i] = True
             if x["prior"]:
                 prior_add[0] += 1
                 prior_add[1] += x["left"]
-        T[t] = {"rev26": rv, "gp26": [int(v) for v in gp], "fc": fc}
+        T[t] = {"rev26": rv, "gp26": [int(v) for v in gp], "fc": fc, "left26": lf, "leftgp26": [int(v) for v in lg]}
     if left_unknown:
         notes.append("%d년 행사 %d건은 장부 매출(매출반영누계)을 몰라 남은 매출을 넣지 못함: %s" % (base, len(left_unknown), ", ".join(sorted(left_unknown))))
     if prior_add[0]:
@@ -472,9 +580,22 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         g = val("성장률", t)
         R["growth"], R["growth_set"] = (g if g is not None else 0.0), g is not None
         rt = (tg.get(t) or {}).get("rate")
-        R["rate"], R["rate_set"] = ((rt / 100.0) if rt is not None else (1 - cost_rate)), rt is not None
         R["base_rev"] = sum(R["rev26"])
         R["base_gp"] = sum(R["gp26"])
+        # 2차 전수조사 B6 (2026-11-18): 내년 목표 수익률을 안 넣었을 때 기본 30%(1 − 예산_원가율)를 써서 영업이익이 70% 늘어난
+        # 것처럼 나왔음 (실제 26.9%·24.1%, 올해 목표 28.5%·28%). 받은 값 먼저: 내년 목표 → 올해 목표 → 올해 실제 → 기본값
+        rt0 = ((getattr(d, "team_targets", None) or {}).get((str(base), t)) or {}).get("rate")
+        if rt is not None:
+            R["rate"], R["rate_src"] = rt / 100.0, "%d년 팀 목표" % year
+        elif rt0 is not None:
+            R["rate"], R["rate_src"] = rt0 / 100.0, "%d년 팀 목표 (내년 목표 입력 전)" % base
+        elif R["base_rev"] > 0 and R["base_gp"] > 0:
+            R["rate"], R["rate_src"] = R["base_gp"] / float(R["base_rev"]), "%d년 실제 수익률 (목표 입력 전)" % base
+        else:
+            R["rate"], R["rate_src"] = 1 - cost_rate, "기본 원가율 (목표·실적 없음)"
+        R["rate_set"] = rt is not None
+        if rt is None:
+            notes.append("%s: %d년 목표 수익률을 넣지 않아 %s %.1f%%로 계산" % (t, year, R["rate_src"].split(" (")[0], R["rate"] * 100))
         R["budget"] = _r4(R["base_rev"] * (1 + R["growth"] / 100.0))
         R["got"] = got_m[t]
         R["got_sum"] = sum(got_m[t])
@@ -530,6 +651,13 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     rz, fl = (raise_ or 0) / 100.0, (infl or 0) / 100.0
     h0 = sum(heads0.values())
     per = (sal_last / float(h0)) if sal_last is not None and h0 else None
+    sal_month = sal_last     # 지금 인원의 한 달 급여 (예산 계산용)
+    sal_how = "기준 달 급여 그대로"
+    if WP and WP.get("annual"):   # V13: 사람마다 올해 실제 받은 급여의 1년 환산 (상여 포함)
+        sal_month = WP["annual"] / 12.0
+        sal_how = "지금 인원의 보통 달 급여 + %d년에 받은 상여의 한 달 치" % base
+        if WP.get("per_staff"):
+            per = float(WP["per_staff"])   # 새 인원 급여는 임원을 뺀 1인 평균 (예전엔 대표 포함 평균이라 크게 잡혔음)
     hires = OrderedDict()
     for t in teams:
         n = val("늘릴인원", t)
@@ -542,7 +670,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         sal = [None] * 12
         notes.append("부서비용(급여) 자료가 없어 급여 예산을 만들지 못함")
     else:
-        sal = [_r4(sal_last * (1 + rz) + sum(n * per * (1 + rz) for (n, m) in hires.values() if i + 1 >= m and per)) for i in range(12)]
+        sal = [_r4(sal_month * (1 + rz) + sum(n * per * (1 + rz) for (n, m) in hires.values() if i + 1 >= m and per)) for i in range(12)]
     havg = sum(heads) / 12.0
 
     # 그 밖의 판관비 (계정별비용.csv, 판매비와관리비 중 급여·감가상각비 뺀 것)
@@ -554,6 +682,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     sga = OrderedDict()
     nin_base = nout_base = 0
     interest_in = 0
+    nonop = {}   # (수익/비용, 계정) -> {달: 금액}
     for a in acc:
         g, nm = a.get("group") or "", a.get("name") or ""
         if "판매비" in g or "관리비" in g:
@@ -563,11 +692,34 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
             sga[nm] += a["amount"]
         elif "영업외수익" in g:
             nin_base += a["amount"]
+            nonop.setdefault(("in", nm), {}).setdefault(a["ym"], 0)
+            nonop[("in", nm)][a["ym"]] += a["amount"]
             if "이자수익" in nm:
                 interest_in += a["amount"]
         elif "영업외비용" in g:
             nout_base += a["amount"]
+            nonop.setdefault(("out", nm), {}).setdefault(a["ym"], 0)
+            nonop[("out", nm)][a["ym"]] += a["amount"]
     k = 12.0 / n_acc
+    # 2차 전수조사 V4 (2026-11-18): 영업외를 끝난 달 합 × 12 ÷ 달수로 늘려 정부지원금 같은 한 번뿐인 돈도 같이 늘어났음
+    # (영업외수익 28,808,416 → 34,570,099). 끝난 달의 절반 넘게 생긴 계정(이자처럼 매달 생기는 것)만 1년으로 늘리고,
+    # 나머지(지원금·처분손익 등)는 실제 금액 그대로 둔다.
+    def _yearly(io):
+        rec = once = 0
+        for (io_, nm), ms in nonop.items():
+            if io_ != io:
+                continue
+            tot = sum(ms.values())
+            if sum(1 for v in ms.values() if v) * 2 > n_acc:
+                rec += tot
+            else:
+                once += tot
+        return rec, once
+    nin_rec, nin_once = _yearly("in")
+    nout_rec, nout_once = _yearly("out")
+    if n_acc < 12 and (nin_once or nout_once):
+        notes.append("영업외: 매달 생기는 계정만 1년으로 늘림 — 한 번씩 생긴 수익 %s원·비용 %s원은 실제 금액 그대로"
+                     % (format(nin_once, ","), format(nout_once, ",")))
     SGA = []
     for nm, v in sorted(sga.items(), key=lambda kv: -kv[1]):
         yv = int(v * k)
@@ -587,14 +739,20 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     # 감가상각비
     D = depreciation(getattr(d, "accounts", None), getattr(d, "dep_manual", None) or {}, "%s-12" % base)
     dep_y = D["annual"]
+    if D["source"] == "고정자산대장":   # V21: 내년 값은 대장의 자산별 남은 금액으로 (상각이 끝나는 자산은 빠짐)
+        nxt, ended = _corptax.next_year_ledger(input_dir, base)
+        if nxt is not None and nxt != dep_y:
+            notes.append("%d년 감가상각비 %s원 = 고정자산대장 자산별 남은 금액 기준 (%d년 %s원, 상각이 끝나는 자산 %d개 · 내년에 새로 살 자산은 모름)"
+                         % (year, format(nxt, ","), base, format(dep_y, ","), ended))
+            dep_y = nxt
     dep_m = [None] * 12 if dep_y is None else [int(dep_y // 12)] * 12
     if dep_y is not None:
         dep_m[11] += dep_y - sum(dep_m)
     else:
         notes.append("감가상각비를 모름 — 창 '감가상각비'에 %d년 금액을 넣으면 들어감" % base)
     nin_y = int(interest_in * k)
-    nout_y = int(nout_base * k)
-    nin_base_y, nout_base_y = int(nin_base * k), int(nout_base * k)
+    nout_y = int(nout_rec * k)   # 내년: 매달 생기는 비용(이자 등)만
+    nin_base_y, nout_base_y = int(nin_rec * k) + nin_once, int(nout_rec * k) + nout_once
     nin_m = [_r4(nin_y / 12.0)] * 12
     nout_m = [_r4(nout_y / 12.0)] * 12
     sal_y = None if sal[0] is None else sum(sal)
@@ -604,16 +762,24 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
          "nin": sum(nin_m), "nout": sum(nout_m)}
     Y["op"] = None if not known else Y["gp"] - Y["sal"] - Y["dep"] - Y["sga"]
     Y["pre"] = None if Y["op"] is None else Y["op"] + Y["nin"] - Y["nout"]
-    ct = corp_tax(Y["pre"], year)
-    Y["tax"] = None if ct is None else ct + int(ct * LOCAL)
+    # N2 (2026-11-17 밤): 예산 법인세도 월간·연간·배당·기획본부와 같은 계산 (예전: 세전 이익에 세율표만 — 세무조정·감면·최저한세 없음)
+    TB = _tax_book(getattr(d, "tax", None) or [], base)
+    adj_y = 0 if not TB else int(round(TB["adj"] * 12.0 / max(TB["m"], 1)))   # 세무조정(승용차 한도 초과 등)은 달마다 쌓여 1년으로 늘림
+    YT = _tax_calc(Y["pre"], year, input_dir, adj_y, 0)   # 내년 대손충당금은 모름 → 빼지 않음 (세금이 적게 보이지 않게)
+    Y["tax"] = None if YT is None else YT["total"]
     # 올해 (실적 + 예상)
     base_dep = D["annual"]
     L = {"rev": base_rev, "gp": base_gp, "cogs": base_rev - base_gp, "sal": sal_base, "dep": base_dep, "sga": sga_base,
          "nin": nin_base_y, "nout": nout_base_y}
     L["op"] = None if None in (sal_base, base_dep) else L["gp"] - L["sal"] - L["dep"] - L["sga"]
     L["pre"] = None if L["op"] is None else L["op"] + L["nin"] - L["nout"]
-    lc = corp_tax(L["pre"], base)
-    L["tax"] = None if lc is None else lc + int(lc * LOCAL)
+    LT = _tax_calc(L["pre"], base, input_dir, adj_y, TB["bad_debt"] if TB else 0)
+    if TB and TB.get("base_ye") is not None:
+        # 제안 3 (2026-11-18): 올해분 법인세는 예산이 따로 계산하지 않고 변환의 '연말 예상 과세표준' 하나로 (주간·월간 자금 일정의
+        # 법인세 줄 합계와 같은 금액). 예전: 예산이 1년 환산 이익으로 따로 계산해 같은 날 보고와 달랐음 (16,452,031 vs 13,676,883)
+        LT = _tax_calc(TB["base_ye"], base, input_dir, 0, 0)
+        LT["shared"] = True
+    L["tax"] = None if LT is None else LT["total"]
 
     # ───── 자금 ─────
     bals = [b for b in getattr(d, "balances", []) if b.get("balance") is not None and b.get("date")]
@@ -637,7 +803,20 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
         j = 12 + i
         cin.append(_r4((1 + VAT) * sum(w * ext_rev[j - l] for l, w in split.items() if j - l >= 0)))
     base_cogs_dec = base_rev_m[11] - base_gp_m[11]
-    cpay = [_r4((1 + VAT) * (AP_SPLIT[0] * cogs[i] + AP_SPLIT[1] * (cogs[i - 1] if i else base_cogs_dec))) for i in range(12)]
+    # 2차 전수조사 V14 (2026-11-18): 매출원가 전부에 부가세 10%, 판관비는 절반에만 부가세라고 보던 것을 올해 실제 비율로.
+    # 실제 비율 = 올해 끝난 달 부가세대급금(13500 차변) ÷ (프로젝트 원가 + 인원 비용이 아닌 판관비). 프리랜서(3.3%)·면세 매입이
+    # 섞여 10%보다 낮다. 자료가 없으면 예전 가정(원가 10%, 판관비 절반) 그대로.
+    vat_in = _input_vat_rate(input_dir, base, done_ym,
+                             sum((p["direct"] or 0) for p in rows),
+                             sum(x["base"] for x in SGA if x["basis"] != "인원") / k,
+                             (sum(x["budget"] for x in SGA if x["basis"] != "인원") / float(sga_y)) if sga_y else 0.0)
+    rv = vat_in["rate"] if vat_in["rate"] is not None else VAT
+    if vat_in["rate"] is not None:
+        notes.append("매입 부가세: %d년 실제 비율 %.1f%% (부가세대급금 %s원 ÷ 매입 %s원)로 지급·부가세 예산을 계산 — 프리랜서·면세 매입이 있어 10%%보다 낮음"
+                     % (base, vat_in["rate"] * 100, format(vat_in["vat"], ","), format(vat_in["buy"], ",")))
+    else:
+        notes.append("매입 부가세: 올해 실제 비율을 몰라(%s) 매출원가 전부에 10%%, 판관비 절반에 10%%가 붙는다고 봄 — 프리랜서·면세 매입만큼 지급이 크게 잡힘" % vat_in["why"])
+    cpay = [_r4((1 + rv) * (AP_SPLIT[0] * cogs[i] + AP_SPLIT[1] * (cogs[i - 1] if i else base_cogs_dec))) for i in range(12)]
     # 세금 일정
     FIX = []
     tax_m = [0] * 12
@@ -651,29 +830,48 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     # 올해 4분기 부가세·법인세·지방세: 세금예상.csv (있으면)
     base_vat = [t for t in taxrows if t["kind"] == "부가세" and t.get("due") and t["due"].year == year and t["due"].month == 1]
     if base_vat:
-        add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, base_vat[0]["amount"], "세금예상 (%s)" % base_vat[0].get("basis", ""), "분개장")
+        # E1 (2026-11-17): 진행 중 분기면 '남은 기간 예상' 줄도 함께 (쌓인 금액 + 남은 기간). 금액 모르는 줄이 있으면 모름
+        amts = [t["amount"] for t in base_vat]
+        add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, None if any(a is None for a in amts) else sum(amts),
+                "세금예상 (%s)" % " + ".join(str(t.get("basis", "")) for t in base_vat), "분개장")
     else:
         add_tax(1, "1/25", "부가세 (%d년 10~12월)" % base, _r4(VAT * sum(base_gp_m[9:12])), "올해 10~12월 매출총이익 × 10% (예상)", "올해 예상")
     # 올해분 법인세·지방세: 손익표와 같은 '올해 연말 예상 세전 이익' 하나로 계산 (2026-11-14 오후 점검 G3: 예전엔 손익표는
     # 연말 예상 이익, 지급 일정은 세금예상.csv 의 지금까지 이익이라 같은 예산 안에서 1,001만 달랐음). 기납부(중간예납)는
     # 세금예상.csv 의 값이 있으면 뺀다. 결산·세무조정 뒤 바뀔 수 있으므로 '예상'으로 적는다.
     corp_rows = [t for t in taxrows if t["kind"] == "법인세" and t.get("due") and t["due"].year == year]
-    prepaid = corp_rows[0].get("prepaid") if corp_rows else None
-    calc_tax = lc
-    if lc is not None:
-        add_tax(3, "3/31", "법인세 (%d년분)" % base, max(lc - (prepaid or 0), 0),
-                "%d년 연말 예상 세전 이익 기준 산출세액 %s%s" % (base, format(lc, ","),
-                                                   " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)"),
+    prepaid = TB["prepaid"] if TB and TB["prepaid"] is not None else (corp_rows[0].get("prepaid") if corp_rows else None)
+    if LT is not None:
+        corp_pay = max(LT["nat"] - (prepaid or 0), 0)
+        from . import choices, corptax as _ct   # A4 (2026-11-17): 회사가 분납을 골랐으면 3/31 과 5/31 로 나눔
+        inst = _ct.installable(corp_pay) if input_dir and choices.installment(input_dir) else 0
+        add_tax(3, "3/31", "법인세 (%d년분)" % base, corp_pay - inst,
+                "%d년 연말 예상 과세표준 %s → 낼 법인세 %s%s%s%s" % (base, format(LT["base"], ","), format(LT["nat"], ","),
+                                                     (" (감면·공제 뒤, " if LT["credits"] else " (") + ("자금 일정의 법인세 예상과 같은 값)" if LT.get("shared") else "월간과 같은 계산)"),
+                                                     " − 기납부 %s" % format(prepaid, ",") if prepaid else " (기납부 모름 — 빼지 않음)",
+                                                     " − 분납 %s (5/31)" % format(inst, ",") if inst else ""),
                 "예산 계산 (예상)")
-        add_tax(4, "4/30", "지방소득세 (%d년분)" % base, int(lc * LOCAL), "법인세 산출세액 × 10%", "예산 계산 (예상)")
-    sga_vat_q = _r4(VAT * sum(x["budget"] for x in SGA if x["basis"] != "인원") / 4.0)
+        if inst:
+            add_tax(5, "5/31", "법인세 분납분 (%d년분)" % base, inst, "분납함(회사 선택): 법인세법 64조 중소기업 2개월", "예산 계산 (예상)")
+        lp = TB["local_prepaid"] if TB else 0
+        add_tax(4, "4/30", "지방소득세 (%d년분)" % base, max(LT["local"] - lp, 0),
+                "법인세 산출세액 %s × 10%%%s" % (format(LT["corp"], ","), " − 원천징수된 지방소득세 %s" % format(lp, ",") if lp else ""),
+                "예산 계산 (예상)")
+    sga_vat_q = _r4(rv * sum(x["budget"] for x in SGA if x["basis"] != "인원") / 4.0)
     for q in range(3):
         s_ = slice(q * 3, q * 3 + 3)
-        amt = max(_r4(VAT * sum(gp[s_]) - sga_vat_q), 0)
+        amt = max(_r4(VAT * sum(rev[s_]) - rv * sum(cogs[s_]) - sga_vat_q), 0)
         add_tax(q * 3 + 4, "%d/25" % (q * 3 + 4), "부가세 (%d년 %d~%d월)" % (year, q * 3 + 1, q * 3 + 3), amt,
-                "(매출 − 매입) 예산 × 10% − 판관비 매입세액", "예산 계산")
-    if calc_tax:
-        add_tax(8, "8/31", "법인세 중간예납 (%d년분)" % year, _r4(calc_tax / 2.0), "%d년 산출세액 ÷ 2" % base, "예산 계산")
+                ("매출 예산 × 10%% − 매입 예산 × %.1f%%(올해 실제 매입 부가세 비율) − 판관비 매입세액" % (rv * 100)) if vat_in["rate"] is not None
+                else "(매출 − 매입) 예산 × 10% − 판관비 매입세액", "예산 계산")
+    # 중간예납 = (작년 감면 뒤 법인세 − 원천징수 등) × 6/12, 50만 원 미만이면 안 냄 (법인세법 63조·63조의2, 월간 일정과 같은 계산 corptax.carry_rows)
+    if LT is not None:
+        w = 0   # 올해 이자 원천징수 법인세는 예산에서 따로 모름 → 빼지 않음 (중간예납이 조금 크게 잡힘 — 돈이 적게 보이는 쪽)
+        mid_amt = int(max(LT["final"] - w, 0) * 6 / 12)
+        if mid_amt >= _corptax.INTERIM_MIN:
+            add_tax(8, "8/31", "법인세 중간예납 (%d년분)" % year, _r4(mid_amt),
+                    "(%d년 감면 뒤 법인세 %s%s) × 6/12 (50만 원 미만이면 안 냄)" % (base, format(LT["final"], ","),
+                                                                    " − 원천징수 등 %s" % format(w, ",") if w else " · 이자 원천징수분은 안 뺌"), "예산 계산")
     FIX.sort(key=lambda f: (f["month"], int(f["day"].split("/")[1])))
     min_cash = None
     try:
@@ -681,7 +879,7 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     except ValueError:
         min_cash = 100000000
     nio = [nin_m[i] - nout_m[i] for i in range(12)]
-    sga_pay = [_r4(v * (1 + VAT * 0.5)) for v in sga_m]
+    sga_pay = [_r4(v * (1 + (vat_in["rate"] * vat_in["sga_share"] if vat_in["rate"] is not None else VAT * 0.5))) for v in sga_m]
     y0 = dt.date(year, 1, 1)
     # 주간 보고와 같은 일정 계산 (자금계획서·자금일정·세금 예상). 못 하면 무엇을 못 했는지 남긴다 (K2)
     W = None
@@ -715,6 +913,36 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
                         "amount": e["amount"], "how": "%s%s" % ("확정" if e.get("firm") else "예상", " · %s" % e["basis"] if e.get("basis") else ""),
                         "src": e.get("source") or "자금일정", "kind": "fixed"})
     FIX.sort(key=lambda f: (f["month"], int(f["day"].split("/")[1])))
+    # 받은 자료 먼저 (사용자 2026-11-17 결정 카드 '고치기'): 자금계획서(없으면 계산서 입금예정일)에 이미 있는 예산 연도 입금·지급은
+    # 그 날짜·금액 그대로 넣고, 공식(입금 = 작성일 뒤 60일, 매입 지급 = 행사 달 40%·다음 달 60%)은 아직 장부에 안 잡힌 매출·매입에만 쓴다.
+    # 예전엔 올해 11~12월 매출 전체를 공식으로 내년 초 입금에 넣고(이미 발행한 계산서의 실제 예정일을 안 봄), 이미 장부에 잡힌
+    # 매입 중 내년에 나갈 미지급금은 어디에도 없었다. 연말 전 줄은 연초 잔액(roll)이 이미 쓴다. 예산 연도 전에 만든 예산만.
+    known = {"in": [0] * 12, "out": [0] * 12, "in_n": 0, "out_n": 0, "used": False}
+    if W is not None and asof < y0:
+        known["used"] = True
+        for e in W.get("events") or []:
+            if e.get("amount") is None or not e.get("date") or e["date"].year != year:
+                continue
+            cat = str(e.get("cat") or "")
+            if e.get("io") == "in" and e.get("source") in ("자금계획서", "계산서"):
+                known["in"][e["date"].month - 1] += e["amount"]
+                known["in_n"] += 1
+            elif (e.get("io") == "out" and e.get("source") == "자금계획서" and not is_loan(e)
+                    and not any(w in cat for w in FIXED_WORDS)):   # FIXED_WORDS 줄은 위 '정해진 지급'이 이미 넣음
+                known["out"][e["date"].month - 1] += e["amount"]
+                known["out_n"] += 1
+        left_rev_m = [sum(T[t]["left26"][i] for t in teams) for i in range(12)]
+        left_gp_m = [sum(T[t]["leftgp26"][i] for t in teams) for i in range(12)]
+        ext_left = left_rev_m + rev
+        cin = [_r4((1 + VAT) * sum(w * ext_left[12 + i - l] for l, w in split.items() if 12 + i - l >= 0) + known["in"][i])
+               for i in range(12)]
+        left_cogs_dec = left_rev_m[11] - left_gp_m[11]
+        cpay = [_r4((1 + rv) * (AP_SPLIT[0] * cogs[i] + AP_SPLIT[1] * (cogs[i - 1] if i else left_cogs_dec)) + known["out"][i])
+                for i in range(12)]
+        if known["in_n"] or known["out_n"]:
+            notes.append("자금계획서·계산서에 이미 있는 %d년 입금 %d건 %s원, 지급 %d건 %s원은 그 날짜·금액 그대로 넣음. "
+                         "아직 장부에 안 잡힌 매출·매입만 공식(입금 60일, 지급 행사 달 40%%·다음 달 60%%)으로 계산"
+                         % (year, known["in_n"], format(sum(known["in"]), ","), known["out_n"], format(sum(known["out"]), ",")))
     cout = [None if sal[i] is None else cpay[i] + sal[i] + sga_pay[i] + tax_m[i] + fixed[i] for i in range(12)]
     bal = []
     # 연초 잔액 = 오늘 쓸 수 있는 돈(주간 보고와 같은 값: 은행 잔액 날짜 뒤 통장 입출금까지 반영, 사용 제한 뺌)
@@ -751,12 +979,13 @@ def compute(d, values, year, asof, settings=None, input_dir=None):
     return {
         "year": year, "base": base, "asof": asof, "teams": teams, "T": T, "last_m": last_m, "src": src,
         "rev": rev, "gp": gp, "cogs": cogs, "sal": sal, "sga": sga_m, "dep": dep_m, "nin": nin_m, "nout": nout_m, "op": op_m,
-        "Y": Y, "L": L, "got": got, "seas": seas, "seas_src": seas_src, "SGA": SGA, "dep_src": D["source"],
+        "tax_shared": bool(LT and LT.get("shared")), "Y": Y, "L": L, "got": got, "seas": seas, "seas_src": seas_src, "SGA": SGA, "dep_src": D["source"],
         "sal_src": sal_src, "heads0": heads0, "hires": hires, "heads": heads, "havg": havg, "per": per, "sal_last": sal_last, "last_ym": last_ym,
+        "sal_month": sal_month, "sal_how": sal_how, "vat_in": vat_in,
         "raise": raise_, "infl": infl, "cost_rate": cost_rate,
         "cash": {"bal0": bal0, "bal_date": bal_date, "restricted": restricted, "roll": roll, "roll_n": roll_n, "start": start, "cin": cin, "cpay": cpay, "sga_pay": sga_pay,
                  "tax": tax_m, "fixed": fixed, "nio": nio, "bal": bal, "lo": lo, "min_cash": min_cash, "days": days, "n_days": n_days,
-                 "days_used": days_used, "split": split, "avail0": avail0},
+                 "days_used": days_used, "split": split, "avail0": avail0, "known": known},
         "fix": FIX, "notes": notes,
         "missing": [k for k, v in (("성장률", any(not T[t]["growth_set"] for t in teams)), ("목표 수익률", any(not T[t]["rate_set"] for t in teams)),
                                    ("급여 인상률", raise_ is None), ("물가 인상률", infl is None)) if v],
@@ -785,8 +1014,10 @@ def confirm(input_dir, B, today=None):
         try:
             with _open_text(path) as f:
                 keep = [r for r in csv.DictReader(f) if (r.get("연도") or "").strip() != y]
-        except (OSError, UnicodeDecodeError, csv.Error):
-            keep = []
+        except (OSError, UnicodeDecodeError, csv.Error) as e:
+            # 2차 전수조사 P5 (2026-11-18): 예전엔 못 읽으면 빈 것으로 보고 새로 써서 다른 해 확정 예산이 지워졌음 → 멈추고 알림
+            raise ValueError("%s 를 읽지 못해 저장하지 않았습니다 (%s) — 파일이 엑셀에 열려 있으면 닫고 다시 하세요. "
+                             "다른 해 확정 예산을 지우지 않으려고 멈춥니다" % (CONFIRM_FILE, type(e).__name__))
     rows = []
     for i in range(12):
         for t in B["teams"]:

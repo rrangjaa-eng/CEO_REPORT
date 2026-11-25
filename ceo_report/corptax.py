@@ -17,6 +17,7 @@ DEP_COLUMNS = ["연도", "연간감가상각비"]
 BRACKETS_2026 = ((200_000_000, 0.10), (20_000_000_000, 0.20), (300_000_000_000, 0.22), (None, 0.25))
 BRACKETS_2023 = ((200_000_000, 0.09), (20_000_000_000, 0.19), (300_000_000_000, 0.21), (None, 0.24))
 LOCAL_RATE = 0.10   # 법인지방소득세 = 법인세의 10%
+LOCAL_WORDS = ("지방", "구청", "시청", "군청")   # 선납세금 중 지방소득세 줄 (코드가 없어 낱말, 근거에 건수를 보임 — E3)
 
 
 def brackets(year):
@@ -79,6 +80,34 @@ def read_ledger(input_dir, wehago_dir=None):
         if y.isdigit() and v is not None:
             out[y] = out.get(y, 0) + v
     return out
+
+
+def next_year_ledger(input_dir, year):
+    """고정자산대장(year 년)으로 본 다음 해 감가상각비 -> (금액, 끝나는 자산 수) 또는 (None, 0).
+    2차 전수조사 V21 (2026-11-18): 내년 감가상각비를 올해 금액 그대로 써서 상각이 끝나는 자산도 계속 들어갔음.
+    자산마다 min(올해 상각, 남은 금액 = 취득가 − 올해 말 상각누계). 내년에 새로 사는 자산은 모르므로 넣지 않는다."""
+    if not input_dir or not os.path.exists(os.path.join(input_dir, LEDGER_FILE)):
+        return None, 0
+    try:
+        with _open_text(os.path.join(input_dir, LEDGER_FILE)) as f:
+            rows = [r for r in csv.DictReader(f) if (r.get("기준연도") or "").strip() == str(year)]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None, 0
+    if not rows:
+        return None, 0
+    total, ended = 0, 0
+    for r in rows:
+        cur, cost, acc = _int(r.get("당기상각")), _int(r.get("취득가")), _int(r.get("당기말상각누계"))
+        if cur is None:
+            continue
+        if cost is None or acc is None:
+            total += cur
+            continue
+        left = max(cost - acc, 0)
+        if cur > 0 and left < cur:
+            ended += 1
+        total += min(cur, left)
+    return total, ended
 
 
 def read(input_dir):
@@ -234,12 +263,13 @@ def bad_debt_saving(base, amount, year, input_dir=None):
     return (nat + int(corp * LOCAL_RATE)) - (nat2 + int(corp2 * LOCAL_RATE))
 
 
+# 11/15~11/17 변환 파일의 근거 글 (그때는 빼지 않고 이 글만 적었음) — 보고서가 예전 파일을 읽을 때만 쓴다
 BAD_DEBT_HINT = "대손충당금 예상 %s원은 세무사 확인 전이라 빼지 않음 (쌓으면 세금 −%s원)"
 BAD_DEBT_HINT_RE = r"대손충당금 예상 ([\d,]+)원은 세무사 확인 전이라 빼지 않음 \(쌓으면 세금 −([\d,]+|모름)원\)"
 
 
 def bad_debt_hint(amount, saving):
-    """세금예상.csv 법인세 줄 근거에 붙이는 글 (보고서가 BAD_DEBT_HINT_RE 로 다시 읽는다)."""
+    """11/15~11/17 판이 세금예상.csv 법인세 줄 근거에 붙였던 글 (시험·예전 파일 읽기용)."""
     return BAD_DEBT_HINT % ("{:,}".format(amount), "모름" if saving is None else "{:,}".format(saving))
 
 
@@ -289,7 +319,9 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
     from .convert import closing_pl_line
     closing = cfg.get("closing_sorts", ())
     prepaid_codes = set(_squash(c) for c in cfg.get("prepaid_tax_codes", PREPAID_CODES))
-    pretax, unknown, prepaid, dep_lines = 0, 0, 0, []
+    pretax, unknown, prepaid, local_prepaid, dep_lines = 0, 0, 0, 0, []
+    by_month = {}   # E1: 달마다 세전 이익 (남은 달 예상에 씀)
+    local_lines = []
     for ln in journal:
         ln = closing_pl_line(ln, closing)   # 결산 전표: 원가·손익 대체는 빼고 감가상각비 차변만 (변환과 같게)
         if ln is None or ln["date"] is None:
@@ -301,7 +333,14 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
         if lym[:4] != year or lym > ym:
             continue
         if code in prepaid_codes:
-            prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+            # 11/17 최종 점검: 원천징수된 지방소득세(거래처·적요에 '지방')는 법인세가 아니라 지방소득세에서 뺀다
+            # E3 (2026-11-17, 계산-11): 선납세금 계정 안에서 지방소득세를 가르는 코드가 없어 거래처·적요 낱말로 가른다 →
+            # 낱말로 가른 줄은 근거에 건수·금액을 보여 확인받는다 (거래처가 구청·시청·군청이어도 지방세)
+            if any(w in _squash(ln.get("vendor")) + _squash(ln.get("memo")) for w in LOCAL_WORDS):
+                local_prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
+                local_lines.append(ln)
+            else:
+                prepaid += (ln["debit"] or 0) - (ln["credit"] or 0)
             continue
         kind = _classify(ln, cfg)
         if code in nin:
@@ -318,36 +357,132 @@ def from_journal(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=Non
             unknown += 1
         else:
             pretax += sign * v
+            by_month[lym] = by_month.get(lym, 0) + sign * v
     dep = depreciation(dep_lines, manual or {}, ym, ledger=read_ledger(input_dir, wehago_dir))
     bd = bad_debt(journal, cfg, ym, input_dir)
     adj = adjust_for(journal, cfg, asof, input_dir, wehago_dir)
-    # 규칙 계산-08 (사용자 결정 d, 2026-11-15): 법인세 예상에서는 장부에 실제로 넣은 비용만 뺀다. 대손충당금은 결산 때 넣을지
-    # 세무사 답이 오기 전이라 빼지 않고, 쌓으면 세금이 얼마 줄어드는지만 따로 적는다 (예전: 빼서 세금이 약 103만 작게 잡힘, R10)
-    base = pretax - (dep["extra"] or 0) + adj["total"]
+    # 규칙 계산-08 (사용자 2026-11-17, 11/15 결정 d를 바꿈): 대손충당금은 세무사 답과 상관없이 프로그램이 계산한 예상 금액을
+    # 감가상각비처럼 과세표준에서 먼저 뺀다 (받을 돈 × 한도율 − 쌓인 충당금)
+    base = pretax - (dep["extra"] or 0) - bd["amount"] + adj["total"]
     nat, corp, C = national(base, year, input_dir)
-    local = int(corp * LOCAL_RATE)
+    local_tax = int(corp * LOCAL_RATE)
+    local = max(local_tax - local_prepaid, 0)
     pay = max(nat - prepaid, 0)
     nxt = int(year) + 1
     period = "%s년 (1월~%d월 장부 기준)" % (year, int(ym[5:]))
-    basis = ("세전 이익 %s − 감가상각비 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
-             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(base),
+    basis = ("세전 이익 %s − 감가상각비 예상 %s − 대손충당금 예상 %s = 과세표준 %s → 법인세 %s − 중간예납 등 선납세금 %s"
+             % ("{:,}".format(pretax), "{:,}".format(dep["extra"] or 0), "{:,}".format(bd["amount"]), "{:,}".format(base),
                 "{:,}".format(corp), "{:,}".format(prepaid)))
     if C:
-        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제) − 중간예납 등"
-                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"])), 1)
+        newc = [x for x in C.get("extra") or [] if x["used"] or x["carry"]]
+        basis = basis.replace(" − 중간예납 등", " → 감면·공제 뒤 %s + 농어촌특별세 %s (작년 신고서: 중소기업 특별세액감면, 넘어온 고용 공제%s) − 중간예납 등"
+                              % ("{:,}".format(C["final"]), "{:,}".format(C["nong"]),
+                                 "".join(" · 받음: %s %s원 중 %s원 사용" % (x["name"], "{:,}".format(x["amount"]), "{:,}".format(x["used"])) for x in newc)), 1)
+        if C.get("carries"):
+            basis += " · 내년으로 넘어갈 공제 %s원 (%s)" % ("{:,}".format(C["carry_next"]),
+                                                     ", ".join("%d년분 %d년까지" % (c["from"], c["until"]) for c in C["carries"]))
     if adj["total"]:
         basis = basis.replace(" = 과세표준", " + 세무조정 예상 %s = 과세표준" % "{:,}".format(adj["total"]), 1)
-    if bd["amount"]:
-        basis += " · " + bad_debt_hint(bd["amount"], bad_debt_saving(base, bd["amount"], year, input_dir))
     basis += " · 대손충당금 = " + bd["note"]
     if unknown:
         basis += " · 금액 없는 손익 줄 %d건 뺌" % unknown
+    if local_lines:
+        basis += " · 선납세금 중 지방소득세로 가른 줄 %d건 %s원 (거래처·적요에 '지방'·구청 등 — 한 줄에 국세·지방세를 함께 넣었으면 확인)" % (
+            len(local_lines), "{:,}".format(local_prepaid))
     rows = [dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), None if unknown else pay, "예상", basis),
-                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"])),
+                 과세표준=str(base), 산출세액=str(corp), 기납부=str(prepaid), 대손충당금=str(bd["amount"]), 세무조정=str(adj["total"]),
+                 감가상각=str(dep["extra"] or 0)),
             dict(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), None if unknown else local, "예상",
-                      "법인세 산출세액 %s × 10%%" % "{:,}".format(corp)), 과세표준="", 산출세액="", 기납부="", 대손충당금="", 세무조정="")]
+                      "법인세 산출세액 %s × 10%%%s" % ("{:,}".format(corp), (" = %s − 원천징수된 지방소득세 %s" % ("{:,}".format(local_tax), "{:,}".format(local_prepaid))) if local_prepaid else "")), 과세표준="", 산출세액=str(local_tax), 기납부=str(local_prepaid), 대손충당금="", 세무조정="")]
+    rest = None if unknown else rest_rows(by_month, ym, dep, base, nat, corp, year, input_dir, prepaid, local_prepaid)
+    if rest:
+        rows += rest
     return rows, "법인세 %s → %s원 (%s %s − 선납 %s), 지방소득세 %s원" % (period, "{:,}".format(pay), "감면 뒤" if C else "산출", "{:,}".format(nat),
                                                                  "{:,}".format(prepaid), "{:,}".format(local))
+
+
+def rest_rows(by_month, ym, dep, base, nat, corp, year, input_dir, prepaid=0, local_prepaid=0):
+    """E1 (결정 카드 2026-11-17 '더하기(따로 한 줄)'): 올해 남은 달(ym 다음 달~12월) 이익으로 더 낼 법인세·지방소득세 예상 줄.
+    남은 달 이익 = 최근 끝난 3달 세전 이익 평균 × 남은 달 수 − 감가상각비 예상(연간 × 남은 달 ÷ 12). 0 이하이면 없음(세금을 줄이지 않음).
+    더 낼 세금 = (지금까지 + 남은 달) 과세표준의 세금 − 지금까지 과세표준의 세금. 대상기간은 '(1월~' 으로 시작하지 않아 본 줄과 섞이지 않는다."""
+    import datetime as dt
+    from .tax import _row, _workday, REST_MARK
+    m = int(ym[5:])
+    left = 12 - m
+    if left <= 0:
+        return None
+    recent = []
+    for k in range(3):
+        mm = m - k
+        if mm >= 1 and "%s-%02d" % (year, mm) in by_month:
+            recent.append(by_month["%s-%02d" % (year, mm)])
+    if not recent:
+        return None
+    avg = sum(recent) / float(len(recent))
+    dep_rest = int(round((dep.get("annual") or 0) * left / 12.0))
+    extra = int(round(avg * left)) - dep_rest
+    if extra <= 0:
+        return None
+    nat2, corp2, _ = national(base + extra, year, input_dir)
+    more_nat = max(nat2 - prepaid, 0) - max(nat - prepaid, 0)
+    more_local = max(int(corp2 * LOCAL_RATE) - local_prepaid, 0) - max(int(corp * LOCAL_RATE) - local_prepaid, 0)
+    nxt = int(year) + 1
+    period = "%s년 %d~12월%s" % (year, m + 1, REST_MARK)
+    why = ("남은 %d달 이익 %s = 최근 %d달 세전 이익 평균 %s × %d − 감가상각비 예상 %s → 과세표준 %s → %s (지금까지 기준과의 차이). 12월 결산 전 어림"
+           % (left, "{:,}".format(extra), len(recent), "{:,}".format(int(avg)), left, "{:,}".format(dep_rest),
+              "{:,}".format(base + extra), "{:,}".format(nat2)))
+    out = []
+    if more_nat > 0:
+        # 과세표준 칸은 비워 둔다 (본 줄과 섞이지 않게). 연말과세표준 칸 = 연말 예상 과세표준 (예산의 올해분 법인세가 이 값을 그대로 씀 — 2차 전수조사 제안 3: 한 군데서만 계산)
+        out.append(dict(_row("법인세", period, _workday(dt.date(nxt, 3, 31)), more_nat, "예상", why), 연말과세표준=str(base + extra)))
+    if more_local > 0:
+        out.append(_row("법인지방소득세", period, _workday(dt.date(nxt, 4, 30)), more_local, "예상",
+                        "남은 달 이익으로 늘어나는 법인세 산출세액 %s × 10%%" % "{:,}".format(corp2 - corp)))
+    return out or None
+
+
+# ───────────── 분납 (A4, 2026-11-17 사용자 '추가 기능은 전부') ─────────────
+INST_MIN, INST_HALF = 10_000_000, 20_000_000   # 법인세법 64조②·시행령 101조②: 1천만 넘으면 분납, 2천만 이하면 1천만 넘는 몫, 넘으면 절반까지
+INST_MONTHS = 2                                 # 중소기업은 납부기한 지난 날부터 2개월 (일반 1개월)
+
+
+def installable(total):
+    """낼 법인세 total 중 분납할 수 있는 가장 큰 금액 (없으면 0)."""
+    if total is None or total <= INST_MIN:
+        return 0
+    return total - INST_MIN if total <= INST_HALF else total // 2
+
+
+def inst_due(due):
+    """분납 기한: 납부기한 + 2개월 (주말이면 다음 평일)."""
+    import datetime as dt
+    from .tax import _workday
+    y, m = due.year, due.month + INST_MONTHS
+    y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+    last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)).day
+    return _workday(dt.date(y, m, min(due.day if due.day < 28 else last, last)))
+
+
+def installment(rows, on):
+    """회사가 분납을 골랐으면(on) 같은 날 낼 법인세 줄(본 줄 + 남은 달 예상 줄)을 합쳐 분납할 몫을 본 줄 '분납' 칸에 적는다.
+    금액 칸은 그대로(전체 세금) — 자금 일정(tax.merge)만 본 줄을 두 번(기한·2달 뒤)으로 나눈다. 지방소득세·중간예납은 나누지 않음."""
+    for r in rows:
+        r.setdefault("분납", "")
+    if not on:
+        return rows
+    by_due = {}
+    for r in rows:
+        if r.get("세목") == "법인세" and r.get("납부예정일") and str(r.get("납부예정일"))[5:7] in ("03", "04") and r.get("금액") not in ("", None):
+            by_due.setdefault(r["납부예정일"], []).append(r)
+    for due, rs in by_due.items():
+        total = sum(int(r["금액"]) for r in rs)
+        s = installable(total)
+        main = next((r for r in rs if "(1월~" in str(r.get("대상기간")) or "(신고서)" in str(r.get("대상기간"))), rs[0])
+        if s:
+            main["분납"] = str(s)
+            main["근거"] = (main.get("근거") or "") + " · 분납함(회사 선택): %s원은 %s에 (법인세법 64조, 중소기업 2개월)" % (
+                "{:,}".format(s), inst_due(__import__("datetime").date.fromisoformat(due)).isoformat())
+    return rows
 
 
 # ───────────── 작년분 법인세·지방소득세, 8/31 중간예납 (2026-11-14 F5) ─────────────
@@ -368,15 +503,30 @@ def _bank_tax_slips(journal, start, end, prepaid_codes):
         if not _from_bank(lines):
             continue
         pre = sum((x.get("debit") or 0) for x in lines if _squash(x["account_code"]) in prepaid_codes)
+        # 2차 전수조사 P18 (2026-11-18): 계정 이름으로 세목이 갈리면 따로 센다 — '지방소득세' 계정으로 낸 것은 법인세 납부로 보지 않는다
+        # (예전엔 금액 0.5~1.5배만 봐서 비슷한 금액의 다른 세목 납부를 법인세로 볼 수 있었다). 이름으로 못 가르면('법인세등') 금액으로.
+        local = sum((x.get("debit") or 0) for x in lines if _squash(x["account_code"]) not in prepaid_codes
+                    and "지방소득세" in _squash(x["account"]))
         tax = sum((x.get("debit") or 0) for x in lines if _squash(x["account_code"]) not in prepaid_codes
-                  and ("법인세" in _squash(x["account"]) or "지방소득세" in _squash(x["account"])))
-        out += [(True, pre)] * bool(pre) + [(False, tax)] * bool(tax)
+                  and "법인세" in _squash(x["account"]) and "지방소득세" not in _squash(x["account"]))
+        out += [_Slip((True, pre))] * bool(pre) + [_Slip((False, tax))] * bool(tax) + [_Slip((False, local), "지방")] * bool(local)
     return out
 
 
-def _paid(slips, amount, prepaid=False):
-    """금액이 거의 같은 납부 전표가 있나 (반~1.5배: 법인세와 지방소득세(약 1/10)를 금액으로 가른다)."""
-    return bool(amount) and any(p == prepaid and 0.5 * amount <= v <= 1.5 * amount for p, v in slips)
+class _Slip(tuple):
+    """(선납세금인가, 금액) + kind: '지방' = 지방소득세 계정으로 낸 것, '' = 계정 이름으로는 모름."""
+    def __new__(cls, pair, kind=""):
+        self = tuple.__new__(cls, pair)
+        self.kind = kind
+        return self
+
+
+def _paid(slips, amount, prepaid=False, kind=""):
+    """금액이 거의 같은 납부 전표가 있나 (반~1.5배: 법인세와 지방소득세(약 1/10)를 금액으로 가른다).
+    kind: 찾는 세목 ('법인세'·'법인지방소득세'). 계정 이름이 '지방소득세'인 전표는 지방소득세를 찾을 때만 센다 (P18)."""
+    local = "지방" in kind
+    return bool(amount) and any(s[0] == prepaid and 0.5 * amount <= s[1] <= 1.5 * amount
+                                and (getattr(s, "kind", "") != "지방" or local or not kind) for s in slips)
 
 
 def carry_rows(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=None):
@@ -416,7 +566,7 @@ def carry_rows(journal, cfg, asof, manual=None, input_dir=None, wehago_dir=None)
             items = []
         for kind, m, day, amount, basis, state in items:
             due = _workday(dt.date(Y, m, day))
-            if due < asof or amount is None or _paid(paid, amount):
+            if due < asof or amount is None or _paid(paid, amount, kind=kind):
                 continue
             row = _row(kind, period, due, amount, state, basis)
             if kind == "법인세" and prev and not last:

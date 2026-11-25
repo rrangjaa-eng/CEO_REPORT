@@ -178,7 +178,7 @@ def issue_summary(temp_input, day):
         k = (f, re.sub(r"'[^']*'", "'…'", re.sub(r"\([^)]*\)", "", str(msg))).strip())
         groups[k] = groups.get(k, 0) + 1
     out = ["- 입력 자료 확인 필요 %d건 (파일 · 내용 · 건수). 줄 번호까지 보려면 보고서를 만든 뒤 경영관리보고 "
-           "'부록 B-7 변동·자료 범위' → '입력 자료 확인 필요' 표" % len(items)]
+           "'6. 자료·지급 관리' → '입력 자료 확인 필요' 표" % len(items)]
     for (f, msg), n in sorted(groups.items(), key=lambda kv: -kv[1]):
         out.append("  · 확인 필요: %s — %s (%d건)" % (f or "-", msg[:120], n))
     return out
@@ -330,6 +330,7 @@ def _input_drift(input_dir, temp_input, res, out):
 
 
 WORK_DIR = "_점검임시"
+DRIFT_RC = 4   # 점검은 끝났지만 입력 파일이 지금 자료로 새로 변환한 결과와 다름 (경고)
 
 
 def _work_dir(app_dir):
@@ -374,7 +375,8 @@ def run(app_dir, out_path, asof=None):
         if getattr(res, "code", 0):
             rc = rc or 3
         _convert_checks(res, temp_input, out)
-        _input_drift(input_dir, temp_input, res, out)
+        if not _input_drift(input_dir, temp_input, res, out):
+            rc = rc or DRIFT_RC   # 2차 전수조사 P17 (2026-11-18): 예전엔 다름이어도 글만 남기고 성공(0)으로 끝나 창에 정상으로 보였다
         _cross_checks(temp_input, out)
         if os.path.isdir(os.path.join(tmp, "수집")) is False:
             os.makedirs(os.path.join(tmp, "수집"), exist_ok=True)

@@ -526,6 +526,7 @@ class TestConvertConfig(unittest.TestCase):
             "revenue_codes": ("41200",), "receivable_codes": ("10800",), "direct_prefixes": ("6",),
             "direct_mark": "(도)", "common_prefixes": ("8",), "common_mark": "(판)",
             "payable_codes": ("25300", "26200"), "cash_codes": ("10300",), "vat_codes": ("13500",),
+            "prepaid_prefixes": ("131",),   # 2차 전수조사 P10 (2026-11-18): 선급금 계정 앞자리도 설정으로
             "loan_codes": ("26000", "29300"), "deposit_codes": ("10500",),   # 장부채무.csv (2026-11-04 점검 A1·A2)
             "closing_sorts": ("결차", "결대", "결산전표", "잉여금관련전표"), "link_days": 90, "card_words": ("카드",),
             "snapshot_days": 7, "salary_codes": ("80200",),

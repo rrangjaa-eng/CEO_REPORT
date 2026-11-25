@@ -62,29 +62,79 @@ def _min_rate(input_dir, year):
         return MIN_RATE
 
 
-def credits(input_dir, year, base, corp):
-    """올해 법인세 = 산출세액 − 중소기업 특별세액감면 − 이월된 통합고용세액공제, 단 최저한세(과세표준 × 7%) 밑으로는 안 줄어듦.
-    줄인 공제의 20%는 농어촌특별세로 같이 냄. 작년 상세 신고서(특별감면·공제이월 칸)가 없으면 None.
+LAST_DEFAULT = "받음"   # 사용자 2026-11-17 결정 카드: 작년 (세무법인) 신고서의 특별감면·넘어온 공제는 그대로 넣음 (설정으로 끌 수 있음). 새 후보는 체크한 것만
 
-    특별감면율은 작년 신고서의 실제 비율(감면 ÷ 산출세액: 감면율 × 감면 대상 소득 비율)을 그대로 쓴다.
-    올해 새로 생길 통합고용 공제는 넣지 않는다 (이월액만으로도 최저한세까지 줄면 결과가 같음 — 'room' 으로 확인)."""
+
+def last_year_taken(input_dir):
+    """작년 신고서의 특별감면·넘어온 공제를 올해 계산에 넣나 -> (특별감면, 이월공제)."""
+    try:
+        from . import dividend
+        a = dividend.read_settings(input_dir)
+    except (OSError, ValueError):
+        a = {}
+
+    def one(k):
+        v = a.get(k) or "기본"
+        return (LAST_DEFAULT if v == "기본" else v) == "받음"
+    return one("반영_특별감면"), one("반영_이월공제")
+
+
+CARRY_YEARS = 10   # 조특법 144조 ①: 다음 과세연도 개시일부터 10년 안에 끝나는 과세연도까지 이월 (2026-11-17 조문 확인)
+
+
+def credits(input_dir, year, base, corp, extra=None):
+    """올해 법인세 = 산출세액 − 중소기업 특별세액감면 − 세액공제, 단 최저한세(과세표준 × 7%) 밑으로는 '최저한세 적용' 감면·공제가 못 줄임.
+    공제 순서 (조특법 144조 ②): 넘어온 공제(먼저 생긴 것부터) → 올해 생긴 최저한세 적용 공제 → 최저한세 밖 공제(중소기업 연구·인력개발비).
+    못 쓴 세액공제는 10년 이월 (감면은 이월 없음). 쓴 공제 중 농어촌특별세 대상(고용·투자 등)의 20%는 농특세로 같이 냄.
+    extra: 감면·공제 후보 중 '받음'인 것 [{name, amount, mt, nong}] — None 이면 taxbreak.picked 로 읽음 (사용자 2026-11-17).
+    작년 상세 신고서(특별감면·공제이월 칸)가 없으면 None."""
     if not input_dir or base is None or corp is None:
         return None
     last = load(input_dir).get((int(year) - 1, "확정"))
     if not last or last.get("특별감면") is None or last.get("공제이월") is None:
         return None
+    if extra is None:
+        try:
+            from . import taxbreak
+            extra = taxbreak.picked(input_dir, int(year))
+        except Exception:   # 후보 판단이 실패해도 법인세 예상은 만든다
+            extra = []
+    Y = int(year)
+    take_sp, take_carry = last_year_taken(input_dir)
     rate = (last["특별감면"] / float(last["산출세액"])) if last.get("산출세액") else 0.0
-    floor = int(max(base, 0) * _min_rate(input_dir, int(year)))
-    sp = min(int(corp * rate), max(corp - floor, 0))
+    floor = int(max(base, 0) * _min_rate(input_dir, Y))
+    sp = min(int(corp * rate), max(corp - floor, 0)) if take_sp else 0
     after = corp - sp
     avail = last["공제이월"]
     room = max(after - floor, 0)
-    used = min(avail, room)
-    final = after - used
-    nong = int(used * NONG_RATE) // 10 * 10   # 10원 미만 버림 (작년 68,534 → 68,530 납부)
-    return {"corp": corp, "sp_rate": rate, "sp": sp, "floor": floor, "avail": avail, "used": used, "room": room,
-            "final": final, "nong": nong, "national": final + nong, "carry_next": avail - used, "at_floor": used == room and room > 0,
-            "last_year": int(year) - 1}
+    used = min(avail, room) if take_carry else 0   # 넘어온 공제 먼저 (체크했을 때만)
+    left_room = room - used
+    items, nong_base = [], used
+    for e in [x for x in extra if x.get("mt")]:   # 올해 생긴 최저한세 적용 공제
+        u = min(int(e["amount"]), left_room)
+        left_room -= u
+        items.append(dict(e, used=u, carry=int(e["amount"]) - u))
+        nong_base += u if e.get("nong") else 0
+    tax_left = after - used - sum(x["used"] for x in items)
+    for e in [x for x in extra if not x.get("mt")]:   # 최저한세 밖: 남은 세금까지
+        u = min(int(e["amount"]), max(tax_left, 0))
+        tax_left -= u
+        items.append(dict(e, used=u, carry=int(e["amount"]) - u))
+        nong_base += u if e.get("nong") else 0
+    final = tax_left
+    from . import taxlaw   # 11/17: 세법 기준표(농어촌특별세법 5조로 맞춰 본 값), 확인 안 됐으면 기본 20%
+    nong = int(nong_base * taxlaw.checked(input_dir, year, "농특세율", NONG_RATE)[0]) // 10 * 10   # 10원 미만 버림 (작년 68,534 → 68,530 납부)
+    carries = []
+    if avail - used > 0:
+        carries.append({"from": Y - 1, "what": "통합고용 등 (작년에 넘어온 몫)", "amount": avail - used, "until": Y - 1 + CARRY_YEARS})
+    for x in items:
+        if x["carry"] > 0:
+            carries.append({"from": Y, "what": x["name"], "amount": x["carry"], "until": Y + CARRY_YEARS})
+    new_used = sum(x["used"] for x in items)
+    return {"take_sp": take_sp, "take_carry": take_carry, "sp_full": min(int(corp * rate), max(corp - floor, 0)),
+            "corp": corp, "sp_rate": rate, "sp": sp, "floor": floor, "avail": avail, "used": used, "room": room,
+            "final": final, "nong": nong, "national": final + nong, "carry_next": sum(c["amount"] for c in carries),
+            "at_floor": used == room and room > 0, "last_year": Y - 1, "extra": items, "new_used": new_used, "carries": carries}
 
 
 def for_report(input_dir, asof, base_now=None, tax_now=None):
@@ -110,8 +160,17 @@ def for_report(input_dir, asof, base_now=None, tax_now=None):
             out["notes"].append("그래서 올해도 법인세는 최저한세(과세표준의 7%%) %s원까지 내려갑니다%s. 감면 전 %s원보다 %s원 덜 냅니다 (농어촌특별세 %s원 포함 계산)."
                                 % (W(C["floor"]) if C["at_floor"] else W(C["final"]), "" if C["at_floor"] else " (최저한세보다 높음)",
                                    W(C["corp"]), W(C["corp"] - C["national"]), W(C["nong"])))
-            out["notes"].append("넘어온 공제 %s원 중 올해 %s원을 쓰고 %s원이 또 내년으로 넘어갈 예정입니다. 올해 직원이 늘면 공제가 더 생기지만 최저한세 때문에 세금은 더 줄지 않고 이월만 늘어납니다."
-                                % (W(C["avail"]), W(C["used"]), W(C["carry_next"])))
+            out["notes"].append("넘어온 공제 %s원 중 올해 %s원을 씁니다." % (W(C["avail"]), W(C["used"])))
+            for x in C.get("extra") or []:
+                out["notes"].append("올해 새 공제 '%s' %s원(설정 '받음') 중 올해 %s원 쓰고 %s원은 내년으로 넘어갑니다%s."
+                                    % (x["name"], W(x["amount"]), W(x["used"]), W(x["carry"]),
+                                       "" if x.get("mt") else " (최저한세와 상관없는 공제)"))
+            if C.get("carries"):
+                out["notes"].append("내년으로 넘어갈 공제 합계 %s원: %s. 기한 안에 못 쓰면 없어집니다 (조특법 144조, 감면은 이월 안 됨)."
+                                    % (W(C["carry_next"]), " · ".join("%s %s원 (%d년분, %d년까지)" % (c["what"], W(c["amount"]), c["from"], c["until"])
+                                                                     for c in C["carries"])))
+            else:
+                out["notes"].append("내년으로 넘어갈 공제는 없습니다.")
         elif at_min_tax(last):
             out["notes"].append("작년에는 감면·공제를 받고도 세금이 최저한세(과세표준의 7%%)까지만 줄었습니다 — 감면 %s원이 다 쓰이지 못하고 잘렸을 수 있습니다."
                                 % W(last["공제감면세액"]))
@@ -140,9 +199,36 @@ def for_report(input_dir, asof, base_now=None, tax_now=None):
             out["notes"].append("업무용 승용차(%s 취득) 감가상각비 %s원 중 1년 800만 원(산 해는 달 수만큼) 한도를 넘은 %s원은 비용으로 인정되지 않았습니다. 이 몫은 버려지는 게 아니라 나중에 한도 안에서 해마다 비용으로 돌아옵니다."
                                 % (last.get("승용차취득일") or "작년", W(last.get("승용차상각비")), W(last["승용차상각초과"])))
     if mid:
-        out["notes"].append("올해 중간예납 %s원은 이미 냈고(장부 선납세금에 있음), 내년 3월 낼 법인세에서 빠집니다."
-                            % W(mid.get("차감납부세액")))
+        # 2차 전수조사 J18 (2026-11-18): 예전엔 신고서 값만 보고 '이미 냈고(장부 선납세금에 있음)'이라 적었고, 월간 대표의
+        # '기납부'(장부 선납세금)와 숫자가 다른데 설명이 없었음 → 장부 선납세금을 읽어 견주고 차이를 적는다
+        m = mid.get("차감납부세액")
+        book = book_prepaid(input_dir, asof.year)
+        if book is None or m is None:
+            out["notes"].append("올해 중간예납 신고 금액 %s원은 내년 3월 낼 법인세에서 빠집니다. 장부 선납세금은 확인하지 못해 실제 납부 여부는 통장·납부서로 확인하세요."
+                                % W(m))
+        elif book >= m:
+            out["notes"].append("올해 중간예납 %s원은 장부 선납세금 %s원 안에 있어 낸 것으로 보이고, 내년 3월 낼 법인세에서 빠집니다.%s"
+                                % (W(m), W(book), " 선납세금이 %s원 더 많은 것은 이자에서 미리 뗀 법인세 등 선납세금 계정의 다른 줄입니다 "
+                                                  "(월간 보고 ‘기납부’는 이 합계)." % W(book - m) if book > m else ""))
+        else:
+            out["notes"].append("올해 중간예납 신고 금액은 %s원인데 장부 선납세금은 %s원뿐입니다 (%s원 모자람) — 납부했는지, 전표를 넣었는지 확인하세요."
+                                % (W(m), W(book), W(m - book)))
     return out
+
+
+def book_prepaid(input_dir, year):
+    """세금예상.csv 의 그해 법인세 줄 '기납부'(장부 선납세금 = 중간예납 + 이자 원천징수 등). 없으면 None."""
+    try:
+        with _open_text(os.path.join(input_dir, "세금예상.csv")) as f:
+            rows = list(csv.DictReader(f))
+    except (OSError, ValueError):
+        return None
+    for r in rows:
+        if (r.get("세목") or "").strip() == "법인세" and str(year) in (r.get("대상기간") or "") and (r.get("기납부") or "").strip():
+            v = _n(r.get("기납부"))
+            if v is not None:
+                return v
+    return None
 
 
 def render(T, esc):

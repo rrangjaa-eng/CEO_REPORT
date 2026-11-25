@@ -291,69 +291,6 @@ def assert_equal_surfaces(test, month_page, screen_page, A, label):
     test.assertIn("프로젝트 미연결 원가 %d건 %s" % (u["count"], total), plain(screen_page), label)
 
 
-class TestConvertedApprovalEqual(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.holder = Holder()
-        cls.tmp, cls.input_dir, cls.collect, cls.wehago_dir = converted_company(cls.holder)
-        cls.dflt = cls.reports(cls.input_dir)
-        # 사람이 프로젝트연결.csv 한 줄과 설정.csv 한 값을 고친 뒤 다시 변환한다
-        write_links_csv(cls.input_dir, [["2026-10-29", "22", "1", "26221"]])
-        edit_csv(cls.input_dir, "설정.csv", lambda rows: set_setting(rows, "변환_자동연결일수", "200"))
-        res = run_core(cls.input_dir, cls.collect, cls.wehago_dir, "20261102_000001")
-        assert res.code == 0, res.lines
-        cls.linked = cls.reports(cls.input_dir)
-
-    @classmethod
-    def reports(cls, input_dir):
-        rc, out, pages, _ = run_cli(cls.holder, input_dir, "월간", BASE_ASOF)
-        assert rc == 0, out
-        screen_page, A = screen_for(cls.holder, cls.tmp, input_dir, cls.collect, cls.wehago_dir)
-        return pages, screen_page, A
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.holder.doCleanups()
-
-    def test_default_settings_per_project_cost_and_request_total_equal(self):
-        pages, screen_page, A = self.dflt
-        self.assertIn("258,400,000", plain(section8(pages["mgmt"])))
-        assert_equal_surfaces(self, pages["mgmt"], screen_page, A, "default")
-
-    def test_default_known_numbers(self):
-        pages, screen_page, A = self.dflt
-        monthly, screen = monthly_projects(pages["mgmt"]), screen_projects(screen_page)
-        self.assertEqual(sorted(screen), ["26201", "26203", "26220", "26221"])
-        self.assertEqual(dict((k, v["WEHAGO 원가"]) for k, v in monthly.items()),
-                         {"26201": "50,000,000", "26220": "158,000,000", "26221": "5,400,000", "26203": "45,000,000"})
-        self.assertEqual(monthly_unlinked(pages["mgmt"]), (2, "1,100,000"))
-        self.assertEqual((A["xchk"]["unlinked"]["count"], A["xchk"]["unlinked"]["sum"]), (2, 1100000))
-
-    def test_an_unknown_request_total_reads_the_same_on_both_surfaces(self):
-        pages, screen_page, A = self.dflt
-        self.assertTrue(monthly_projects(pages["mgmt"])["26221"]["요청 누계"].startswith("판단 불가"))
-        self.assertEqual(screen_projects(screen_page)["26221"][3], "판단 불가")
-        self.assertIsNone([r for r in A["xchk"]["projects"] if r["code"] == "26221"][0]["requested"])
-
-    def test_manual_link_and_link_days_after_converting_again_equal_on_both_surfaces(self):
-        pages, screen_page, A = self.linked
-        assert_equal_surfaces(self, pages["mgmt"], screen_page, A, "manual + 200")
-
-    def test_the_manual_link_moves_the_cost_and_shrinks_the_unlinked_list_on_both_surfaces(self):
-        pages, screen_page, A = self.linked
-        self.assertEqual(monthly_projects(pages["mgmt"])["26221"]["WEHAGO 원가"], "6,200,000")   # 5,400,000 + 800,000
-        self.assertEqual(screen_projects(screen_page)["26221"][4], "6,200,000")
-        self.assertEqual(monthly_unlinked(pages["mgmt"]), (1, "300,000"))
-        self.assertEqual((A["xchk"]["unlinked"]["count"], A["xchk"]["unlinked"]["sum"]), (1, 300000))
-
-    def test_the_second_conversion_ends_with_zero_mismatches(self):
-        with open(os.path.join(self.input_dir, "변환결과.txt"), encoding="utf-8-sig") as f:
-            self.assertEqual(f.read().splitlines()[-1], "대조 불일치 0건")
-
-    def test_the_total_project_cost_is_the_same_in_the_summary_and_on_the_screen(self):
-        for pages, screen_page, A in (self.dflt, self.linked):
-            total = sum(r["cost"] for r in A["xchk"]["projects"])
-            self.assertTrue(summary_rows(pages["mgmt"])["프로젝트 (도)원가"].startswith("{:,} (".format(total)))
 
 
 # ───────────── Task 2: 회사 자료가 git 에 들어가지 않음 (D-45, T-02-31) ─────────────

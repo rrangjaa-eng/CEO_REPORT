@@ -239,6 +239,25 @@ def _month_span(months):
     return out
 
 
+def journal_months(books):
+    """분개장이 다루는 달: 첫 전표 달 ~ 마지막 전표 달 전부 (어느 파일에도 없는 빈 기간에 통째로 든 달은 뺌).
+    2차 전수조사 P7 (2026-11-18): 누적 파일(계정별비용·부서비용·사원급여·부서계정비용)은 '이번 분개장에 줄이 있는 달'만 새로 써서,
+    날짜를 잘못 넣은 전표를 고쳐 그 달이 통째로 사라지면 예전 줄이 영영 남았다 → 분개장 기간 안의 달은 줄이 없어도 예전 줄을 지운다."""
+    import datetime as dt
+    dated = [ln["date"] for ln in (getattr(books, "journal", None) or []) if ln.get("date") is not None]
+    if not dated:
+        return set()
+    out = _month_span([min(dated).strftime("%Y-%m"), max(dated).strftime("%Y-%m")])
+    for g0, g1 in getattr(books, "journal_gaps", None) or []:
+        for ym in _month_span([g0.strftime("%Y-%m"), g1.strftime("%Y-%m")]):
+            y, m = int(ym[:4]), int(ym[5:7])
+            first = dt.date(y, m, 1)
+            last = (dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1))
+            if g0 <= first and last <= g1:
+                out.discard(ym)
+    return out
+
+
 def _ranges(months):
     """달 목록 -> '2026-01~2026-08, 2026-11' (이어지는 달은 묶는다; 달 모양이 아닌 글자는 그대로)."""
     good = sorted(m for m in set(months) if re.match(r"^\d{4}-\d{2}$", m))
@@ -352,7 +371,10 @@ def build_pl(books, cfg, prev_rows, links=None):
                 unit_checks.extend(_unit_checks(ym, company, "팀별", list(teams.values())))
             keys = _project_order(list(units), links["projects"])
             rows.extend(_project_row(columns, ym, k, units[k], links["projects"], links["snapshot"], final) for k in keys)
-            unit_checks.extend(_unit_checks(ym, company, "프로젝트별", [units[k] for k in keys]))
+            # 프로젝트 줄 직접비에는 프로젝트 번호 달린 판관비도 들어 있다 (사용자 결정 2026-11-17) → 회사 직접비에 그만큼 더해 맞춘다
+            extra = ((links["costs"].get("sga") or {}).get("months") or {}).get(ym, 0)
+            both = dict(company, direct=None if company["direct"] is None else company["direct"] + extra)
+            unit_checks.extend(_unit_checks(ym, both, "프로젝트별", [units[k] for k in keys]))
     labels = _labels(cfg)
     checks = [Check(labels[k], source[k], None if csv_unknown[k] else csv_sum[k]) for k, _, _ in CATEGORIES]
     checks.extend(unit_checks)
@@ -459,6 +481,7 @@ def build_dept(books, cfg, prev_rows=()):
         else:
             cell[0] += amount
     months = set(k[0] for k in cells)
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept), c in sorted(cells.items()):
         paid = [n for n, v in c["names"].items() if v is None or v > 0]   # 합을 모르는 사람(None)은 센다
@@ -514,6 +537,7 @@ def build_staff(books, cfg, prev_rows=()):
             c[1] += 1
         else:
             c[0] += amount
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept, name), c in sorted(cells.items()):
         rows.append(dict(zip(data.STAFF_KEYS, [ym, dept, name, cell_amount(_cell(c))])))
@@ -552,6 +576,7 @@ def build_dept_accounts(books, cfg, prev_rows=()):
         else:
             c["sum"][0] += amount
             t[0] += amount
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, dept, code), c in sorted(cells.items()):
         rows.append(dict(zip(data.DEPT_ACCOUNT_KEYS, [ym, dept, code, c["name"], cell_amount(_cell(c["sum"]))])))
@@ -571,7 +596,8 @@ def _dept_cell():
     return {"salary": [0, 0], "sga": [0, 0], "nonop_in": [0, 0], "nonop_out": [0, 0], "names": {}, "nameless": 0}
 
 
-ACCOUNT_GROUPS = (("direct", "원가"), ("common", "판매비와관리비"), ("common_unmarked", "판매비와관리비"), ("nonop_out", "영업외비용"))
+ACCOUNT_GROUPS = (("direct", "원가"), ("common", "판매비와관리비"), ("common_unmarked", "판매비와관리비"), ("nonop_out", "영업외비용"),
+                  ("nonop_in", "영업외수익"))   # 11/17 전수 점검 F10: 예산의 이자수익·올해 영업외 수익이 늘 0 이던 것 (금액 = 대변 − 차변)
 
 
 def build_accounts(books, cfg, prev_rows=()):
@@ -580,11 +606,13 @@ def build_accounts(books, cfg, prev_rows=()):
     달·계정마다 차변−대변. 구분 = 원가(직접비 (도)) · 판매비와관리비(공통비) · 영업외비용(설정 계정). 손익.csv 와 같은 줄을 쓴다.
     금액 없는 줄이 있는 칸은 비운다 (0으로 치지 않음). 새 분개장에 없는 달의 이전 줄은 그대로 잇는다 (누적)."""
     nout = set(_squash(c) for c in cfg["nonop_out_codes"])
+    nin = set(_squash(c) for c in cfg.get("nonop_in_codes", ()))
     label = dict(ACCOUNT_GROUPS)
     cells = OrderedDict()
     undated = 0
     for ln in books.journal:
-        kind = "nonop_out" if _squash(ln["account_code"]) in nout else _classify(ln, cfg)
+        sq = _squash(ln["account_code"])
+        kind = "nonop_out" if sq in nout else "nonop_in" if sq in nin else _classify(ln, cfg)
         if kind not in label:
             continue
         if ln["date"] is None:
@@ -592,17 +620,18 @@ def build_accounts(books, cfg, prev_rows=()):
             continue
         key = (ln["date"].strftime("%Y-%m"), label[kind], _squash(ln["account_code"]))
         c = cells.setdefault(key, {"name": _squash(ln["account"]), "sum": [0, 0]})
-        amount = _net(ln, "common")
+        amount = _net(ln, "revenue" if kind == "nonop_in" else "common")
         if amount is None:
             c["sum"][1] += 1
         else:
             c["sum"][0] += amount
     months = set(k[0] for k in cells)
+    months = set(months) | journal_months(books)   # 2차 전수조사 P7: 분개장이 다루는 기간의 예전 줄은 통째로 새로 쓴다
     rows = [r for r in prev_rows if r.get("연월") not in months]
     for (ym, group, code), c in sorted(cells.items()):
         rows.append(dict(zip(data.ACCOUNT_KEYS, [ym, group, code, c["name"], cell_amount(_cell(c["sum"]))])))
     rows.sort(key=lambda r: (r.get("연월", ""), r.get("계정코드", "")))
-    notes = ["원가 = 직접비(도) · 판매비와관리비 = 공통비 · 영업외비용 = 계정 %s · 금액 = 차변 − 대변" % ",".join(cfg["nonop_out_codes"])]
+    notes = ["원가 = 직접비(도) · 판매비와관리비 = 공통비 · 영업외비용 = 계정 %s · 금액 = 차변 − 대변 · 영업외수익 = 계정 %s · 금액 = 대변 − 차변" % (",".join(cfg["nonop_out_codes"]), ",".join(cfg.get("nonop_in_codes", ())))]
     if undated:
         notes.append("날짜 없는 비용 줄 %d건 → 넣지 않음" % undated)
     return Table(data.ACCOUNT_FILE, data.ACCOUNT_KEYS, rows, notes=notes)

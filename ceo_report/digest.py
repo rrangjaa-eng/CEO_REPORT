@@ -171,7 +171,7 @@ def lights(R, I=None):
             if cdiff:
                 facts.append("위하고 대조: 보통예금 장부 잔액과 계좌잔액.csv 합계 차이 %s원." % "{:,}".format(cdiff))
             if facts:
-                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (부록 B-8)"
+                lv, num, sub = WA, "차이 %d건" % len(facts), "대조함 — 차이 있음 (7. 위하고 대조)"
         else:
             lv, num, sub = WA, st or "자료 없음", "대조 자료 확인 필요"
             facts = ["위하고 대조: %s." % (X.get("reason") or st or "자료 없음")]
@@ -348,17 +348,26 @@ def _track_table(K, last_only):
 
 def _track_line(K):
     """1쪽 오차 상자 아래 한 줄 (숫자로만)."""
+    # 11/18: 맨 앞이 최근 달 (예전엔 맨 뒤=가장 오래된 달을 씀). 다 끝난 달이 아직 없으면 보고마다 그 뒤 기간(주 단위) 표에서
+    # 7일 넘게 지난 가장 최근 보고로 — 예전엔 기록이 있어도 '지난 보고 기록 없음'으로 나왔음
     ms = K.get("months") or []
-    if not ms:
-        return ""
-    r = ms[-1]
     out = []
+    if ms:
+        r = ms[0]
+        out.append("%s 한 달" % r["ym"])
+    else:
+        ws = [w for w in (K.get("weeks") or []) if w.get("made") and w.get("to")]
+        if not ws:
+            return ""
+        long_ = [w for w in ws if (w["to"] - w["made"]).days >= 7]
+        r = long_[0] if long_ else max(ws, key=lambda w: (w["to"] - w["made"]).days)
+        out.append("%s 보고 → %s%s" % (r["made"].strftime("%m/%d"), r["to"].strftime("%m/%d"), " (진행 중)" if r.get("part") else ""))
     for io, name in (("in", "입금"), ("out", "출금")):
         c = r[io]
         if c["all"]:
             out.append("예상 포함 %s 예측이 실제보다 %s" % (name, "%.0f%% %s" % (abs(c["all"] - c["actual"]) * 100.0 / c["all"],
                                                                   "많음" if c["all"] > c["actual"] else "적음")))
-    return " · ".join(out)
+    return " · ".join(out) if len(out) > 1 else ""
 
 
 def render(R, I, L, todo, filing, prev):
@@ -440,9 +449,10 @@ EXPLAIN = {
     "one": "이 보고서 전체를 한 쪽으로 줄인 곳입니다. 신호등이 노랑·빨강인 곳과 ‘해야 할 일’부터 보면 됩니다.",
     "docs": "지금까지 만들어 달라고 하신 자료가 모두 어디에 있는지 한 표로 모은 곳입니다. 이번 보고에 없는 정기 자료도 마지막 파일로 바로 갈 수 있습니다.",
     "sum": "대표에게 드린 보고 화면을 그대로 둔 곳입니다. 대표가 본 숫자와 똑같은지 확인할 때 봅니다.",
+    "tbl": "줄이 많은 건별 표를 한곳에 모은 곳입니다. 주제 쪽에서는 결론과 짧은 표만 보고, 한 건씩 확인할 때 여기로 옵니다.",
     "ev": "요약 화면의 숫자마다 어디서 나왔는지(근거 번호)와, 사람이 판단해야 할 것(확인할 것)을 모은 곳입니다.",
     "risk": "정해 둔 기준(설정.csv)에 걸린 위험을 ‘높음·중간’으로 나누고, 각각 무엇을 하면 되는지 적은 곳입니다.",
-    "auto": "새 자료가 들어올 때마다 프로그램이 장부와 일정을 15가지로 자동 점검한 결과입니다. 맨 위 ‘경보’부터 보면 됩니다.",
+    "auto": "새 자료가 들어올 때마다 프로그램이 장부와 일정을 23가지로 자동 점검한 결과입니다. 맨 위 ‘경보’부터 보면 됩니다.",
     "s1": "지금 통장에 얼마가 있고, 이번 기간에 얼마가 들어오고 나갔는지 보여 줍니다. 정기예금처럼 바로 꺼내 쓸 수 없는 돈은 따로 뺐습니다.",
     "s2": "앞으로 들어올 돈과 나갈 돈을 날짜순으로 놓고 날마다 통장 잔액을 계산한 곳입니다. ‘가장 적을 때’가 늘 남겨 둘 돈(최소 보유현금)보다 낮으면 그때 돈이 모자란다는 뜻입니다.",
     "s3": "프로젝트마다 쓸 수 있는 돈(추정 예산)과 이미 쓴 돈·앞으로 쓸 돈을 견줍니다. 예산을 넘을 것 같은 프로젝트를 일찍 찾는 곳입니다.",
@@ -456,6 +466,7 @@ EXPLAIN = {
     "c2": "언제 어떤 세금 신고를 해야 하는지(기한)와, 홈택스·위하고에 넣을 값을 장부에서 뽑아 둔 곳입니다.",
     "c3": "급여가 최저임금·4대보험·원천세·수당 규칙에 맞게 처리됐는지 점검하고, 직원 연말정산 결과를 미리 어림합니다.",
     "c4": "지금까지 쌓인 이익(이익잉여금)을 배당할지 회사에 남길지 판단하는 곳입니다. 처분계산서는 그 결정을 적는 양식입니다.",
+    "c6": "법인세를 줄일 수 있는 감면·공제를 현행 법령에서 모두 찾아, 우리 회사 자료(장부·위하고 급여·작년 신고서)로 받을 수 있는지 판단한 표입니다. 금액은 모두 계산해 두고, 창 ‘법인세 감면·공제’에서 ‘받음’으로 고른 것만 법인세 예상에 넣습니다(작년 신고서의 특별감면·넘어온 공제는 기본이 넣음).",
     "c5": "결산 숫자로 은행·보증기관이 매길 신용등급을 미리 어림하고, 12월 31일 전에 하면 등급에 유리한 일을 알려 줍니다.",
     "gasu": "대표이사가 회사에 잠시 넣어 둔 돈(가수금)을 언제 돌려드려야 통장이 늘 남겨 둘 돈(최소 보유현금) 아래로 내려가지 않는지 날짜별로 계산한 곳입니다.",
     "track": "지난 보고 때 ‘앞으로 이만큼 들어오고 나갈 것’이라고 한 예측이 실제 통장과 얼마나 맞았는지 봅니다. 차이가 크면 자금 예측을 그만큼 덜 믿어야 합니다.",
@@ -513,6 +524,8 @@ def suggest(key, R, I=None, L=None):
         return [a for _, a, _ in todos(R, I)]
     if key == "docs":
         return ["이번 보고에 없는 정기 자료(분기·반기·연간·예산)는 ‘어디서 보나’의 마지막 파일 링크로 열어 보세요."]
+    if key == "tbl":
+        return ["화면에서는 표 위의 ‘찾기’ 칸에 거래처나 프로젝트 번호를 넣으면 그 줄만 남습니다. 인쇄·PDF에는 언제나 전부 나옵니다."]
     if key == "sum":
         return ["대표 보고에서 질문이 나올 만한 숫자(빨간 글씨·‘예상’)는 근거 번호를 따라 부록 A-2에서 미리 확인해 두세요."]
     if key == "ev":
@@ -579,8 +592,13 @@ def suggest(key, R, I=None, L=None):
         if v == "이월":
             return ["이번엔 이월(회사에 남김) 권장 — 자금 사정이 나아지면 다음 반기에 다시 판단합니다."]
         if v == "보류":
-            return ["판단 보류 — 아래 체크리스트의 ‘꼭 넣을 값(✗)’을 창 ‘배당 판단 질문’에서 채우세요."]
+            return ["판단 보류 — 아래 체크리스트의 ‘꼭 넣을 값(✗)’을 창 ‘배당 판단 질문’(감면 질문은 ‘법인세 감면·공제’)에서 채우세요."]
         return ["위하고 분개장(작년 포함)을 받아 ‘자료 변환’을 하면 처분계산서가 채워집니다."]
+    if key == "c6":
+        T = (R.get("re") or {}).get("tb") or {}
+        ask = [r for r in T.get("rows") or [] if r[1] == "확인 필요" and r[4]]
+        return (["%s: %s" % (r[0], r[4]) for r in ask[:3]] or ["지금 세무사에게 확인할 감면·공제 후보는 없습니다."]) + \
+            ["법인세 예상에 넣을 감면·공제는 창 ‘법인세 감면·공제’에서 ‘받음’으로 고릅니다."]
     if key == "c5":
         C = R.get("credit") or {}
         return _uniq(["%s" % t for t, b, e in (C.get("todo") or [])], 4) or ["창 ‘신용평가 체크리스트’를 채우면 등급 범위가 좁아집니다."]
@@ -610,6 +628,7 @@ def find_docs(out_dir, asof):
         return (sub + sorted(names)[-1]) if names else None
     found["budget"] = newest(os.path.join(out_dir, "예산"), r"^\d{4}_예산_경영관리용\.html$", "예산/")
     found["annual"] = newest(out_dir, r"^\d{4}_연간_경영관리보고\.html$")
+    found["planbs"] = newest(os.path.join(out_dir, "기획본부"), r"^\d{4}-\d{2}-\d{2}_기획본부_재무상태표(_\d+)?\.xlsx$", "기획본부/")
     found["team"] = newest(os.path.join(out_dir, "팀장용"), r"^\d{4}-\d{2}-\d{2}_월간_팀장_.*\.html$", "팀장용/")
     try:
         names = os.listdir(out_dir)
@@ -626,7 +645,7 @@ def find_docs(out_dir, asof):
 
 
 def docs_section(R, I, L):
-    P = periodic(R)
+    P = periodic(R) | ({"m"} if R.get("kind") == "monthly" else set())   # C-6 감면·공제 검토는 매달 (사용자 2026-11-17)
     F = R.get("docs_files") or {}
     mon = R.get("kind") == "monthly"
 
@@ -650,7 +669,7 @@ def docs_section(R, I, L):
     yes = "<span class='lt ok'><i></i>있음</span>"
     add("1쪽 요약·신호등·해야 할 일", here("one", "1쪽 요약"), yes, suggest("one", R, I, L), EXPLAIN["one"])
     add("대표 보고 (주간·월간, 출금 목록)", here("sum", "부록 A-1"), yes, suggest("sum", R, I, L), EXPLAIN["sum"])
-    add("자동 분석 15가지 (꼭 나갈 돈·계산서 기한 포함)", here("auto", "부록 A-4"), yes, suggest("auto", R, I, L), EXPLAIN["auto"])
+    add("자동 분석 23가지 (꼭 나갈 돈·계산서 기한·손익분기·안 쓸 돈 포함)", here("auto", "부록 A-4"), yes, suggest("auto", R, I, L), EXPLAIN["auto"])
     add("가용금액 예측 오차 (지난 예상 대비 실제)", here("one", "1쪽·본문") + " · " + here("auto", "A-4 15번"), yes,
         track_suggest((I or {}).get("track")), EXPLAIN["track"])
     for i, nm in ((1, "현재 자금·입출금"), (2, "입금·지급 일정"), (3, "프로젝트 예산·집행"), (4, "매출·손익"), (5, "계산서·수금"),
@@ -664,12 +683,13 @@ def docs_section(R, I, L):
     else:
         add("위하고 대조·현금흐름표", esc("월간 경영관리 보고 부록 B-8·B-9"), esc("월간에만"), [], EXPLAIN["s9"])
     add("법인세 예상", here("sum", "부록 A-1 누적 절") if mon else esc("월간 보고 A-1"), yes if mon else esc("월간에만"), [],
-        "올해 장부 이익으로 미리 계산한 법인세입니다 (감가상각비 예상 반영. 대손충당금은 세무사 확인 전이라 빼지 않고 '쌓으면 세금 −X'로만 보임).")
+        "올해 장부 이익으로 미리 계산한 법인세입니다 (감가상각비·대손충당금 예상을 먼저 뺀 이익 기준).")
     for code, area, nm, lab, gone in (("q", "c1", "세무조정 예상", "부록 C-1", "분기(3·6·9·12월)"),
                                       ("f" if "f" in P else "q", "c2", "신고 일정·신고 도우미", "부록 C-2", "신고 있는 달"),
                                       ("q", "c3", "급여 점검·연말정산 예상", "부록 C-3", "분기(3·6·9·12월)"),
                                       ("h", "c4", "이익잉여금처분계산서·배당 판단·감면 후보", "부록 C-4", "반기(6·12월)"),
-                                      ("prep", "c5", "기업신용평가 미리보기·결산 전 할 일", "부록 C-5", "결산 준비(9월)")):
+                                      ("prep", "c5", "기업신용평가 미리보기·결산 전 할 일", "부록 C-5", "결산 준비(9월)"),
+                                      ("m", "c6", "법인세 감면·공제 전체 검토", "부록 C-6", "매달 (월간)")):
         w, st, sg = periodic_where(code, nm, area, lab, gone)
         if area == "c5" and R.get("credit_brief"):   # 신용평가 최근 결과 한 줄 (사용자 2026-11-13)
             sg = ["최근 결과: " + R["credit_brief"]] + list(sg)
@@ -681,13 +701,29 @@ def docs_section(R, I, L):
         "팀별 성장률·인원·인상률로 내년 매출·비용·이익을 미리 짠 초안입니다.")
     add("팀장용 팀 실적", file("team", "마지막 팀장용") or esc("월간 보고 때 출력\\팀장용 에 생김"),
         esc("월간 보고 때 함께"), [], "팀마다 이번 달 매출·이익·진행 프로젝트 예산을 보여 주는 팀장 전달용 문서입니다 (급여 금액 없음).")
+    add("기획본부용 재무상태표 (영업외수익 뺀 엑셀)", file("planbs", "마지막 기획본부 재무상태표") or esc("창 3단계 ‘기획본부 재무상태표’로 만듦"),
+        esc("따로 만듦"), ["노란 칸(뺄 영업외수익·세금 비율·법인세 예상)을 바꾸면 손익·재무상태표가 다시 계산됩니다."],
+        "회사 전체 장부에서 영업외수익(이자·지원금·잡이익)과 그 세금만 뺀 재무상태표입니다. 비용이 크게 잡혔을 수 있는 항목(감가상각·영업외비용·세무조정 등)도 표시합니다.")
     add("세법 기준 확인 (해마다)", esc("창 ‘세법 기준 확인’"), esc("1·7월 자동 확인"), [],
         "세율·공제 금액이 바뀌었는지 법령 조문을 받아 확인하고, 확인 안 된 값은 계산에서 ‘확인 필요’로 둡니다.")
+    # M4 (2026-11-17): 문서로만 있던 두 자료를 프로그램이 만든다 (규칙 11/13)
+    add("보고 숫자를 얼마나 믿나 (오차범위)", "<a class='go' href='#trust'>아래 표</a>", yes, [],
+        "항목마다 보통·크게 틀리는 정도와 믿을 정도, 줄이는 법입니다. 지난 예상과 실제의 차이(자동 분석 15)로 매번 다시 잽니다.")
+    add("분개장 전표 입력 안내", "<a class='go' href='#entry'>아래 표</a>", yes, [],
+        "프로그램이 장부를 바르게 읽도록 전표를 넣는 모양입니다. 안 지키면 보고서에서 생기는 일을 함께 적었습니다.")
     return ("<style>%s</style><div class='dg1'><h2 id='docs'>자료 안내 · 요청하신 자료 전부</h2>%s"
             "<div class='tw'><table class='pt evt dgx nofold'><thead><tr><th>자료</th><th>어디서 보나</th><th>이번 보고</th><th>쉬운 설명</th><th>제안</th></tr></thead>"
             "<tbody>%s</tbody></table></div>"
-            "<div class='note'>새 자료를 만들 때마다 이 표에 한 줄씩 더하고, 그 장 맨 위에 ‘쉬운 설명 · 제안’ 상자를 붙입니다 (사용자 2026-11-13).</div></div>"
-            % (CSS, guide_box("docs", R, I, L), "".join(rows)))
+            "<div class='note'>새 자료를 만들 때마다 이 표에 한 줄씩 더하고, 그 장 맨 위에 ‘쉬운 설명 · 제안’ 상자를 붙입니다 (사용자 2026-11-13).</div>%s</div>"
+            % (CSS, guide_box("docs", R, I, L), "".join(rows), _guides(I)))
+
+
+def _guides(I):
+    from . import guides   # M4 (2026-11-17)
+    try:
+        return guides.trust_html(I) + guides.entry_html()
+    except Exception as e:   # 안내 표 때문에 보고서를 못 만들면 안 된다
+        return "<div class='note'>오차범위·전표 안내 표를 만들지 못함 (%s)</div>" % esc(type(e).__name__)
 
 
 # ─────────── 연간 경영관리 보고에도 같은 상자 (사용자 2026-11-13) ───────────
@@ -703,6 +739,11 @@ ANNUAL_EXPLAIN = {
     "d7": EXPLAIN["s9"],
     "d8": EXPLAIN["c4"],
     "d9": EXPLAIN["c5"],
+    "d10": EXPLAIN["c1"],
+    "d11": EXPLAIN["c6"],
+    "d12": EXPLAIN["c2"],
+    "d13": EXPLAIN["c3"],
+    "d14": "한 해 실적을 확정한 예산과 견줍니다. 예산보다 덜 벌었거나 더 쓴 곳이 어디인지 보는 곳입니다.",
 }
 ANNUAL_AREA = {"d4": ("거래처", "수금"), "d5": ("팀", "프로젝트", "비용"), "d1": ("자료",)}
 
@@ -718,6 +759,8 @@ def annual_box(key, A, risks):
         sg = suggest("c4", {"re": A.get("re")})
     elif key == "d9":
         sg = suggest("c5", {"credit": A.get("credit")})
+    elif key in ("d10", "d11", "d12", "d13") and A.get("M"):   # 월간 경영관리의 같은 절 제안 그대로 (사용자 2026-11-17)
+        sg = suggest({"d10": "c1", "d11": "c6", "d12": "c2", "d13": "c3"}[key], A["M"])
     else:
         sg = _uniq([r[3] for r in risks if r[1] in ANNUAL_AREA.get(key, ())], 3)
     return ("<style>%s</style><div class='gbox'><div><b class='gk'>쉬운 설명</b> %s</div><div style='margin-top:4px'><b class='gk'>제안</b>%s</div></div><!-- /gbox -->"

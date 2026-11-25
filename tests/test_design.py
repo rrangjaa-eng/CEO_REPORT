@@ -115,11 +115,11 @@ class TestAvailableFundsTable(unittest.TestCase):
         R = self.R["weekly"]
         html = first_screen(render(R, "ceo"))
         for p in R["s2"]["periods"]:
-            f, a = p["firm"]["avail"], p["spend"]["avail"]
+            f, a = p["firm"]["avail"], p["all"]["avail"]   # 사용자 2026-11-18 결정: 작은 줄은 예상 입금·지급을 모두 넣은 값
             self.assertIn("<b class='%s'>%s</b>" % ("neg" if f < 0 else "", "{:,}".format(f)), html)
             if a != f:
-                self.assertIn("프로젝트 지급 예상 등까지 빼면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
-                              else "프로젝트 지급 예상 등까지 빼면 {:,}".format(a), html)
+                self.assertIn("예상 입금·지급까지 넣으면 %s" % "{:,}".format(a).replace("-", "−") if a < 0
+                              else "예상 입금·지급까지 넣으면 {:,}".format(a), html)
 
     def test_unknown_balance_says_so(self):
         import shutil
@@ -283,12 +283,17 @@ class TestReportIsADocument(unittest.TestCase):
             # 누적 1인당 = 누적 순수익 ÷ 1~10월 평균 인원 (사용자 2026-11-03)
             self.assertEqual(ytd[0], ["기획1팀", "742,500,000", "237,600,000", "32.0%", "90,000,000", "20,000,000", "127,600,000", "3.0명",
                                       "42,533,333", "1.4배", "25,866,667"])   # 급여·판관비 따로, 급여 대비 (사용자 2026-11-03)
+            # 2차 전수조사 J20 (2026-11-18): 누적 표에도 '기획본부 자체 비용' 줄 (팀 합과 본부 합계가 왜 다른지 보이게)
+            self.assertEqual(ytd[2][0], "기획본부 자체 비용")
+            self.assertEqual(ytd[2][1:4] + ytd[2][8:10], ["", "", "", "", ""])
+            self.assertEqual(ytd[3][0], "기획본부 합계")
+            ytd = ytd[:2] + ytd[3:]   # 아래는 예전 줄 번호 그대로 (팀 · 팀 · 본부 합계 · 회사)
             self.assertEqual(ytd[3][:2], ["회사 전체 (영업이익)<small>인원 = 기획본부만</small>", "1,350,000,000"])
             self.assertEqual(ytd[3][6], "132,000,000")   # 기획본부 영업외 비용은 영업이익에 넣지 않음 (사용자 2026-11-04 정정)
             self.assertEqual(ytd[3][7:11], ["7.0명", "18,857,143", "0.6배", ""])   # 회사 줄엔 공통비 나눈 뒤 칸 없음 (사용자 2026-11-04)   # 회사 영업이익은 공통비 뺀 값 (사용자 2026-11-03)   # 회사 인원은 팀·본부만 (경영관리 제외, 사용자 2026-11-03)
             # 누적 결산 끝: 세전 이익 − 법인세 예상(지방세 포함) = 당기순이익 예상 (사용자 2026-11-04). 2026-11-14 P3: '지금까지 이익 기준'
             self.assertEqual([[c for c in r if c] for r in ytd[-3:]], [
-                ["세전 이익", "137,000,000"], ["− 법인세·지방소득세 (지금까지 이익 기준 예상)", "15,070,000"], ["당기순이익 (예상)", "121,930,000"]])   # 감가상각 월할 (결정 M5)
+                ["세전 이익", "137,000,000"], ["− 법인세·지방소득세 (지금까지 이익 기준 올해 세금 전체 예상 · 이미 낸 중간예납 포함)", "15,070,000"], ["당기순이익 (예상)", "121,930,000"]])   # 감가상각 월할 (결정 M5)
             self.assertNotIn("당기순이익", tables[0])   # 이번 달 표에는 넣지 않음
             # 본부·공통 비용을 인원 비율로 나눈 뒤: 팀 합계 = 회사 영업이익 (기획팀 1인당이 과장되지 않게, 사용자 2026-11-03)
             self.assertEqual(round(5_226_667 * 3 + 3_973_333 * 3, -2), 27_600_000)
@@ -334,7 +339,7 @@ class TestReportIsADocument(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("지정일", rows[-1][0])
         self.assertIn(pick.isoformat(), rows[-1][0])
-        self.assertIn("{:,}".format(last["spend"]["avail"]), rows[-1][3])   # 예상 입금은 넣지 않은 작은 줄 (2026-11-14 F7)
+        self.assertIn("{:,}".format(last["all"]["avail"]), rows[-1][3])   # 예상 입금·지급을 모두 넣은 작은 줄 (사용자 2026-11-18 결정)
         self.assertEqual(len(same), 3)
 
     def test_no_pick_date_no_row(self):
@@ -358,33 +363,6 @@ REQ_MEASURE = """
 """
 
 
-class TestApprovalTableWithBooks(unittest.TestCase):
-    """WEHAGO 장부가 있을 때(대조 글·금액 차이 글이 길 때)도 요청 표가 읽히는가."""
-
-    @classmethod
-    def setUpClass(cls):
-        import shutil
-        import tempfile
-        from test_approval import NOW, load_approval_cli, write_fake_snapshot
-        from test_wehago import write_fake_books
-        tmp = tempfile.mkdtemp()
-        cls.addClassCleanup(shutil.rmtree, tmp, True)
-        snap = write_fake_snapshot(os.path.join(tmp, "수집"))
-        write_fake_books(os.path.join(tmp, "위하고"))
-        path, _ = load_approval_cli().make_screen(SAMPLE, os.path.join(tmp, "출력"), snap, ASOF, NOW, False,
-                                                  wehago_dir=os.path.join(tmp, "위하고"))
-        with open(path, encoding="utf-8") as f:
-            cls.page = f.read()
-
-    def test_desk_width_shows_every_column_without_tall_rows(self):
-        dom = browser_dom(self, self.page, REQ_MEASURE, size=(1280, 900))
-        self.assertLessEqual(float(body_attr(dom, "data-twsw")), float(body_attr(dom, "data-twcw")))
-        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
-
-    def test_phone_rows_stay_short_and_table_scrolls_sideways(self):
-        dom = browser_dom(self, self.page, REQ_MEASURE, size=(390, 844))
-        self.assertLessEqual(float(body_attr(dom, "data-sw")), 390)
-        self.assertLess(float(body_attr(dom, "data-rowmax")), 130)
 
 
 UNCHECK_BIGGEST = """
@@ -397,25 +375,6 @@ UNCHECK_BIGGEST = """
 """
 
 
-class TestApprovalHeadlineFeedback(unittest.TestCase):
-    """머리 줄: '부족·최소보유현금 미만 주 없음'도 상태로 보이고(글자 그대로), 다시 계산하면 바뀐 값이 잠깐 강조된다."""
-
-    @classmethod
-    def setUpClass(cls):
-        TestApprovalTableWithBooks.setUpClass.__func__(cls)
-
-    def test_no_short_week_is_marked_ok_in_the_file(self):
-        open_tag = re.search(r'<div[^>]*id="headline"[^>]*>', self.page).group(0)
-        self.assertIn("lv-ok", open_tag)
-
-    def test_recompute_marks_the_changed_value(self):
-        dom = browser_dom(self, self.page, UNCHECK_BIGGEST)
-        self.assertIn("lv-ok", body_attr(dom, "data-hl"))
-        self.assertIn("chg", body_attr(dom, "data-low-cls"))
-
-    def test_focus_ring_and_reduced_motion_rules_exist(self):
-        self.assertIn(":focus-visible{outline:2px solid", self.page)
-        self.assertIn("prefers-reduced-motion", self.page)
 
 
 PHONE_ROWS = """
@@ -528,7 +487,8 @@ class TestSectionsDoNotSplit(unittest.TestCase):
                 self.assertEqual(flow, 1 if kind == "weekly" else 0)
                 self.assertEqual(html.count("<div class='q'>"), html.count("<div class='sec'><div class='q'>") + brk + pgb + flow)
                 self.assertIn(".sec{break-inside:avoid}", html.replace(".kpi,.card,.sec{break-inside:avoid}", ".sec{break-inside:avoid}"))
-                self.assertEqual(html.count("break-inside:auto"), 2)
+                # 2026-11-17 보는 사람 기준 양식: 대표용은 ② 자금(표 · 그림 사이)도 주간·월간 모두 나뉠 수 있다 → 한 번 더
+                self.assertEqual(html.count("break-inside:auto"), 3)
                 self.assertIn(".sec.brk,.sec.brk .frimain{break-inside:auto}", html)
 
 

@@ -25,7 +25,8 @@ import os
 import re
 import statistics
 
-from .calc import counts_in, must_pay, unissued_due, with_vat
+from . import codes as _codes
+from .calc import _event_date, counts_in, must_pay, unissued_due, with_vat
 
 FILE = "자동분석.json"
 DAY = dt.timedelta(days=1)
@@ -41,7 +42,7 @@ def _sq(t):
 # ───────────── 장부로 계산 (자료 변환 때) ─────────────
 CARD_RE = re.compile(r"^(신한|롯데|비씨|BC|삼성|현대|국민|KB|하나|우리|농협|NH)[_\s-]?\d{4}$")
 INSURERS = ("국민연금", "건강보험", "근로복지", "고용보험")
-TAXOFF = ("세무서", "구청", "시청", "군청")
+TAXOFF = _codes.TAX_OFFICE + _codes.LOCAL_OFFICE   # 낱말은 codes.py 한곳에 (2차 전수조사 P4)
 
 
 def _months_back(asof, n):
@@ -218,7 +219,8 @@ def taxes_set_aside(R):
     · later: 다음 달 말일 뒤에 낼 세금 계산값 (이미 쌓인 부가세·원천세·법인세)
     after = 마지막 기간 여유 자금(확정분) − must − later."""
     rows = [t for t in R.get("tax") or [] if t.get("kind") in TAX_KINDS and t.get("due") and t["due"] > R["asof"]
-            and t.get("amount") is not None]
+            and t.get("amount") is not None
+            and not (isinstance(t.get("matched"), dict) and t["matched"].get("rest_in_plan"))]   # E1: 일정에 그 세금이 있으면 남은 기간 줄은 빼고
     total = sum(t["amount"] for t in rows)
     last = _last(R)
     end = last["end"] if last else R["asof"]
@@ -289,11 +291,11 @@ def alerts(R):
         b = p.get("budget")
         used = p.get("committed") if "committed" in p else p.get("paid_total")
         name = "[%s] %s" % (p.get("id"), p.get("name"))
-        if b and used is not None and used > b:
+        # 사용자 2026-11-17: 예산 대비 실행가가 120%를 넘는 것만 알림 (예전: 100% 넘으면 높음, 80% 넘으면 주의)
+        from .calc import OVER_ALERT_PCT
+        if b and used is not None and used * 100.0 > OVER_ALERT_PCT * b:
             out.append(("높음", "%s 쓴 돈·요청·계획 %s원이 추정 예산 %s원을 넘음 (%.0f%%, %s원 초과)" % (
                 name, "{:,}".format(used), "{:,}".format(b), 100.0 * used / b, "{:,}".format(used - b))))
-        elif b and used is not None and used >= 0.8 * b:
-            out.append(("주의", "%s 쓴 돈·요청·계획이 추정 예산의 %.0f%%" % (name, 100.0 * used / b)))
         now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if now is not None and now < 0:
             out.append(("높음", "%s 예상 적자 %s원" % (name, "{:,}".format(-now))))
@@ -358,10 +360,10 @@ def invoice_pairs(R):
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
         ev = p.get("event_date") or ""
-        try:
-            end = dt.date(*[int(x) for x in ev[-10:].split("-")]) if ev else None
-        except ValueError:
-            end = None
+        # 2차 전수조사 D2 (2026-11-18): '2026.10.27' 꼴을 못 읽어 늘 0건이었음 → 다른 곳과 같은 읽기(calc._event_date, 기간은 끝난 날)
+        end = _event_date(ev)
+        if end is not None:
+            ev = end.isoformat()
         if end is None or end >= asof:
             continue
         sold = max(issued.get(p.get("id"), 0), p.get("recognized") or 0)
@@ -374,7 +376,9 @@ def invoice_pairs(R):
     return out
 
 
-MISSING_CONTRACT = "계약금액이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 계약금액을 넣으면 나옵니다."
+# 11/17 전수 점검 F2: 인트라넷엔 계약금액 칸이 없어 예전 안내('인트라넷에 계약금액을 넣으면')는 할 수 없는 일이었음
+# → 받은 자료(장부 매출·사전견적)로 예상 이익을 내고, 넷 다 없는 것만 센다
+MISSING_CONTRACT = "매출 기준 금액(계약금액·사전견적·장부 매출)이 없어 지금 예상 이익을 못 낸 프로젝트 %d개 — 인트라넷에 사전견적을 넣으면 나옵니다."
 
 
 def missing_contracts(R, team=None):
@@ -382,7 +386,8 @@ def missing_contracts(R, team=None):
     실제 자료 302개 모두 빈칸이라 팀장·대표는 빠진 줄 몰랐음 R3). team 을 주면 그 팀 프로젝트만. 0 은 미등록과 같이 본다
     (profit_flow 도 0 이면 건너뜀)."""
     return sum(1 for p in (R.get("s3") or {}).get("projects") or []
-               if not p.get("contract") and (team is None or (p.get("team") or "") == team))
+               if not (p.get("profit_basis") if "profit_basis" in p else p.get("contract"))
+               and (team is None or (p.get("team") or "") == team))
 
 
 def profit_flow(R):
@@ -393,7 +398,7 @@ def profit_flow(R):
     예전엔 남은 예산이 그대로 '이익 개선'으로 보였음). closed = 끝난 프로젝트 (보고에서 진행 중과 나눠 보인다)."""
     out = []
     for p in (R.get("s3") or {}).get("projects") or []:
-        c, b = p.get("contract"), p.get("budget")
+        c, b = (p.get("profit_basis") if "profit_basis" in p else p.get("contract")), p.get("budget")   # F2: 받은 자료 기준 매출
         now = p.get("profit_now") if "profit_now" in p else p.get("profit_end")
         if not c or b is None or now is None:
             continue
@@ -406,13 +411,23 @@ def profit_flow(R):
 def pay_habits(R, d_invoices=None):
     """9: 거래처마다 입금이 예정일보다 며칠 늦었나 -> {'clients': [(거래처, 평균 늦은 날, 건수)], 'avail': (firm, all) 늦춰 본 여유 자금}."""
     invs = d_invoices if d_invoices is not None else (R.get("_invoices") or [])
-    delay = collections.defaultdict(list)
+    # E3 (2026-11-17, 계산-01): 거래처는 코드로 묶는다 (코드가 없는 옛 계산서만 이름). 보이는 이름은 그 코드의 이름 '이름 [코드]'
+    delay, label, names = collections.defaultdict(list), {}, collections.defaultdict(set)
     for r in invs:
+        code = (r.get("client_code") or "").strip()
+        key = ("c", code) if code else ("n", r.get("client") or "")
+        names[key].add(r.get("client") or "")
+        label[key] = "%s [%s]" % (r.get("client") or "", code) if code else (r.get("client") or "")
         if r.get("due") and r.get("paid_date"):
-            delay[r.get("client") or ""].append((r["paid_date"] - r["due"]).days)
-    habit = dict((k, statistics.mean(v)) for k, v in delay.items() if k and len(v) >= 2)
-    clients = sorted(((k, round(v, 1), len(delay[k])) for k, v in habit.items()), key=lambda x: -x[1])
-    late = dict((k, int(round(v))) for k, v in habit.items() if v > 0)
+            delay[key].append((r["paid_date"] - r["due"]).days)
+    habit = dict((k, statistics.mean(v)) for k, v in delay.items() if k[1] and len(v) >= 2)
+    clients = sorted(((label[k], round(v, 1), len(delay[k])) for k, v in habit.items()), key=lambda x: -x[1])
+    late = {}
+    for k, v in habit.items():   # 일정 줄(desc = 거래처 이름)에 늦춤을 적용: 그 코드에 쓰인 이름 모두
+        if v > 0:
+            for n in names[k]:
+                if n:
+                    late[n] = int(round(v))
     moved = []
     for e in R["s2"].get("dated") or []:
         k = (e.get("desc") or "").strip()
@@ -574,7 +589,20 @@ def issue_deadline(R, days=PAY_AFTER_ISSUE, small=ISSUE_SMALL):
     if short:
         out["deadline"] = short[0] - dt.timedelta(days=days)
         out["late"] = out["deadline"] < asof
+        # 2차 전수조사 B3 (2026-11-18): 기한이 이미 지났을 때, 그 기한에 행사가 끝나 있어 발행할 수 있었던 것만 '늦었다'고 말한다
+        # (11/17 행사를 10/11까지 발행했어야 한다고 적혔음)
+        could = [r for r in rows if _as_date(r.get("event")) is not None and _as_date(r["event"]) <= out["deadline"]]
+        out["could"] = (len(could), sum(r["amount"] for r in could))
     return out
+
+
+def _as_date(v):
+    if isinstance(v, dt.date):
+        return v
+    try:
+        return _event_date(v)
+    except Exception:
+        return None
 
 
 def _merge_cards(presence):
@@ -814,9 +842,15 @@ def compute(R, facts=None, invoices=None, prev_events=None):
         "missing": missing_entries(R, facts),
         "issue": issue_deadline(R),
         "track": forecast_track(R.get("auto_records"), R.get("_txns"), R, R.get("auto_profits")),
+        "more": _more(R),   # 16~23 (2026-11-17 제안 M3·A1~A8) — 경영관리에만
         "has_facts": bool(facts),
         "has_prev": prev_events is not None,
     }
+
+
+def _more(R):
+    from . import insights_more
+    return insights_more.compute(R)
 
 
 # ───────────── 지난 일정 기록 (1 바뀐 이유) ─────────────
@@ -877,7 +911,9 @@ def load_profit_forecasts(out_dir):
 
 
 def load_previous(out_dir, asof, lookback=14):
-    """기준일 전 lookback 일 안의 가장 최근 기록 -> 일정 목록 또는 None."""
+    """기준일 전 lookback 일 안의 기록 중 '7일 전'에 가장 가까운 것 -> 일정 목록 또는 None.
+    2차 전수조사 P14 (2026-11-18): 예전엔 가장 최근 기록이라, 보고를 매일 만들면 '지난주 대비'가 어제 기록과의 비교가 됐다.
+    한 주에 한 번만 만들면 예전과 같은 기록이 골라진다."""
     folder = os.path.join(out_dir, RECORD_DIR)
     try:
         names = os.listdir(folder)
@@ -893,7 +929,9 @@ def load_previous(out_dir, asof, lookback=14):
     if not found:
         return None
     try:
-        with open(os.path.join(folder, max(found)[1]), encoding="utf-8") as f:
+        week = asof - dt.timedelta(days=7)
+        pick = min(found, key=lambda x: (abs((x[0] - week).days), x[0]))
+        with open(os.path.join(folder, pick[1]), encoding="utf-8") as f:
             x = json.load(f)
         return x if isinstance(x, list) else None
     except (OSError, ValueError):

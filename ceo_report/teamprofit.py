@@ -18,11 +18,36 @@ def _add(*vals):
     return None if any(v is None for v in vals) else sum(vals)
 
 
+def paid_months(dept_rows):
+    """급여 전표가 들어온 달 (회사 전체 급여 합 > 0). 급여는 달 말·다음 달 초에 한 번에 들어가므로
+    달 중간에 만든 보고의 이번 달은 아직 '급여 전'이다 (11/17 전수 점검 F1: 인원 0명·미확인, 평균 인원이 진행 중 달까지 나뉨)."""
+    tot = {}
+    for r in dept_rows or []:
+        if r.get("salary"):
+            tot[r["ym"]] = tot.get(r["ym"], 0) + r["salary"]
+    return set(m for m, v in tot.items() if v > 0)
+
+
+def _prev_ym(ym):
+    y, m = int(ym[:4]), int(ym[5:7])
+    return "%04d-%02d" % (y - 1, 12) if m == 1 else "%04d-%02d" % (y, m - 1)
+
+
 def _dept_costs(dept_rows, months):
-    """부서 -> {salary, sga, heads(마지막 달만)}. months 의 달이 하나라도 부서비용에 없으면 None (모름)."""
+    """부서 -> {salary, sga, heads(마지막 달만)}. months 의 달이 하나라도 부서비용에 없으면 None (모름).
+
+    인원: 급여 전인 달(paid_months 밖)은 인원을 모르는 달이 아니라 아직 급여가 안 들어온 달이다 — 이번 달 하나면 지난달 인원을 쓰고
+    (heads_from = 지난달), 누적이면 급여가 들어온 달만으로 평균을 낸다 (11/17 전수 점검 F1)."""
     have = set(r["ym"] for r in dept_rows)
     if not months or any(m not in have for m in months):
         return None
+    paid = paid_months(dept_rows)
+    head_months = [m for m in months if m in paid]
+    carry = None
+    if len(months) == 1 and not head_months:   # 이번 달 급여 전: 지난달 인원
+        pm = _prev_ym(months[0])
+        if pm in paid:
+            carry = pm
     out = OrderedDict()
     for r in dept_rows:
         if r["ym"] not in months:
@@ -33,12 +58,20 @@ def _dept_costs(dept_rows, months):
         ok = r.get("has_nonop", False)
         c["nonop_in"] = _add(c["nonop_in"], r.get("nonop_in") if ok else None)
         c["nonop_out"] = _add(c["nonop_out"], r.get("nonop_out") if ok else None)
-        c["head_sum"] = _add(c["head_sum"], r["heads"])
+        if r["ym"] in head_months:
+            c["head_sum"] = _add(c["head_sum"], r["heads"])
         if r["ym"] == months[-1]:
             c["heads"] = r["heads"]
-    if len(months) > 1:   # 누적: 평균 인원 = 달마다 인원 합 ÷ 달 수 (그 부서 줄이 없는 달은 0명). 모르는 달이 있으면 None
+    if carry:
+        for r in dept_rows:
+            if r["ym"] == carry:   # 이번 달 비용 줄이 아직 없는 부서도 인원은 지난달 그대로 (급여·판관비는 0)
+                out.setdefault(r["dept"], {"salary": 0, "sga": 0, "heads": None, "nonop_in": 0, "nonop_out": 0, "head_sum": 0})
+                out[r["dept"]]["heads"] = r["heads"]
+                out[r["dept"]]["heads_from"] = carry
+    if len(months) > 1:   # 누적: 평균 인원 = 급여 들어온 달마다 인원 합 ÷ 그 달 수 (그 부서 줄이 없는 달은 0명). 모르는 달이 있으면 None
+        n = len(head_months)
         for c in out.values():
-            c["heads"] = None if c["head_sum"] is None else c["head_sum"] / len(months)
+            c["heads"] = None if c["head_sum"] is None or not n else c["head_sum"] / n
     return out
 
 
@@ -56,17 +89,18 @@ def _row(label, kind, revenue=None, gp=None, salary=None, sga=None, heads=None, 
             "heads": heads, "has_rev": has_rev}
 
 
-def build(pl_table, dept_rows, ym, ytd=False):
-    """pl_table: R['s4']['sources']['WEHAGO']['table']. -> {"rows", "company", "dept_ok", "check"} 또는 None (팀 손익 없음)."""
-    key = "ytd" if ytd else "cur"
+def build(pl_table, dept_rows, ym, ytd=False, key=None):
+    """pl_table: R['s4']['sources']['WEHAGO']['table']. -> {"rows", "company", "dept_ok", "check"} 또는 None (팀 손익 없음).
+    key: 표에서 읽을 묶음 ('ytd_closed' = 다 끝난 달까지 누적, calc.month_scope). 없으면 ytd 에 따라 'ytd'·'cur'."""
+    key = key or ("ytd" if ytd else "cur")
     teams = OrderedDict()
     special, company = [], None
     for r in pl_table:
-        v = r[key] or {"revenue": None, "gp": None, "common": None}
+        v = r.get(key) or {"revenue": None, "gp": None, "common": None}
         if r["unit"] == "회사":
             company = v
         elif r["unit"] == "팀":
-            if r[key] is None:   # 그 기간에 손익 줄이 없는 팀 (예: 10월에 원가·매출이 없는 기획3팀): 줄을 만들지 않는다
+            if r.get(key) is None:   # 그 기간에 손익 줄이 없는 팀 (예: 10월에 원가·매출이 없는 기획3팀): 줄을 만들지 않는다
                 continue
             if r["target"] in SPECIAL:
                 special.append((r["target"], v))
@@ -117,7 +151,9 @@ def build(pl_table, dept_rows, ym, ytd=False):
         if d in used or d in names:
             continue
         s, g, h = cost(d)
-        r = _row(d if d != NO_DEPT else "부서 없음 (분개장 부서명 빈칸)", "other", salary=s, sga=g, heads=h, has_rev=False)
+        # 장부 부서명 '플랜트8'(회사 이름)은 부서가 아니라 회사 공통 비용 (사용자 2026-11-18)
+        lab = "부서 없음 (분개장 부서명 빈칸)" if d == NO_DEPT else ("회사 공통 비용 (장부 부서명 '%s')" % d if "플랜트" in d else d)
+        r = _row(lab, "other", salary=s, sga=g, heads=h, has_rev=False)
         r["nonop_in"] = costs[d].get("nonop_in")   # 영업외 수익을 가져온 부서 (사용자 2026-11-03: 경영관리 실적으로 보이게)
         rows.append(r)
     for name, v in special:
@@ -141,7 +177,9 @@ def build(pl_table, dept_rows, ym, ytd=False):
     common = company.get("common") if company else None
     moved_sum = sum(moved.values())
     check = None if (common is None or total_s is None or total_g is None) else (total_s + total_g - moved_sum, common)
-    return {"rows": rows, "company": comp, "dept_ok": dept_ok, "check": check, "nonop": nonop, "hq_nonop": list(moved.items())}
+    heads_from = next((c.get("heads_from") for c in (costs or {}).values() if c.get("heads_from")), None)
+    return {"rows": rows, "company": comp, "dept_ok": dept_ok, "check": check, "nonop": nonop, "hq_nonop": list(moved.items()),
+            "heads_from": heads_from}
 
 
 def allocate(T, basis="heads"):

@@ -1,7 +1,7 @@
 """신한은행 대량이체 파일 (사용자 2026-11-03: 정기적으로 나가는 돈 말고 거래처 지급은 양식에 맞춰 계좌·은행·예금주까지).
 
 양식은 ERP_PLANT8_260917 저장소의 신한 대량이체 양식과 같다: 시트 '입력정보', 머리글 9칸, 칸마다 CP949 바이트 한도, 은행은 3자리 코드.
-계좌 정보는 입력/거래처계좌.csv (대표보고 창 ⑦에서 넣는다. 외장하드 입력 폴더에만 두고 저장소에는 올리지 않는다).
+계좌 정보는 입력/거래처계좌.csv (대표보고 창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣는다. 외장하드 입력 폴더에만 두고 저장소에는 올리지 않는다).
 거래처는 위하고 거래처코드로 구분한다 (사용자 2026-11-04). 자금계획서 줄의 코드로 계좌를 찾고, 코드가 없는 줄(손으로 넣은 일정)은
 이름이 계좌 목록의 한 곳과만 맞을 때 쓴다.
 은행 이름을 코드로 못 풀거나 계좌·예금주가 없으면 그 줄은 파일에 넣지 않고 이유를 알린다 (짐작해서 넣으면 돈이 엉뚱한 데로 간다).
@@ -138,7 +138,7 @@ def read_accounts(input_dir):
     if problem:
         return {}, [problem]
     if not rows and not os.path.exists(os.path.join(input_dir, ACCOUNT_FILE)):
-        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ⑦ 거래처 계좌에서 넣으세요)" % ACCOUNT_FILE]
+        return {}, ["%s 없음 → 계좌를 채울 수 없음 (창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)" % ACCOUNT_FILE]
     out = {}
     for r in rows:
         c = code_key(r["거래처코드"])
@@ -233,7 +233,7 @@ def paid_vendors(journal):
 
 
 def register_vendors(input_dir, vendors):
-    """계좌 목록에 없는 거래처코드를 코드·이름만으로 더한다 (계좌는 창 ⑦에서). -> 더한 수. 있던 줄은 건드리지 않는다."""
+    """계좌 목록에 없는 거래처코드를 코드·이름만으로 더한다 (계좌는 창 ‘가끔 넣는 값 › 거래처 계좌’에서). -> 더한 수. 있던 줄은 건드리지 않는다."""
     rows, problem = _read_rows(input_dir)
     if problem:
         raise ValueError(problem)
@@ -254,14 +254,14 @@ def find_account(accounts, ln):
             return None, "계좌 %d개 (%s) — 사람별 금액 필요, 은행 화면에서 나눠 넣으세요" % (
                 len(found), ", ".join(r["예금주"] for r in found))
         if not found[0]["계좌번호"]:
-            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ⑦에서 넣으세요)"
+            return None, "계좌 정보 없음 (목록에 거래처만 있음 — 창 ‘가끔 넣는 값 › 거래처 계좌’에서 넣으세요)"
         return found[0], None
     acc = accounts.get(vendor_key(ln["vendor"]))
     if acc is AMBIGUOUS:
         return None, "같은 이름 거래처가 여럿 (거래처코드로 넣으세요)"
     if acc is not None and c and code_key(acc.get("거래처코드")) != c:
         # 안전-01 (P5-3, 2026-11-15): 코드가 있는 지급은 같은 코드 계좌만. 코드 없는 옛 줄을 이름으로 고르지 않는다
-        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ⑦에서 코드와 함께 넣으세요)" % (
+        return None, "계좌 정보 없음 (거래처코드 %s — 이름만 같은 %s 계좌는 쓰지 않음, 창 ‘가끔 넣는 값 › 거래처 계좌’에서 코드와 함께 넣으세요)" % (
             ln["code"], "코드 없는" if not code_key(acc.get("거래처코드")) else "다른 코드")
     if acc is None:
         return None, "계좌 정보 없음" + (" (거래처코드 %s)" % ln["code"] if c else "")
@@ -314,11 +314,12 @@ def pick(events, start, end, info=None):
         code = str(e.get("vendor_code") or "").strip()
         k = code_key(code) or vendor_key(name) or "?%d" % len(lines)
         ln = lines.setdefault(k, {"vendor": name, "code": code, "amount": 0, "unknown": False, "projects": [], "dates": [],
-                                  "firm": True})
+                                  "firm": True, "parts": []})
         if e["amount"] is None:
             ln["unknown"] = True
         else:
             ln["amount"] += e["amount"]
+            ln["parts"].append(e["amount"])   # 합치기 전 한 줄씩 (예금주별 금액 창에 보여 줌, 사용자 2026-11-20)
         if e.get("project") and e["project"] not in ln["projects"]:
             ln["projects"].append(e["project"])
         ln["dates"].append(e["date"])
@@ -386,7 +387,7 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None):
             if sum(v for _, v in parts) != ln["amount"] or any(v < 0 for _, v in parts):
                 if multi is not None:
                     multi.append({"vendor": ln["vendor"], "code": ln.get("code") or "", "amount": ln["amount"],
-                                  "holders": [a["예금주"] for a in many]})
+                                  "holders": [a["예금주"] for a in many], "parts": list(ln.get("parts") or [])})
                 blocked.append((ln["vendor"], ln["amount"], "계좌 %d개 (%s) — 예금주별 금액 필요 (합계 %s원)" % (
                     len(many), ", ".join(a["예금주"] for a in many), "{:,}".format(ln["amount"]))))
                 continue
@@ -507,31 +508,13 @@ def ready_problems(R, input_dir, collect_dir=None, downloads=None):
         out.append("마지막 자료 변환이 실패함 (%s) — 다시 변환하세요" % failed[:60])
     elif when is None:
         out.append("자료 변환 시각을 모름 (변환결과.txt) — 자료 변환을 먼저 하세요")
-    if when is not None and collect_dir and os.path.isdir(collect_dir):
-        newer = []
-        for n in sorted(os.listdir(collect_dir)):
-            if ("분개장" in n or "자금계획" in n) and n.lower().endswith((".json", ".xls", ".xlsx")):
-                try:
-                    t = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(collect_dir, n)))
-                except (OSError, ValueError, OverflowError):
-                    continue
-                if t > when + dt.timedelta(seconds=60):
-                    newer.append(n)
-        if newer:
-            out.append("자료 변환(%s) 뒤에 새로 받은 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(newer[:3]) + (" 외 %d개" % (len(newer) - 3) if len(newer) > 3 else "")))
-    if when is not None and (downloads is not None or collect_dir):
-        from . import app as _app
-        try:
-            pend = _app.pending_downloads(downloads)
-        except Exception:   # 다운로드 폴더를 못 읽어도 이체 확인은 계속
-            pend = []
-        waiting = sorted(os.path.basename(p) for p, t in pend
-                         if ("분개장" in os.path.basename(p) or "자금계획" in os.path.basename(p))
-                         and t > when + dt.timedelta(seconds=60))
-        if waiting:
-            out.append("자료 변환(%s) 뒤에 크롬 다운로드 폴더에 받아 둔 새 파일이 있음: %s — 자료 변환을 먼저 하세요 (이미 낸 지급이 다시 들어갈 수 있음)"
-                       % (when.strftime("%m-%d %H:%M"), ", ".join(waiting[:3]) + (" 외 %d개" % (len(waiting) - 3) if len(waiting) > 3 else "")))
+    if when is not None:   # ③④: 보고와 같은 판단 (gate.unconverted). 보고 쪽에서 이미 막은 줄은 다시 적지 않는다
+        for msg in gate.unconverted(input_dir, collect_dir, downloads, "이미 낸 지급이 다시 들어갈 수 있음"):
+            if not any(msg.split(" — ")[0] == o.split(" — ")[0] for o in out):
+                out.append(msg)
+        # 2차 전수조사 P19: 인트라넷 새 자료도 같은 확인에 (예전엔 분개장·자금계획 이름만 봤다)
+        root = os.path.dirname(os.path.abspath(collect_dir)) if collect_dir else None
+        out.extend(gate.unconverted_intranet(input_dir, root))
     return out
 
 
@@ -583,11 +566,16 @@ def _log(input_dir, when, start, end, rows, path, gate_text, reason):
                         os.path.basename(path), gate_text, reason or ""])
 
 
-def repeats(log_rows, rows, now, days=REPEAT_DAYS):
-    """이번 줄 중 최근 days 안에 만든 이체 파일에 같은 계좌·금액으로 이미 담긴 것 -> [(줄, 예전 만든시각, 예전 파일)]."""
+def repeats(log_rows, rows, now, days=REPEAT_DAYS, replaced=()):
+    """이번 줄 중 최근 days 안에 만든 이체 파일에 같은 계좌·금액으로 이미 담긴 것 -> [(줄, 예전 만든시각, 예전 파일)].
+    replaced: 이번 흐름(계좌·예금주별 금액 창에서 이어서 다시 만들기)에서 방금 만들어 이번 파일로 바꾸는 파일 이름 — 세지 않는다
+    (사용자 2026-11-20: 창에서 다시 만들 때마다 앞 파일의 모든 줄이 '중복 의심'으로 빨갛게 떴다)."""
     out = []
+    replaced = set(replaced or ())
     for r in rows:
         for x in log_rows:
+            if (x.get("파일") or "") in replaced:
+                continue
             try:
                 t = dt.datetime.strptime(x.get("만든시각") or "", "%Y-%m-%d %H:%M:%S")
             except ValueError:
@@ -609,7 +597,7 @@ def _log_writable(input_dir):
 
 
 def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, splits=None, multi=None,
-              collect_dir=None, override=None, result=None, now=None, downloads=None):
+              collect_dir=None, override=None, result=None, now=None, downloads=None, replaced=None):
     """[start, end] 거래처 지급으로 이체 파일을 만든다. -> 만든 파일 경로 또는 None.
     missing(list)을 주면 계좌가 없어 못 넣은 거래처를 채운다 (창이 그 자리에서 계좌를 받게).
     splits·multi: 예금주가 다른 계좌가 여럿인 거래처의 사람별 금액 (build 참고).
@@ -652,6 +640,17 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         start.isoformat(), end.isoformat(), len(rows), "{:,}".format(sum(int(r[3]) for r in rows)), len(blocked), skipped))
     for vendor, amount, why in blocked:
         say("  못 넣음: %s %s — %s" % (vendor, "금액 미확인" if amount is None else "{:,}원".format(amount), why))
+    # 2차 전수조사 P20 (2026-11-18): 이체 기간은 기준일 다음 날부터라, 기준일 당일 날짜의 지급 예정(장부에 아직 지급 전표 없음)은
+    # 파일·출금 목록 어디에도 없었다 → 넣지는 않고(이미 보냈을 수 있음) 따로 알린다
+    day0 = R["asof"]
+    if day0 < start:
+        r0, b0, _ = build(R["events"], accounts, day0, day0, splits, None, {})
+        n0 = len(r0) + len(b0)
+        if n0:
+            amt0 = sum(int(r[3]) for r in r0) + sum(a or 0 for _, a, _ in b0)
+            result["same_day"] = (n0, amt0)
+            say("[확인] 기준일 당일(%s) 날짜의 지급 예정 %d건 %s원은 이 파일에 없습니다 (장부에 지급 전표가 아직 없음) — "
+                "아직 보내지 않았으면 기간 시작을 %s 로 바꿔 다시 만드세요" % (day0.isoformat(), n0, "{:,}".format(amt0), day0.isoformat()))
     for vendor, amount, why in info.get("regular") or []:   # 2차 C2·P5-8: 무엇을 뺐는지 이름으로
         say("  정기 지급이라 뺌: %s %s — %s" % (vendor or "(거래처 없음)", "금액 미확인" if amount is None else "{:,}원".format(amount), why))
     for vendor, word in sorted(set(info.get("hints") or [])):
@@ -666,7 +665,9 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
         result["log_failed"] = True
         say("이체 파일을 만들지 않음 — 입력\\%s 에 기록을 남기지 못함 (%s). 그 파일을 엑셀 등에서 닫고 다시 만드세요" % (LOG_FILE, why))
         return None
-    again = repeats(read_log(input_dir), rows, now)
+    # replaced: 이번 흐름에서 방금 만든 같은 기간 파일 (아래 _put_away 로 지난이체파일에 옮겨지는 것만)
+    current = set(_period_files(output_dir, start, end))
+    again = repeats(read_log(input_dir), rows, now, replaced=[f for f in (replaced or ()) if f in current])
     for r, when, fname in again:
         say("[주의] %s %s원 — %s에 만든 이체 파일(%s)에 같은 계좌·금액이 이미 있습니다. 두 번 보내지 않게 확인하세요"
             % (r[2], "{:,}".format(int(r[3])), when, fname))
@@ -692,7 +693,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
 
 
 def account_choices(input_dir):
-    """창 ⑦ 거래처 고르기 목록 -> [(보이는 글, 코드, 이름, [계좌 줄...])]. 코드마다 한 줄, 이름 순."""
+    """창 ‘가끔 넣는 값 › 거래처 계좌’ 거래처 고르기 목록 -> [(보이는 글, 코드, 이름, [계좌 줄...])]. 코드마다 한 줄, 이름 순."""
     rows, problem = _read_rows(input_dir)
     if problem:
         return []

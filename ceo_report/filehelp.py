@@ -18,6 +18,9 @@ from .util import open_text as _open_text  # UTF-8·CP949 모두 읽음 (C5)
 CARD = re.compile(r"^[^\s_]+_\d{4}$")
 ASSET = ("206", "207", "208", "209", "210", "212", "213")
 NONDEDUCT = ("접대비", "기업업무추진비")
+# 2차 전수조사 V3 (2026-11-18): 설명은 '접대비·승용차 매입세액은 공제 못 받는 후보'인데 계산은 접대비만 뺐음.
+# 승용차 관련 = 차량유지비(522·822)·차량운반구(208) 계정 (부가가치세법 39조 1항 5호: 비영업용 소형승용차 구입·임차·유지)
+CAR_CODES = ("208", "522", "822")
 
 # 위하고에서 신고할 때 순서 (2026-11-12 일반 안내 — 메뉴 이름은 PC 화면 확인 뒤 고침)
 WEHAGO_STEPS = {
@@ -58,11 +61,13 @@ def vat(journal, start, end):
         slips.setdefault((s, d, ln.get("no")), []).append(ln)
     box = collections.defaultdict(lambda: [0, 0, 0])   # 칸 -> [공급가액, 세액, 장수]
     check = []
+    cars = [0, 0]   # 승용차 관련 매입: 장수, 세액
     for (s, d, no), lines in slips.items():
         codes = [_sq(x.get("account_code")) for x in lines]
         if s == "매출전표":
             vat_ = sum((x.get("credit") or 0) - (x.get("debit") or 0) for x in lines if _sq(x.get("account_code")) == "25500")
-            sup = sum((x.get("credit") or 0) for x in lines if _sq(x.get("account_code")).startswith("4"))
+            # V7: 공급가액도 세액처럼 대변 − 차변 (취소·수정 세금계산서가 있는 분기에 공급가액과 세액이 안 맞았음)
+            sup = sum((x.get("credit") or 0) - (x.get("debit") or 0) for x in lines if _sq(x.get("account_code")).startswith("4"))
             # 카드 매출: 카드사 거래처 차변 또는 같은 전표의 카드 수수료(지급수수료 비용) 차변 (수입수수료미수금은 매출채권이라 아님)
             card = any(CARD.match(_sq(x.get("vendor"))) or "카드" in _sq(x.get("vendor")) for x in lines if x.get("debit")) or \
                 any(_sq(x.get("account")).startswith("지급수수료") and x.get("debit") for x in lines)
@@ -73,24 +78,33 @@ def vat(journal, start, end):
                 k = "3" if card else "1"
         else:
             vat_ = sum((x.get("debit") or 0) - (x.get("credit") or 0) for x in lines if _sq(x.get("account_code")) == "13500")
-            sup = sum((x.get("debit") or 0) for x in lines if _sq(x.get("account_code")) != "13500")
+            sup = sum((x.get("debit") or 0) - (x.get("credit") or 0) for x in lines
+                      if _sq(x.get("account_code")) != "13500" and (x.get("debit") or _sq(x.get("account_code"))[:1] in ("5", "8")))
             card = any(CARD.match(_sq(x.get("vendor"))) for x in lines if x.get("credit"))
             asset = any(c[:3] in ASSET for c in codes)
             if not vat_:
                 check.append("%s 매입 %s원 부가세 0원 — 계산서(면세) 또는 공제 안 되는 매입" % (d.isoformat(), format(sup, ",")))
                 continue
             k = ("14" if card else "10") + ("고정" if asset else "")
-            if any(w in _sq(x.get("account")) for x in lines for w in NONDEDUCT):
+            ent = any(w in _sq(x.get("account")) for x in lines for w in NONDEDUCT)
+            car = any(c[:3] in CAR_CODES for c in codes)
+            if ent or car:
                 box["16"][0] += sup
                 box["16"][1] += vat_
                 box["16"][2] += 1
+                if car and not ent:
+                    cars[0] += 1
+                    cars[1] += vat_
         box[k][0] += sup
         box[k][1] += vat_
         box[k][2] += 1
     names = [("1", "세금계산서 발급분 (매출)"), ("3", "신용카드·현금영수증 발행분 (매출)"), ("5", "영세율·면세 (확인 필요)"),
              ("10", "세금계산서 수취분 — 일반 매입"), ("10고정", "세금계산서 수취분 — 고정자산 (칸 11)"),
              ("14", "그 밖의 공제 — 신용카드 수취분 일반 (칸 14, 명세서 41)"), ("14고정", "그 밖의 공제 — 신용카드 수취분 고정자산 (명세서 42)"),
-             ("16", "공제받지 못할 매입세액 후보 (접대비 관련, 확인 필요)")]
+             ("16", "공제받지 못할 매입세액 후보 (접대비·승용차 관련, 확인 필요)")]
+    if cars[0]:
+        check.append("차량유지비·차량운반구 매입 %d장의 매입세액 %s원을 공제 못 받는 것으로 계산 — 화물차·경차·9인승 이상이면 공제되므로 확인"
+                     % (cars[0], format(cars[1], ",")))
     box_no = {"10고정": "11", "14고정": "14"}   # 고정자산 매입은 신고서 칸 11 (2026-11-14 코덱스 검토: 10으로 나갔음)
     rows = [(box_no.get(k, k), n, box[k][0], box[k][1], "%d장" % box[k][2]) for k, n in names if box[k][2]]
     out_tax = box["1"][1] + box["3"][1]
@@ -107,21 +121,52 @@ def withholding(journal, start, end):
             continue
         memo, vendor = _sq(ln.get("memo")), _sq(ln.get("vendor"))
         kind = "A25" if "사업소득" in memo else ("A42" if "기타소득" in memo else ("A01" if "급여" in memo else None))
-        if kind is None or "기타예수금" in memo:
+        if "기타예수금" in memo:
             continue
-        if "세무서" in vendor:
-            s[kind][0] += ln["credit"]
-        elif any(w in vendor for w in ("구청", "시청", "군청")):
-            s[kind][1] += ln["credit"]
-    names = {"A01": "근로소득 간이세액", "A25": "사업소득 매월징수", "A42": "기타소득"}
-    return [(k, names[k], s[k][0], s[k][1]) for k in ("A01", "A25", "A42") if s[k][0] or s[k][1]]
+        col = 0 if "세무서" in vendor else (1 if any(w in vendor for w in ("구청", "시청", "군청")) else None)
+        if col is None:
+            continue
+        # 2차 전수조사 V6: 적요가 다르게 적혀 근로·사업·기타로 못 나눈 세액은 통째로 빠지고 표시도 없었음 → '?' 줄로 보인다
+        s[kind or "?"][col] += ln["credit"]
+    names = {"A01": "근로소득 간이세액", "A25": "사업소득 매월징수", "A42": "기타소득",
+             "?": "적요로 나누지 못한 예수금 (세무서·구청 앞) — 위 칸에 안 들어감, 어느 소득인지 확인"}
+    return [(k, names[k], s[k][0], s[k][1]) for k in ("A01", "A25", "A42", "?") if s[k][0] or s[k][1]]
+
+
+def half_of(asof):
+    """원천세 도우미 기간: 1월·7월에는 방금 끝난 반기(그 달 10일이 신고 기한), 그 밖에는 지금 반기.
+    2차 전수조사 V8: 7월에 만들면 상반기가 아니라 하반기로 잡혔음 (1월만 지난 반기였음)."""
+    if asof.month == 1:
+        return dt.date(asof.year - 1, 7, 1), dt.date(asof.year - 1, 12, 31)
+    if asof.month <= 6 or asof.month == 7:
+        return dt.date(asof.year, 1, 1), dt.date(asof.year, 6, 30)
+    return dt.date(asof.year, 7, 1), dt.date(asof.year, 12, 31)
+
+
+def screen_totals(wehago_dir, start, end):
+    """위하고 원천징수부·사업소득·기타소득 조회 화면의 그 기간 합계(소득세+지방소득세) -> {"근로","사업","기타"} 또는 None."""
+    if not wehago_dir:
+        return None
+    try:
+        from . import screen_tax, wehago_raw
+        T = screen_tax.income_tax(wehago_raw.files(wehago_dir))
+    except Exception:
+        return None
+    out = dict((k, 0) for k in screen_tax.KINDS)
+    hit = False
+    for (y, m), v in T.items():
+        if start <= dt.date(y, m, 1) <= end:
+            hit = True
+            for k in out:
+                out[k] += v.get(k, 0)
+    return out if hit else None
 
 
 FILE = "신고도우미.csv"
 COLUMNS = ["신고", "기간", "기한", "칸", "이름", "공급가액", "세액", "지방소득세", "근거"]
 
 
-def build_table(books, cfg, asof, input_dir=None):
+def build_table(books, cfg, asof, input_dir=None, wehago_dir=None):
     """변환 때 장부로 신고 도우미 숫자를 만든다 (보고서는 이 파일만 읽음)."""
     from .convert import Table
     from . import filing
@@ -137,16 +182,23 @@ def build_table(books, cfg, asof, input_dir=None):
     rows.append(["부가세", per, dd, "=", "납부(환급) 세액 = 매출세액 %s − 매입세액 %s" % (format(V["out"], ","), format(V["in"], ",")), "", V["pay"], "", ""])
     for c in V["check"]:
         rows.append(["부가세", per, dd, "확인", c, "", "", "", ""])
-    if asof.month == 1:
-        ws, we = dt.date(asof.year - 1, 7, 1), dt.date(asof.year - 1, 12, 31)
-    elif asof.month <= 6:
-        ws, we = dt.date(asof.year, 1, 1), dt.date(asof.year, 6, 30)
-    else:
-        ws, we = dt.date(asof.year, 7, 1), dt.date(asof.year, 12, 31)
+    ws, we = half_of(asof)
     wd = filing._workday(dt.date(we.year + (we.month == 12), 1 if we.month == 12 else 7, 10)).isoformat()
-    for k, n, a, b in withholding(J, ws, we):
-        rows.append(["원천세", "%s~%s" % (ws.isoformat(), we.isoformat()), wd, k, n, ("약 %d" % int(a / 0.03)) if k == "A25" else "", a, b,
+    wper = "%s~%s" % (ws.isoformat(), we.isoformat())
+    WH = withholding(J, ws, we)
+    for k, n, a, b in WH:
+        rows.append(["원천세", wper, wd, k, n, ("약 %d" % int(a / 0.03)) if k == "A25" else "", a, b,
                      "예수금 적요 기준 (반기 납부면 이 기간 전체)"])
+    # V6: 받은 위하고 화면 값과 맞춰 본다 (화면은 근로=귀속월, 사업·기타=지급월이라 달 경계에서 조금 다를 수 있음)
+    scr = screen_totals(wehago_dir, ws, we)
+    if scr is not None and WH:
+        book = dict((k, a + b) for k, _, a, b in WH)
+        for code, kind in (("A01", "근로"), ("A25", "사업"), ("A42", "기타")):
+            bv, sv = book.get(code, 0), scr.get(kind, 0)
+            if bv or sv:
+                rows.append(["원천세", wper, wd, "대조", "%s: 위하고 화면 %s원 · 장부 예수금 %s원 (소득세+지방소득세)%s"
+                             % (kind, format(sv, ","), format(bv, ","), "" if sv == bv else " — 차이 %s원 (화면은 근로=귀속 달, 사업·기타=지급 달 기준이라 달 경계에서 다를 수 있음 · 신고 전에 위하고 신고서 숫자와 확인)" % format(sv - bv, ",")),
+                             "", "", "", "위하고 원천징수부·사업소득·기타소득 조회"])
     out = [dict(zip(COLUMNS, [str(x) for x in r])) for r in rows]
     return Table(FILE, COLUMNS, out, notes=["신고 도우미: 부가세 %s 납부 예상 %s원, 원천세 칸 %d줄" % (name, format(V["pay"], ","), sum(1 for r in rows if r[0] == "원천세"))])
 
@@ -161,9 +213,17 @@ def load(input_dir):
         return list(csv.DictReader(f)) or None
 
 
-def render(rows, esc):
+def render(rows, esc, asof=None):
     if not rows:
         return ""
+
+    def due_text(t):
+        # 2차 전수조사 J17: 늘 '바로 앞 분기'만 보여 기한이 지난 신고가 이번 신고처럼 보였음 → 지났으면 '지난 신고'
+        try:
+            past = asof is not None and dt.date.fromisoformat((t or "").strip()) < asof
+        except ValueError:
+            past = False
+        return esc(t) + (" — 기한이 지난 신고 (다음 신고 숫자는 그 분기가 끝난 뒤 나옴)" if past else "")
     def W(t):
         t = (t or "").strip()
         try:
@@ -175,8 +235,8 @@ def render(rows, esc):
         R = [r for r in rows if r["신고"] == kind]
         if not R:
             continue
-        h.append("<div class='q'>%s · %s · 기한 %s</div>" % (esc(title), esc(R[0]["기간"]), esc(R[0]["기한"])))
-        main = [r for r in R if r["칸"] not in ("확인",)]
+        h.append("<div class='q'>%s · %s · 기한 %s</div>" % (esc(title), esc(R[0]["기간"]), due_text(R[0]["기한"])))
+        main = [r for r in R if r["칸"] not in ("확인", "대조")]
         if kind == "부가세":
             h.append("<table class='re'><tr><th>칸</th><th class='l'>이름</th><th>공급가액</th><th>세액</th><th class='l'>근거</th></tr>%s</table>"
                      % "".join("<tr><td>%s</td><td class='l'>%s</td><td>%s</td><td>%s</td><td class='l'>%s</td></tr>"
@@ -191,6 +251,9 @@ def render(rows, esc):
             h.append("<table class='re'><tr><th>코드</th><th class='l'>소득</th><th>인원</th><th>총지급액</th><th>소득세</th><th>지방소득세 (위택스)</th></tr>%s</table>"
                      % "".join("<tr><td>%s</td><td class='l'>%s</td><td>위하고 신고서</td><td>%s</td><td>%s</td><td>%s</td></tr>"
                                % (esc(r["칸"]), esc(r["이름"]), W(r["공급가액"]) or "위하고 신고서", W(r["세액"]), W(r["지방소득세"])) for r in main))
+            cmp_ = [r["이름"] for r in R if r["칸"] == "대조"]
+            if cmp_:
+                h.append("<div class='note'><b>위하고 화면과 맞춰 봄</b><br>%s</div>" % "<br>".join(esc(x) for x in cmp_))
             h.append(_steps("위하고에서 신고할 때 (원천세)", WEHAGO_STEPS["원천세"], esc))
     h.append(_steps("위하고에서 제출할 때 (간이지급명세서)", WEHAGO_STEPS["간이지급"], esc))
     # 2차 P4-17 (2026-11-15): 예전 안내는 '급여 자료가 들어오면 채운다'였지만 채우는 기능이 없었다 — 약속하지 않고 어디서 볼지 적는다

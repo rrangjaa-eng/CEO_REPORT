@@ -58,13 +58,11 @@ class Hiring(unittest.TestCase):
         pay.update(("2026-%02d" % m, ["대표", "a", "b", "c", "d"]) for m in range(1, 13))
         d = folder(pay)
         r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
-        self.assertEqual(r[1], "확인 필요")   # 2026 개편 1명당 금액 미확인 → 합계에 안 넣음
-        self.assertIn("세법 기준 확인", r[4])
-        from ceo_report import taxlaw
-        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000"}, "세무사")
-        r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
+        # 2026-11-17 법령 확인 (조특법 29조의8 개정 + 부칙 34조): 2026년 +2명은 새 규정 직전 해 대비 1명당 400만(수도권, 청년 외),
+        # 2025년 +2명(0명에서)은 옛 규정 850만을 2027년까지 → 800만 + 1,700만
         self.assertEqual(r[1], "해당")
-        self.assertEqual(r[2], 4 * 8_500_000)   # 2025년 +2명(첫해, 0명에서) + 2026년 +2명, 수도권 그 밖 850만
+        self.assertEqual(r[2], 2 * 4_000_000 + 2 * 8_500_000)
+        self.assertIn("부칙 34조", r[3])
 
     def test_young_and_officer_from_staff_file(self):
         pay = dict(("2025-%02d" % m, ["대표", "임원", "a", "b"]) for m in range(1, 13))
@@ -75,12 +73,15 @@ class Hiring(unittest.TestCase):
             w.writerow(["사원명", "생년월일", "임원"])
             w.writerows([["임원", "1970-01-01", "예"], ["a", "1980-01-01", ""], ["b", "1980-01-01", ""],
                          ["c", "2000-01-01", ""], ["d", "1980-01-01", ""]])
-        from ceo_report import taxlaw
-        taxlaw.confirm(d, 2026, {"고용공제_수도권": "8,500,000", "고용공제_수도권청년": "14,500,000"}, "세무사")
         r = row(tb.check(d, 2026, YES, holders=["대표"]), "통합고용")
-        # 2025 +2명(a,b, 청년 0) · 2026 +2명(c 청년 26세, d) → 청년 1명 1,450만 + 3명 850만
-        self.assertEqual(r[2], 14_500_000 + 3 * 8_500_000)
-        self.assertIn("청년·60세 이상 늘어난 1.0명", r[3])
+        # 2026 +2명(c 청년 26세, d): 청년 등 1명 700만 + 그 외 1명 400만 (새 규정) · 2025 +2명(a,b) 옛 규정 850만씩
+        self.assertEqual(r[2], 7_000_000 + 4_000_000 + 2 * 8_500_000)
+        self.assertIn("청년 등 직전 해 대비 1.0명", r[3])
+
+    def test_tiers_2027(self):
+        from ceo_report.taxbreak import _tier_incs
+        # 2025 2명 → 2026 4명 → 2027 5명: 직전 대비 +1, 전전(2025) 대비 min(5,4)−2 = +2, 전전전(2024)은 비교 안 함
+        self.assertEqual(_tier_incs({2025: 2.0, 2026: 4.0, 2027: 5.0}, 2027), [1.0, 2.0, 0.0])
 
     def test_prev_year_unknown(self):
         pay = dict(("2026-%02d" % m, ["a"]) for m in range(1, 11))
@@ -101,3 +102,92 @@ class Hiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullReview1117(unittest.TestCase):
+    """2026-11-17 사용자: 법인세 감면·공제를 모두 최신 법령 기준으로 찾아 적용할 게 있는지 검토 (보여 주기만). 숫자는 모두 가짜."""
+
+    def _write(self, d, name, head, rows):
+        with open(os.path.join(d, name), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(head)
+            w.writerows(rows)
+
+    def test_missing_year_from_wehago_pay_screen_and_owner_only_month_is_zero(self):
+        d = folder(dict(("2026-%02d" % m, ["대표", "a", "b", "c"]) for m in range(1, 11)))
+        rows = [["2025-02", "대표", "지급", "지급합계", "100"], ["2025-03", "대표", "지급", "지급합계", "100"]]
+        rows += [["2025-%02d" % m, n, "지급", "지급합계", "100"] for m in range(4, 13) for n in ("대표", "a", "b")]
+        self._write(d, "급여명세.csv", ["연월", "사원명", "구분", "항목", "금액"], rows)
+        hc = tb.headcount(d, ["대표"])
+        self.assertAlmostEqual(hc[2025][0], 18 / 11.0)   # 2~3월 0명 + 4~12월 2명 = 18 ÷ 11달
+        self.assertEqual(hc[2026], (3.0, 10))            # 올해는 장부 사원급여 그대로
+
+    def test_training_cost_and_pay_based_rows(self):
+        d = folder({})
+        self._write(d, "계정별비용.csv", ["연월", "구분", "계정코드", "계정과목", "금액"],
+                    [["2026-03", "판매비와관리비", "82500", "교육훈련비(판)", "400000"]])
+        pay = [["2025-%02d" % m, "a", "지급", "지급합계", "1000"] for m in range(1, 13)]
+        pay += [["2026-%02d" % m, "a", "지급", "지급합계", "1200"] for m in range(1, 11)]
+        self._write(d, "급여명세.csv", ["연월", "사원명", "구분", "항목", "금액"], pay)
+        T = tb.check(d, 2026, YES)
+        r = row(T, "인력개발비")
+        self.assertEqual(r[1:3], ("확인 필요", 100_000))
+        self.assertIn("최저한세 안 걸림", r[5])
+        self.assertEqual(row(T, "고용유지")[1], "해당 없음")        # 1인당 급여가 늘었음
+        self.assertEqual(row(T, "근로소득을 늘린")[1], "해당 없음")  # 2025 창업 → 직전 3년 증가율 2029년부터, 법 기한 2028
+        self.assertEqual(row(T, "영상콘텐츠")[1], "해당 없음")
+        self.assertEqual(T["total"], tb.check(folder({}), 2026, YES)["total"])   # 새 후보는 합계(배당 판단)를 바꾸지 않음
+        names = [x[0] for x in T["rows"]]
+        for want in ("상생결제", "상생협력 출연금", "성과공유", "전자신고", "외국납부", "재해손실", "중소기업 사회보험료", "고용을 늘린 기업"):
+            self.assertTrue(any(n.startswith(want) for n in names), want)
+
+    def test_deadline_read_from_downloaded_article(self):
+        import json
+        d = folder({})
+        items = {"조세특례제한법 30조의3": {"text": "① 고용유지중소기업은 … 2025년 12월 31일이 속하는 과세연도까지 공제한다.",
+                                         "시행일자": "20260918", "seen": "2026-11-17", "keys": []}}
+        with open(os.path.join(d, "세법조문.json"), "w", encoding="utf-8") as f:
+            json.dump({"oc": "", "items": items}, f, ensure_ascii=False)
+        r = row(tb.check(d, 2026, YES), "고용유지")
+        self.assertEqual(r[1], "해당 없음")
+        self.assertIn("법 기한(2025년)이 지남", r[3])
+        self.assertIn("시행 2026-09-18", r[5])
+
+    def test_agent_filing_means_no_e_filing_credit(self):
+        rows = tb.review_more(folder({}), 2026, YES, {"조정": "외부 (세무법인)"})
+        r = [x for x in rows if x[0] == "전자신고 세액공제"][0]
+        self.assertEqual(r[1], "해당 없음")
+
+    def test_render_has_law_column(self):
+        h = tb.render(tb.check(folder({}), 2026, YES), lambda x: x)
+        self.assertIn("근거 조문", h)
+        self.assertIn("조특법 10조", h)
+        self.assertIn("세금 계산", h)
+
+
+class ResearchDeclined1117(unittest.TestCase):
+    def test_company_decided_not_to_claim(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 연구공제="안 받음"))
+        r = row(T, "연구·인력개발비")
+        self.assertEqual(r[1], "해당 없음")
+        self.assertIn("회사가 공제를 받지 않기로", r[3])
+        self.assertEqual(row(tb.check(folder({}), 2026, dict(YES, 연구전담="예")), "연구·인력개발비")[1], "확인 필요")
+
+
+class EasyWords1117(unittest.TestCase):
+    def test_every_candidate_has_plain_explanation(self):
+        T = tb.check(folder({}), 2026, dict(YES, 연구전담="예", 벤처="예"))
+        for r in T["rows"]:
+            self.assertIsNotNone(tb.easy(r[0], 2026), r[0])
+        h = tb.render(T, lambda x: x)
+        self.assertIn("받는 조건:", h)
+        self.assertIn("직원 수가 늘면", h)
+
+
+class OnlyCheckedGoIn1117(unittest.TestCase):
+    """사용자 2026-11-17: 공제·감면은 자동으로 넣지 말고 경영관리가 확인·체크('받음')한 것만 세금 계산에."""
+
+    def test_default_nothing_then_checked_only(self):
+        self.assertEqual(tb.chosen({}, "통합고용세액공제", "해당", 1_000_000)[0], False)
+        self.assertEqual(tb.chosen({"반영_고용": "받음"}, "통합고용세액공제", "확인 필요", 1_000_000)[0], True)
+        self.assertEqual(tb.chosen({"반영_교육훈련": "받음"}, "통합고용세액공제", "해당", 1_000_000)[0], False)

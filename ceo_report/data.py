@@ -57,6 +57,7 @@ BOOK_NOTE_KEYS = ["알림"]
 
 # 변환.py 가 분개장으로 만드는 세금 납부 예상 (사용자 2026-11-03). 없으면 세금 예상은 일정에 넣지 않는다.
 TAX_FILE = "세금예상.csv"
+INVOICE_OPTIONAL = ["거래처코드"]   # 계산서.csv 선택 칸 (E3, 2026-11-17): 매출 거래처코드 — 입금 습관·고객사별 이익을 코드로 묶음. 옛 파일은 빈칸
 SCHED_OPTIONAL = ["거래처코드"]   # 자금일정.csv 선택 칸 (2026-11-14): 없는 옛 파일도 그대로 읽는다. 새 파일·양식에는 넣는다
 TAX_KEYS = ["세목", "대상기간", "납부예정일", "금액", "상태"]
 
@@ -133,6 +134,7 @@ def _unusable(folder, fname, ok, lost):
 def load(folder):
     iss = Issues()
     d = Data()
+    d.input_dir = folder   # 2차 전수조사 P1: 보고가 '변환 뒤 새로 받은 자료'를 볼 수 있게 입력 폴더를 들고 다닌다
     d.issues = iss
     d.present = {}
     d.out_missing = []  # 지급 일정을 다 알 수 없게 만드는 파일: '자금일정.csv (파일 없음)' 꼴
@@ -211,6 +213,7 @@ def load(folder):
 
     # 자금일정 (프로젝트 밖 지급, 기타 입금)
     d.schedule = []
+    d.sched_dropped = []
     for r in raw["자금일정.csv"]:
         io = r.get("입출금", "")
         s = {"date": date(r.get("예정일"), iss, r, "예정일"), "io": "지급" if io == "출금" else io,  # '출금'도 지급으로 읽는다
@@ -220,6 +223,7 @@ def load(folder):
              "vendor_code": (r.get("거래처코드") or "").strip(),
              "basis": r.get("근거", ""), "memo": r.get("비고", ""), "source": "자금일정", "row": r}
         if not _check(iss, r, "입출금", s["io"], ["입금", "지급"]):
+            d.sched_dropped.append((r["_line"], r.get("입출금", ""), s["amount"]))   # 2차 전수조사 P13: 빠진 줄을 맨 위 경고로
             continue
         if s["io"] == "지급":
             s["amount"] = _outflow(iss, r, "금액", s["amount"])
@@ -336,6 +340,10 @@ def load(folder):
         setattr(d, attr, got or [])
     from .targets import read as read_targets   # 팀별 연간 목표 (사용자 2026-11-03)
     d.team_targets = read_targets(folder)
+    from .targets import problem as _target_problem   # 2차 전수조사 P6: 못 읽었으면 말없이 넘어가지 않는다
+    d.targets_problem = _target_problem(folder)
+    if d.targets_problem:
+        iss.add("팀목표.csv", "-", d.targets_problem)
     from .corptax import read as read_dep   # 연간 감가상각비 직접 입력 (사용자 2026-11-04: 법인세 예상)
     d.dep_manual = read_dep(folder)
     from .budget import read_confirmed   # 확정한 예산 (사용자 2026-11-10: 월간 보고 '예산 대비'). 없으면 {}
@@ -363,7 +371,15 @@ def load(folder):
                               # 법인세 줄만 (2026-11-04): 과세표준·산출세액·기납부(중간예납 등 선납세금)
                               "base": num(r.get("과세표준"), iss, r, "과세표준") if (r.get("과세표준") or "").strip() else None,
                               "calc": num(r.get("산출세액"), iss, r, "산출세액") if (r.get("산출세액") or "").strip() else None,
-                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None})
+                              "prepaid": num(r.get("기납부"), iss, r, "기납부") if (r.get("기납부") or "").strip() else None,
+                              # N2 (2026-11-17 밤): 예산 법인세도 월간과 같은 과세표준으로 — 대손충당금·세무조정 칸도 읽는다
+                              "bad_debt": num(r.get("대손충당금"), iss, r, "대손충당금") if (r.get("대손충당금") or "").strip() else None,
+                              "adj": num(r.get("세무조정"), iss, r, "세무조정") if (r.get("세무조정") or "").strip() else None,
+                              # A4 (2026-11-17): 분납할 몫 (회사 선택, 법인세 줄만). 금액 칸은 전체, 자금 일정만 둘로 나눈다
+                              "inst": num(r.get("분납"), iss, r, "분납") if (r.get("분납") or "").strip() else None,
+                              # 2차 전수조사 P3 (2026-11-18): 감가상각비 예상도 숫자 칸으로 (근거 글에서 뽑지 않음)
+                              "dep": num(r.get("감가상각"), iss, r, "감가상각") if (r.get("감가상각") or "").strip() else None,
+                              "base_ye": num(r.get("연말과세표준"), iss, r, "연말과세표준") if (r.get("연말과세표준") or "").strip() else None})
 
     # 장부 채무 (변환.py 장부채무.csv, 2026-11-04 점검 A1·A2): 없으면 None
     from .debts import load as load_debts
@@ -462,6 +478,7 @@ def load(folder):
     d.invoices = []
     for r in raw["계산서.csv"]:
         v = {"project": r.get("프로젝트번호", ""), "client": r.get("거래처", ""),
+             "client_code": (r.get("거래처코드") or "").strip().lstrip("0"),
              "date": date(r.get("발행일"), iss, r, "발행일"), "kind": r.get("구분", "") or "발행",
              "supply": num(r.get("공급가액"), iss, r, "공급가액"), "vat": num(r.get("부가세"), iss, r, "부가세"),
              "due": date(r.get("입금예정일"), iss, r, "입금예정일"), "due_firm": r.get("예정일확정", "") in ("Y", "확정"),

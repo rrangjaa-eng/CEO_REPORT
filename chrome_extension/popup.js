@@ -41,6 +41,11 @@ async function run(btn, msgId, label, message) {
   clearInterval(timer);
   $("books").disabled = $("all").disabled = $("journal").disabled = $("plan").disabled = $("closing").disabled = $("hr").disabled = $("ye").disabled = false;
   await show();
+  // 편의성 43 (2026-11-17): 끝나도 '…받는 중…'이 남던 것 → 끝난 시각 또는 '일부 못 받음'
+  if ($(msgId).textContent === label) {
+    const now = new Date().toTimeString().slice(0, 5);
+    $(msgId).textContent = (r && r.error) ? `일부 못 받음 (${now}) — 다시 받기를 누르세요` : `받기 끝 (${now})`;
+  }
   if (r && r.parts) for (const [k, p] of Object.entries(r.parts)) if (p && p.same) $(msgId).innerHTML += `<br>${k}: 바뀐 것 없음`;
   if (r && r.same) $(msgId).innerHTML += "<br>바뀐 것 없음 — 새 파일 만들지 않음";
   if (r && r.error) $(msgId).innerHTML += `<br><span class="err">${r.error}</span>`;

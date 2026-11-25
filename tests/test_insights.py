@@ -157,6 +157,18 @@ class TestIssueDeadline(unittest.TestCase):
         X = insights.issue_deadline(_fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)]))
         self.assertTrue(X["late"])
         self.assertEqual(X["firm_short"][0], D(2026, 12, 1))
+        # 2차 전수조사 B3: 그 기한(10/2)에는 행사(11/2)가 끝나지 않았다 → '발행했어야'라고 하지 않는다
+        self.assertEqual(X["could"], (0, 0))
+        h = insights_render.ceo_issue(X)
+        self.assertNotIn("발행했어야", h)
+        self.assertIn("그때는 행사가 끝나지 않았습니다", h)
+
+    def test_late_and_event_was_over_by_the_deadline(self):
+        ev = [{"date": D(2026, 12, 1), "io": "out", "amount": 50, "firm": True}]
+        R = _fake_R(D(2026, 11, 12), 120, 100, ev, [("a", 1000000)])
+        R["s5"]["event_unissued"]["rows"][0].update(event=D(2026, 9, 20), days=53)
+        X = insights.issue_deadline(R)
+        self.assertEqual(X["could"], (1, 1100000))
         self.assertIn("발행했어야", insights_render.ceo_issue(X))
 
     def test_no_short_one_line(self):
