@@ -730,23 +730,24 @@ body.rd .wrap{font-family:"Noto Sans KR","Malgun Gothic","맑은 고딕","Apple 
 .rd table.pt.wo small.dt{display:inline!important;color:#556070!important;font-size:11.5px!important}
 .rd table.pt.wo small.dt::before{content:" · "}
 .rd #avail{table-layout:fixed}
-.rd #avail th{position:relative;text-align:center!important;padding:5px 8px 22px!important;border-left:1px solid #D9DDE3}
+.rd #avail th{position:relative;text-align:center!important;padding:5px 6px 22px!important;border-left:1px solid #D9DDE3}
 .rd #avail th:first-child{text-align:left!important;border-left:0;width:17%;padding-bottom:5px!important;vertical-align:middle}
 .rd #avail th:nth-child(n+2)::before,.rd #avail th:nth-child(n+2)::after{position:absolute;bottom:4px;font-size:11px;font-weight:400;color:#3A4452;text-align:right;white-space:nowrap}
-.rd #avail th:nth-child(n+2)::after{right:8px;width:96px;content:"예상 (별도)"}
-.rd #avail th:nth-child(n+2)::before{right:112px;content:"확정"}
+.rd #avail th:nth-child(n+2)::after{right:6px;width:88px;content:"예상 (별도)"}
+.rd #avail th:nth-child(n+2)::before{right:100px;content:"확정"}
 .rd #avail th:nth-child(3)::before{content:"확정·정기"}
 .rd #avail th.av::before{content:"확정 기준"}
 .rd #avail th.av::after{content:"예상까지 넣으면"}
-.rd #avail td{white-space:nowrap;text-align:right}
-.rd #avail td:first-child{text-align:left}
-.rd #avail td:first-child small{display:inline!important;margin-left:6px;color:#556070!important;font-size:11px!important;font-weight:400}
-.rd #avail td small.firm{display:inline-block!important;width:96px;margin-left:8px;text-align:right;color:#556070!important;font-size:11.5px!important;font-weight:400}
+/* 가로 스크롤 없게 (사용자 2026-11-25): 칸 너비는 표 안에서만 정하고, 글꼴이 넓어 한 줄에 안 들어가면 '예상' 숫자가 아랫줄로 내려간다 (숫자 안에서는 안 끊김) */
+.rd #avail td{white-space:normal;overflow-wrap:normal;word-break:keep-all;text-align:right;padding-left:6px!important;padding-right:6px!important}
+.rd #avail td:first-child{text-align:left}.rd #avail td:first-child b{white-space:nowrap}
+.rd #avail td:first-child small{display:inline-block!important;white-space:nowrap;margin-left:6px;color:#556070!important;font-size:11px!important;font-weight:400}
+.rd #avail td small.firm{display:inline-block!important;white-space:nowrap;width:88px;margin-left:6px;text-align:right;color:#556070!important;font-size:11.5px!important;font-weight:400}
 .rd #avail td small.firm.neg{color:#C0392B!important}
 .rd #avail td small.firm[data-v]{font-size:0!important}
 .rd #avail td small.firm[data-v]::after{content:attr(data-v);font-size:11.5px}
 .rd #avail td small.na{display:block!important}
-.rd #avail td:nth-child(n+2):not(:has(small.firm))::after{content:"-";display:inline-block;width:96px;margin-left:8px;text-align:right;color:#556070;font-weight:400;font-size:11.5px}
+.rd #avail td:nth-child(n+2):not(:has(small.firm))::after{content:"-";display:inline-block;width:88px;margin-left:6px;text-align:right;color:#556070;font-weight:400;font-size:11.5px}
 .rd #avail tbody td.vin,.rd #avail tbody td.vout{font-size:12.5px!important;font-weight:400!important}
 .rd #avail td.av b,.rd .fs #avail td.av b{font-size:14.5px!important;color:#17202B!important}
 .rd #avail td.av b.neg,.rd #avail .neg{color:#C0392B!important}
@@ -793,7 +794,7 @@ body.rd .wrap{font-family:"Noto Sans KR","Malgun Gothic","맑은 고딕","Apple 
 .rd .doc-h:has(table.sign){padding-right:0;min-height:0}.rd table.sign{position:static;margin:0 0 8px!important}
 .rd .four.top,.rd .four:not(.top),.rd .flow,.rd .exprow{flex-wrap:wrap!important}.rd .four>*{flex:1 1 40%}.rd .flow>div:not(.op),.rd .exprow .exp-c{flex:1 1 100%}
 .rd .q{flex-wrap:wrap}.rd .q .qr{white-space:normal}
-.rd #avail{table-layout:auto;width:max-content;min-width:100%}}
+.rd #avail{table-layout:auto!important;width:100%!important;min-width:0!important}.rd #avail td{white-space:normal!important}}
 @media print{body.rd .wrap{font-size:12px}
 .rd .q{margin:14px 0 8px!important;font-size:16px!important}
 .rd table.pt td{padding:5px 8px!important}
