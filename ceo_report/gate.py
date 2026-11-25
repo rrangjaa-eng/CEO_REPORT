@@ -343,7 +343,10 @@ def sources_line(R):
     fp = R.get("fundplan")
     if fp and fp.get("used"):
         months = fp.get("months") or []
-        parts.append("자금계획서 %s 받음%s" % (fp["stamp"].isoformat(), (" (%s~%s)" % (min(months), max(months))) if months else ""))
+        from .fundplan import old_note   # 2026-11-25: 지난 달만 예전 파일이면 '(2026-09은 11-19 자료)'
+        note = old_note(fp, ", ", "")
+        parts.append("자금계획서 %s 받음%s" % (fp["stamp"].isoformat(), (" (%s~%s%s)" % (min(months), max(months), note)) if months
+                                           else old_note(fp)))
     else:
         parts.append("자금계획서 미반영")
     return "사용한 자료: " + " · ".join(parts)

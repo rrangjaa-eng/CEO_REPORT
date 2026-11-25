@@ -316,7 +316,8 @@ def build(input_dir, output_dir, asof=None, now=None):
     if (R.get("s1") or {}).get("txn_cover"):
         meta += " · 통장(분개장) %s까지" % R["s1"]["txn_cover"].isoformat()
     if fp.get("stamp"):
-        meta += " · 자금계획서 %s 받음" % fp["stamp"].isoformat()
+        from .fundplan import old_note
+        meta += " · 자금계획서 %s 받음%s" % (fp["stamp"].isoformat(), old_note(fp))
     if hist:
         meta += " · 지난 현황 %s" % hist[-1].get("at", "")
     # 자동 분석 13가지 (사용자 2026-11-12) — 지난 현황 때 일정과 비교해 '바뀐 이유'

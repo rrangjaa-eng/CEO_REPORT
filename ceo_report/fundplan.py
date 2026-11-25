@@ -714,6 +714,31 @@ def _done_window(ev_day, done_day):
 SPLIT_MAX = 12   # 같은 날 같은 거래처 계산서 줄이 이보다 많으면 합이 맞는 묶음을 찾지 않는다 (경우의 수가 너무 많음)
 
 
+def split_stamps(plan, asof):
+    """자금계획 줄 -> (받은 날짜, [(지난 달, 그 달 자료일)]).
+    받은 날짜 = 기준일이 든 달과 그 뒤 달 줄 중 가장 오래된 자료일 (그런 줄이 없으면 전체 중 가장 오래된 자료일).
+    지난 달(기준일 달 앞) 중 그보다 오래된 파일에서 온 달은 따로 돌려준다 — 보고에 '(9월은 11/19 자료)'로 적는다."""
+    cur = "%d-%02d" % (asof.year, asof.month)
+    now = [p["stamp"] for p in plan if p["ym"] >= cur]
+    stamp = min(now) if now else min(p["stamp"] for p in plan)
+    old = {}
+    for p in plan:
+        if p["ym"] < cur and p["stamp"] < stamp:
+            old[p["ym"]] = min(old.get(p["ym"], p["stamp"]), p["stamp"])
+    return stamp, sorted(old.items())
+
+
+def old_note(info, head=" (", tail=")"):
+    """split_stamps 의 지난 달 -> ' (2026-09은 11-19 자료)' 또는 '' (head·tail 로 앞뒤 글을 바꾼다)."""
+    old = (info or {}).get("old_months") or []
+    if not old:
+        return ""
+    by = {}
+    for ym, st in old:
+        by.setdefault(st, []).append(ym)
+    return head + ", ".join("%s은 %s 자료" % ("·".join(ms), st.strftime("%m-%d")) for st, ms in sorted(by.items())) + tail
+
+
 def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None):
     """자금계획서 줄로 일정을 바꾼다 (D-55 '자금계획서 기준'). -> (새 일정 목록, 설명 dict 또는 None).
 
@@ -734,10 +759,13 @@ def apply(events, plan, asof, stale_days, problem="", cash_date=None, txns=None)
     from .wehago import norm_vendor, norm_code
     if not plan:
         return events, {"used": False, "reason": "자금계획.csv 에 줄이 없음 → 기존 일정 사용"}
-    stamp = min(p["stamp"] for p in plan)
+    # 2026-11-25 (사용자 결정 카드 '날짜 옆에 예전 달 표시'): 이번 달·앞으로 달이 새 파일이고 지난 달만 예전 파일에서 온 경우
+    # (예전 확장이 지난 1달만 받아 8·9월은 11/19 파일에만 있음), 받은 날짜·7일 검사는 이번 달 이후 줄의 날짜로 하고
+    # 예전 파일에서 온 지난 달은 날짜 옆에 따로 적는다. 이번 달 이후가 예전 파일이면 그 날짜가 그대로 기준(막힘)이다.
+    stamp, old = split_stamps(plan, asof)
     months = sorted(set(p["ym"] for p in plan))
-    info = {"used": False, "stamp": stamp, "months": months, "reason": "", "matched": [], "missing": [], "done": [],
-            "moved": [], "late_in": [], "added": []}
+    info = {"used": False, "stamp": stamp, "old_months": old, "months": months, "reason": "", "matched": [], "missing": [],
+            "done": [], "moved": [], "late_in": [], "added": []}
     if (asof - stamp).days > stale_days:
         info["reason"] = "자금계획서 자료일 %s이 기준일보다 %d일 이전 (허용 %d일) → 기존 일정 사용" % (
             stamp.isoformat(), (asof - stamp).days, stale_days)

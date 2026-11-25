@@ -7,6 +7,7 @@ import datetime as dt
 import re
 
 from .calc import compute
+from .fundplan import old_note
 from .screen_values import ceo_status
 from .util import Issues, is_blank, mask_rrn, num, setting_num, ssum, ssum_or_none, won
 from .util import date as parse_date
@@ -403,7 +404,7 @@ def _plan_notes(F, moved, absent):
     if not F.get("used"):
         return ["자금계획서 쓰지 않음: " + F["reason"]]
     lines = ["일정 기준: WEHAGO 자금계획서 (자료일 %s, %s). 지급요청 %d건은 자금계획서 지급예정일로 날짜를 맞춤"
-             % (F["stamp"].isoformat(), ", ".join(F["months"]), len(moved))]
+             % (F["stamp"].isoformat() + old_note(F, ", ", ""), ", ".join(F["months"]), len(moved))]
     if absent:
         lines.append("WEHAGO 자금계획서에 없는 지급요청 %s — 요청 날짜 그대로 일정에 둠 (WEHAGO 지급예정일 등록 확인)"
                      % _count_text(absent))
