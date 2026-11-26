@@ -168,6 +168,12 @@ def save_account(input_dir, code, name, bank, number, holder):
     if problem:
         raise ValueError(problem)
     same = lambda r: code_key(r["거래처코드"]) == code_key(code) and (not holder or r["예금주"] == holder)
+    if (bank or number) and not holder:
+        # 예금주 없이 저장 (사용자 2026-11-26: 필수 아님): 그 코드 계좌가 하나뿐이면 그것을 바꾸고, 여럿이면 예금주 없는 줄만 바꾼다
+        # (예전 뜻대로 '그 코드 전부'를 바꾸면 사업소득처럼 여러 사람 계좌가 한꺼번에 지워진다)
+        mine = [r for r in rows if code_key(r["거래처코드"]) == code_key(code) and r["계좌번호"]]
+        same = (lambda r: code_key(r["거래처코드"]) == code_key(code)) if len(mine) <= 1 else (
+            lambda r: code_key(r["거래처코드"]) == code_key(code) and not r["예금주"])
     rest = [r for r in rows if not same(r)]
     if not (bank or number):
         if len(rest) == len(rows):
@@ -179,8 +185,8 @@ def save_account(input_dir, code, name, bank, number, holder):
             raise ValueError("은행 이름을 알 수 없음: '%s' (예: 신한, 국민, 기업, 농협)" % bank)
         if not digits.isdigit() or len(digits) > MAX_BYTES["account"]:
             raise ValueError("계좌번호는 숫자와 '-'만 (16자리 이하)")
-        if not holder or not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
-            raise ValueError("예금주를 넣으세요 (한글 10자 이하)")
+        if holder and (not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]):
+            raise ValueError("예금주는 한글 10자 이하 (비워 둬도 됨)")
         if not name:
             name = next((r["거래처"] for r in rows if code_key(r["거래처코드"]) == code_key(code) and r["거래처"]), "")
         # 미리 등록된 같은 코드의 빈 줄(코드·이름만)은 계좌를 넣으면 없앤다
@@ -294,11 +300,51 @@ def name_hint(e):
     return next((w for w in REGULAR if w in name), "")
 
 
-def pick(events, start, end, info=None):
-    """[start, end] 에 나갈 거래처 지급 (정기 지급·계획 제외) -> (거래처별로 합친 줄, 뺀 줄 수).
+MERGE_FILE = "출금목록_합칠거래처.txt"   # app.MERGE_FILE 과 같은 파일 (창의 주간 출금 목록 건별·모두 합침·고른 곳만 합침)
+
+
+def merge_setting(input_dir):
+    """창 '주간 출금 목록' 설정 -> (모드, [고른 거래처 이름]). 모드 = '건별' / '모두' / '고른곳만'.
+    사용자 2026-11-26: 이체 파일이 이 설정을 보지 않고 같은 거래처를 늘 한 줄로 합쳤다 → 출금 목록과 같은 설정을 따른다.
+    '고른 곳만 합침'에 0곳이면 합치지 않음(건별)."""
+    from . import app
+    group, only = app.load_merge(type("P", (), {"input": input_dir})())
+    names = [x.strip() for x in (only or "").split(",") if x.strip()]
+    if group == "거래처별":
+        return "모두", []
+    # 2026-11-26 (결정 카드 권장안): 출금 목록이 '건별'이어도 '합칠 거래처 고르기'에서 고른 곳이 저장돼 있으면 이체 파일은 그곳만 합친다
+    return ("고른곳만", names) if names else ("건별", [])
+
+
+def merge_key(merge, accounts=None):
+    """merge = merge_setting() 결과 -> pick 에 줄 열쇠 함수 (None 이면 예전처럼 같은 거래처는 기간 전체를 한 줄로).
+    합치는 거래처는 예전처럼 이체 기간 전체를 한 줄로 (한 번에 보내는 돈이라 날짜가 달라도 한 번 이체), 합치지 않는 거래처는
+    지급 한 건마다 한 줄. 예금주가 다른 계좌가 여럿인 거래처(사업소득 등)는 예금주별 금액 창이 거래처 합계로 묻기 때문에
+    설정과 관계없이 한 줄로 합친다 (그 창에서 사람별로 나뉨)."""
+    if merge is None:
+        return None
+    mode, names = merge
+    from .render import _merge_this
+
+    def key(e, i):
+        code, name = code_key(e.get("vendor_code")), str(e.get("desc") or "").strip()
+        base = code or vendor_key(name)
+        if not base:
+            return None
+        if accounts is not None and code and multi_accounts(accounts, {"code": e.get("vendor_code")}):
+            return base
+        if mode == "모두" or (mode == "고른곳만" and _merge_this(name, names)):
+            return base
+        return "건%d" % i   # 건별 ("#코드" 열쇠와 겹치지 않게)
+    return key
+
+
+def pick(events, start, end, info=None, key=None):
+    """[start, end] 에 나갈 거래처 지급 (정기 지급·계획 제외) -> (합친 줄, 뺀 줄 수).
+    key(e, i) 를 주면 그 열쇠가 같은 지급끼리만 합친다 (merge_key). 없으면 같은 거래처는 기간 전체를 한 줄로.
     info(dict)를 주면 info['regular'] = [(거래처, 금액, 까닭)] (뺀 정기 지급), info['hints'] = [(거래처, 낱말)] 를 채운다."""
     lines, skipped = {}, 0
-    for e in events:
+    for i, e in enumerate(events):
         if e["io"] != "out" or e["date"] is None or not (start <= e["date"] <= end) or e.get("cat") in PLANS:
             continue
         why = regular_why(e)
@@ -312,7 +358,7 @@ def pick(events, start, end, info=None):
             info.setdefault("hints", []).append((str(e.get("desc") or "").strip(), hint))
         name = str(e.get("desc") or "").strip()
         code = str(e.get("vendor_code") or "").strip()
-        k = code_key(code) or vendor_key(name) or "?%d" % len(lines)
+        k = (key(e, i) if key else None) or code_key(code) or vendor_key(name) or "?%d" % len(lines)
         ln = lines.setdefault(k, {"vendor": name, "code": code, "amount": 0, "unknown": False, "projects": [], "dates": [],
                                   "firm": True, "parts": []})
         if e["amount"] is None:
@@ -334,11 +380,10 @@ def _check_acc(acc, amount):
     holder = acc["예금주"]
     number = re.sub(r"[\s-]", "", acc["계좌번호"])
     why = None
-    if not holder:
-        why = "예금주 없음"
-    elif bank_code(acc["은행"]) is None:
+    # 사용자 2026-11-26: 고객관리성명(예금주)은 필수 아님 — 비어 있으면 그 칸을 비운 채 넣는다 (은행 수취인조회로 확인)
+    if bank_code(acc["은행"]) is None:
         why = "은행 코드 없음 (%s)" % acc["은행"]
-    elif not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
+    elif holder and (not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]):
         why = "예금주 형식·길이 오류"
     elif not number.isdigit() or len(number) > MAX_BYTES["account"]:
         why = "계좌번호 형식 오류"
@@ -353,6 +398,12 @@ def _row(bank, number, holder, amount):
     return [bank_code(bank), number, holder, str(amount), "", "", "", "", ""]
 
 
+def holder_label(acc):
+    """예금주별 금액 창·나눔 열쇠에 쓰는 이름: 예금주, 비었으면 '예금주 없음 …계좌 끝 4자리' (사용자 2026-11-26: 예금주 필수 아님)."""
+    h = (acc.get("예금주") or "").strip()
+    return h or "예금주 없음 …%s" % re.sub(r"[\s-]", "", acc.get("계좌번호") or "")[-4:]
+
+
 def multi_accounts(accounts, ln):
     """거래처코드에 계좌(계좌번호 있는 줄)가 2개 이상이면 그 목록, 아니면 None."""
     found = accounts.get(code_key(ln.get("code"))) if code_key(ln.get("code")) else None
@@ -361,12 +412,14 @@ def multi_accounts(accounts, ln):
     return None
 
 
-def build(events, accounts, start, end, splits=None, multi=None, info=None):
+def build(events, accounts, start, end, splits=None, multi=None, info=None, merge=None):
     """-> (파일 줄 [9칸], 막힌 줄 [(거래처, 금액, 이유)], 뺀 정기 지급 수).
 
-    splits: {거래처코드 열쇠: {예금주: 금액}} — 한 코드에 예금주가 다른 계좌가 여럿일 때 사람별로 나눠 넣는다
-    (사용자 2026-11-05). 합계가 지급액과 같을 때만 쓴다. multi(list)를 주면 나눌 금액이 필요한 거래처를 채운다."""
-    picked, skipped = pick(events, start, end, info)
+    merge: merge_setting() 결과 (출금 목록 합침 설정, 사용자 2026-11-26). None 이면 예전처럼 같은 거래처는 한 줄로.
+
+    splits: {거래처코드 열쇠: {예금주: 금액} 또는 [(예금주, 금액), ...]} — 한 코드에 예금주가 다른 계좌가 여럿일 때 사람별로 나눠 넣는다
+    (사용자 2026-11-05). 목록이면 줄마다 한 줄 (같은 예금주도 건마다 따로, 사용자 2026-11-26). 합계가 지급액과 같을 때만 쓴다. multi(list)를 주면 나눌 금액이 필요한 거래처를 채운다."""
+    picked, skipped = pick(events, start, end, info, merge_key(merge, accounts))
     rows, blocked = [], []
     splits = splits or {}
     for k, ln in picked:
@@ -383,13 +436,18 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None):
         many = multi_accounts(accounts, ln)
         if many:
             plan = splits.get(code_key(ln.get("code"))) or {}
-            parts = [(a, plan.get(a["예금주"]) or 0) for a in many]
+            if isinstance(plan, (list, tuple)):
+                # 사용자 2026-11-26: 예금주가 한 사람이어도 지급 건마다 따로 보내야 할 때가 있다 → [(예금주, 금액)] 줄마다 한 줄
+                by = dict((holder_label(a), a) for a in many)
+                parts = [] if any(h not in by for h, v in plan if v) else [(by[h], v) for h, v in plan if v]   # 목록에 없는 예금주 → 다시 묻는다
+            else:
+                parts = [(a, plan.get(holder_label(a)) or 0) for a in many]
             if sum(v for _, v in parts) != ln["amount"] or any(v < 0 for _, v in parts):
                 if multi is not None:
                     multi.append({"vendor": ln["vendor"], "code": ln.get("code") or "", "amount": ln["amount"],
-                                  "holders": [a["예금주"] for a in many], "parts": list(ln.get("parts") or [])})
+                                  "holders": [holder_label(a) for a in many], "parts": list(ln.get("parts") or [])})
                 blocked.append((ln["vendor"], ln["amount"], "계좌 %d개 (%s) — 예금주별 금액 필요 (합계 %s원)" % (
-                    len(many), ", ".join(a["예금주"] for a in many), "{:,}".format(ln["amount"]))))
+                    len(many), ", ".join(holder_label(a) for a in many), "{:,}".format(ln["amount"]))))
                 continue
             bad = [why for a, v in parts if v for why in [_check_acc(a, v)[2]] if why]
             if bad:
@@ -414,7 +472,7 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None):
 
 def missing_accounts(events, accounts, start, end):
     """[start, end] 거래처 지급 중 계좌가 없어 이체 파일에 못 넣는 곳 (사용자 2026-11-05: 그 자리에서 계좌 입력)
-    -> [{vendor, code, amount, date, why}] (금액 미확인·계좌 여러 개는 빼고, 계좌·예금주가 없는 곳만)."""
+    -> [{vendor, code, amount, date, why}] (금액 미확인·계좌 여러 개는 빼고, 계좌가 없는 곳만. 예금주는 필수 아님)."""
     picked, _ = pick(events, start, end)
     out = []
     for k, ln in picked:
@@ -422,9 +480,9 @@ def missing_accounts(events, accounts, start, end):
             continue
         acc, why = find_account(accounts, ln)
         if acc is not None:
-            if acc.get("예금주") and acc.get("계좌번호"):
+            if acc.get("계좌번호"):   # 예금주는 필수 아님 (사용자 2026-11-26)
                 continue
-            why = "예금주 없음" if not acc.get("예금주") else "계좌번호 없음"
+            why = "계좌번호 없음"
         elif "계좌 정보 없음" not in (why or ""):
             continue
         out.append({"vendor": ln["vendor"], "code": ln["code"], "amount": ln["amount"],
@@ -633,7 +691,10 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     for n in notes:
         say(n)
     info = {}
-    rows, blocked, skipped = build(R["events"], accounts, start, end, splits, multi, info)
+    merge = merge_setting(input_dir)   # 사용자 2026-11-26: 주간 출금 목록과 같은 합침 설정 (예전엔 늘 거래처별로 합침)
+    say("합침: %s" % {"건별": "건별 (합치지 않음)", "모두": "같은 거래처 모두 합침"}.get(
+        merge[0], "고른 곳만 합침 (%s)" % ", ".join(merge[1])) + " — 창 '주간 출금 목록' 설정과 같음, 예금주가 여럿인 거래처는 예금주별 금액으로")
+    rows, blocked, skipped = build(R["events"], accounts, start, end, splits, multi, info, merge)
     if missing is not None:
         missing.extend(missing_accounts(R["events"], accounts, start, end))
     say("이체 대상 %s ~ %s: 파일에 넣음 %d건 %s원, 못 넣음 %d건, 정기 지급 %d건은 뺌" % (
@@ -644,7 +705,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     # 파일·출금 목록 어디에도 없었다 → 넣지는 않고(이미 보냈을 수 있음) 따로 알린다
     day0 = R["asof"]
     if day0 < start:
-        r0, b0, _ = build(R["events"], accounts, day0, day0, splits, None, {})
+        r0, b0, _ = build(R["events"], accounts, day0, day0, splits, None, {}, merge)
         n0 = len(r0) + len(b0)
         if n0:
             amt0 = sum(int(r[3]) for r in r0) + sum(a or 0 for _, a, _ in b0)
@@ -670,7 +731,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     again = repeats(read_log(input_dir), rows, now, replaced=[f for f in (replaced or ()) if f in current])
     for r, when, fname in again:
         say("[주의] %s %s원 — %s에 만든 이체 파일(%s)에 같은 계좌·금액이 이미 있습니다. 두 번 보내지 않게 확인하세요"
-            % (r[2], "{:,}".format(int(r[3])), when, fname))
+            % (r[2] or "계좌 …%s" % r[1][-4:], "{:,}".format(int(r[3])), when, fname))
     os.makedirs(output_dir, exist_ok=True)
     _put_away(output_dir, start, end, say, "새 파일로 바꿈")
     path = os.path.join(output_dir, "신한대량이체_%s_%s_%s.xlsx" % (start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), now.strftime("%H%M%S")))
@@ -687,7 +748,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
             % (LOG_FILE, e.strerror or type(e).__name__))
         return None
     result["summary"] = {"n": len(rows), "total": sum(int(r[3]) for r in rows), "rows": rows, "blocked": list(blocked),
-                         "repeats": [(r[2], int(r[3]), when, fname) for r, when, fname in again]}
+                         "repeats": [(r[2] or "계좌 …%s" % r[1][-4:], int(r[3]), when, fname) for r, when, fname in again]}
     say("이체 파일: %s — 신한은행 기업뱅킹 대량이체에서 불러오기 전에 금액·계좌를 한 번 더 확인하세요" % path)
     return path
 

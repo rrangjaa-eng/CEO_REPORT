@@ -134,7 +134,7 @@ class TestAccountsByCode(unittest.TestCase):
 
     def test_checks_before_saving(self):
         for args in (("", "x", "신한", "1", "가"), ("1", "x", "모름은행", "1", "가"), ("1", "x", "신한", "12a", "가"),
-                     ("1", "x", "신한", "1", "")):
+                     ("1", "x", "신한", "1", "가" * 11)):   # 예금주 빈칸은 이제 됨 (사용자 2026-11-26), 너무 길면 막음
             with self.assertRaises(ValueError):
                 self.save(*args)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, transfer.ACCOUNT_FILE)))

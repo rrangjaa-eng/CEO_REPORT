@@ -132,14 +132,18 @@ class TestTwoWindows(unittest.TestCase):
             self.button(t[0], "저장하고 다시 만들기").invoke()   # 가상벤처는 비워 둠 (은행에서 직접)
             t = self.tops()
             self.assertEqual([x.title() for x in t], ["예금주별 금액 1곳"])   # 예전엔 계좌 창만 다시 떴다
-            self.assertTrue(any("920,000 · 96,700 · 50,000원" in x for x in self._labels(t[0])))
+            self.assertTrue(any("자금계획서 지급 3건" in x for x in self._labels(t[0])))
             self.assertEqual(self.calls[1]["replaced"], ["이체_1.xlsx"])
-            entries = [e for e in self._entries(t[0])]
-            for e, v in zip(entries, ("920000", "96700", "50000")):
-                e.insert(0, v)
+            # 2026-11-26: 지급 건마다 금액이 미리 들어 있고, 받을 사람을 고른다
+            self.assertEqual([e.get() for e in self._entries(t[0])], ["920,000", "96,700", "50,000"])
+            boxes = self._combos(t[0])
+            self.button(t[0], "나눠서 다시 만들기").invoke()
+            self.assertEqual(len(self.tops()), 1)   # 사람을 안 고르면 막힘
+            for c, h in zip(boxes, ("가갑", "나을", "다병")):
+                c.set(h)
             self.button(t[0], "나눠서 다시 만들기").invoke()
             self.assertEqual(self.tops(), [])   # 비워 둔 가상벤처 때문에 계좌 창이 또 뜨지 않음
-            self.assertEqual(self.calls[2]["splits"][transfer.code_key("000147")], {"가갑": 920000, "나을": 96700, "다병": 50000})
+            self.assertEqual(self.calls[2]["splits"][transfer.code_key("000147")], [("가갑", 920000), ("나을", 96700), ("다병", 50000)])
             self.assertEqual(self.calls[2]["replaced"], ["이체_1.xlsx", "이체_2.xlsx"])
             self.assertIn("못 넣음 1건 1,320,000원", self.w.t_result.get())
             # 단추로 새로 만들면 이어 가던 기록을 비운다 (비워 둔 거래처를 다시 묻고, 앞 파일은 중복 의심으로 셈)
@@ -175,6 +179,18 @@ class TestTwoWindows(unittest.TestCase):
             for c in wd.winfo_children():
                 if isinstance(c, ttk.Label):
                     out.append(str(c.cget("text")))
+                walk(c)
+        walk(top)
+        return out
+
+    def _combos(self, top):
+        from tkinter import ttk
+        out = []
+
+        def walk(wd):
+            for c in wd.winfo_children():
+                if isinstance(c, ttk.Combobox):
+                    out.append(c)
                 walk(c)
         walk(top)
         return out
