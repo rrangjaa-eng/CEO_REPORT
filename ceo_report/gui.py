@@ -2144,6 +2144,18 @@ class Window(object):
             self.merge_btn.state(["disabled"])
         if save:
             app.save_merge(self.paths, mode, self.only.get().strip())
+        if hasattr(self, "t_result") and not getattr(self, "_t_made", False):
+            # 사용자 2026-11-26: 이체 파일도 이 설정을 따른다 → 만들기 전에 어떻게 합칠지 이체 칸에 보인다
+            self.t_result.set("급여·세금·카드 등 정기 지급은 뺌 · " + self.transfer_merge_text(mode, names))
+
+    @staticmethod
+    def transfer_merge_text(mode, names):
+        """이체 파일 합침 (transfer.merge_setting 과 같은 뜻): 모두 합침 / 고른 곳만 (출금 목록이 건별이어도) / 건별."""
+        if mode == "거래처별":
+            return "이체: 같은 거래처는 한 줄로"
+        if names:
+            return "이체: %s만 한 줄로, 나머지는 건별" % ", ".join(names)
+        return "이체: 건마다 한 줄"
 
     def pick_merge(self):
         """그 출금일 목록에서 2건 이상 나가는 거래처를 체크해서 고른다."""
@@ -3192,6 +3204,7 @@ class Window(object):
             except tk.TclError:
                 pass
         # 편의성 11: 넣은 건수·합계, 못 넣은 지급, 중복 의심을 이체 칸에 남긴다 (중복 의심이면 빨강)
+        self._t_made = True
         self.show_transfer_result(*winstate.transfer_summary(result))
         if result.get("blocked") and not path and not override:
             # 결정 f (2026-11-15): 대표 보고가 막힌 날은 이체 파일도 막는다. 급하면 이유를 적고 풀고, 그 이유는 이체기록.csv 에 남는다
@@ -3243,7 +3256,9 @@ class Window(object):
         self.root.destroy()
 
     def ask_splits(self, multi):
-        """계좌가 여럿(예금주 다름)인 거래처 창: 예금주마다 금액 → 합계가 맞으면 나눠서 이체 파일 다시 만들기."""
+        """계좌가 여럿(예금주 다름)인 거래처 창: 지급 건마다 예금주를 고름 → 합계가 맞으면 그 줄대로 이체 파일 다시 만들기.
+        사용자 2026-11-26: 예금주가 한 사람이어도 금액은 나눠 보내야 할 때가 있다 → 예금주별 합계 대신 줄마다 (예금주, 금액).
+        같은 예금주를 여러 줄에 고르면 줄마다 따로 파일에 들어간다. '줄 추가'로 한 건을 두 사람에게 나눌 수도 있다."""
         from . import transfer
         top = tk.Toplevel(self.root)
         top.title("예금주별 금액 %d곳" % len(multi))
@@ -3251,25 +3266,36 @@ class Window(object):
         self._dialog(top)
         frm = ttk.Frame(top, padding=10)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="한 거래처에 예금주가 다른 계좌가 여럿입니다. 사람마다 보낼 금액을 넣으세요 (합계가 지급액과 같아야 함). "
-                            "0 이나 빈칸인 사람은 넣지 않습니다.", style="S.TLabel", wraplength=560).grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
-        fields, r = [], 1
+        ttk.Label(frm, text="한 거래처에 예금주가 다른 계좌가 여럿입니다. 지급 건마다 받을 사람을 고르세요. 한 줄이 이체 파일의 한 줄입니다 "
+                            "(같은 사람이 여러 줄이면 따로 보냄). 금액은 고칠 수 있고, 합계가 지급액과 같아야 합니다. "
+                            "금액이 0 이나 빈칸인 줄은 넣지 않습니다.", style="S.TLabel", wraplength=560).pack(anchor="w", pady=(0, 6))
+        groups = []   # (m, 줄 틀, [(예금주 칸, 금액 칸)])
+
+        def add_line(g, amount=""):
+            m, box, lines = g
+            row = ttk.Frame(box)
+            row.pack(anchor="w", pady=1)
+            hv, av = tk.StringVar(value=m["holders"][0] if len(m["holders"]) == 1 else ""), tk.StringVar(value=amount)
+            ttk.Label(row, text="%d." % (len(lines) + 1), width=3).pack(side="left", padx=(12, 2))
+            ttk.Combobox(row, textvariable=hv, values=m["holders"], width=14, state="readonly").pack(side="left", padx=3)
+            ttk.Entry(row, textvariable=av, width=14).pack(side="left", padx=3)
+            ttk.Label(row, text="원", style="S.TLabel").pack(side="left")
+            lines.append((hv, av))
+
         for m in multi:
             ttk.Label(frm, text="%s [%s] · 지급 %s원" % (m["vendor"] or "-", m["code"], "{:,}".format(m["amount"])),
-                      style="H.TLabel").grid(row=r, column=0, columnspan=3, sticky="w", pady=(6, 2))
-            r += 1
-            if len(m.get("parts") or []) > 1:   # 사용자 2026-11-20: 합친 지급이 원래 어떤 금액들이었는지 (자금계획서엔 받는 사람 이름이 없음)
-                ttk.Label(frm, text="자금계획서 지급 %d건: %s원 — 누구 몫인지 확인해 넣으세요" % (
-                    len(m["parts"]), " · ".join("{:,}".format(v) for v in m["parts"])), style="S.TLabel", wraplength=560).grid(
-                    row=r, column=0, columnspan=3, sticky="w", padx=(12, 0), pady=(0, 2))
-                r += 1
-            for h in m["holders"]:
-                v = tk.StringVar()
-                ttk.Label(frm, text=h, width=14).grid(row=r, column=0, sticky="w", padx=(12, 3))
-                ttk.Entry(frm, textvariable=v, width=14).grid(row=r, column=1, sticky="w", padx=3)
-                fields.append((m, h, v))
-                r += 1
+                      style="H.TLabel").pack(anchor="w", pady=(6, 2))
+            parts = [v for v in (m.get("parts") or []) if v] or [m["amount"]]
+            if len(parts) > 1:   # 사용자 2026-11-20: 자금계획서엔 받는 사람 이름이 없음 → 건마다 누구 몫인지 고름
+                ttk.Label(frm, text="자금계획서 지급 %d건 — 건마다 누구 몫인지 고르세요" % len(parts), style="S.TLabel",
+                          wraplength=560).pack(anchor="w", padx=(12, 0))
+            box = ttk.Frame(frm)
+            box.pack(anchor="w", fill="x")
+            g = (m, box, [])
+            groups.append(g)
+            for v in parts:
+                add_line(g, "{:,}".format(v))
+            ttk.Button(frm, text="줄 추가 (한 건을 나눌 때)", command=lambda g=g: add_line(g)).pack(anchor="w", padx=(12, 0), pady=(2, 0))
 
         sp_err = tk.StringVar(value="")
 
@@ -3278,27 +3304,36 @@ class Window(object):
             self.say(text)
 
         def apply():
-            plan, sums = {}, {}
-            for m, h, v in fields:
-                t = v.get().replace(",", "").strip()
-                try:
-                    amt = int(t) if t else 0
-                except ValueError:
-                    bad("금액 숫자 오류: %s %s" % (m["vendor"], h))
-                    return
-                plan.setdefault(transfer.code_key(m["code"]), {})[h] = amt
-                sums[m["code"]] = sums.get(m["code"], 0) + amt
-            for m in multi:
-                if sums.get(m["code"], 0) != m["amount"]:
+            plan = {}
+            for m, _, lines in groups:
+                got = []
+                for i, (hv, av) in enumerate(lines, 1):
+                    t = av.get().replace(",", "").replace("원", "").strip()
+                    try:
+                        amt = int(t) if t else 0
+                    except ValueError:
+                        bad("금액 숫자 오류: %s %d번 줄" % (m["vendor"], i))
+                        return
+                    if amt < 0:
+                        bad("금액이 0보다 작음: %s %d번 줄" % (m["vendor"], i))
+                        return
+                    if amt and not hv.get():
+                        bad("받을 사람을 고르세요: %s %d번 줄 (%s원)" % (m["vendor"], i, "{:,}".format(amt)))
+                        return
+                    if amt:
+                        got.append((hv.get(), amt))
+                total = sum(v for _, v in got)
+                if total != m["amount"]:
                     bad("합계가 맞지 않음: %s 지급 %s원, 넣은 합계 %s원" % (
-                        m["vendor"], "{:,}".format(m["amount"]), "{:,}".format(sums.get(m["code"], 0))))
+                        m["vendor"], "{:,}".format(m["amount"]), "{:,}".format(total)))
                     return
+                plan[transfer.code_key(m["code"])] = got
             self._splits = dict(getattr(self, "_splits", None) or {}, **plan)
             top.destroy()
             self.make_transfer(again=True)
 
         b = ttk.Frame(frm)
-        b.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        b.pack(anchor="w", fill="x", pady=(8, 0))
         ttk.Button(b, text="나눠서 다시 만들기", command=apply, style="Big.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(b, text="닫기 (이대로 둠)", command=lambda: (top.destroy(), self.open_dir(self.paths.output))).pack(side="left")
         ttk.Label(b, textvariable=sp_err, foreground=C["red"], wraplength=360).pack(side="left", padx=(8, 0))
