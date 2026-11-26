@@ -168,6 +168,12 @@ def save_account(input_dir, code, name, bank, number, holder):
     if problem:
         raise ValueError(problem)
     same = lambda r: code_key(r["거래처코드"]) == code_key(code) and (not holder or r["예금주"] == holder)
+    if (bank or number) and not holder:
+        # 예금주 없이 저장 (사용자 2026-11-26: 필수 아님): 그 코드 계좌가 하나뿐이면 그것을 바꾸고, 여럿이면 예금주 없는 줄만 바꾼다
+        # (예전 뜻대로 '그 코드 전부'를 바꾸면 사업소득처럼 여러 사람 계좌가 한꺼번에 지워진다)
+        mine = [r for r in rows if code_key(r["거래처코드"]) == code_key(code) and r["계좌번호"]]
+        same = (lambda r: code_key(r["거래처코드"]) == code_key(code)) if len(mine) <= 1 else (
+            lambda r: code_key(r["거래처코드"]) == code_key(code) and not r["예금주"])
     rest = [r for r in rows if not same(r)]
     if not (bank or number):
         if len(rest) == len(rows):
@@ -179,8 +185,8 @@ def save_account(input_dir, code, name, bank, number, holder):
             raise ValueError("은행 이름을 알 수 없음: '%s' (예: 신한, 국민, 기업, 농협)" % bank)
         if not digits.isdigit() or len(digits) > MAX_BYTES["account"]:
             raise ValueError("계좌번호는 숫자와 '-'만 (16자리 이하)")
-        if not holder or not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
-            raise ValueError("예금주를 넣으세요 (한글 10자 이하)")
+        if holder and (not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]):
+            raise ValueError("예금주는 한글 10자 이하 (비워 둬도 됨)")
         if not name:
             name = next((r["거래처"] for r in rows if code_key(r["거래처코드"]) == code_key(code) and r["거래처"]), "")
         # 미리 등록된 같은 코드의 빈 줄(코드·이름만)은 계좌를 넣으면 없앤다
@@ -374,11 +380,10 @@ def _check_acc(acc, amount):
     holder = acc["예금주"]
     number = re.sub(r"[\s-]", "", acc["계좌번호"])
     why = None
-    if not holder:
-        why = "예금주 없음"
-    elif bank_code(acc["은행"]) is None:
+    # 사용자 2026-11-26: 고객관리성명(예금주)은 필수 아님 — 비어 있으면 그 칸을 비운 채 넣는다 (은행 수취인조회로 확인)
+    if bank_code(acc["은행"]) is None:
         why = "은행 코드 없음 (%s)" % acc["은행"]
-    elif not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]:
+    elif holder and (not _cp949_ok(holder) or nbytes(holder) > MAX_BYTES["holder"]):
         why = "예금주 형식·길이 오류"
     elif not number.isdigit() or len(number) > MAX_BYTES["account"]:
         why = "계좌번호 형식 오류"
@@ -391,6 +396,12 @@ def _row(bank, number, holder, amount):
     """이체 파일 9칸. 예금주는 고객관리성명에만 (사용자 2026-11-05: 은행 수취인조회로 맞춰 봄).
     출금통장표시내용·입금통장표시내용·입금인코드·비고·업체사용key 는 비운다."""
     return [bank_code(bank), number, holder, str(amount), "", "", "", "", ""]
+
+
+def holder_label(acc):
+    """예금주별 금액 창·나눔 열쇠에 쓰는 이름: 예금주, 비었으면 '예금주 없음 …계좌 끝 4자리' (사용자 2026-11-26: 예금주 필수 아님)."""
+    h = (acc.get("예금주") or "").strip()
+    return h or "예금주 없음 …%s" % re.sub(r"[\s-]", "", acc.get("계좌번호") or "")[-4:]
 
 
 def multi_accounts(accounts, ln):
@@ -427,16 +438,16 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None, merg
             plan = splits.get(code_key(ln.get("code"))) or {}
             if isinstance(plan, (list, tuple)):
                 # 사용자 2026-11-26: 예금주가 한 사람이어도 지급 건마다 따로 보내야 할 때가 있다 → [(예금주, 금액)] 줄마다 한 줄
-                by = dict((a["예금주"], a) for a in many)
+                by = dict((holder_label(a), a) for a in many)
                 parts = [] if any(h not in by for h, v in plan if v) else [(by[h], v) for h, v in plan if v]   # 목록에 없는 예금주 → 다시 묻는다
             else:
-                parts = [(a, plan.get(a["예금주"]) or 0) for a in many]
+                parts = [(a, plan.get(holder_label(a)) or 0) for a in many]
             if sum(v for _, v in parts) != ln["amount"] or any(v < 0 for _, v in parts):
                 if multi is not None:
                     multi.append({"vendor": ln["vendor"], "code": ln.get("code") or "", "amount": ln["amount"],
-                                  "holders": [a["예금주"] for a in many], "parts": list(ln.get("parts") or [])})
+                                  "holders": [holder_label(a) for a in many], "parts": list(ln.get("parts") or [])})
                 blocked.append((ln["vendor"], ln["amount"], "계좌 %d개 (%s) — 예금주별 금액 필요 (합계 %s원)" % (
-                    len(many), ", ".join(a["예금주"] for a in many), "{:,}".format(ln["amount"]))))
+                    len(many), ", ".join(holder_label(a) for a in many), "{:,}".format(ln["amount"]))))
                 continue
             bad = [why for a, v in parts if v for why in [_check_acc(a, v)[2]] if why]
             if bad:
@@ -461,7 +472,7 @@ def build(events, accounts, start, end, splits=None, multi=None, info=None, merg
 
 def missing_accounts(events, accounts, start, end):
     """[start, end] 거래처 지급 중 계좌가 없어 이체 파일에 못 넣는 곳 (사용자 2026-11-05: 그 자리에서 계좌 입력)
-    -> [{vendor, code, amount, date, why}] (금액 미확인·계좌 여러 개는 빼고, 계좌·예금주가 없는 곳만)."""
+    -> [{vendor, code, amount, date, why}] (금액 미확인·계좌 여러 개는 빼고, 계좌가 없는 곳만. 예금주는 필수 아님)."""
     picked, _ = pick(events, start, end)
     out = []
     for k, ln in picked:
@@ -469,9 +480,9 @@ def missing_accounts(events, accounts, start, end):
             continue
         acc, why = find_account(accounts, ln)
         if acc is not None:
-            if acc.get("예금주") and acc.get("계좌번호"):
+            if acc.get("계좌번호"):   # 예금주는 필수 아님 (사용자 2026-11-26)
                 continue
-            why = "예금주 없음" if not acc.get("예금주") else "계좌번호 없음"
+            why = "계좌번호 없음"
         elif "계좌 정보 없음" not in (why or ""):
             continue
         out.append({"vendor": ln["vendor"], "code": ln["code"], "amount": ln["amount"],
@@ -720,7 +731,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
     again = repeats(read_log(input_dir), rows, now, replaced=[f for f in (replaced or ()) if f in current])
     for r, when, fname in again:
         say("[주의] %s %s원 — %s에 만든 이체 파일(%s)에 같은 계좌·금액이 이미 있습니다. 두 번 보내지 않게 확인하세요"
-            % (r[2], "{:,}".format(int(r[3])), when, fname))
+            % (r[2] or "계좌 …%s" % r[1][-4:], "{:,}".format(int(r[3])), when, fname))
     os.makedirs(output_dir, exist_ok=True)
     _put_away(output_dir, start, end, say, "새 파일로 바꿈")
     path = os.path.join(output_dir, "신한대량이체_%s_%s_%s.xlsx" % (start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), now.strftime("%H%M%S")))
@@ -737,7 +748,7 @@ def make_file(input_dir, output_dir, start, end, say, asof=None, missing=None, s
             % (LOG_FILE, e.strerror or type(e).__name__))
         return None
     result["summary"] = {"n": len(rows), "total": sum(int(r[3]) for r in rows), "rows": rows, "blocked": list(blocked),
-                         "repeats": [(r[2], int(r[3]), when, fname) for r, when, fname in again]}
+                         "repeats": [(r[2] or "계좌 …%s" % r[1][-4:], int(r[3]), when, fname) for r, when, fname in again]}
     say("이체 파일: %s — 신한은행 기업뱅킹 대량이체에서 불러오기 전에 금액·계좌를 한 번 더 확인하세요" % path)
     return path
 

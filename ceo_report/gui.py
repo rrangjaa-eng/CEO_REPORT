@@ -898,7 +898,7 @@ class Window(object):
         r = self._row(f)
         ttk.Label(r, text="코드").pack(side="left")
         ttk.Entry(r, textvariable=self.a_code, width=7).pack(side="left", padx=(3, 6))
-        ttk.Label(r, text="예금주").pack(side="left")
+        ttk.Label(r, text="예금주(선택)").pack(side="left")
         # 편의성 15: 계좌가 여럿(예금주 다름)이면 예금주를 골라 그 사람 계좌만 고치고 지운다
         self.a_hbox = ttk.Combobox(r, textvariable=self.a_holder, width=10)
         self.a_hbox.pack(side="left", padx=(3, 6))
@@ -3363,7 +3363,7 @@ class Window(object):
         inner = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=inner, anchor="nw")
         # 머리글도 같은 표 안에 둔다 (칸 너비가 줄과 맞게, 2026-11-19)
-        for c, t in enumerate(("거래처", "금액", "거래처코드", "은행", "계좌번호", "예금주")):
+        for c, t in enumerate(("거래처", "금액", "거래처코드", "은행", "계좌번호", "예금주(선택)")):
             ttk.Label(inner, text=t).grid(row=0, column=c, sticky="w", padx=3)
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)

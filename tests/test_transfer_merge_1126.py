@@ -121,3 +121,42 @@ class TestReadSetting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHolderOptional(unittest.TestCase):
+    """사용자 2026-11-26: 거래처 이체 파일에서 고객관리성명(예금주)은 필수가 아니다."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def test_blank_holder_goes_in_with_blank_name(self):
+        accs = {"#201": [acc("201", "가상음향", "100000000201", "")]}
+        rows, blocked, _ = transfer.build([ev(700_000, "가상음향", "201")], accs, START, END, None, [], {}, ("건별", []))
+        self.assertEqual(blocked, [])
+        self.assertEqual(rows, [["088", "100000000201", "", "700000", "", "", "", "", ""]])
+        self.assertEqual(transfer.missing_accounts([ev(700_000, "가상음향", "201")], accs, START, END), [])
+
+    def test_save_without_holder(self):
+        transfer.save_account(self.d, "201", "가상음향", "신한", "100-000-201", "가상음향")
+        transfer.save_account(self.d, "201", "가상음향", "신한", "100-000-202", "")   # 하나뿐이면 그 계좌를 바꿈
+        accs, _ = transfer.read_accounts(self.d)
+        self.assertEqual([(a["계좌번호"], a["예금주"]) for a in accs["#201"]], [("100-000-202", "")])
+        # 여러 사람 계좌가 있는 코드에 예금주 없이 넣으면 다른 사람 계좌는 그대로
+        transfer.save_account(self.d, "147", "사업소득", "신한", "1-1", "가갑")
+        transfer.save_account(self.d, "147", "사업소득", "신한", "1-2", "나을")
+        transfer.save_account(self.d, "147", "사업소득", "신한", "1-3", "")
+        accs, _ = transfer.read_accounts(self.d)
+        self.assertEqual(sorted(a["예금주"] for a in accs["#147"]), ["", "가갑", "나을"])
+
+    def test_blank_holder_in_split_window_gets_label(self):
+        accs = {"#147": [acc("147", "사업소득", "100000000011", "가갑"), acc("147", "사업소득", "100000009876", "")]}
+        evs = [ev(100_000, "사업소득", "147"), ev(50_000, "사업소득", "147")]
+        multi = []
+        transfer.build(evs, accs, START, END, None, multi, {}, ("건별", []))
+        self.assertEqual(multi[0]["holders"], ["가갑", "예금주 없음 …9876"])
+        rows, blocked, _ = transfer.build(evs, accs, START, END, {"#147": [("가갑", 100_000), ("예금주 없음 …9876", 50_000)]},
+                                          None, {}, ("건별", []))
+        self.assertEqual(blocked, [])
+        self.assertEqual(sorted((r[1], r[2], r[3]) for r in rows), [("100000000011", "가갑", "100000"), ("100000009876", "", "50000")])
