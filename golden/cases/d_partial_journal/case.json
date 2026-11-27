@@ -1,0 +1,11 @@
+{
+ "title": "받다 만 확장 분개장 JSON(줄 수 불일치)은 쓰지 않음",
+ "rules": [
+  "D7"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_partial_journal"
+}

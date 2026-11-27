@@ -1,0 +1,11 @@
+{
+ "title": "분개장이 다른 회사 자료면 대표 보고를 만들지 않음",
+ "rules": [
+  "U10"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "u_other_company"
+}

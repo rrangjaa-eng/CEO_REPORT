@@ -1,0 +1,9 @@
+*
+!package.json
+!package-lock.json
+!web/
+!extension/package.json
+!server/server.mjs
+!server/iap.mjs
+web/node_modules
+web/dist

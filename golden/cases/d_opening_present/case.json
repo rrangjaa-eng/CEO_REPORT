@@ -1,0 +1,11 @@
+{
+ "title": "전기이월이 있으면 통장 잔액을 분개장으로 만듦 (D8 의 짝)",
+ "rules": [
+  "D8"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_opening_present"
+}

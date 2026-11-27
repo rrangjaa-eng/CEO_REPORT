@@ -1,0 +1,11 @@
+{
+ "title": "같은 이름 다른 거래처코드: 다른 거래처로 보고 지급을 맞추지 않음(경고)",
+ "rules": [
+  "D2"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_same_name_other_code"
+}

@@ -1,0 +1,11 @@
+{
+ "title": "계좌잔액.csv 에 손으로 넣은 정기예금 줄이 장부 정기예금보다 우선",
+ "rules": [
+  "D13"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_deposit_manual"
+}
