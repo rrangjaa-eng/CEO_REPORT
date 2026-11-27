@@ -5,10 +5,12 @@ on:
   push:
     branches: ["**"]
     paths: ["web/**", "server/**", "extension/**", "golden/**", "tools/golden/**", "tests/test_golden.py",
-            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml"]
+            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml",
+            ".nvmrc", "ceo_report/**", "*.py"]
   pull_request:
     paths: ["web/**", "server/**", "extension/**", "golden/**", "tools/golden/**", "tests/test_golden.py",
-            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml"]
+            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml",
+            ".nvmrc", "ceo_report/**", "*.py"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -71,13 +73,15 @@ jobs:
       - name: Cloud Run 배포
         run: |
           test -n "${{ vars.ALLOWED_EMAIL }}" || { echo "저장소 Variables 에 ALLOWED_EMAIL 이 없어 배포하지 않음"; exit 1; }
+          # 서비스가 있는 프로젝트의 번호. GCP_PROJECT_NUMBER 가 없으면 GCP_WIF_PROVIDER(projects/<번호>/...)에서 읽음 (지금은 같은 프로젝트)
+          NUM="${{ vars.GCP_PROJECT_NUMBER }}"
+          [ -n "$NUM" ] || NUM=$(echo "${{ vars.GCP_WIF_PROVIDER }}" | sed -E 's#^projects/([0-9]+)/.*#\1#')
+          echo "NUM=$NUM" >> "$GITHUB_ENV"
           gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "${{ vars.GCP_PROJECT_ID }}" \
-            --no-allow-unauthenticated --iap --set-env-vars "ALLOWED_EMAIL=${{ vars.ALLOWED_EMAIL }}" \
+            --no-allow-unauthenticated --iap --set-env-vars "ALLOWED_EMAIL=${{ vars.ALLOWED_EMAIL }},IAP_AUDIENCE=/projects/$NUM/locations/$REGION/services/$SERVICE" \
             --cpu 1 --memory 256Mi --min-instances 0 --max-instances 1 --quiet
       - name: 본인 계정만 들어오게 (IAP)
         run: |
-          # 프로젝트 번호는 GCP_WIF_PROVIDER(projects/<번호>/...)에서 읽음
-          NUM=$(echo "${{ vars.GCP_WIF_PROVIDER }}" | sed -E 's#^projects/([0-9]+)/.*#\1#')
           # IAP가 서비스를 부를 수 있게
           gcloud run services add-iam-policy-binding "$SERVICE" --region "$REGION" --project "${{ vars.GCP_PROJECT_ID }}" \
             --member "serviceAccount:service-$NUM@gcp-sa-iap.iam.gserviceaccount.com" --role roles/run.invoker --quiet

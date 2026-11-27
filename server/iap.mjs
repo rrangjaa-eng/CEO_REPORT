@@ -7,9 +7,9 @@ export const IAP_KEYS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk";
 
 const b64u = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
-/** -> { email } 또는 null. keys: { kid: jwk } */
-export function verifyIapJwt(token, keys, nowSec = Math.floor(Date.now() / 1000)) {
-  if (typeof token !== "string") return null;
+/** -> { email } 또는 null. keys: { kid: jwk }. audience: 이 서비스의 IAP aud (/projects/<번호>/locations/<지역>/services/<이름>) */
+export function verifyIapJwt(token, keys, nowSec = Math.floor(Date.now() / 1000), audience) {
+  if (typeof token !== "string" || !audience) return null;
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   let header, claims;
@@ -19,11 +19,15 @@ export function verifyIapJwt(token, keys, nowSec = Math.floor(Date.now() / 1000)
   } catch {
     return null;
   }
-  if (header.alg !== "ES256" || !keys[header.kid]) return null;
+  if (header.alg !== "ES256" || typeof header.kid !== "string" || !Object.hasOwn(keys, header.kid)) return null;
   const ok = verify("sha256", Buffer.from(parts[0] + "." + parts[1]),
     { key: createPublicKey({ key: keys[header.kid], format: "jwk" }), dsaEncoding: "ieee-p1363" }, b64u(parts[2]));
   if (!ok) return null;
   if (claims.iss !== IAP_ISSUER) return null;
+  if (claims.aud !== audience) { // 다른 IAP 앱에 발급된 서명은 받지 않음 (설정이 틀렸을 때 로그로 알 수 있게 aud 만 남김)
+    console.warn("IAP aud 다름: 받은 값 %s, 기대 %s", String(claims.aud), audience);
+    return null;
+  }
   if (typeof claims.exp !== "number" || claims.exp < nowSec - 30) return null;
   if (typeof claims.iat !== "number" || claims.iat > nowSec + 30) return null;
   if (typeof claims.email !== "string" || !claims.email) return null;

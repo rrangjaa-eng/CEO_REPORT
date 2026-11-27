@@ -19,6 +19,9 @@ const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object
 export function checkDoc(raw: unknown): Checked {
   if (!isObj(raw)) return { ok: false, reason: "자료 모양이 아님" };
   if (typeof raw.종류 !== "string" || raw.종류 === "") return { ok: false, reason: "자료 종류가 없음" };
+  if (Array.isArray(raw.오류) && raw.오류.length > 0) {
+    return { ok: false, reason: `확장이 받다가 실패한 자료라 쓰지 않음 (${String(raw.오류[0])})` };
+  }
   const rows = raw.줄;
   const cols = raw.열;
   if (rows !== undefined) {

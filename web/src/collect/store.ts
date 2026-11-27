@@ -35,19 +35,34 @@ async function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRe
   }
 }
 
-export async function saveDocs(docs: CollectedDoc[], now = new Date()): Promise<void> {
+/** 같은 열쇠에 이미 더 새로 받은 자료(수집시각이 더 늦음)가 있으면 그대로 둔다. -> 실제로 쓴 수 */
+async function putNewer(items: Stored[]): Promise<number> {
   const db = await open();
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<number>((resolve, reject) => {
       const t = db.transaction(STORE, "readwrite");
       const s = t.objectStore(STORE);
-      for (const doc of docs) s.put({ key: docKey(doc), savedAt: now.toISOString(), doc } satisfies Stored);
-      t.oncomplete = () => resolve();
+      let wrote = 0;
+      for (const it of items) {
+        const g = s.get(it.key);
+        g.onsuccess = () => {
+          const had = g.result as Stored | undefined;
+          if (had && String(had.doc.수집시각 ?? "") > String(it.doc.수집시각 ?? "")) return;
+          s.put(it);
+          wrote++;
+        };
+      }
+      t.oncomplete = () => resolve(wrote);
       t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error ?? new Error("저장이 중간에 취소됨 (브라우저 저장 공간이 모자랄 수 있음)"));
     });
   } finally {
     db.close();
   }
+}
+
+export async function saveDocs(docs: CollectedDoc[], now = new Date()): Promise<number> {
+  return putNewer(docs.map((doc) => ({ key: docKey(doc), savedAt: now.toISOString(), doc })));
 }
 
 export async function listDocs(): Promise<Stored[]> {
@@ -64,7 +79,8 @@ export async function exportBackup(): Promise<Blob> {
   return new Blob([JSON.stringify(body)], { type: "application/json" });
 }
 
-/** 백업 파일을 불러온다. 파일 전체가 맞을 때만 바꾼다(하나라도 틀리면 아무것도 바꾸지 않음). -> 불러온 자료 수 */
+/** 백업 파일을 불러온다. 파일 전체가 맞을 때만 바꾼다(하나라도 틀리면 아무것도 바꾸지 않음).
+ *  더 새로 받은 같은 자료는 덮지 않는다. -> 실제로 되살린 자료 수 */
 export async function importBackup(file: Blob): Promise<number> {
   let body: unknown;
   try {
@@ -80,17 +96,5 @@ export async function importBackup(file: Blob): Promise<number> {
     if (!c.ok) throw new Error(`백업 안 자료가 틀림: ${c.reason}`);
     items.push({ key: docKey(c.doc), savedAt: String(it.savedAt ?? ""), doc: c.doc });
   }
-  const db = await open();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const t = db.transaction(STORE, "readwrite");
-      const s = t.objectStore(STORE);
-      for (const it of items) s.put(it);
-      t.oncomplete = () => resolve();
-      t.onerror = () => reject(t.error);
-    });
-  } finally {
-    db.close();
-  }
-  return items.length;
+  return putNewer(items);
 }

@@ -25,7 +25,7 @@ function send(res, code, body, headers = {}) {
   res.end(body);
 }
 
-/** 사이트 처리기. opts: { root, allowed, keys: () => Promise<keys>, now: () => sec } */
+/** 사이트 처리기. opts: { root, allowed, audience, keys: () => Promise<keys>, now: () => sec } */
 export function handler(opts) {
   const root = resolve(opts.root);
   const allowed = String(opts.allowed || "").trim().toLowerCase();
@@ -33,13 +33,19 @@ export function handler(opts) {
     try {
       if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "", { Allow: "GET, HEAD" });
       if (!allowed) return send(res, 403, "ALLOWED_EMAIL 이 설정되지 않아 열지 않음", { "Content-Type": "text/plain; charset=utf-8" });
-      const who = verifyIapJwt(req.headers["x-goog-iap-jwt-assertion"], await opts.keys(), opts.now ? opts.now() : undefined);
+      if (!opts.audience) return send(res, 403, "IAP_AUDIENCE 가 설정되지 않아 열지 않음", { "Content-Type": "text/plain; charset=utf-8" });
+      const who = verifyIapJwt(req.headers["x-goog-iap-jwt-assertion"], await opts.keys(), opts.now ? opts.now() : undefined, opts.audience);
       if (!who || who.email !== allowed) return send(res, 403, "허용되지 않은 접속", { "Content-Type": "text/plain; charset=utf-8" });
       const url = new URL(req.url, "http://x");
       if (url.pathname === "/api/me") {
         return send(res, 200, JSON.stringify({ email: who.email }), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       }
-      let rel = decodeURIComponent(url.pathname);
+      let rel;
+      try {
+        rel = decodeURIComponent(url.pathname);
+      } catch {
+        return send(res, 400, "잘못된 주소", { "Content-Type": "text/plain; charset=utf-8" });
+      }
       if (rel.endsWith("/")) rel += "index.html";
       const file = normalize(join(root, rel));
       if (file !== root && !file.startsWith(root + sep)) return send(res, 404, "");
@@ -66,6 +72,6 @@ export function handler(opts) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 8080);
   const root = process.env.WEB_ROOT || join(fileURLToPath(new URL(".", import.meta.url)), "..", "web", "dist");
-  createServer(handler({ root, allowed: process.env.ALLOWED_EMAIL, keys: () => iapKeys() }))
+  createServer(handler({ root, allowed: process.env.ALLOWED_EMAIL, audience: process.env.IAP_AUDIENCE, keys: () => iapKeys() }))
     .listen(port, () => console.log(`listening on ${port}`));
 }
