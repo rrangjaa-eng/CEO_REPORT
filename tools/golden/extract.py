@@ -246,8 +246,11 @@ def check(case_dir):
             continue
         with open(p, encoding="utf-8") as f:
             want = f.read()
-        if want != dumps(got[name]):
-            diffs.append("%s: 다름" % name)
+        have = dumps(got[name])
+        if want != have:
+            import difflib
+            d = list(difflib.unified_diff(want.splitlines(), have.splitlines(), "기대", "실제", n=1, lineterm=""))
+            diffs.append("%s: 다름\n%s" % (name, "\n".join(d[:40])))
     return diffs
 
 
