@@ -126,7 +126,7 @@ export function section2(ctx: Ctx): void {
   ctx.events = events;
   R["debts"] = compareDebts((d.debts ?? null) as unknown as DebtRow[] | null, events as FundEvent[], asof);
   R["two_source"] = twoSources(events, asof);
-  R["two_source_in"] = twoSourcesIn(events, asof);   // 새 안전장치 (파이썬에 없음)
+  R["two_source_in"] = twoSourcesIn(events, asof, R["payday"] as IsoDate);   // 새 안전장치 (파이썬에 없음)
 
   const payday = R["payday"] as IsoDate;
   const weekEnds = [0, 1, 2, 3].map((i) => addDays(payday, 7 * i));
@@ -154,7 +154,10 @@ export function section2(ctx: Ctx): void {
       if (ev["io"] !== "in") {
         // 고침(RULES.overdueOutNextFriday): 지급 기록을 못 찾은 지난 날짜 지급은 버리지 않고 다음 금요일 예상 지출로 둔다.
         // 자금계획서 줄은 applyFundplan 이 이미 옮겼으므로 자금일정·프로젝트집행만. 냈는지 모르므로 확정·꼭 나갈 돈으로 치지 않는다.
-        if (!(RULES.overdueOutNextFriday && OVERDUE_SOURCES.includes(ev["source"]))) { past.push(ev); continue; }
+        if (!(RULES.overdueOutNextFriday && OVERDUE_SOURCES.includes(ev["source"]) && !paidOrOld(ev, asof, d.txns as unknown as Txn[]))) {
+          past.push(ev);
+          continue;
+        }
         ev = { ...ev, orig_date: ev["date"], date: nextFriday(asof), firm: false, must: false, late_out: true,
           basis: (ev["basis"] || "") + `, 예정일 ${ev["date"]} 지난 지급 (지급 기록 없음) → 다음 금요일 예상 지출` };
         lateOut.push(ev);
@@ -248,6 +251,15 @@ export function section2(ctx: Ctx): void {
   for (const b of buckets) for (const k of ["in_firm", "in_est", "out_firm", "out_est"]) parts += b[k];
   parts += [...undated, ...past, ...beyond].reduce((t, e) => t + e["amount"], 0);
   checks.push(["예정 일정 합계 = 기간별 + 날짜 없음 + 지난 날짜 + 기간 밖", parts, allAmt, parts === allAmt]);
+}
+
+/** 지난 날짜 지급을 다음 금요일로 옮기지 않는 경우: 통장에 같은 금액 출금이 예정일 3일 전 ~ 기준일에 있거나(이미 냄),
+ * 예정일이 OVERDUE_MAX_DAYS 일 넘게 지남(정리 안 된 옛 일정). */
+export const OVERDUE_MAX_DAYS = 31;
+function paidOrOld(ev: Obj, asof: IsoDate, txns: Txn[]): boolean {
+  if (daysBetween(ev["date"], asof) > OVERDUE_MAX_DAYS) return true;
+  const lo = addDays(ev["date"], -3);
+  return txns.some((t) => t.io === "출금" && t.amount === ev["amount"] && t.date != null && lo <= t.date && t.date <= asof);
 }
 
 /** F9: 일정(R.events) 중 '남은 예산' 줄로, 날짜가 기준일 뒤 ~ 일정 끝(horizon, 6개월 뒤 말일) 안인 것 — R.s2.dated 에 들어가

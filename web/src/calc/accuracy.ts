@@ -10,12 +10,17 @@ import { countsIn } from "./schedule";
 /** 예상 한 줄. firm = 확정 잔액에 넣는 줄(확정이거나 꼭 나갈 정기 지출). amount null = 금액 미확인(U1). */
 export interface ForecastRow {
   date: IsoDate; io: "in" | "out"; amount: number | null; firm: boolean; source: string; desc: string; cat: string;
+  /** 통장 거래가 아닌 줄(사용제한 해제): 입출금 비교·건별 맞춤에서 빼고 끝 잔액에만 넣는다 */
+  internal?: boolean;
 }
 /** 보고 한 번의 예상: 기준일, 시작 자금(쓸 수 있는 돈), 기준일 뒤 RECORD_DAYS 일 안의 일정. */
 export interface ForecastRecord { asof: IsoDate; start: number | null; rows: ForecastRow[] }
 export interface ActualTxn { date: IsoDate; io: string; amount: number; vendor?: string; cat?: string }
 
 export const RECORD_DAYS = 28;
+/** 건별 맞춤: 예상일과 실제일이 이보다 멀면 같은 건으로 보지 않는다 */
+export const HIT_MAX_DAYS = 31;
+const INTERNAL_SOURCES = ["계좌잔액"];
 
 const isNone = (x: unknown) => x === null || x === undefined;
 
@@ -30,9 +35,12 @@ export function forecastRecord(R: Obj): ForecastRecord {
     .map((ev) => ({
       date: ev["date"], io: ev["io"] === "in" ? "in" : "out", amount: isNone(ev["amount"]) ? null : ev["amount"],
       firm: countsIn(ev, "firm"), source: String(ev["source"] ?? ""), desc: String(ev["desc"] ?? ""), cat: String(ev["cat"] ?? ""),
+      ...(INTERNAL_SOURCES.includes(ev["source"]) ? { internal: true } : {}),
     }));
   rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return { asof, start: isNone(s2["start"]) ? null : s2["start"], rows };
+  // 지급 자료가 없으면 보고도 잔액을 비운다(s2: out_missing → 주차별 잔액 null). 기록의 시작 자금도 같이 비운다.
+  const blank = isNone(s2["start"]) || (s2["out_missing"] as unknown[]).length > 0;
+  return { asof, start: blank ? null : s2["start"], rows };
 }
 
 export interface SideAccuracy { firm: number; all: number; actual: number; diff_firm: number; diff_all: number; unknown_n: number }
@@ -51,7 +59,11 @@ export interface Accuracy {
  * endActual = upto 날의 실제 쓸 수 있는 돈(모르면 null). */
 export function compareForecast(prev: ForecastRecord, txns: ActualTxn[], upto: IsoDate, endActual: number | null): Accuracy {
   const from = addDays(prev.asof, 1);
-  const plan = prev.rows.filter((r) => from <= r.date && r.date <= upto)
+  const last = addDays(prev.asof, RECORD_DAYS);
+  if (upto > last) upto = last;   // 기록은 RECORD_DAYS 일 치만 담는다: 그 뒤는 비교할 예상이 없다
+  const inPeriod = prev.rows.filter((r) => from <= r.date && r.date <= upto);
+  const internal = inPeriod.filter((r) => r.internal).reduce((t, r) => t + (r.io === "in" ? 1 : -1) * (r.amount ?? 0), 0);
+  const plan = inPeriod.filter((r) => !r.internal)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const actual = txns.filter((t) => from <= t.date && t.date <= upto && t.cat !== TRANSFER);
   const side = (io: "in" | "out"): SideAccuracy => {
@@ -64,13 +76,14 @@ export function compareForecast(prev: ForecastRecord, txns: ActualTxn[], upto: I
   };
   const sin = side("in"), sout = side("out");
   const knownAll = prev.start !== null && !sin.unknown_n && !sout.unknown_n;
-  const endFirm = knownAll ? (prev.start as number) + sin.firm - sout.firm : null;
-  const endAll = knownAll ? (prev.start as number) + sin.all - sout.all : null;
+  const endFirm = knownAll ? (prev.start as number) + sin.firm - sout.firm + internal : null;
+  const endAll = knownAll ? (prev.start as number) + sin.all - sout.all + internal : null;
 
   const used = new Set<number>();
   const hitOf = new Map<ForecastRow, number>();
   const cands = (r: ForecastRow) => actual.map((t, i) => [t, i] as const)
-    .filter(([t, i]) => !used.has(i) && t.amount === r.amount && t.io === (r.io === "in" ? "입금" : "출금"));
+    .filter(([t, i]) => !used.has(i) && t.amount === r.amount && t.io === (r.io === "in" ? "입금" : "출금")
+      && Math.abs(daysBetween(r.date, t.date)) <= HIT_MAX_DAYS);
   const nearest = (r: ForecastRow, xs: (readonly [ActualTxn, number])[]) =>
     xs.reduce<readonly [ActualTxn, number] | null>((b, x) =>
       b === null || Math.abs(daysBetween(r.date, x[0].date)) < Math.abs(daysBetween(r.date, b[0].date)) ? x : b, null);

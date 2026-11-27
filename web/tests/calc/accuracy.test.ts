@@ -94,6 +94,39 @@ describe("compareForecast", () => {
   });
 });
 
+describe("검토 반영", () => {
+  it("지급 자료가 없어 보고가 잔액을 비우면 기록의 시작 자금도 null", () => {
+    const c = loadCase("base");
+    delete c.files["자금일정.csv"];
+    const R = compute(loadData(c.files), "weekly", "2026-11-02");
+    expect(R["s2"]["buckets"][0]["bal_firm"]).toBeNull();
+    expect(forecastRecord(R).start).toBeNull();
+  });
+
+  it("31일 넘게 떨어진 같은 금액은 맞은 것으로 보지 않는다", () => {
+    const p: ForecastRecord = { asof: "2026-11-02", start: 0, rows: [row("2026-11-04", "out", 1_000_000)] };
+    const a = compareForecast(p, [txn("2026-12-20", "출금", 1_000_000, "다른곳")], "2026-12-31", null);
+    expect(a.hit).toEqual([]);
+  });
+
+  it("비교 기간은 기록이 담은 28일을 넘지 않는다", () => {
+    const p: ForecastRecord = { asof: "2026-11-02", start: 0, rows: [] };
+    const a = compareForecast(p, [txn("2026-12-20", "출금", 1_000_000)], "2026-12-31", null);
+    expect(a.to).toBe("2026-11-30");
+    expect(a.unplanned).toEqual([]);
+  });
+
+  it("사용제한 해제는 통장 거래가 아니므로 입금 비교에서 빼고 끝 잔액에만 넣는다", () => {
+    const p: ForecastRecord = { asof: "2026-11-02", start: 10_000_000,
+      rows: [{ ...row("2026-11-05", "in", 30_000_000, true, "프로젝트계좌", "계좌잔액"), internal: true }] };
+    const a = compareForecast(p, [], "2026-11-09", 40_000_000);
+    expect(a.in.all).toBe(0);
+    expect(a.not_happened).toEqual([]);
+    expect(a.end.all).toBe(40_000_000);
+    expect(a.end.diff_all).toBe(0);
+  });
+});
+
 describe("collectionLag", () => {
   const inv = (client: string, date: string, due: string | null, paid_date: string | null, due_firm = false) =>
     ({ client, date, due, due_firm, paid_date, kind: "발행", supply: 1_000_000, vat: 100_000 });

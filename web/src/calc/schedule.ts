@@ -37,16 +37,18 @@ export function twoSources(events: Obj[], asof: IsoDate): Obj[] {
 }
 
 /** 입금 출처 둘 점검 (새 안전장치): 자금계획서 입금과 맞춰지지 않은 계산서·자금일정 입금이 같은 거래처·같은 달에 있으면
- * 같은 돈이 두 번 잡혔을 수 있다. 기준일 뒤, 금액·날짜를 아는 줄만. 금액 큰 순. 숫자는 바꾸지 않고 목록만 낸다. */
-export function twoSourcesIn(events: Obj[], asof: IsoDate): Obj[] {
+ * 같은 돈이 두 번 잡혔을 수 있다. 기준일 뒤, 금액·날짜를 아는 줄만(예정일 지난 입금 포함). 금액 큰 순. 숫자는 바꾸지 않고 목록만 낸다. */
+export function twoSourcesIn(events: Obj[], asof: IsoDate, payday: IsoDate): Obj[] {
   const groups = new Map<string, { vendor: string; month: string; sources: Map<string, number> }>();
   for (const ev of events) {
-    if (ev["io"] !== "in" || ev["amount"] === null || ev["amount"] === undefined || !ev["date"] || ev["date"] <= asof) continue;
+    if (ev["io"] !== "in" || ev["amount"] === null || ev["amount"] === undefined || !ev["date"]) continue;
+    // 예정일 지난 입금은 s2 가 출금일(payday)로 옮겨 이번 주 예상 입금으로 세므로 그 달로 본다
+    const day: IsoDate = ev["date"] <= asof ? payday : ev["date"];
     const src = ev["source"] as string;
     if (!["자금계획서", "자금일정", "계산서"].includes(src)) continue;
     const key = normVendor(ev["desc"] || "");
     if (!key) continue;
-    const month = (ev["date"] as string).slice(0, 7);
+    const month = day.slice(0, 7);
     const gk = JSON.stringify([key, month]);
     const g = groups.get(gk) ?? { vendor: ev["desc"] || key, month, sources: new Map<string, number>() };
     groups.set(gk, g);

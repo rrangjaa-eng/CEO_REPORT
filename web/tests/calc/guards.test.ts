@@ -30,6 +30,22 @@ describe("금액에 따옴표 없는 쉼표가 든 줄", () => {
   });
 });
 
+describe("칸이 밀려도 숫자가 멀쩡한 줄은 그대로 읽는다 (검토 반영)", () => {
+  it("적요에 따옴표 없는 쉼표가 있어도 그 거래 금액은 그대로", () => {
+    const c = loadCase("base");
+    rep(c.files, "입출금내역.csv", "A사 무대 1차", "A사 무대, 1차");
+    const d = loadData(c.files);
+    expect(d.txns.length).toBe(loadData(loadCase("base").files).txns.length);
+    expect(msgs(d as never, "입출금내역.csv").some((m) => m.includes("칸이 머리글보다 많음"))).toBe(false);
+  });
+
+  it("제한사유에 쉼표가 있어도 잔액은 그대로", () => {
+    const c = loadCase("base");
+    rep(c.files, "계좌잔액.csv", "A사 선수금 중 행사 전용 금액", "A사 선수금, 행사 전용");
+    expect(loadData(c.files).balances.filter((b) => b.balance === null).length).toBe(0);
+  });
+});
+
 describe("손익 연월 형식", () => {
   const plRow = (c: ReturnType<typeof loadCase>) => c.files["손익.csv"]!.split("\n").find((l) => l.includes("2026-09"))!;
 
@@ -55,6 +71,16 @@ describe("입금 출처 둘 (자금계획서와 계산서에 같은 거래처·�
     const c = loadCase("base");
     rep(c.files, "자금계획.csv", "82500000", "80000000");
     rep(c.files, "계산서.csv", "2026-12-26,N", "2026-11-26,N");
+    const R = compute(loadData(c.files), "weekly", "2026-11-02");
+    expect(R["two_source_in"]).toEqual([
+      { vendor: "가상고객D", month: "2026-11", sources: { 자금계획서: 80000000, 계산서: 82500000 } },
+    ]);
+  });
+
+  it("예정일이 지나 이번 주 입금으로 옮겨진 계산서도 본다 (검토 반영)", () => {
+    const c = loadCase("base");
+    rep(c.files, "자금계획.csv", "82500000", "80000000");
+    rep(c.files, "계산서.csv", "2026-12-26,N", "2026-10-30,N");
     const R = compute(loadData(c.files), "weekly", "2026-11-02");
     expect(R["two_source_in"]).toEqual([
       { vendor: "가상고객D", month: "2026-11", sources: { 자금계획서: 80000000, 계산서: 82500000 } },

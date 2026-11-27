@@ -172,15 +172,24 @@ export function readCsv(name: string, text: string | undefined, required: readon
     }
     if (!Object.values(clean).some((v) => v)) continue;
     const row = { ...clean, _line: line, _file: name } as Row;
-    // 새 안전장치 (파이썬에 없음): 칸이 머리글보다 많고 남는 칸에 글자가 있으면 금액에 따옴표 없는 쉼표가 든 줄일 수 있다
-    // ('360,100,000' → 360). 값이 한 칸씩 밀렸으므로 이 줄의 숫자는 미확인(null)으로 둔다 (util.num 이 _overflow 를 본다).
-    if (cells.slice(header.length).some((x) => pyStrip(x ?? ""))) {
+    // 새 안전장치 (파이썬에 없음): 칸이 머리글보다 많고, 천 단위 쉼표가 칸을 가른 모양('360','100','000')이 보이면
+    // 금액에 따옴표 없는 쉼표가 든 줄이다. 값이 한 칸씩 밀렸으므로 이 줄의 숫자는 미확인(null)으로 둔다 (util.num 이 _overflow 를 본다).
+    // 적요·비고 같은 글 칸의 쉼표는 숫자 칸을 밀지 않으므로 잡지 않는다.
+    if (cells.slice(header.length).some((x) => pyStrip(x ?? "")) && splitNumber(cells)) {
       row._overflow = 1;
       issues.add(name, line, "칸이 머리글보다 많음 (금액에 따옴표 없는 쉼표가 있는지 확인) → 이 줄의 숫자는 미확인으로 처리");
     }
     out.push(row);
   }
   return [out, true];
+}
+
+/** 이웃한 두 칸이 '1~3자리 숫자' + '정확히 3자리 숫자' 인가 (천 단위 쉼표로 갈린 금액의 모양). */
+function splitNumber(cells: string[]): boolean {
+  for (let i = 0; i + 1 < cells.length; i++) {
+    if (/^[-(]?\d{1,3}$/.test(pyStrip(cells[i] ?? "")) && /^\d{3}\)?$/.test(pyStrip(cells[i + 1] ?? ""))) return true;
+  }
+  return false;
 }
 
 /** csv.DictReader 한 줄: 칸이 모자라면 null (restval), 남으면 무시 (restkey 는 쓰지 않음). */

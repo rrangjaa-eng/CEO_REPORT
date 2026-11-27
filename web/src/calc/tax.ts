@@ -71,11 +71,14 @@ export function mergeTax(
     const day = ev.orig_date || ev.date;
     return ev.io === ioOf(t) && !!day && Math.abs(daysBetween(t.due, day)) <= NEAR_DAYS;
   };
-  /** 고침(RULES.taxSameMonth): 세목 낱말·거래처코드로 맞출 때는 납부일과 같은 달이어도 같은 세금으로 본다. 금액만 같은 줄은 ±7일 그대로. */
+  /** 고침(RULES.taxSameMonth): 세목 낱말로 맞출 때는 납부일과 같은 달이어도 같은 세금으로 본다.
+   * 단 그 일정이 다른 세금 줄의 납부일 ±7일 안이면 그쪽 것이므로 가져오지 않는다. 거래처코드·금액으로 맞출 때는 ±7일 그대로
+   * (세무서 코드는 여러 세목이 같이 쓴다). */
   const nearKind = (ev: FundEvent, t: TaxRow) => {
     if (near(ev, t)) return true;
+    if (!RULES.taxSameMonth || t.due === null || ev.io !== ioOf(t)) return false;
     const day = ev.orig_date || ev.date;
-    return RULES.taxSameMonth && t.due !== null && ev.io === ioOf(t) && !!day && day.slice(0, 7) === t.due.slice(0, 7);
+    return !!day && day.slice(0, 7) === t.due.slice(0, 7) && !tx.some((o) => o !== t && near(ev, o));
   };
   const codes = (t: TaxRow) => new Set((t.codes || []).map(codeKey));   // U6
   const evCode = (ev: FundEvent) => codeKey(ev.vendor_code);
@@ -98,7 +101,7 @@ export function mergeTax(
     if (!cs.size) return;
     const hit: number[] = [];
     events.forEach((ev, i) => {
-      if (usable(i, ev) && nearKind(ev, t) && cs.has(evCode(ev))) hit.push(i);
+      if (usable(i, ev) && near(ev, t) && cs.has(evCode(ev))) hit.push(i);
     });
     if (hit.length) {
       found[n] = hit.map((i) => events[i]!);
