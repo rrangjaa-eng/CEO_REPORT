@@ -5,6 +5,7 @@ import { depreciation } from "./corptax";
 import { accountYear, lastPaydayOut } from "./accounts";
 import { blankPlanGaps } from "./gate_blank";
 import { risks } from "./risks";
+import { totalsSplit } from "./totals_split";
 
 export function tail(ctx: Ctx): void {
   const { d, R, ym, pl_out } = ctx;
@@ -34,4 +35,5 @@ export function tail(ctx: Ctx): void {
   R["last_pay"] = lastPaydayOut(d.txns, R["payday"]);
   R["plan_gap_note"] = blankPlanGaps(R);
   R["risks"] = risks(R);
+  R["totals_split"] = totalsSplit(R);   // 새 값 (파이썬에 없음)
 }

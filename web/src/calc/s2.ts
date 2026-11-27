@@ -6,7 +6,8 @@ import { d2s, ssum, won } from "../model/util";
 import { isPrior } from "../model/data";
 import { BUDGET_IN_FUNDS, INTRANET_IN_FUNDS } from "./projects";
 import type { Ctx, Obj } from "./ctx";
-import { applyFundplan, fillProjects, type FundEvent, type PlanRow, type Txn, type ExecRow } from "./fundplan";
+import { RULES } from "../model/rules";
+import { applyFundplan, fillProjects, nextFriday, type FundEvent, type PlanRow, type Txn, type ExecRow } from "./fundplan";
 import { mergeTax, type TaxRow } from "./tax";
 import { compareDebts, type DebtRow } from "./debts";
 import { attach as attachDetails, type DetailRow } from "./paydetail";
@@ -14,6 +15,7 @@ import { attach as attachReqs, type ReqRow } from "./payreq";
 import { availablePeriods, countsIn, markMust, twoSources, twoSourcesIn } from "./schedule";
 
 const isNone = (x: unknown) => x === null || x === undefined;
+const OVERDUE_SOURCES = ["자금일정", "프로젝트집행"];
 
 export function section2(ctx: Ctx): void {
   const { d, asof, R, invs, ar_rows, in_missing, checks } = ctx;
@@ -144,15 +146,23 @@ export function section2(ctx: Ctx): void {
     s = addDays(e_, 1);
   }
   for (const b of buckets) for (const k of ["in_firm", "in_est", "out_firm", "out_est"]) b[k] = 0;
-  const undated: Obj[] = [], past: Obj[] = [], beyond: Obj[] = [], amountUnknown: Obj[] = [], lateIn: Obj[] = [];
+  const undated: Obj[] = [], past: Obj[] = [], beyond: Obj[] = [], amountUnknown: Obj[] = [], lateIn: Obj[] = [], lateOut: Obj[] = [];
   for (let ev of events) {
     if (isNone(ev["amount"])) { amountUnknown.push(ev); continue; }
     if (isNone(ev["date"])) { undated.push(ev); continue; }
     if (ev["date"] <= asof) {
-      if (ev["io"] !== "in") { past.push(ev); continue; }
+      if (ev["io"] !== "in") {
+        // 고침(RULES.overdueOutNextFriday): 지급 기록을 못 찾은 지난 날짜 지급은 버리지 않고 다음 금요일 예상 지출로 둔다.
+        // 자금계획서 줄은 applyFundplan 이 이미 옮겼으므로 자금일정·프로젝트집행만. 냈는지 모르므로 확정·꼭 나갈 돈으로 치지 않는다.
+        if (!(RULES.overdueOutNextFriday && OVERDUE_SOURCES.includes(ev["source"]))) { past.push(ev); continue; }
+        ev = { ...ev, orig_date: ev["date"], date: nextFriday(asof), firm: false, must: false, late_out: true,
+          basis: (ev["basis"] || "") + `, 예정일 ${ev["date"]} 지난 지급 (지급 기록 없음) → 다음 금요일 예상 지출` };
+        lateOut.push(ev);
+      } else {
       ev = { ...ev, orig_date: ev["date"], date: payday, firm: false, must: false, late_in: true,
         basis: (ev["basis"] || "") + `, 예정일 ${ev["date"]} 지난 입금 → 이번 주 예상 입금` };
       lateIn.push(ev);
+      }
     }
     if (ev["date"] > horizon) { beyond.push(ev); continue; }
     for (const b of buckets) {
@@ -174,7 +184,7 @@ export function section2(ctx: Ctx): void {
     b["bal_all"] = balA;
   }
   const dated = sortedBy([...events.filter((ev) => !isNone(ev["amount"]) && ev["date"] && asof < ev["date"] && ev["date"] <= horizon),
-    ...lateIn], (x) => x["date"] as string);
+    ...lateIn, ...lateOut], (x) => x["date"] as string);
   const mins: Obj = {};
   for (const mode of ["firm", "all"]) {
     if (isNone(startCash)) { mins[mode] = [null, null]; continue; }
@@ -231,6 +241,7 @@ export function section2(ctx: Ctx): void {
   };
   // 바꿀 것 F9 (사용자 결정 2026-11-27): 남은 예산은 예상 지출에 그대로 두고, 대표 보고에서 따로 보이게 합계·건수를 둔다.
   R["budget_left"] = budgetLeft(events, asof, horizon);
+  R["late_out"] = lateOut;   // 고침(RULES.overdueOutNextFriday)으로 다음 금요일에 옮긴 지난 날짜 지급. 꺼져 있으면 빈 목록
 
   const allAmt = events.filter((e) => !isNone(e["amount"])).reduce((t, e) => t + e["amount"], 0);
   let parts = 0;

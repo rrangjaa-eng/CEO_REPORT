@@ -1,6 +1,7 @@
 // ceo_report/data.py load(folder) 를 파일 묶음(FileSet)으로. 같은 알림 글·같은 속성 이름(파이썬 d.<이름>)을 쓴다.
 // 이것이 부르는 읽기도 함께 옮김: paydetail/payreq.read_checked, targets.read, corptax.read(+read_ledger),
 // budget.read_confirmed, debts.load(+reconcile.read_maturity).
+import { RULES } from "./rules";
 import { dictReader, readCsv, type CsvInfo, type FileSet } from "./csv";
 import { ymd, type IsoDate } from "./dates";
 import { PY_SPACE, cmpStr, fmtComma, pyFloatParse, pyIntParse, pyIsDigit, pySplit, pyStrip } from "./py";
@@ -461,6 +462,8 @@ export function loadData(files: FileSet): Data {
     if (bok && tok && brows.length) {
       book_bank = true;
       for (const r of R("계좌잔액.csv")) {
+        // 고침(RULES.bookKeepsManualDeposit): 손으로 넣은 정기예금 줄은 보통예금이 아니므로 잔액을 살린다
+        if (RULES.bookKeepsManualDeposit && `${rget(r, "계좌명") || ""} ${rget(r, "제한사유") || ""}`.includes("정기예금")) continue;
         if (pyStrip(go(r, "잔액"))) iss.add(r._file, r._line, "잔액은 분개장 보통예금(장부잔액.csv)으로 계산 → 이 줄은 사용제한만 씀");
         r["잔액"] = "0";
         r["계좌명"] = "사용제한: " + (rget(r, "계좌명") || rget(r, "제한사유") || "");

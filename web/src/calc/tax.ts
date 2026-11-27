@@ -2,6 +2,7 @@
 // 바꿀 것 U6: 거래처코드 비교는 양쪽 같은 규칙(codeKey: 숫자가 아닌 코드도 앞 0을 뗌).
 import { daysBetween, type IsoDate } from "../model/dates";
 import { cmpStr, fmtComma, PY_SPACE } from "../model/py";
+import { RULES } from "../model/rules";
 import { codeKey, nextFriday, type FundEvent } from "./fundplan";
 
 /** data.load 의 d.tax 한 줄 (세금예상.csv). codes 는 파이썬 튜플 → 목록. */
@@ -70,6 +71,12 @@ export function mergeTax(
     const day = ev.orig_date || ev.date;
     return ev.io === ioOf(t) && !!day && Math.abs(daysBetween(t.due, day)) <= NEAR_DAYS;
   };
+  /** 고침(RULES.taxSameMonth): 세목 낱말·거래처코드로 맞출 때는 납부일과 같은 달이어도 같은 세금으로 본다. 금액만 같은 줄은 ±7일 그대로. */
+  const nearKind = (ev: FundEvent, t: TaxRow) => {
+    if (near(ev, t)) return true;
+    const day = ev.orig_date || ev.date;
+    return RULES.taxSameMonth && t.due !== null && ev.io === ioOf(t) && !!day && day.slice(0, 7) === t.due.slice(0, 7);
+  };
   const codes = (t: TaxRow) => new Set((t.codes || []).map(codeKey));   // U6
   const evCode = (ev: FundEvent) => codeKey(ev.vendor_code);
   const conflict = (ev: FundEvent, t: TaxRow) => {
@@ -91,7 +98,7 @@ export function mergeTax(
     if (!cs.size) return;
     const hit: number[] = [];
     events.forEach((ev, i) => {
-      if (usable(i, ev) && near(ev, t) && cs.has(evCode(ev))) hit.push(i);
+      if (usable(i, ev) && nearKind(ev, t) && cs.has(evCode(ev))) hit.push(i);
     });
     if (hit.length) {
       found[n] = hit.map((i) => events[i]!);
@@ -103,12 +110,13 @@ export function mergeTax(
     (ev, t) => (OFFICE[t.kind] || []).some((w) => text(ev).includes(w)),
     (ev, t) => t.amount !== null && ev.amount === t.amount,
   ];
-  for (const test of tests) {
+  tests.forEach((test, k) => {
+    const close = k < 2 ? nearKind : near;
     tx.forEach((t, n) => {
       if (found[n] !== null) return;
       for (let i = 0; i < events.length; i++) {
         const ev = events[i]!;
-        if (usable(i, ev) && near(ev, t) && !conflict(ev, t) && test(ev, t)) {
+        if (usable(i, ev) && close(ev, t) && !conflict(ev, t) && test(ev, t)) {
           found[n] = [ev];
           byName[n] = true;
           taken.add(i);
@@ -116,7 +124,7 @@ export function mergeTax(
         }
       }
     });
-  }
+  });
   const cardKey = (t: TaxRow) => JSON.stringify([cardCo(t), t.due]);
   const cardHit = new Set<string>();
   tx.forEach((t, n) => {

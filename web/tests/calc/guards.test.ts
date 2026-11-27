@@ -66,3 +66,32 @@ describe("입금 출처 둘 (자금계획서와 계산서에 같은 거래처·�
     expect(compute(loadData(c.files), "weekly", "2026-11-02")["two_source_in"]).toEqual([]);
   });
 });
+
+describe("합계 나눠 보기 (R.totals_split): 음수가 다른 프로젝트 몫을 깎지 않게", () => {
+  const R = compute(loadData(loadCase("base").files), "weekly", "2026-11-02");
+  const T = R["totals_split"];
+
+  it("잔여 예산: 진행 중 양수 · 끝난 프로젝트 잔여 · 예산 초과로 나눈다 (합치면 기존 합계)", () => {
+    expect(T.remain).toEqual({ open: 206050000, closed: 87500000, over: 14000000, over_n: 1 });
+    expect(T.remain.open + T.remain.closed - T.remain.over).toBe(R["s3"].total.remain);
+    // 자금 일정에 '남은 예산'으로 들어가는 금액(부가세 10% 더한 값)의 바탕과 같다
+    expect(Math.round(T.remain.open * 1.1)).toBe(R["budget_left"].amount);
+  });
+
+  it("미발행·매출 미반영: 계약보다 더 발행·반영한 몫(over)을 따로 둔다", () => {
+    expect(T.unissued.open - T.unissued.over).toBe(R["s5"].unissued);
+    expect(T.unrecognized.open - T.unrecognized.over).toBe(R["s4"].unrecognized);
+    expect(T.unissued.over).toBeGreaterThanOrEqual(0);
+    expect(T.unrecognized.over_n).toBe(R["s4"].projects.filter((P: any) => P.unrecognized < 0).length);
+  });
+
+  it("계약보다 많이 발행한 프로젝트가 있어도 다른 프로젝트 미발행(open)은 줄지 않는다", () => {
+    const c = loadCase("base");
+    const before = T.unissued.open;
+    c.files["계산서.csv"] += "26203,가상고객D,2026-10-30,발행,300000000,30000000,2026-12-29,N,,\n";
+    const R2 = compute(loadData(c.files), "weekly", "2026-11-02");
+    const own = (R["s5"].by_project as any[]).find((x) => x.P.id === "26203").unissued;
+    expect(R2["totals_split"].unissued.open).toBe(before - Math.max(own, 0));
+    expect(R2["totals_split"].unissued.over).toBeGreaterThan(0);
+  });
+});
