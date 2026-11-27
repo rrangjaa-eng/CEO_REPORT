@@ -46,16 +46,16 @@ for (const id of cases) {
       if (!onlyKeys || onlyKeys.includes("stop")) {
         it("stop", () => {
           const ch = changed("stop");
-          if (exp.rc === 2 && exp.R === null) return; // 명령이 시작 전에 거부한 사례(F12): known_changes 가 따로 본다
-          expect(diffPaths(ch ? ch.want : exp.stop, run().stop)).toEqual([]);
+          if (exp.rc === 2 && exp.R === null) return; // 명령이 시작 전에 거부한 사례(F12): decisions.test.ts 가 따로 본다
+          expect(ch ? ch.check(exp.stop, run().stop) : diffPaths(exp.stop, run().stop)).toEqual([]);
         });
       }
       for (const key of keys) {
         it(key, () => {
           if (exp.R === null) return; // 위와 같음
           const ch = changed(`R.${key}`);
-          const want = ch ? ch.want : (exp.R as Record<string, unknown>)[key];
-          expect(diffPaths(want, run().R![key])).toEqual([]);
+          const want = (exp.R as Record<string, unknown>)[key];
+          expect(ch ? ch.check(want, run().R![key]) : diffPaths(want, run().R![key])).toEqual([]);
         });
       }
     });
