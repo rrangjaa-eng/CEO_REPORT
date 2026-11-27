@@ -209,7 +209,9 @@ def case_d_journal_line_id(input_dir, collect, wehago_dir):
     moved = [list(r) for r in full["줄"] if r[1] == "00021"]
     for r in moved:
         r[0], r[1], r[10] = "20261101", "00001", "10월 임차료 (날짜 고침)"
-    new = dict(full, 기간={"start_date": "20261101", "end_date": "20261102", "gisu": "2"}, 줄=moved, 줄수=len(moved), 전표수=1)
+    # 수집시각이 예전 파일과 같으면 어느 것이 '나중 파일'인지 폴더 읽는 순서에 따라 바뀜 → 한 시간 뒤로 둠
+    new = dict(full, 수집시각="2026-11-05 11:00:00",
+               기간={"start_date": "20261101", "end_date": "20261102", "gisu": "2"}, 줄=moved, 줄수=len(moved), 전표수=1)
     write_json(wehago_dir, "261102 분개장 자동수집.json", new)
     base_plan(wehago_dir)
     return {"title": "분개장 중복 줄: 줄 번호(sq_acttax2)가 같으면 날짜를 고쳐 다시 받아도 한 번만", "rules": ["D6"],
