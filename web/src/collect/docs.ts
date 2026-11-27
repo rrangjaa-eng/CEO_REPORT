@@ -38,7 +38,10 @@ export function checkDoc(raw: unknown): Checked {
   return { ok: true, doc: raw as CollectedDoc };
 }
 
-/** 같은 자료(종류·기간·회사)를 알아보는 열쇠. 확장의 docKey 와 같은 식. */
+/** 같은 자료를 알아보는 열쇠. 확장의 docKey 와 같은 식.
+ *  결산·대조 원본은 종류가 같고 기간·회사가 없어 화면코드·연도를 붙여야 서로 덮지 않는다. */
 export function docKey(doc: CollectedDoc): string {
-  return `${doc.종류}|${JSON.stringify(doc.기간 ?? "")}|${doc.회사 ?? ""}`;
+  const base = `${doc.종류}|${JSON.stringify(doc.기간 ?? "")}|${String(doc.회사 ?? "")}`;
+  if (doc.화면코드 === undefined) return base;
+  return `${base}|${String(doc.화면코드 ?? "")}|${String(doc.연도 ?? "")}`;
 }

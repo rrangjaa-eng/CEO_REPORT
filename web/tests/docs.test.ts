@@ -34,3 +34,14 @@ describe("docKey", () => {
     expect(docKey(r.doc)).toBe('분개장|{"start_date":"20260101","end_date":"20261031"}|가상회사');
   });
 });
+
+describe("docKey 화면별 원본", () => {
+  it("화면코드가 다른 대조 원본은 서로 덮지 않는다", async () => {
+    const { docKey } = await import("../src/collect/docs");
+    const a = docKey({ 종류: "대조원본", 화면코드: "A1", 연도: 2026 });
+    const b = docKey({ 종류: "대조원본", 화면코드: "B2", 연도: 2026 });
+    expect(a).not.toBe(b);
+    expect(docKey({ 종류: "분개장", 기간: ["2026-01-01", "2026-11-26"], 회사: "X" }))
+      .toBe(`분개장|${JSON.stringify(["2026-01-01", "2026-11-26"])}|X`);
+  });
+});
