@@ -85,3 +85,13 @@ describe("백업 형식 3", () => {
     expect((await listForecasts()).map((r) => r.asof)).toEqual(["2026-11-02"]);
   });
 });
+
+describe("백업 폴더 시각 검사", () => {
+  beforeEach(async () => { await clearAll(); });
+  it("불러온 때가 ISO 시각이 아니면 거절하고 아무것도 바꾸지 않는다", async () => {
+    const bad = new Blob([JSON.stringify({ 종류: "CEO 보고 백업", 형식: 3, 자료: [],
+      폴더: { 불러온때: "yesterday", 파일: [{ path: "입력/a.csv", lastModified: 1, base64: "" }] } })]);
+    await expect(importBackup(bad)).rejects.toThrow("폴더");
+    expect((await loadFolder()).files).toEqual([]);
+  });
+});

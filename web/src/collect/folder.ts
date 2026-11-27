@@ -31,18 +31,37 @@ export function mapPickedPath(rel: string): string | null {
   return rest.join("/");
 }
 
-/** 고른 파일들 → 저장할 폴더 파일. 같은 경로가 둘이면(부모 폴더 아래 보고 폴더가 둘 등) 더 새로 고친 것. */
-export async function readPicked(files: Iterable<{ rel: string; file: File }>): Promise<{ files: FolderFile[]; skipped: number }> {
+/** 고른 경로에서 보고 폴더 자리(입력·수집 바로 위까지). 없으면 null */
+function rootOf(rel: string): string | null {
+  const parts = rel.normalize("NFC").replace(/\\/g, "/").split("/").filter((p) => p !== "" && p !== ".");
+  const i = parts.findIndex((p) => (ROOTS as readonly string[]).includes(p));
+  return i < 0 ? null : parts.slice(0, i).join("/");
+}
+
+/** 고른 파일들 → 저장할 폴더 파일.
+ *  부모 폴더 아래 보고 폴더가 여럿이면(지난달 폴더 등) 섞으면 옛 자료가 들어가므로, 가장 새로 고친 파일이 있는 보고 폴더 하나만 쓴다. */
+export async function readPicked(files: Iterable<{ rel: string; file: File }>): Promise<{ files: FolderFile[]; skipped: number; droppedRoots: string[] }> {
+  const list = [...files];
+  const newestByRoot = new Map<string, number>();
+  for (const { rel, file } of list) {
+    if (mapPickedPath(rel) === null) continue;
+    const r = rootOf(rel) as string;
+    newestByRoot.set(r, Math.max(newestByRoot.get(r) ?? -Infinity, file.lastModified));
+  }
+  const roots = [...newestByRoot.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const keep = roots[0]?.[0];
   const by = new Map<string, FolderFile>();
   let skipped = 0;
-  for (const { rel, file } of files) {
+  for (const { rel, file } of list) {
     const path = mapPickedPath(rel);
     if (path === null) { skipped++; continue; }
+    if (rootOf(rel) !== keep) continue;
     const had = by.get(path);
     if (had && had.lastModified >= file.lastModified) continue;
     by.set(path, { path, lastModified: file.lastModified, bytes: new Uint8Array(await file.arrayBuffer()) });
   }
-  return { files: [...by.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)), skipped };
+  return { files: [...by.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)), skipped,
+    droppedRoots: roots.slice(1).map((r) => r[0]).sort() };
 }
 
 export interface FolderGroup { folder: string; count: number; newest: number }

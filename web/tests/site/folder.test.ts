@@ -39,6 +39,18 @@ describe("폴더 경로 바꾸기", () => {
     expect(files.map((x) => [x.path, new TextDecoder().decode(x.bytes), x.lastModified])).toEqual([["입력/설정.csv", "new", 2000]]);
   });
 
+  it("부모 폴더 아래 보고 폴더가 둘이면 가장 새로 고친 쪽 하나만 쓰고 나머지는 알린다", async () => {
+    const f = (text: string, t: number) => new File([text], "x.csv", { lastModified: t });
+    const { files, droppedRoots } = await readPicked([
+      { rel: "보고/2026-10/입력/설정.csv", file: f("old", 1000) },
+      { rel: "보고/2026-10/수집/위하고/261031 분개장 자동수집.json", file: f("{}", 1500) },
+      { rel: "보고/2026-11/입력/설정.csv", file: f("new", 2000) },
+    ]);
+    expect(files.map((x) => x.path)).toEqual(["입력/설정.csv"]);
+    expect(new TextDecoder().decode(files[0]!.bytes)).toBe("new");
+    expect(droppedRoots).toEqual(["보고/2026-10"]);
+  });
+
   it("폴더마다 개수와 가장 늦게 고친 때", () => {
     const b = new Uint8Array();
     expect(summarize([

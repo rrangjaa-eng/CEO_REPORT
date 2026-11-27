@@ -59,3 +59,12 @@ describe("폴더 + 확장 자료 합치기", () => {
     expect(r.fileDays).toEqual({ "입력/계산서.csv": "2026-11-02" });
   });
 });
+
+describe("이름 없는 예전 자료가 같은 이름이 되면", () => {
+  it("둘 다 넣는다 (회사가 다른 같은 날 분개장)", () => {
+    const a = { ...journal("2026-11-05 10:00:00"), 회사: "가" };
+    const b = { ...journal("2026-11-05 11:00:00"), 회사: "나" };
+    const r = buildConvInput([], [{ doc: a }, { doc: b }]);
+    expect(Object.keys(r.files).sort()).toEqual(["수집/위하고/261105 분개장 자동수집 (2).json", "수집/위하고/261105 분개장 자동수집.json"]);
+  });
+});

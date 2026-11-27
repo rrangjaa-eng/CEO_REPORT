@@ -92,9 +92,16 @@ export function buildConvInput(folder: FolderFile[], docs: ExtDoc[]): ConvInput 
     if (path.startsWith("입력/")) fileDays[path] = seoulDate(ms);
   };
   for (const f of folder) put(f.path, f.bytes, f.lastModified, "폴더");
+  // 이름 없이 저장된 예전 자료는 이름을 지어 주는데, 회사·기간이 다른 두 자료가 같은 이름이 될 수 있다 → 뒤에 (2), (3)… 을 붙여 둘 다 넣음
+  const used = new Set<string>();
   for (const d of docs) {
     const ms = collectedMs(d.doc.수집시각) ?? 0;
-    put(`수집/위하고/${nameOf(d.doc, d.name)}`, enc.encode(JSON.stringify(d.doc)), ms, "확장");
+    let name = nameOf(d.doc, d.name);
+    if (!String(d.name ?? "").trim()) {
+      for (let k = 2; used.has(name); k++) name = nameOf(d.doc, null).replace(/\.json$/i, ` (${k}).json`);
+      used.add(name);
+    }
+    put(`수집/위하고/${name}`, enc.encode(JSON.stringify(d.doc)), ms, "확장");
   }
   return { files, mtimes, fileDays, from };
 }

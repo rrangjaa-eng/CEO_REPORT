@@ -3,7 +3,7 @@ import { checkDoc } from "./collect/docs";
 import { fetchFromExtension } from "./collect/extension";
 import { readPicked, summarize, type FolderFile } from "./collect/folder";
 import { buildConvInput, nameOf, seoulDate, seoulNow } from "./collect/inputs";
-import { exportBackup, importBackup, lastForecastBefore, listDocs, loadFolder, replaceFolder, saveDocs, saveForecast } from "./collect/store";
+import { exportBackup, hasForecast, importBackup, lastForecastBefore, listDocs, loadFolder, replaceFolder, saveDocs, saveForecast } from "./collect/store";
 import { won } from "./model/util";
 import { makeReport, vsForecast, type Kind } from "./pipeline";
 import { renderReport, renderStop } from "./report/report";
@@ -38,7 +38,7 @@ function row(k: string, v: string, small?: string): HTMLLIElement {
 }
 
 /** ms → 'YYYY-MM-DD HH:MM' (서울) */
-const when = (ms: number) => seoulNow(ms).slice(0, 16);
+const when = (ms: number) => (Number.isFinite(ms) && Math.abs(ms) <= 8.64e15 ? seoulNow(ms).slice(0, 16) : "알 수 없음");
 
 // ── 확장 자료 ──────────────────────────────────────────────
 
@@ -96,10 +96,18 @@ async function renderFolder() {
   if (importedAt) ul.append(row("불러온 때", when(Date.parse(importedAt))));
 }
 
+let folderBusy = false;
 async function takeFolder(picked: { rel: string; file: File }[]) {
+  // 읽는 중에 또 고르면 늦게 끝난 쪽이 저장돼 안내와 어긋나므로, 하나가 끝날 때까지 받지 않는다
+  if (folderBusy) { say("folderStatus", "앞서 고른 폴더를 아직 읽는 중입니다. 끝난 뒤 다시 골라 주세요.", true); return; }
+  folderBusy = true;
+  try { await takeFolderNow(picked); } finally { folderBusy = false; }
+}
+
+async function takeFolderNow(picked: { rel: string; file: File }[]) {
   say("folderStatus", "폴더를 읽는 중…");
   try {
-    const { files, skipped } = await readPicked(picked);
+    const { files, skipped, droppedRoots } = await readPicked(picked);
     if (!files.length) {
       say("folderStatus", "고른 폴더 안에 '입력'이나 '수집' 폴더가 없습니다. 보고 폴더(또는 그 위 폴더)를 고르세요.", true);
       return;
@@ -108,7 +116,8 @@ async function takeFolder(picked: { rel: string; file: File }[]) {
     await renderFolder();
     const n = (p: string) => files.filter((f: FolderFile) => f.path.startsWith(p)).length;
     say("folderStatus", `불러옴: 입력 ${n("입력/")}개 · 수집 ${n("수집/")}개` + (skipped ? ` (입력·수집 밖이거나 쓰지 않는 파일 ${skipped}개는 뺌)` : "")
-      + " — 예전에 불러온 폴더는 이것으로 바뀌었습니다.");
+      + " — 예전에 불러온 폴더는 이것으로 바뀌었습니다."
+      + (droppedRoots.length ? ` 보고 폴더가 여럿이라 가장 새로 고친 것만 썼습니다 (쓰지 않음: ${droppedRoots.join(", ")}).` : ""));
   } catch (e) {
     say("folderStatus", errText(e), true);
   }
@@ -136,6 +145,9 @@ async function walkEntry(entry: FileSystemEntry, out: { rel: string; file: File 
   }
 }
 
+// 상자 밖에 떨어뜨려도 크롬이 파일을 열며 페이지를 떠나지 않게
+document.addEventListener("dragover", (ev) => ev.preventDefault());
+document.addEventListener("drop", (ev) => ev.preventDefault());
 const drop = $("drop");
 drop.addEventListener("dragover", (ev) => { ev.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -230,12 +242,13 @@ $<HTMLFormElement>("makeForm").addEventListener("submit", async (ev) => {
       body.append(renderReport(made.R, kind, { made: seoulNow(nowMs).slice(0, 16) }));
       const prev = await lastForecastBefore(asof);
       if (prev && made.data) vsTable(vsForecast(prev, made.data, made.R), prev.asof);
-      await saveForecast(forecastRecord(made.R));
     }
     $("logCode").textContent = `(코드 ${made.conv.code} · 변환 ${Math.round(made.ms.convert)}ms · 계산 ${Math.round(made.ms.report)}ms)`;
     $("log").textContent = [...made.conv.lines, ...made.notes].join("\n");
     showView(true);
     say("makeStatus", "");
+    // 예상 기록은 그 기준일에 처음 만든 것만 남긴다(지난 기준일을 다시 만들면 이미 실제가 섞인 '예상'이 되므로)
+    if (made.ok && made.R && !(await hasForecast(asof))) await saveForecast(forecastRecord(made.R));
   } catch (e) {
     say("makeStatus", errText(e), true);
   } finally {

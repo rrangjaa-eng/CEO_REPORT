@@ -135,6 +135,10 @@ export async function listForecasts(): Promise<ForecastRecord[]> {
   return all.sort((a, b) => (a.asof < b.asof ? -1 : a.asof > b.asof ? 1 : 0));
 }
 
+export async function hasForecast(asof: string): Promise<boolean> {
+  return (await listForecasts()).some((r) => r.asof === asof);
+}
+
 /** 이번 기준일보다 앞선 기록 중 가장 늦은 것 (없으면 null) */
 export async function lastForecastBefore(asof: string): Promise<ForecastRecord | null> {
   const earlier = (await listForecasts()).filter((r) => r.asof < asof);
@@ -185,12 +189,17 @@ function readBackupFolder(x: unknown): { files: FolderFile[]; importedAt: string
   const files: FolderFile[] = [];
   for (const it of f.파일) {
     if (typeof it?.path !== "string" || !/^(입력|수집)\/./.test(it.path) || it.path.split("/").includes("..")) throw bad();
-    if (typeof it.lastModified !== "number" || !Number.isFinite(it.lastModified) || typeof it.base64 !== "string") throw bad();
+    // 날짜로 바꿀 수 있는 범위(±8.64e15 ms)만
+    if (typeof it.lastModified !== "number" || !Number.isFinite(it.lastModified) || Math.abs(it.lastModified) > 8.64e15 ||
+      typeof it.base64 !== "string") throw bad();
     let bytes: Uint8Array;
     try { bytes = fromB64(it.base64); } catch { throw bad(); }
     files.push({ path: it.path, lastModified: it.lastModified, bytes });
   }
-  return files.length ? { files, importedAt: typeof f.불러온때 === "string" ? f.불러온때 : "" } : null;
+  const at = f.불러온때;
+  // 불러온 때는 ISO 시각만 (문자열 비교로 새 것을 가리므로 모양이 같아야 함)
+  if (at !== undefined && at !== null && (typeof at !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(at) || Number.isNaN(Date.parse(at)))) throw bad();
+  return files.length ? { files, importedAt: at ?? "" } : null;
 }
 
 /** 백업 파일을 불러온다. 파일 전체가 맞을 때만 바꾼다(하나라도 틀리면 아무것도 바꾸지 않음).
@@ -218,12 +227,13 @@ export async function importBackup(file: Blob): Promise<number> {
     items.push({ key: docKey(c.doc), savedAt: String(it.savedAt ?? ""), doc: c.doc, ...(name ? { name } : {}) });
   }
   const folder = readBackupFolder(b.폴더);
-  const n = await putNewer(items);
+  // 가장 큰(저장 공간이 모자라 실패하기 쉬운) 폴더를 먼저 쓴다: 실패하면 아무것도 바뀌지 않은 채 멈춤
   // 폴더는 이 크롬에 폴더가 없거나 백업 쪽을 더 늦게 불러왔을 때만 바꾼다 (더 새로 불러온 폴더를 옛 백업이 덮지 않게)
   if (folder) {
     const have = await loadFolder();
     if (!have.files.length || (have.importedAt ?? "") < folder.importedAt) await replaceFolder(folder.files, folder.importedAt);
   }
+  const n = await putNewer(items);
   // 예상 기록은 이미 있는 기준일은 그대로 둔다(그 기준일에 이 PC에서 만든 것이 더 정확함)
   const have = new Set((await listForecasts()).map((r) => r.asof));
   for (const f of forecasts as ForecastRecord[]) if (!have.has(f.asof)) await saveForecast(f);
