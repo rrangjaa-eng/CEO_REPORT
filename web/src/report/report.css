@@ -1,0 +1,167 @@
+/* 대표 보고 (주간·월간). 문서처럼: 검정·회색 글자, 가는 선, 강조색 하나(남색: 그림·절 번호), 빨강은 음수·경고에만.
+   휴대폰 먼저 (옆 여백 16px, 페이지 가로 밀림 없음), 인쇄는 A4 (브라우저 인쇄 → PDF). */
+:root{--r-paper:#fff;--r-ink:#1c2128;--r-sub:#5b6470;--r-rule:#d7dbe0;--r-soft:#f4f5f7;--r-accent:#1f3b63;--r-neg:#b3261e;--r-na:#8a5a00;
+  --r-f:"Pretendard","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--r-paper:#15181c;--r-ink:#e6e8eb;--r-sub:#9aa3ad;--r-rule:#2e343b;
+  --r-soft:#1d2126;--r-accent:#8fb0dc;--r-neg:#ef8a82;--r-na:#e0b25c}}
+:root[data-theme="dark"]{--r-paper:#15181c;--r-ink:#e6e8eb;--r-sub:#9aa3ad;--r-rule:#2e343b;--r-soft:#1d2126;--r-accent:#8fb0dc;--r-neg:#ef8a82;--r-na:#e0b25c}
+
+.report{max-width:760px;margin:0 auto;padding:20px 16px 48px;background:var(--r-paper);color:var(--r-ink);
+  font:15px/1.6 var(--r-f);word-break:keep-all;overflow-wrap:anywhere}
+.report *{box-sizing:border-box}
+.report p{margin:6px 0}
+
+/* 머리 */
+.doc-h{border-bottom:2px solid var(--r-ink);padding-bottom:10px;margin-bottom:14px}
+.doc-h::after{content:"";display:block;clear:both}
+.doc-h .co{margin:0;color:var(--r-sub);font-size:14px}
+.doc-h h1{margin:2px 0 8px;font-size:24px;font-weight:700;letter-spacing:-.01em}
+.meta{display:flex;flex-wrap:wrap;gap:2px 18px;margin:0;font-size:13.5px}
+.meta div{display:flex;gap:6px}
+.meta dt{color:var(--r-sub);white-space:nowrap}
+.meta dd{margin:0;font-variant-numeric:tabular-nums;white-space:nowrap}
+.src{color:var(--r-sub);font-size:12.5px;line-height:1.5}
+table.sign{float:right;border-collapse:collapse;font-size:12px;margin:0 0 6px 12px}
+table.sign th,table.sign td{border:1px solid var(--r-ink);text-align:center;padding:2px 8px;font-weight:500;width:64px}
+table.sign th.sv{width:22px;padding:2px 4px;writing-mode:vertical-rl;letter-spacing:.3em}
+table.sign tr.sg td{height:44px}
+
+/* 절 */
+.sec{margin-top:26px}
+.sec h2{font-size:18px;margin:0 0 4px;padding-top:8px;border-top:1px solid var(--r-ink);font-weight:700}
+.sec h2 .no{color:var(--r-accent);margin-right:6px}
+.report h3{font-size:15px;margin:18px 0 6px;font-weight:700}
+.report h3 small{display:block;font-weight:400;color:var(--r-sub);font-size:12.5px}
+.note{color:var(--r-sub);font-size:12.5px;line-height:1.5}
+.warn{border-left:3px solid var(--r-neg);padding:2px 0 2px 10px;font-size:13.5px;font-weight:600}
+.doc-end{text-align:right;margin-top:24px;color:var(--r-sub)}
+
+/* 숫자 */
+.m{white-space:nowrap}
+.m.neg{color:var(--r-neg)}
+.na,.m.na{color:var(--r-na);font-weight:600}
+
+/* 요약 숫자 줄 */
+.figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px;margin:10px 0 4px}
+.figs>div{border-top:1px solid var(--r-rule);padding:8px 0 10px;min-width:0}
+.figs dt{color:var(--r-sub);font-size:12.5px;line-height:1.35}
+.figs dd{margin:2px 0 0;font-size:20px;font-weight:700;line-height:1.3}
+.figs dd.foot{font-size:12px;font-weight:400;color:var(--r-sub);margin-top:2px}
+.figs dd.foot .m{font-weight:600}
+.figs.top{border-bottom:1px solid var(--r-rule);margin-bottom:6px}
+.figs.top>div{border-top:0}
+.figs.top dd{font-size:22px}
+.figs.top dd.foot,.figs dd.foot{font-size:12px;font-weight:400}
+@media (min-width:640px){.figs{grid-template-columns:repeat(4,minmax(0,1fr))}.figs.eqfig{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+/* 표 (모든 표 같은 모양) */
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:4px 0}
+.report table:not(.sign){width:100%;border-collapse:collapse;font-size:13.5px}
+.report caption{text-align:left;font-weight:600;font-size:13px;padding:6px 0 2px;color:var(--r-sub)}
+.report th{text-align:left;font-weight:600;font-size:12.5px;color:var(--r-sub);border-bottom:1px solid var(--r-ink);padding:5px 6px;vertical-align:bottom}
+.report td{border-bottom:1px solid var(--r-rule);padding:5px 6px;vertical-align:top}
+.report th:first-child,.report td:first-child{padding-left:0}
+.report th:last-child,.report td:last-child{padding-right:0}
+.report th.n,.report td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.report td small,.report th small{display:block;color:var(--r-sub);font-size:11.5px;font-weight:400;white-space:normal}
+.report td small .m{font-weight:400}
+.report tr.tot td{font-weight:700;border-top:1px solid var(--r-ink);border-bottom:1px solid var(--r-ink)}
+.report tr.sum td{font-weight:700}
+.report tr.hq td{font-weight:600;background:var(--r-soft)}
+.report tr.mut td{color:var(--r-sub)}
+.report td.empty{color:var(--r-sub)}
+.report table.team,.report table.stmt{font-size:13px}
+.report table.team{min-width:760px}
+.report table.series{font-size:12px;min-width:720px}
+.report table.series td:first-child{white-space:nowrap}
+.report table.stmt td:first-child{white-space:normal}
+.report table.team td:first-child{min-width:7.5em}
+.report table.stmt{max-width:560px}
+
+/* 좁은 화면: 줄마다 카드처럼 다시 놓는 표 (.reflow). 첫 칸이 제목, 나머지는 '칸 이름 · 값' 세 칸 */
+@media (max-width:560px){
+  .report table.reflow thead{display:none}
+  .report table.reflow tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 10px;border-bottom:1px solid var(--r-rule);padding:6px 0}
+  .report table.reflow td{border:0;padding:0;text-align:left}
+  .report table.reflow td:first-child{grid-column:1/-1;display:flex;gap:8px;align-items:baseline}
+  .report table.reflow td:first-child small{display:inline}
+  .report table.reflow td.n{text-align:left;white-space:normal}
+  .report table.reflow td.n::before{content:attr(data-l);display:block;color:var(--r-sub);font-size:11.5px}
+  .report table.reflow tr.tot{border-top:1px solid var(--r-ink)}
+  /* 출금 목록: 첫 줄 날짜·거래처·금액, 둘째 줄 프로젝트·내역 */
+  .report table.pay thead{display:none}
+  .report table.pay tr{display:grid;grid-template-columns:3.2em minmax(0,1fr) auto;gap:0 8px;border-bottom:1px solid var(--r-rule);padding:6px 0}
+  .report table.pay td{border:0;padding:0}
+  .report table.pay td:nth-child(3),.report table.pay td:nth-child(4){grid-column:2/4;color:var(--r-sub);font-size:12.5px}
+  .report table.pay td:nth-child(3):empty{display:none}
+  .report table.pay td:nth-child(5){grid-row:1;grid-column:3}
+  .report table.pay tr.tot td:nth-child(n+3):not(:last-child){display:none}
+  .report table.next{font-size:13px}
+  .report table.next td:nth-child(3),.report table.next td:nth-child(5){white-space:nowrap}
+}
+
+/* 월초 + 입금 − 지급 = 월말 */
+.eq{display:flex;flex-wrap:wrap;align-items:flex-end;gap:4px 10px;border-top:1px solid var(--r-rule);border-bottom:1px solid var(--r-rule);padding:8px 0}
+.eq-c{display:flex;flex-direction:column}
+.eq-c span{color:var(--r-sub);font-size:12.5px}
+.eq-c .m{font-size:17px;font-weight:700;color:var(--r-ink)}
+.eq-c .m.neg{color:var(--r-neg)}
+.eq .op{font-size:17px;color:var(--r-sub);padding-bottom:1px}
+
+/* 그림 */
+.chart{margin:6px 0 2px}
+.chart-box{overflow-x:auto}
+.chart svg{display:block;width:100%;min-width:320px;max-width:560px;height:auto;font-family:var(--r-f)}
+.chart .grid{stroke:var(--r-rule);stroke-width:1}
+.chart .zero{stroke:var(--r-ink);stroke-width:1}
+.chart .floor{stroke:var(--r-neg);stroke-width:1;stroke-dasharray:5 4}
+.chart .ax{font-size:11.5px;fill:var(--r-sub)}
+.chart .lab{font-size:12px;fill:var(--r-ink);font-weight:600}
+.chart .lab.sub{fill:var(--r-sub);font-weight:400}
+.chart .floor-t{fill:var(--r-neg);font-weight:400;font-size:11px}
+.chart .l-firm{fill:none;stroke:var(--r-accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .l-all{fill:none;stroke:var(--r-sub);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;opacity:.55}
+.chart .pt{fill:var(--r-accent);stroke:var(--r-paper);stroke-width:2}
+.chart .pt.low{fill:var(--r-neg)}
+.legend{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:var(--r-sub);margin-top:2px}
+.legend i{display:inline-block;width:16px;height:0;border-top:2px solid var(--r-accent);vertical-align:middle;margin-right:5px}
+.legend i.k-all{border-top-color:var(--r-sub);opacity:.6}
+.legend i.k-floor{border-top:1px dashed var(--r-neg)}
+details.tview{font-size:13px;margin:2px 0}
+details.tview summary{cursor:pointer;color:var(--r-accent);font-size:12.5px}
+
+/* 막는 까닭 */
+.report.stop h1{font-size:22px}
+.gate{border:2px solid var(--r-neg);padding:12px 14px;margin:12px 0;font-weight:700}
+.gate ul{margin:6px 0 0;padding-left:20px;font-weight:500}
+
+/* 인쇄: A4 세로. 화면 색 대신 늘 밝은 판 */
+@page{size:A4;margin:13mm 12mm}
+@media print{
+  :root{--r-paper:#fff;--r-ink:#000;--r-sub:#4a5059;--r-rule:#c9cdd3;--r-soft:#f1f2f4;--r-accent:#1f3b63;--r-neg:#b3261e;--r-na:#7a4f00}
+  body{background:#fff}
+  .report{max-width:none;padding:0;font-size:9.5pt;line-height:1.45}
+  .report table:not(.sign){font-size:8.2pt}
+  .report td,.report th{padding:3px 5px}
+  .note{font-size:8pt}
+  .keep{break-inside:avoid}
+  .report table.team{min-width:0;font-size:7.8pt}
+  .report table.pay{min-width:0}
+  .report table.series{min-width:0;font-size:7pt}
+  .report table.series td,.report table.series th{padding:3px 2px}
+  .tw,.chart-box{overflow:visible}
+  .chart svg{min-width:0;max-width:110mm}
+  .doc-end{margin-top:6px;break-before:avoid}
+  .figs{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .figs.eqfig{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .figs dd{font-size:13pt}.figs.top dd{font-size:14pt}.figs dd.foot,.figs.top dd.foot{font-size:8pt}
+  .doc-h h1{font-size:18pt}
+  .sec{margin-top:16px}
+  .sec h2{font-size:13pt}
+  .report h3{font-size:10.5pt;margin:12px 0 4px}
+  .report h2,.report h3{break-after:avoid}
+  .figs,.eq,.chart,.report tr{break-inside:avoid}
+  .report thead{display:table-header-group}
+  details.tview{display:none}
+  .report.monthly .sec.p3{break-before:page}
+}

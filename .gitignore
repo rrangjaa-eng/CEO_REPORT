@@ -19,3 +19,5 @@ ceo_report/_build.py
 node_modules/
 extension/dist/
 web/dist/
+!web/tests/**/fixtures/*.xls
+!web/tests/**/fixtures/*.xlsx
