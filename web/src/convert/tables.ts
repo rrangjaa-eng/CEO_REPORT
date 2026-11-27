@@ -87,13 +87,26 @@ export const DEBT_KEYS = ["구분", "계정코드", "계정과목", "거래처�
 const PAYABLE = "미지급금", LOAN = "차입금", DEPOSIT = "정기예금";
 const DATE_RE = /(20\p{Nd}{2})\s*[.\-/년]\s*(\p{Nd}{1,2})\s*[.\-/월]\s*(\p{Nd}{1,2})/gu;
 
-function memoDate(memo: string): IsoDate | null {
+/** 유니코드 숫자 한 글자의 값 (0~9) */
+function digitValue(c: string): number {
+  const code = c.codePointAt(0) ?? 0;
+  for (let base = code; base >= code - 9; base--) {
+    if (!/\p{Nd}/u.test(String.fromCodePoint(base - 1))) return code - base;
+  }
+  return NaN;
+}
+
+export function memoDate(memo: string): IsoDate | null {
   const text = memo || "";
   const pos = text.indexOf("만기");
   const cands = [...(pos >= 0 ? text.slice(pos) : text).matchAll(DATE_RE)];
   for (const m of pos >= 0 ? cands : cands.reverse()) {
     try {
-      return ymd(Number(m[1]), Number(m[2]), Number(m[3]));
+      // 파이썬 int() 처럼 전각 숫자도 읽는다
+      const n = (t: string | undefined) => Number((t ?? "").replace(/\p{Nd}/gu, (c) => String(digitValue(c))));
+      const [y, mo, d] = [n(m[1]), n(m[2]), n(m[3])];
+      if (![y, mo, d].every(Number.isInteger)) continue;
+      return ymd(y, mo, d);
     } catch {
       continue;
     }

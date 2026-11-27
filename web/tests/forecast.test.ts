@@ -32,3 +32,13 @@ describe("예상 기록", () => {
     expect((await listForecasts())[0]?.start).toBe(7);
   });
 });
+
+describe("예상 기록 백업 검사", () => {
+  beforeEach(async () => { await clearAll(); });
+  it("줄 모양이 틀린 예상 기록이 든 백업은 통째로 거절", async () => {
+    const bad = new Blob([JSON.stringify({ 종류: "CEO 보고 백업", 형식: 2, 자료: [],
+      예상기록: [{ asof: "2026-11-06", start: "abc", rows: [{ amount: "1000", io: "x" }] }] })]);
+    await expect(importBackup(bad)).rejects.toThrow("예상 기록");
+    expect(await listForecasts()).toEqual([]);
+  });
+});

@@ -8,13 +8,13 @@ import type { Obj } from "../calc/ctx";
 import { bookDate } from "../calc/gate";
 import { unissuedDue, withVat } from "../calc/projects";
 import { addDays, daysBetween, monthEnd, type IsoDate } from "../model/dates";
-import { pyFixed } from "../model/py";
+import { pyFixed, pyRound } from "../model/py";
 import { balanceChart, type BalPoint } from "./chart";
 import {
   catCell, companyPl, depInto, missingContracts, monthFlow, monthNp, monthSeries, nextWeekGroups, pname, teamAllocate,
   teamBuild, teamYtdAlloc, vsLastWeek, weekOutflows, type Nonop, type TeamRow, type TeamTable,
 } from "./derive";
-import { day, md, money, pct, times, won, ymText } from "./fmt";
+import { day, md, money, pct, won, ymText } from "./fmt";
 import { cat, h, raw, type Child, type Html } from "./html";
 
 export type ReportKind = "weekly" | "monthly";
@@ -330,7 +330,7 @@ function pastBlock(R: Obj): Html {
   const poRows: Row[] = po.slice(0, 6).map((e, i) => ({ cells: [md(e["date"]), e["desc"] || "", pname(R, e["project"]), e["cat"] || "",
     money(e["amount"], `D:pastout.${i}`, "금액 미확인")] }));
   if (po.length > 6) {
-    const rest = po.slice(6), known = rest.filter((e) => e["amount"] !== null);
+    const rest = po.slice(6), known = rest.filter((e) => e["amount"] !== null && e["amount"] !== undefined);
     poRows.push({ cells: [`외 ${rest.length}건`, "", "", known.length < rest.length ? `금액 미확인 ${rest.length - known.length}건` : "",
       money(known.reduce((s, e) => s + e["amount"], 0), "D:pastout.rest")] });
   }
@@ -396,11 +396,11 @@ function teamRows(T: TeamTable, part: "cur" | "ytd", ytdAlloc: Map<string, numbe
     const costly = r.kind !== "unlinked";
     const hh = r.heads;
     const rev: Cell[] = r.has_rev ? [money(r.revenue, k(r, "revenue")), money(r.gp, k(r, "gp")), pct(r.gp, r.revenue)] : ["", "", ""];
-    const per = !costly || !r.has_rev ? "" : hh === null || r.net === null || !hh ? "미확인" : money(Math.round(r.net / hh), k(r, "per"));
+    const per = !costly || !r.has_rev ? "" : hh === null || r.net === null || !hh ? "미확인" : money(pyRound(r.net / hh), k(r, "per"));
     let alloc: Cell = "";
     if (r.kind === "team") {
       const a = part === "cur" ? r.alloc ?? null : ytdAlloc?.get(r.label) ?? null;
-      alloc = a === null || !hh ? "미확인" : money(Math.round(a / hh), k(r, "alloc"));
+      alloc = a === null || !hh ? "미확인" : money(pyRound(a / hh), k(r, "alloc"));
     }
     const heads = !costly ? "" : hh === null ? "미확인" : part === "cur" ? `${hh}명` : `${pyFixed(hh, 1)}명`;
     const label = r.kind === "company" ? cat("회사 전체", h("small", null, "인원 = 기획본부만")) : r.label;

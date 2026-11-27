@@ -3,6 +3,7 @@
 // 숫자는 끝 점과 가장 낮은 점에만 (나머지는 아래 표와 점 위 title). 색은 표시일 뿐 — 범례·글자로도 구분된다.
 import { esc, h, raw, type Html } from "./html";
 import { won } from "./fmt";
+import { pyRound } from "../model/py";
 
 export interface BalPoint { label: string; firm: number | null; all: number | null }
 
@@ -19,8 +20,9 @@ export function axisText(v: number): string {
   if (v === 0) return "0";
   const sign = v < 0 ? "−" : "";
   const a = Math.abs(v);
-  if (a >= 100_000_000) return `${sign}${Math.round((a / 100_000_000) * 100) / 100}억`;
-  if (a >= 10_000) return `${sign}${Math.round(a / 10_000).toLocaleString("en-US")}만`;
+  // 파이썬 round·'{:,.0f}' 처럼 .5 는 짝수 쪽으로
+  if (a >= 100_000_000) return `${sign}${pyRound(a / 1_000_000) / 100}억`;
+  if (a >= 10_000) return `${sign}${pyRound(a / 10_000).toLocaleString("en-US")}만`;
   return sign + a.toLocaleString("en-US");
 }
 
@@ -33,7 +35,7 @@ export function balanceChart(pts: BalPoint[], minCash: number | null, H = 230): 
   const firm = pts.map((p) => p.firm).filter((v): v is number => v !== null);
   if (pts.length < 2 || !firm.length) return raw("");
   const all = pts.map((p) => p.all).filter((v): v is number => v !== null);
-  const vals = [0, ...firm, ...all, ...(minCash ? [minCash] : [])];
+  const vals = [0, ...firm, ...all, ...(minCash !== null ? [minCash] : [])];
   const step = niceStep((Math.max(...vals) - Math.min(...vals)) / 4 || 1);
   let hi = step * Math.ceil(Math.max(...vals) / step);
   const lo = step * Math.floor(Math.min(...vals) / step);
@@ -88,6 +90,6 @@ export function balanceChart(pts: BalPoint[], minCash: number | null, H = 230): 
   const legend = h("div", { class: "legend" },
     h("span", null, h("i", { class: "k-firm" }), "예상 잔액 (확정분·정기 지출)"),
     all.length ? h("span", null, h("i", { class: "k-all" }), "예상 입출금까지 넣은 잔액") : null,
-    minCash ? h("span", null, h("i", { class: "k-floor" }), "최소 보유현금 (밑이면 빨간 점)") : null);
+    minCash !== null ? h("span", null, h("i", { class: "k-floor" }), "최소 보유현금 (밑이면 빨간 점)") : null);
   return h("figure", { class: "chart" }, h("div", { class: "chart-box" }, svg), legend);
 }

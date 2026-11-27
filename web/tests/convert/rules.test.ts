@@ -80,3 +80,11 @@ describe("I9 읽지 못한 현금 줄", () => {
     expect(bal!.notes).toContain("[확인] 보통예금 줄 중 날짜를 읽지 못한 1줄은 빼고, 금액을 읽지 못한 1줄은 0으로 셈 — 장부잔액이 틀릴 수 있음 (위하고에서 분개장을 다시 받으세요)");
   });
 });
+
+describe("적요 만기일", () => {
+  it("전각 숫자도 파이썬 int() 처럼 읽고, 못 읽으면 날짜를 만들지 않는다", async () => {
+    const { memoDate } = await import("../../src/convert/tables");
+    expect(memoDate("만기 2027.０３.３１")).toBe("2027-03-31");
+    expect(memoDate("만기 2027.03.31")).toBe("2027-03-31");
+  });
+});

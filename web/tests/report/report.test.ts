@@ -173,3 +173,11 @@ describe.each(STOPPED)("막힌 보고 %s %s", (id, kind) => {
     expect(nums(html)).toEqual([]);   // 숫자는 하나도 보이지 않음
   });
 });
+
+describe("세로축 글자는 파이썬처럼 .5 를 짝수 쪽으로", () => {
+  it("25,000 → 2만, 35,000 → 4만", async () => {
+    const { axisText } = await import("../../src/report/chart");
+    expect(axisText(25_000)).toBe("2만");
+    expect(axisText(35_000)).toBe("4만");
+  });
+});

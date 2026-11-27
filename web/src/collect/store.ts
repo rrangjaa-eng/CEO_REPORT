@@ -98,9 +98,16 @@ export async function lastForecastBefore(asof: string): Promise<ForecastRecord |
   return earlier[earlier.length - 1] ?? null;
 }
 
-const isForecast = (x: unknown): x is ForecastRecord =>
-  typeof x === "object" && x !== null && typeof (x as ForecastRecord).asof === "string" &&
-  /^\d{4}-\d{2}-\d{2}$/.test((x as ForecastRecord).asof) && Array.isArray((x as ForecastRecord).rows);
+const isIso = (x: unknown) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
+const isNumOrNull = (x: unknown) => x === null || (typeof x === "number" && Number.isFinite(x));
+/** 백업에서 온 예상 기록이 계산이 쓰는 모양인지 (줄 하나하나까지) */
+const isForecast = (x: unknown): x is ForecastRecord => {
+  if (typeof x !== "object" || x === null) return false;
+  const r = x as ForecastRecord;
+  if (!isIso(r.asof) || !isNumOrNull(r.start) || !Array.isArray(r.rows)) return false;
+  return r.rows.every((row) => typeof row === "object" && row !== null && isIso(row.date) &&
+    (row.io === "in" || row.io === "out") && isNumOrNull(row.amount) && typeof row.firm === "boolean");
+};
 
 export async function exportBackup(): Promise<Blob> {
   const body = { 종류: BACKUP_KIND, 형식: 2, 자료: await listDocs(), 예상기록: await listForecasts() };
@@ -118,7 +125,8 @@ export async function importBackup(file: Blob): Promise<number> {
   }
   const b = body as { 종류?: unknown; 자료?: unknown; 예상기록?: unknown };
   if (b?.종류 !== BACKUP_KIND || !Array.isArray(b.자료)) throw new Error("CEO 보고 백업 파일이 아님");
-  const forecasts = Array.isArray(b.예상기록) ? b.예상기록 : [];
+  if (b.예상기록 !== undefined && !Array.isArray(b.예상기록)) throw new Error("백업 안 예상 기록이 틀림");
+  const forecasts = (b.예상기록 as unknown[] | undefined) ?? [];
   for (const f of forecasts) if (!isForecast(f)) throw new Error("백업 안 예상 기록이 틀림");
   const items: Stored[] = [];
   for (const it of b.자료 as Stored[]) {
