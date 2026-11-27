@@ -25,12 +25,19 @@ export async function readDocs(): Promise<DocMap> {
   return m && typeof m === "object" ? (m as DocMap) : {};
 }
 
-export async function storeDoc(name: string, savedAt: string, doc: CollectedDoc): Promise<string> {
-  const key = docKey(doc, name);
-  const docs = await readDocs();
-  docs[key] = {name, savedAt, doc};
-  await chrome.storage.local.set({[DOCS_KEY]: docs});
-  return key;
+// 읽고-고치고-쓰기를 한 줄로 세운다: 두 받기가 겹쳐도 한쪽 자료가 사라지지 않게.
+let chain: Promise<unknown> = Promise.resolve();
+
+export function storeDoc(name: string, savedAt: string, doc: CollectedDoc): Promise<string> {
+  const run = chain.then(async () => {
+    const key = docKey(doc, name);
+    const docs = await readDocs();
+    docs[key] = {name, savedAt, doc};
+    await chrome.storage.local.set({[DOCS_KEY]: docs});
+    return key;
+  });
+  chain = run.catch(() => undefined);
+  return run;
 }
 
 export async function listDocs(): Promise<StoredDoc[]> {

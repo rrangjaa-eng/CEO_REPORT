@@ -9,11 +9,14 @@ async function pending(): Promise<PendingSave[]> {
   return pendingSaves;
 }
 
+/** 폴더·파일 이름·오류 글은 사용자·위하고에서 온 글이라 HTML 로 넣지 않는다. */
+const esc = (t: unknown) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
 async function show(extra = ""): Promise<void> {
   const dir = await getFolder();
   const list = await pending();
-  let html = dir ? `지금 저장 폴더: <b>${dir.name}</b>` : `<span class="err">저장 폴더를 아직 고르지 않았습니다.</span>`;
-  if (list.length) html += `<br>저장 기다리는 파일 ${list.length}개: ${list.map((p) => p.name).join(", ")}`;
+  let html = dir ? `지금 저장 폴더: <b>${esc(dir.name)}</b>` : `<span class="err">저장 폴더를 아직 고르지 않았습니다.</span>`;
+  if (list.length) html += `<br>저장 기다리는 파일 ${list.length}개: ${list.map((p) => esc(p.name)).join(", ")}`;
   $("msg").innerHTML = html + (extra ? "<br>" + extra : "");
   $("allow").hidden = !(dir && list.length);
 }
@@ -43,7 +46,7 @@ $("pick").onclick = async () => {
     await show(r.saved ? `<span class="ok">${r.saved}개 저장했습니다.</span>` : `<span class="ok">폴더를 정했습니다.</span>`);
     if (r.saved && !r.left) setTimeout(() => window.close(), 1500);
   } catch (e) {
-    if ((e as Error).name !== "AbortError") await show(`<span class="err">${(e as Error).message}</span>`);
+    if ((e as Error).name !== "AbortError") await show(`<span class="err">${esc((e as Error).message)}</span>`);
   }
 };
 

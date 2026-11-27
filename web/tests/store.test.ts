@@ -37,3 +37,15 @@ describe("store", () => {
     expect(await listDocs()).toHaveLength(1);
   });
 });
+
+describe("store 새 것 지키기", () => {
+  beforeEach(async () => { await clearAll(); });
+
+  it("예전 백업을 불러와도 더 새로 받은 같은 자료는 덮지 않는다", async () => {
+    await saveDocs([doc(1, "2026-11-02 10:00:00")]);
+    const old = await exportBackup();
+    await saveDocs([doc(5, "2026-11-06 10:00:00")]);
+    expect(await importBackup(old)).toBe(0);
+    expect((await listDocs())[0]?.doc.줄수).toBe(5);
+  });
+});

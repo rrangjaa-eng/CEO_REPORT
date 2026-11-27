@@ -12,11 +12,12 @@ const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256
 const jwk = { ...publicKey.export({ format: "jwk" }), kid: "k1", alg: "ES256" };
 const KEYS = { k1: jwk };
 const NOW = 1_800_000_000;
+const AUD = "/projects/1/locations/us-central1/services/ceo-report";
 const b64u = (b) => Buffer.from(b).toString("base64url");
 
 function token(claims = {}, kid = "k1", key = privateKey) {
   const h = b64u(JSON.stringify({ alg: "ES256", kid }));
-  const c = b64u(JSON.stringify({ iss: IAP_ISSUER, email: "me@example.com", iat: NOW - 10, exp: NOW + 600, ...claims }));
+  const c = b64u(JSON.stringify({ iss: IAP_ISSUER, email: "me@example.com", iat: NOW - 10, exp: NOW + 600, aud: AUD, ...claims }));
   const s = sign("sha256", Buffer.from(h + "." + c), { key, dsaEncoding: "ieee-p1363" });
   return `${h}.${c}.${b64u(s)}`;
 }
@@ -26,7 +27,7 @@ function site(allowed = "me@example.com") {
   mkdirSync(join(root, "assets"));
   writeFileSync(join(root, "index.html"), "<p>hi</p>");
   writeFileSync(join(root, "assets", "index-DZ-TLYoT.js"), "x");
-  const srv = createServer(handler({ root, allowed, keys: async () => KEYS, now: () => NOW }));
+  const srv = createServer(handler({ root, allowed, audience: AUD, keys: async () => KEYS, now: () => NOW }));
   return new Promise((ok) => srv.listen(0, () => ok({ srv, url: `http://127.0.0.1:${srv.address().port}` })));
 }
 
@@ -88,4 +89,19 @@ test("폴더 밖 파일은 못 읽음", async () => {
 test("verifyIapJwt 는 모양이 틀린 글을 거절", () => {
   assert.equal(verifyIapJwt("a.b", KEYS, NOW), null);
   assert.equal(verifyIapJwt(undefined, KEYS, NOW), null);
+});
+
+test("다른 앱(aud 다름)에 발급된 IAP 서명은 막는다", async () => {
+  const r = await get("/api/me", token({ aud: "/projects/1/locations/us-central1/services/other" }));
+  assert.equal(r.status, 403);
+});
+
+test("kid 가 객체 기본 속성 이름이어도 500 이 아니라 403", async () => {
+  const r = await get("/api/me", token({}, "constructor"));
+  assert.equal(r.status, 403);
+});
+
+test("깨진 % 주소는 500 이 아니라 400", async () => {
+  const r = await get("/%E0%A4%A", token());
+  assert.equal(r.status, 400);
 });

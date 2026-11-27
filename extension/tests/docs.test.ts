@@ -25,6 +25,14 @@ describe("docKey", () => {
 describe("storeDoc", () => {
   beforeEach(() => { installFakeChrome(); });
 
+  it("두 받기가 동시에 저장해도 둘 다 남는다", async () => {
+    await Promise.all([
+      storeDoc("a.json", "2026-11-27 09:00:00", {"종류": "분개장", "회사": "가"}),
+      storeDoc("b.json", "2026-11-27 09:00:01", {"종류": "자금계획", "회사": "가"}),
+    ]);
+    expect(Object.keys(await readDocs())).toHaveLength(2);
+  });
+
   it("같은 key 는 새 것이 옛 것을 덮는다 (key 마다 하나)", async () => {
     const old = {"종류": "분개장", "기간": {start_date: "20260101"}, "회사": "가", "줄수": 1};
     const neu = {...old, "줄수": 2};

@@ -61,9 +61,10 @@ $("pull").addEventListener("click", async () => {
       if (c.ok) good.push(c.doc);
       else bad.push(`${it.name}: ${c.reason}`);
     }
-    await saveDocs(good);
+    const wrote = await saveDocs(good);
     await render();
-    say(`확장 ${version}에서 ${good.length}개 받음` + (bad.length ? ` · 쓰지 않음 ${bad.length}개 (${bad.join(" / ")})` : ""), bad.length > 0);
+    const kept = good.length - wrote;
+    say(`확장 ${version}에서 ${good.length}개 받음` + (kept ? ` · 이미 더 새 것이 있어 그대로 둔 것 ${kept}개` : "") + (bad.length ? ` · 쓰지 않음 ${bad.length}개 (${bad.join(" / ")})` : ""), bad.length > 0);
   } catch (e) {
     say(String((e as Error).message ?? e), true);
   } finally {
@@ -72,7 +73,13 @@ $("pull").addEventListener("click", async () => {
 });
 
 $("export").addEventListener("click", async () => {
-  const blob = await exportBackup();
+  let blob: Blob;
+  try {
+    blob = await exportBackup();
+  } catch (e) {
+    say(String((e as Error).message ?? e), true);
+    return;
+  }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   const d = new Date();
@@ -83,14 +90,17 @@ $("export").addEventListener("click", async () => {
 });
 
 $<HTMLInputElement>("import").addEventListener("change", async (ev) => {
-  const f = (ev.target as HTMLInputElement).files?.[0];
+  const input = ev.target as HTMLInputElement;
+  const f = input.files?.[0];
   if (!f) return;
   try {
     const n = await importBackup(f);
     await render();
-    say(`백업에서 ${n}개를 되살렸습니다.`);
+    say(`백업에서 ${n}개를 되살렸습니다. 더 새로 받은 같은 자료는 그대로 뒀습니다.`);
   } catch (e) {
     say(String((e as Error).message ?? e), true);
+  } finally {
+    input.value = ""; // 같은 파일을 다시 골라도 불러오게
   }
 });
 
