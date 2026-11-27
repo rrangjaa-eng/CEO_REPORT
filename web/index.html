@@ -4,29 +4,78 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CEO 보고</title>
+  <link rel="stylesheet" href="/src/report/report.css">
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <main class="doc">
+  <main class="doc" id="home">
     <header>
-      <div class="note">CEO 보고 · 자료</div>
-      <h1>받은 자료</h1>
-      <p class="meta" id="who">로그인 확인 중…</p>
+      <div class="note">CEO 보고</div>
+      <h1>자료와 보고서</h1>
+      <p class="who" id="who">로그인 확인 중…</p>
     </header>
+
     <section>
+      <h2>1. 보고 폴더 불러오기</h2>
+      <p class="note">지금 쓰는 보고 폴더(<b>입력</b>·<b>수집</b> 폴더가 든 폴더)를 고르세요. 그 위 폴더를 골라도 됩니다. 엑셀로 직접 내려받은 자료도 수집\위하고 에 넣은 뒤 다시 불러오면 됩니다.</p>
       <div class="actions">
-        <button id="pull" type="button">확장에서 받기</button>
+        <label class="button">폴더 불러오기<input id="folder" type="file" webkitdirectory multiple hidden></label>
+      </div>
+      <div id="drop" class="drop">또는 폴더를 여기에 끌어다 놓기</div>
+      <p id="folderStatus" class="status" role="status" aria-live="polite"></p>
+      <ul id="folderList" class="rows"></ul>
+    </section>
+
+    <section>
+      <h2>2. 확장에서 받은 자료</h2>
+      <div class="actions">
+        <button id="pull" type="button" class="ghost">확장에서 받기</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <ul id="list" class="rows"></ul>
+      <p class="note">같은 이름의 파일이 폴더에도 있으면 더 새로 받은 쪽을 씁니다.</p>
+    </section>
+
+    <section>
+      <h2>3. 보고서 만들기</h2>
+      <form id="makeForm" class="make">
+        <fieldset class="kind">
+          <legend>종류</legend>
+          <label><input type="radio" name="kind" value="weekly" checked> 주간</label>
+          <label><input type="radio" name="kind" value="monthly"> 월간</label>
+        </fieldset>
+        <label class="field">기준일<input id="asof" type="date" required></label>
+        <label class="field" id="paydayField">출금일 <small>(비우면 기준일 뒤 첫 금요일)</small><input id="payday" type="date"></label>
+        <div class="actions"><button id="make" type="submit">보고서 만들기</button></div>
+      </form>
+      <p id="makeStatus" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h2>백업</h2>
+      <div class="actions">
         <button id="export" type="button" class="ghost">백업 내보내기</button>
         <label class="ghost button">백업 불러오기<input id="import" type="file" accept="application/json,.json" hidden></label>
       </div>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-    </section>
-    <section>
-      <h2>이 크롬에 있는 자료</h2>
-      <ul id="list" class="rows"></ul>
-      <p class="note">자료는 이 크롬 프로필 안에만 있고 서버로 보내지 않습니다. 크롬 기록을 지우면 사라지니 백업을 내보내 두세요.</p>
+      <p id="backupStatus" class="status" role="status" aria-live="polite"></p>
+      <p class="note">자료는 이 크롬 프로필 안에만 있고 서버로 보내지 않습니다. 크롬 기록을 지우면 사라지니 백업을 내보내 두세요. 백업에는 불러온 폴더 파일도 들어갑니다.</p>
     </section>
   </main>
+
+  <div id="view" hidden>
+    <nav class="chrome bar">
+      <a href="#" id="back">← 돌아가기</a>
+      <button id="print" type="button" class="ghost">인쇄·PDF</button>
+    </nav>
+    <div id="reportBody"></div>
+    <div class="chrome after">
+      <section id="vsBox" hidden></section>
+      <details id="logBox" class="log">
+        <summary>변환 기록 <span id="logCode"></span></summary>
+        <pre id="log"></pre>
+      </details>
+    </div>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
