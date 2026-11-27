@@ -12,3 +12,7 @@ __pycache__/
 /정합성_기준값.json
 /정합성점검.txt
 ceo_report/_build.py
+# 정답 예시(golden/)는 모두 가상 자료라 저장소에 둔다
+!golden/**/수집/
+!golden/**/*.xlsx
+!golden/**/*.xls

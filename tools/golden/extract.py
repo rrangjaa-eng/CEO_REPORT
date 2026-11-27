@@ -33,6 +33,62 @@ GENERATED = None   # 변환 뒤 입력 폴더에서 읽을 CSV: 변환 전후로
 SKIP_R = ("auto_prev", "auto_records", "auto_profits", "lights_prev", "docs_files", "todo_prev", "week_prev", "taxret_dir")
 
 
+class _Clock:
+    """프로그램 안의 '오늘'을 기준일로 묶는다 (기대값이 돌린 날에 따라 바뀌지 않게). 모듈마다 'import datetime as dt' 를 쓰므로
+    그 dt 이름을 today()·now() 만 바꾼 대용 모듈로 잠시 바꾼다."""
+
+    def __init__(self, asof):
+        import types
+        real = dt
+        fixed_now = real.datetime.combine(asof, real.time(9, 0))
+
+        class FDate(real.date):
+            @classmethod
+            def today(cls):
+                return asof
+
+        class FDateTime(real.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+            @classmethod
+            def today(cls):
+                return fixed_now
+
+        shim = types.ModuleType("datetime")
+        shim.__dict__.update(real.__dict__)
+        shim.date, shim.datetime = FDate, FDateTime
+        self.shim, self.real, self.saved = shim, real, []
+
+    def __enter__(self):
+        for m in list(sys.modules.values()):
+            name = getattr(m, "__name__", "") or ""
+            if (name.startswith("ceo_report") or name == "ceo_report_cli") and getattr(m, "dt", None) is self.real:
+                self.saved.append(m)
+                m.dt = self.shim
+        return self
+
+    def __exit__(self, *exc):
+        for m in self.saved:
+            m.dt = self.real
+        self.saved = []
+
+
+def _import_all():
+    """시계를 묶기 전에 프로그램 모듈을 모두 불러 둔다 (늦게 불리는 모듈도 묶이게)."""
+    import importlib
+    import pkgutil
+    import ceo_report
+    for info in pkgutil.iter_modules(ceo_report.__path__):
+        if info.name in ("gui",):
+            continue
+        try:
+            importlib.import_module("ceo_report." + info.name)
+        except Exception:
+            pass
+
+
 def _load_report_module():
     spec = importlib.util.spec_from_file_location("ceo_report_cli", os.path.join(ROOT, "보고서.py"))
     m = importlib.util.module_from_spec(spec)
@@ -79,11 +135,16 @@ def _read_csv(path):
     raise ValueError("CSV 인코딩을 모름: %s" % path)
 
 
+def _read_json(path):
+    with open(path, encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
 def _snapshot_csv(folder):
     out = {}
     for name in sorted(os.listdir(folder)):
         p = os.path.join(folder, name)
-        if os.path.isfile(p) and name.endswith(".csv"):
+        if os.path.isfile(p) and name.endswith((".csv", ".json")):
             with open(p, "rb") as f:
                 out[name] = f.read()
     return out
@@ -108,14 +169,18 @@ def extract(case_dir):
         os.makedirs(wehago_dir, exist_ok=True)
         before = _snapshot_csv(input_dir)
         from ceo_report import convert
-        with contextlib.redirect_stdout(io.StringIO()):
+        _import_all()
+        cli = _load_report_module()
+        sys.modules["ceo_report_cli"] = cli
+        clock = _Clock(asof)
+        with clock, contextlib.redirect_stdout(io.StringIO()):
             res = convert.run(input_dir, collect, wehago_dir, asof, now, stamp="GOLDEN", ran_at=now)
         after = _snapshot_csv(input_dir)
         changed = sorted(n for n in after if before.get(n) != after[n])
         conv = {"code": res.code, "lines": res.lines,
-                "files": {n: _read_csv(os.path.join(input_dir, n)) for n in changed}}
+                "files": {n: _read_csv(os.path.join(input_dir, n)) for n in changed if n.endswith(".csv")},
+                "json": {n: _read_json(os.path.join(input_dir, n)) for n in changed if n.endswith(".json")}}
         files = {"convert.json": plain(conv, tmp)}
-        cli = _load_report_module()
         for kind in case.get("kinds", ["weekly", "monthly"]):
             got = {}
 
@@ -138,7 +203,7 @@ def extract(case_dir):
             if case.get("payday"):
                 argv += ["--출금일", case["payday"]]
             env = {k: v for k, v in os.environ.items() if k != gate.TEST_OFF}
-            with mock.patch.dict(os.environ, env, clear=True), \
+            with _Clock(asof), mock.patch.dict(os.environ, env, clear=True), \
                     mock.patch.object(cli, "render", fake_render), \
                     mock.patch.object(gate, "problems", spy_problems), \
                     contextlib.redirect_stdout(io.StringIO()) as said:

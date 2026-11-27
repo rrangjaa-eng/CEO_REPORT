@@ -1,0 +1,11 @@
+{
+ "title": "분개장 중복 줄: 줄 번호(sq_acttax2)가 같으면 날짜를 고쳐 다시 받아도 한 번만",
+ "rules": [
+  "D6"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_journal_line_id"
+}

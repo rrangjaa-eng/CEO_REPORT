@@ -1,0 +1,11 @@
+{
+ "title": "계좌 사이 이체 20,000,000원은 입금·출금에서 뺌 (u_book_balance 의 짝)",
+ "rules": [
+  "U5"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "u_transfer"
+}

@@ -1,0 +1,11 @@
+{
+ "title": "결산 분개는 손익에서 빼되 감가상각비 차변은 남김",
+ "rules": [
+  "D9"
+ ],
+ "asof": "2026-11-02",
+ "kinds": [
+  "weekly"
+ ],
+ "id": "d_closing_entries"
+}
