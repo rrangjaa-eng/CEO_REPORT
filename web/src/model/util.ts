@@ -55,6 +55,7 @@ export function isBlank(value: unknown): boolean {
 /** util.num: '1,234,000' '-500' '(500)' → 숫자. 빈칸·'-'·'미확인' → null. */
 export function num(value: unknown, issues?: Issues | null, row?: Row | null, col = ""): number | null {
   if (isBlank(value)) return null;
+  if (row && row["_overflow"]) return null;   // 칸이 밀린 줄 (csv.ts 가 알림)
   let s = plain(value);
   const neg = s.startsWith("(") && s.endsWith(")");
   if (neg) s = s.slice(1, -1);

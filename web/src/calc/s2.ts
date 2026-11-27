@@ -11,7 +11,7 @@ import { mergeTax, type TaxRow } from "./tax";
 import { compareDebts, type DebtRow } from "./debts";
 import { attach as attachDetails, type DetailRow } from "./paydetail";
 import { attach as attachReqs, type ReqRow } from "./payreq";
-import { availablePeriods, countsIn, markMust, twoSources } from "./schedule";
+import { availablePeriods, countsIn, markMust, twoSources, twoSourcesIn } from "./schedule";
 
 const isNone = (x: unknown) => x === null || x === undefined;
 
@@ -124,6 +124,7 @@ export function section2(ctx: Ctx): void {
   ctx.events = events;
   R["debts"] = compareDebts((d.debts ?? null) as unknown as DebtRow[] | null, events as FundEvent[], asof);
   R["two_source"] = twoSources(events, asof);
+  R["two_source_in"] = twoSourcesIn(events, asof);   // 새 안전장치 (파이썬에 없음)
 
   const payday = R["payday"] as IsoDate;
   const weekEnds = [0, 1, 2, 3].map((i) => addDays(payday, 7 * i));

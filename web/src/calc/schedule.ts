@@ -36,6 +36,27 @@ export function twoSources(events: Obj[], asof: IsoDate): Obj[] {
   return sortedBy(out, (g) => -tot(g)).map((g) => ({ ...g, sources: Object.fromEntries(g["sources"] as Map<string, number>) }));
 }
 
+/** 입금 출처 둘 점검 (새 안전장치): 자금계획서 입금과 맞춰지지 않은 계산서·자금일정 입금이 같은 거래처·같은 달에 있으면
+ * 같은 돈이 두 번 잡혔을 수 있다. 기준일 뒤, 금액·날짜를 아는 줄만. 금액 큰 순. 숫자는 바꾸지 않고 목록만 낸다. */
+export function twoSourcesIn(events: Obj[], asof: IsoDate): Obj[] {
+  const groups = new Map<string, { vendor: string; month: string; sources: Map<string, number> }>();
+  for (const ev of events) {
+    if (ev["io"] !== "in" || ev["amount"] === null || ev["amount"] === undefined || !ev["date"] || ev["date"] <= asof) continue;
+    const src = ev["source"] as string;
+    if (!["자금계획서", "자금일정", "계산서"].includes(src)) continue;
+    const key = normVendor(ev["desc"] || "");
+    if (!key) continue;
+    const month = (ev["date"] as string).slice(0, 7);
+    const gk = JSON.stringify([key, month]);
+    const g = groups.get(gk) ?? { vendor: ev["desc"] || key, month, sources: new Map<string, number>() };
+    groups.set(gk, g);
+    g.sources.set(src, (g.sources.get(src) ?? 0) + ev["amount"]);
+  }
+  const tot = (g: { sources: Map<string, number> }) => [...g.sources.values()].reduce((a, b) => a + b, 0);
+  return sortedBy([...groups.values()].filter((g) => g.sources.has("자금계획서") && g.sources.size > 1), (g) => -tot(g))
+    .map((g) => ({ ...g, sources: Object.fromEntries(g.sources) }));
+}
+
 export const MUST_KINDS = ["급여", "4대보험", "원천세", "부가세", "법인세", "법인지방소득세", "카드대금", "고정 지출"];
 export const MUST_CAT_EXTRA = ["세금", "회사부담금"];
 export const MUST_VENDOR = ["세무서", "구청", "시청", "군청", "공단"];

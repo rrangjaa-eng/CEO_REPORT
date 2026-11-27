@@ -801,7 +801,11 @@ export function loadData(files: FileSet): Data {
   const pl: PlRow[] = [];
   for (const r of R("손익.csv")) {
     const source = g(r, "출처");
-    const ym = Array.from(g(r, "연월").replace(/\./g, "-").replace(/\//g, "-")).slice(0, 7).join("");
+    let ym = Array.from(g(r, "연월").replace(/\./g, "-").replace(/\//g, "-")).slice(0, 7).join("");
+    // 새 안전장치: 연월은 글자로 비교하므로 '2026-9' 는 '2026-09' 로 고치고, 그래도 YYYY-MM 이 아니면 알린다
+    const ymParts = /^(\d{4})-(\d{1,2})$/.exec(ym);
+    if (ymParts) ym = `${ymParts[1]}-${ymParts[2]!.padStart(2, "0")}`;
+    else if (ym) iss.add(r._file, r._line, `연월 '${g(r, "연월")}' 형식 확인 (YYYY-MM) → 기간 합계에서 빠질 수 있음`);
     const unit = g(r, "단위"), target = g(r, "대상");
     const revenue = num(rget(r, "매출"), iss, r, "매출");
     const direct = num(rget(r, "직접비"), iss, r, "직접비");

@@ -171,7 +171,14 @@ export function readCsv(name: string, text: string | undefined, required: readon
       if (!Object.prototype.hasOwnProperty.call(clean, k)) clean[k] = "";
     }
     if (!Object.values(clean).some((v) => v)) continue;
-    out.push({ ...clean, _line: line, _file: name } as Row);
+    const row = { ...clean, _line: line, _file: name } as Row;
+    // 새 안전장치 (파이썬에 없음): 칸이 머리글보다 많고 남는 칸에 글자가 있으면 금액에 따옴표 없는 쉼표가 든 줄일 수 있다
+    // ('360,100,000' → 360). 값이 한 칸씩 밀렸으므로 이 줄의 숫자는 미확인(null)으로 둔다 (util.num 이 _overflow 를 본다).
+    if (cells.slice(header.length).some((x) => pyStrip(x ?? ""))) {
+      row._overflow = 1;
+      issues.add(name, line, "칸이 머리글보다 많음 (금액에 따옴표 없는 쉼표가 있는지 확인) → 이 줄의 숫자는 미확인으로 처리");
+    }
+    out.push(row);
   }
   return [out, true];
 }
