@@ -1,0 +1,88 @@
+# 새 시스템(사이트·수집 확장) 검사와 배포. 기본 가지(claude/ceo-report-v1)에 합쳐지면 검사 뒤 Cloud Run 에 자동 배포.
+# 다른 가지·PR 은 검사만 한다. 구글 클라우드 연결은 키 파일 없이 Workload Identity (저장소 Variables 의 GCP_*).
+name: web
+on:
+  push:
+    branches: ["**"]
+    paths: ["web/**", "server/**", "extension/**", "golden/**", "tools/golden/**", "tests/test_golden.py",
+            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml"]
+  pull_request:
+    paths: ["web/**", "server/**", "extension/**", "golden/**", "tools/golden/**", "tests/test_golden.py",
+            "package.json", "package-lock.json", "Dockerfile", ".dockerignore", ".github/workflows/web.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  REGION: us-central1
+  SERVICE: ceo-report
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 형식 검사·시험
+        run: npm run check
+      - name: 빌드 (사이트·확장)
+        run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 정답 예시 (지금 프로그램과 같은 숫자)
+        run: python -m unittest tests.test_golden -v
+      - name: 확장 zip
+        run: cd extension/dist && zip -qr ../../ceo-report-extension.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ceo-report-extension
+          path: ceo-report-extension.zip
+          retention-days: 30
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/claude/ceo-report-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: 이미지 만들고 올리기
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/ceo-report/web:${{ github.sha }}"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Cloud Run 배포
+        run: |
+          test -n "${{ vars.ALLOWED_EMAIL }}" || { echo "저장소 Variables 에 ALLOWED_EMAIL 이 없어 배포하지 않음"; exit 1; }
+          gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "${{ vars.GCP_PROJECT_ID }}" \
+            --no-allow-unauthenticated --iap --set-env-vars "ALLOWED_EMAIL=${{ vars.ALLOWED_EMAIL }}" \
+            --cpu 1 --memory 256Mi --min-instances 0 --max-instances 1 --quiet
+      - name: 본인 계정만 들어오게 (IAP)
+        run: |
+          # 프로젝트 번호는 GCP_WIF_PROVIDER(projects/<번호>/...)에서 읽음
+          NUM=$(echo "${{ vars.GCP_WIF_PROVIDER }}" | sed -E 's#^projects/([0-9]+)/.*#\1#')
+          # IAP가 서비스를 부를 수 있게
+          gcloud run services add-iam-policy-binding "$SERVICE" --region "$REGION" --project "${{ vars.GCP_PROJECT_ID }}" \
+            --member "serviceAccount:service-$NUM@gcp-sa-iap.iam.gserviceaccount.com" --role roles/run.invoker --quiet
+          # 사이트에 들어올 수 있는 계정은 ALLOWED_EMAIL 하나
+          gcloud iap web add-iam-policy-binding --resource-type cloud-run --service "$SERVICE" --region "$REGION" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --member "user:${{ vars.ALLOWED_EMAIL }}" \
+            --role roles/iap.httpsResourceAccessor --quiet
+          gcloud run services describe "$SERVICE" --region "$REGION" --project "${{ vars.GCP_PROJECT_ID }}" --format 'value(status.url)'

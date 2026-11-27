@@ -1,0 +1,10 @@
+{
+  "name": "ceo-report",
+  "private": true,
+  "workspaces": ["web", "extension"],
+  "scripts": {
+    "check": "npm run -ws --if-present typecheck && npm run -ws --if-present test && npm run test:server",
+    "build": "npm run -ws --if-present build",
+    "test:server": "node --test server/test/*.test.mjs"
+  }
+}

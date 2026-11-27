@@ -16,3 +16,5 @@ ceo_report/_build.py
 !golden/**/수집/
 !golden/**/*.xlsx
 !golden/**/*.xls
+node_modules/
+extension/dist/

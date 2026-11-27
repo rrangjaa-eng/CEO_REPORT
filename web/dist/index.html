@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CEO 보고</title>
+  <script type="module" crossorigin src="/assets/index-DZ-TLYoT.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CDoMP815.css">
+</head>
+<body>
+  <main class="doc">
+    <header>
+      <div class="note">CEO 보고 · 자료</div>
+      <h1>받은 자료</h1>
+      <p class="meta" id="who">로그인 확인 중…</p>
+    </header>
+    <section>
+      <div class="actions">
+        <button id="pull" type="button">확장에서 받기</button>
+        <button id="export" type="button" class="ghost">백업 내보내기</button>
+        <label class="ghost button">백업 불러오기<input id="import" type="file" accept="application/json,.json" hidden></label>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+    <section>
+      <h2>이 크롬에 있는 자료</h2>
+      <ul id="list" class="rows"></ul>
+      <p class="note">자료는 이 크롬 프로필 안에만 있고 서버로 보내지 않습니다. 크롬 기록을 지우면 사라지니 백업을 내보내 두세요.</p>
+    </section>
+  </main>
+</body>
+</html>
