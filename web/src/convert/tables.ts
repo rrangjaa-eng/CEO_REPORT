@@ -11,6 +11,7 @@ import { carryRows, fromJournal, readManual, type Law } from "./corptax";
 import { exists, join, readCsvFile, type ConvFiles } from "./files";
 import * as fundplan from "./fundplan";
 import { cardUsage, compareScreens, rawFiles } from "./screens";
+import { CONVERT_RULES } from "./rules";
 import { Table, type TRow } from "./table";
 import * as tax from "./tax";
 import { journalFromStart, squash, type Books, type JLine, type Sales } from "./wehago";
@@ -235,7 +236,16 @@ export function buildBank(books: Books, cfg: Cfg): Table[] {
   snap(last);
   const total = [...bal.values()].reduce((s, x) => s + x, 0);
   const note = `보통예금 잔액 = 분개장 ${lines[0]!.date}부터 차변−대변 누적 (기초 잔액 0) · 계좌 ${bal.size}개 · ${last} 합계 ${won(total)}`;
-  return [new Table(BOOK_BAL_FILE, BOOK_BAL_KEYS, snaps, { notes: [note] }),
+  const balNotes = [note];
+  if (CONVERT_RULES.cashUnreadableNote) {   // I9 고침(스위치): 읽지 못한 현금 줄을 말없이 빼거나 0 으로 더하지 않고 알린다
+    const all = books.journal.filter((ln) => cash.has(squash(ln.account_code)));
+    const undated = all.filter((ln) => ln.date === null).length;
+    const noAmount = all.filter((ln) => ln.date !== null && ln.debit === null && ln.credit === null).length;
+    if (undated || noAmount) {
+      balNotes.push(`[확인] 보통예금 줄 중 날짜를 읽지 못한 ${undated}줄은 빼고, 금액을 읽지 못한 ${noAmount}줄은 0으로 셈 — 장부잔액이 틀릴 수 있음 (위하고에서 분개장을 다시 받으세요)`);
+    }
+  }
+  return [new Table(BOOK_BAL_FILE, BOOK_BAL_KEYS, snaps, { notes: balNotes }),
     new Table(BOOK_TXN_FILE, TXN, txns, { notes: [`보통예금 입출금 ${txns.length}줄 (같은 전표에 차변·대변 모두 있으면 계좌간이체)`] })];
 }
 

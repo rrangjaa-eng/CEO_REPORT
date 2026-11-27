@@ -1,5 +1,6 @@
 // wehago.py: WEHAGO 장부(분개장·매입매출장·전자세금계산서(매입))를 골라 읽고, 매출 계산서 원천을 읽고, 인트라넷 요청과 대조한다.
 // 엑셀(.xlsx)은 비동기로 풀어야 하므로 convert 가 먼저 prepareBooks 로 읽어 둔 결과(BookCache)를 쓴다.
+import { CONVERT_RULES } from "./rules";
 import { addDays, daysBetween, type IsoDate } from "../model/dates";
 import { cmpStr, pyIsDigit, pyRemoveSpace, pyStrip, sortedBy, type SortKey } from "../model/py";
 import { isBlank, maskRrn, parseDate, ssumOrNone, won } from "../model/util";
@@ -707,8 +708,25 @@ function readFail(name: string, err: unknown): string {
 
 type Foreign = [string, string][];
 
+/** I8 고침(스위치 journalDedupLineId): 같은 해 안에서 줄 번호(line_id)가 두 번 나오면 앞 줄만 쓴다 (한 파일 안 같은 줄이 두 번 들어간 받기).
+ *  꺼짐이면 그대로 돌려준다. */
+export function dedupLineIds(journal: JLine[], notes: string[]): JLine[] {
+  if (!CONVERT_RULES.journalDedupLineId) return journal;
+  const seen = new Set<string>();
+  const out: JLine[] = [];
+  let dropped = 0;
+  for (const ln of journal) {
+    const k = ln.line_id && ln.date !== null ? ln.date.slice(0, 4) + "|" + ln.line_id : null;
+    if (k !== null && seen.has(k)) { dropped++; continue; }
+    if (k !== null) seen.add(k);
+    out.push(ln);
+  }
+  if (dropped) notes.push(`[확인] 분개장에 같은 줄 번호가 두 번 나온 줄 ${dropped}건은 한 번만 셈 — 분개장을 다시 받아 넣으세요`);
+  return out;
+}
+
 function sameYearLayers(ctx: BookCtx, names: string[], rows: JLine[], period: [IsoDate, IsoDate], asof: IsoDate | null, company: string,
-  foreign: Foreign | null): [JLine[], string[], string[], Map<string, string>, [IsoDate, IsoDate][]] {
+  foreign: Foreign | null, gone: JLine[] = []): [JLine[], string[], string[], Map<string, string>, [IsoDate, IsoDate][]] {
   const spans: [IsoDate, IsoDate][] = [period];
   const added: JLine[] = [], used: string[] = [], rest: string[] = [];
   const slips = new Map<string, string>();
@@ -731,6 +749,12 @@ function sameYearLayers(ctx: BookCtx, names: string[], rows: JLine[], period: [I
     if (p === null || p[1] < year0) { rest.push(n); continue; }
     const keep = more.filter((r) => r.date !== null && p[0] <= r.date && r.date <= p[1] && !inSpans(r.date, spans)
       && !(r.line_id && seen.has(r.line_id)));
+    // I8 고침(스위치): 더 새 파일이 맡은 기간에 있던 줄인데 그 줄 번호가 더 새 파일 어디에도 없음 → 날짜를 옛 기간으로 고쳤거나 지운 전표
+    if (CONVERT_RULES.journalDedupLineId) {
+      for (const r of more) {
+        if (r.line_id && r.date !== null && p[0] <= r.date && r.date <= p[1] && inSpans(r.date, spans) && !seen.has(r.line_id)) gone.push(r);
+      }
+    }
     spans.push(p);
     for (const r of more) if (r.line_id && p[0] <= (r.date ?? p[0]) && (r.date ?? p[0]) <= p[1]) seen.add(r.line_id);
     if (keep.length) {
@@ -919,8 +943,15 @@ export function loadBooks(ctx: BookCtx, asof: IsoDate, staleDays: number | null,
     if (kind === "분개장" && info.period && namesLeft.length) {
       let layerRows: JLine[];
       let sp: [IsoDate, IsoDate][];
-      [layerRows, entry.layers, namesLeft, layerSlips, sp] = sameYearLayers(ctx, namesLeft, rows as JLine[], info.period, asof, company, foreign);
+      const gone: JLine[] = [];
+      [layerRows, entry.layers, namesLeft, layerSlips, sp] = sameYearLayers(ctx, namesLeft, rows as JLine[], info.period, asof, company, foreign, gone);
       spans = sp;
+      const kept = new Set(layerRows.map((r) => r.line_id));
+      const lost = gone.filter((r) => !kept.has(r.line_id));
+      if (lost.length) {
+        const ids = [...new Set(lost.map((r) => `${r.date} 전표 ${r.no}`))].slice(0, 5).join(", ");
+        books.notes.push(`[확인] 이전 분개장에 있던 줄 ${lost.length}건(${ids})이 더 새 분개장 ${name} 에 없음 — 날짜를 옛 기간으로 고쳤다면 그 기간 분개장을 다시 받아 넣으세요 (지웠으면 그대로 두면 됨)`);
+      }
       if (entry.layers.length) {
         const [a, b] = info.period;
         rows = sortedBy([...layerRows, ...rows], (r) => [r.date === null, r.date ?? DATE_MIN]);
@@ -1011,7 +1042,7 @@ export function loadBooks(ctx: BookCtx, asof: IsoDate, staleDays: number | null,
     }
   }
   if (books.state === "ok" && fromJournal) {
-    books.journal = staged["분개장"] as JLine[];
+    books.journal = dedupLineIds(staged["분개장"] as JLine[], books.notes);
     books.ledger = derived[0];
     books.einvoice = [];
     books.journal_sales = derived[1];
@@ -1024,7 +1055,7 @@ export function loadBooks(ctx: BookCtx, asof: IsoDate, staleDays: number | null,
     }
     if (staged["전자세금계산서(매입)"]) books.notes.push(`전자세금계산서(매입) ${books.files["전자세금계산서(매입)"]!.name} 은(는) 쓰지 않음 (분개장 매입전표 기준)`);
   } else if (books.state === "ok") {
-    books.journal = staged["분개장"] as JLine[];
+    books.journal = dedupLineIds(staged["분개장"] as JLine[], books.notes);
     books.ledger = staged["매입매출장"] as LRow[];
     books.einvoice = staged["전자세금계산서(매입)"] as LRow[];
     books.slip_projects = slipProjects;
