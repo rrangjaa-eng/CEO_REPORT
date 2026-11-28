@@ -766,8 +766,16 @@ export function loadData(files: FileSet): Data {
     if (e.basis.startsWith("WEHAGO ")) {
       // 장부 원가 줄의 음수는 취소·감액 전표: 부호 그대로
     } else if (INTRANET_IN_FUNDS || !e.basis.startsWith("지급요청")) {
-      e.supply = outflow(iss, r, "공급가액", e.supply);
-      e.vat = outflow(iss, r, "부가세", e.vat);
+      // I13 (사용자 결정 2026-11-28): 손으로 넣은 집행의 음수는 환불·감액 → 부호 그대로 (양수로 바꾸면 원가가 2배만큼 틀림)
+      if (RULES.manualExecKeepsNegative) {
+        for (const col of ["공급가액", "부가세"] as const) {
+          const v = col === "공급가액" ? e.supply : e.vat;
+          if (v !== null && v < 0) iss.add(r._file, r._line, `${col} 값이 음수: '${g(r, col)}' → 환불·감액으로 보고 음수 그대로 계산 (원가·지급이 그만큼 줄어듦)`);
+        }
+      } else {
+        e.supply = outflow(iss, r, "공급가액", e.supply);
+        e.vat = outflow(iss, r, "부가세", e.vat);
+      }
     }
     if (isPrior(e)) {
       // 지난해 프로젝트: 알리지 않음
