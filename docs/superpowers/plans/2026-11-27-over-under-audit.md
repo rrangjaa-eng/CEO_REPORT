@@ -4,7 +4,7 @@
 
 **기준:**
 - 가상 자료로 숫자를 바꿔 돌려 본 것만 "확인"으로 적는다. 실제 회사 자료는 이 환경에 없어 실제 크기는 모른다.
-- 정답 예시 46개는 계속 1원까지 같아야 한다. 숫자가 바뀌는 고침은 사용자 결정 전까지 `web/src/model/rules.ts` 의 스위치로 꺼 둔다.
+- 정답 예시 46개는 계속 1원까지 같아야 한다. 숫자가 바뀌는 고침은 `web/src/model/rules.ts` 의 스위치로 넣는다(2026-11-28 사용자 결정으로 셋 다 켬, 달라지는 정답 예시는 `web/tests/calc/known_changes.ts` C2).
 - 폴더는 `web/src/model`, `web/src/calc`, `web/tests/calc` 만 쓴다(연결 스레드와 합의). 변환(파이썬)은 고치지 않고 다시 만들 때 지킬 것으로 적는다.
 
 ## 1. 이번에 넣은 것
@@ -16,7 +16,7 @@
 | 손익 연월 `2026.9` → `2026-09`, 형식이 틀리면 알림 | `web/src/model/data.ts` | 그런 줄만 |
 | 입금 출처 둘 목록 `R.two_source_in` | `web/src/calc/schedule.ts` | 아니오 |
 | 합계 나눠 보기 `R.totals_split`(잔여 예산·미발행·미반영: open, closed, over) | `web/src/calc/totals_split.ts` | 아니오(기존 합계 그대로) |
-| 스위치 `overdueOutNextFriday`, `taxSameMonth`, `bookKeepsManualDeposit`(모두 기본 꺼짐) | `web/src/model/rules.ts`, `s2.ts`, `tax.ts`, `data.ts` | 켜면 바뀜 |
+| 스위치 `overdueOutNextFriday`, `taxSameMonth`, `bookKeepsManualDeposit`(2026-11-28 사용자 결정으로 모두 켬) | `web/src/model/rules.ts`, `s2.ts`, `tax.ts`, `data.ts` | 바뀜 |
 
 시험: `web/tests/calc/accuracy.test.ts`, `guards.test.ts`, `rules.test.ts`.
 
@@ -82,7 +82,7 @@
 
 ## 4. 남은 일
 
-- 사용자 결정 뒤 스위치를 켜고 `golden/RULES.md` '새 시스템에서 바꿀 것'에 적기.
+- 스위치 3개는 2026-11-28 켬(`golden/RULES.md` C2·C3·I4). C2 의 한계: 급여·4대보험·세금·카드대금 같은 정기 지출은 통장 금액이 예정과 달라 지급 기록을 못 찾는 일이 많으므로 옮기지 않는다(제 날짜에 나간 것으로 봄). 실제로 안 나간 정기 지출은 여전히 예상에서 빠진다. 임차료·구독료·이자처럼 정기 지출 목록에 없는 자동이체는 통장에 같은 금액이 없으면 다음 금요일로 온다.
 - P1·P4·P6·P11, I13 은 따로 결정.
 - 변환을 타입스크립트로 옮길 때 I1·I2·I5~I11 반영.
 - 맞추기 속도(2,000건 0.63초).

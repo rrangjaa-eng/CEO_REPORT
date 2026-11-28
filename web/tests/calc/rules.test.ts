@@ -1,4 +1,5 @@
-// 과대·과소 점검(2026-11-27)에서 찾은 것 중 숫자가 바뀌는 고침. 사용자 결정 전에는 꺼 둔다(RULES 기본값 false = 지금 프로그램과 같음).
+// 과대·과소 점검(2026-11-27)에서 찾은 것 중 숫자가 바뀌는 고침. 사용자가 2026-11-28 에 셋 다 켜기로 결정 (RULES 기본값 true).
+// '꺼짐' 시험은 스위치를 끄고 옛 프로그램의 숫자를 보여 준다.
 import { afterEach, describe, expect, it } from "vitest";
 import { compute } from "../../src/calc/compute";
 import { mergeTax } from "../../src/calc/tax";
@@ -19,14 +20,15 @@ const outAll = (R: Record<string, any>) => R["s2"].buckets.reduce((t: number, b:
 const saved = { ...RULES };
 afterEach(() => Object.assign(RULES, saved));
 
-describe("기본값은 모두 꺼짐 (정답 예시와 같은 숫자)", () => {
-  it("RULES 의 모든 값이 false", () => expect(Object.values(RULES).every((v) => v === false)).toBe(true));
+describe("기본값은 모두 켜짐 (사용자 결정 2026-11-28)", () => {
+  it("RULES 의 모든 값이 true", () => expect(Object.values(RULES).every((v) => v === true)).toBe(true));
 });
 
 describe("overdueOutNextFriday: 예정일 지난 자금일정 지급", () => {
   const late = (f: Record<string, string>) => rep(f, "자금일정.csv", '2026-11-10,지급,"3,300,000"', '2026-10-30,지급,"3,300,000"');
 
-  it("꺼짐: 예상 지출에서 빠지고 past 에만 남는다 (지금 프로그램)", () => {
+  it("꺼짐: 예상 지출에서 빠지고 past 에만 남는다 (옛 프로그램)", () => {
+    RULES.overdueOutNextFriday = false;
     const R = run("base", late);
     expect(outAll(R)).toBe(outAll(run("base")) - 3300000);
     expect(R["s2"].past_out).toBe(3300000);
@@ -65,6 +67,13 @@ describe("overdueOutNextFriday: 이미 낸 것과 오래된 것은 옮기지 않
     expect(R["s2"].past_out).toBe(8000000);
   });
 
+  it("급여·4대보험·세금·카드대금처럼 제 날짜에 저절로 나가는 정기 지출은 옮기지 않는다 (금액이 통장과 달라도 나간 것으로 봄)", () => {
+    RULES.overdueOutNextFriday = true;
+    const R = run("base", (f) => { f["자금일정.csv"] += '2026-10-25,지급,"45,000,000",확정,급여,,직원,급여대장,\n'; });
+    expect(R["late_out"]).toEqual([]);
+    expect(R["s2"].past_out).toBe(45000000);
+  });
+
   it("예정일이 31일 넘게 지난 줄은 옮기지 않는다 (정리 안 된 옛 일정)", () => {
     RULES.overdueOutNextFriday = true;
     const R = run("base", (f) => { f["자금일정.csv"] += '2026-09-30,지급,"1,234,000",확정,거래처미지급,,옛거래처,청구서,\n'; });
@@ -81,7 +90,8 @@ describe("taxSameMonth: 세금 일정이 납부일과 같은 달이면 같은 �
   };
   const near = (f: Record<string, string>) => rep(f, "세금예상.csv", "-15440000", "15440000");
 
-  it("꺼짐: 13일 떨어지면 일정 3,500만과 세금 예상 1,544만이 둘 다 나간다 (지금 프로그램)", () => {
+  it("꺼짐: 13일 떨어지면 일정 3,500만과 세금 예상 1,544만이 둘 다 나간다 (옛 프로그램)", () => {
+    RULES.taxSameMonth = false;
     expect(outAll(run("base", mut))).toBe(outAll(run("base", near)) + 15440000);
   });
 
@@ -131,7 +141,8 @@ describe("bookKeepsManualDeposit: 장부 잔액을 쓸 때 손으로 넣은 정�
     f["계좌잔액.csv"] += '2026-11-02,정기예금,가상은행,"90,000,000","90,000,000",정기예금 만기 2027-04-15\n';
   };
 
-  it("꺼짐: 원금은 0 이 되고 제한만 빠져 쓸 수 있는 돈이 9,000만 작게 나온다 (지금 프로그램)", () => {
+  it("꺼짐: 원금은 0 이 되고 제한만 빠져 쓸 수 있는 돈이 9,000만 작게 나온다 (옛 프로그램)", () => {
+    RULES.bookKeepsManualDeposit = false;
     const a = run("u_book_balance"), b = run("u_book_balance", dep);
     expect(b["s1"].total).toBe(a["s1"].total);
     expect(b["s1"].available).toBe(a["s1"].available - 90000000);

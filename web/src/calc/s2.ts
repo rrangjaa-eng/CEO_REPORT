@@ -154,7 +154,8 @@ export function section2(ctx: Ctx): void {
       if (ev["io"] !== "in") {
         // 고침(RULES.overdueOutNextFriday): 지급 기록을 못 찾은 지난 날짜 지급은 버리지 않고 다음 금요일 예상 지출로 둔다.
         // 자금계획서 줄은 applyFundplan 이 이미 옮겼으므로 자금일정·프로젝트집행만. 냈는지 모르므로 확정·꼭 나갈 돈으로 치지 않는다.
-        if (!(RULES.overdueOutNextFriday && OVERDUE_SOURCES.includes(ev["source"]) && !paidOrOld(ev, asof, d.txns as unknown as Txn[]))) {
+        // 급여·4대보험·세금·카드대금 같은 꼭 나갈 정기 지출(ev.must)은 제 날짜에 나간 것으로 보고 옮기지 않는다 (통장 금액이 예정과 달라 지급 기록을 못 찾는 일이 많다).
+        if (!(RULES.overdueOutNextFriday && OVERDUE_SOURCES.includes(ev["source"]) && !ev["must"] && !paidOrOld(ev, asof, d.txns as unknown as Txn[]))) {
           past.push(ev);
           continue;
         }
