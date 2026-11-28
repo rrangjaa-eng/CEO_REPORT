@@ -156,3 +156,34 @@ describe("bookKeepsManualDeposit: 장부 잔액을 쓸 때 손으로 넣은 정�
     expect(b["s1"].available).toBe(a["s1"].available);
   });
 });
+
+describe("manualExecKeepsNegative: 손으로 넣은 집행의 음수(환불) (I13, 사용자 결정 2026-11-28)", () => {
+  const refund = (f: Record<string, string>) => { f["프로젝트집행.csv"] += '26201,환불,가상인쇄,지급완료,"-1,000,000","-100,000",2026-10-20,확정,수기\n'; };
+  const cost = (id: string, mut?: (f: Record<string, string>) => void) => {
+    const c = loadCase(id);
+    mut?.(c.files);
+    const d = loadData(c.files);
+    return { d, sum: d.execs.filter((e) => e.project === "26201").reduce((t, e) => t + (e.supply ?? 0), 0) };
+  };
+
+  it("켜짐: 음수 그대로 두어 원가가 그만큼 줄고, 환불로 보았다고 알린다", () => {
+    const a = cost("base"), b = cost("base", refund);
+    expect(b.sum).toBe(a.sum - 1_000_000);
+    const last = b.d.execs[b.d.execs.length - 1]!;
+    expect([last.supply, last.vat]).toEqual([-1_000_000, -100_000]);
+    expect(JSON.stringify(b.d.issues)).toContain("환불·감액으로 보고 음수 그대로");
+  });
+
+  it("꺼짐: 양수 지급으로 바꾼다 (옛 프로그램)", () => {
+    RULES.manualExecKeepsNegative = false;
+    const a = cost("base"), b = cost("base", refund);
+    expect(b.sum).toBe(a.sum + 1_000_000);
+  });
+
+  it("자금일정 지급·통장 출금의 음수는 그대로 양수로 본다 (결정 범위 밖)", () => {
+    const c = loadCase("base");
+    c.files["자금일정.csv"] += '2026-11-12,지급,"-700,000",확정,기타,,어딘가,메모,\n';
+    const d = loadData(c.files);
+    expect(d.schedule.some((s) => s.amount === 700_000 && s.date === "2026-11-12")).toBe(true);
+  });
+});
